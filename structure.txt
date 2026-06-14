@@ -1,0 +1,35 @@
+Personal_Finance/
+├── app.py
+├── requirements.txt
+├── config/
+│   ├── __init__.py
+│   └── settings.py
+├── database/
+│   ├── __init__.py
+│   ├── connection.py
+│   ├── crud.py
+│   └── queries.py
+├── data/
+│   ├── __init__.py
+│   └── downloaders.py
+├── ai/
+│   ├── __init__.py
+│   ├── llm.py
+│   ├── rag.py
+│   ├── agent.py
+│   └── web_search.py
+├── ui/
+│   ├── __init__.py
+│   ├── components.py
+│   ├── dashboard.py
+│   ├── register.py
+│   ├── investments.py
+│   ├── reports.py
+│   ├── market_data.py
+│   ├── ai_assistant.py
+│   └── settings.py
+└── utils/
+    ├── __init__.py
+    ├── logging_config.py
+    ├── session_state.py
+    └── helpers.py

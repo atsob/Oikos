@@ -1,0 +1,1029 @@
+import React, { useState, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { AgGridReact } from 'ag-grid-react'
+import type { ColDef, GridReadyEvent, GridApi, CellValueChangedEvent } from 'ag-grid-community'
+import {
+  api,
+  getPayees, getCategories, getInstitutions, getAccountsMaster, getBudgets,
+  upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories,
+  getSecuritiesMaster, upsertSecurity,
+  getCurrenciesMaster, upsertCurrency,
+  upsertBudget, deleteBudget,
+  getPayeeTransactions, getCategoryTransactions,
+} from '@/lib/api'
+import { PageHeader, Input, Button, Spinner, Card } from '@/components/ui'
+import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
+
+const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Budgets']
+
+const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
+const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
+const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
+const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+const deleteRow = (table: string, id: number) =>
+  api.delete(`/static-data/${table}/${id}`).then(r => r.data)
+
+const extractError = (e: unknown) =>
+  (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+  (e instanceof Error ? e.message : 'Operation failed')
+
+// ── Shared Modal shell ────────────────────────────────────────────────────────
+function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: React.ReactNode; footer: React.ReactNode; wide?: boolean }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <h2 className="text-base font-semibold">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">{children}</div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">{footer}</div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="text-xs font-medium text-slate-500 block mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
+
+// ── Payees Tab ────────────────────────────────────────────────────────────────
+function PayeesTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editCatId, setEditCatId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSource, setMergeSource] = useState('')
+  const [mergeTarget, setMergeTarget] = useState('')
+  const [merging, setMerging] = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
+
+  const { data: payees = [], isLoading } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const { data: mergePreview = [] } = useQuery({
+    queryKey: ['payee-tx-preview', mergeSource],
+    queryFn: () => getPayeeTransactions(Number(mergeSource)),
+    enabled: !!mergeSource,
+  })
+
+  const filtered = search
+    ? (payees as Record<string, unknown>[]).filter(r =>
+        String(r.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        String(r.default_category ?? '').toLowerCase().includes(search.toLowerCase()))
+    : payees as Record<string, unknown>[]
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setEditName(String(row.name ?? ''))
+    setEditCatId(row.categories_id != null ? String(row.categories_id) : '')
+    setError(null)
+  }
+
+  const handleSave = async () => {
+    if (!editRow) return
+    setSaving(true); setError(null)
+    try {
+      await upsertPayee({ id: editRow.id ?? undefined, name: editName, categories_id: editCatId ? Number(editCatId) : null })
+      qc.invalidateQueries({ queryKey: ['payees'] })
+      setEditRow(null)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this payee?')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('payees', id)
+      qc.invalidateQueries({ queryKey: ['payees'] })
+    } catch (e) { setDeleteError(extractError(e)) }
+  }
+
+  const handleMerge = async () => {
+    if (!mergeSource || !mergeTarget || mergeSource === mergeTarget) return
+    setMerging(true); setMergeError(null)
+    try {
+      await mergePayees(Number(mergeSource), Number(mergeTarget))
+      qc.invalidateQueries({ queryKey: ['payees'] })
+      setMergeOpen(false); setMergeSource(''); setMergeTarget('')
+    } catch (e: unknown) { setMergeError(e instanceof Error ? e.message : 'Merge failed') }
+    finally { setMerging(false) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <Button size="sm" variant="secondary" onClick={() => openEdit({ id: null, name: '', categories_id: null })}>
+          <Plus size={13} /> Add Payee
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
+          <ArrowRightLeft size={13} /> Merge Payees
+        </Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} payees</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
+            { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
+            { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' },
+            { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          pagination paginationPageSize={50}
+        />
+      </div>
+
+      {editRow && (
+        <Modal title={editRow.id ? 'Edit Payee' : 'New Payee'} onClose={() => setEditRow(null)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !editName.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <Field label="Name *">
+            <Input value={editName} onChange={e => setEditName(e.target.value)} />
+          </Field>
+          <Field label="Default Category">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={editCatId} onChange={e => setEditCatId(e.target.value)}>
+              <option value="">— none —</option>
+              {(categories as Record<string, unknown>[]).map(c => (
+                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path ?? c.name)}</option>
+              ))}
+            </select>
+          </Field>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+
+      {mergeOpen && (
+        <Modal title="Merge Payees" wide onClose={() => setMergeOpen(false)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setMergeOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleMerge} disabled={merging || !mergeSource || !mergeTarget || mergeSource === mergeTarget}>
+              <ArrowRightLeft size={14} /> {merging ? 'Merging…' : 'Merge'}
+            </Button>
+          </>}>
+          <p className="text-sm text-slate-600">All transactions from the <strong>source</strong> payee will be reassigned to the <strong>target</strong>, then the source is deleted.</p>
+          <Field label="Source payee (will be deleted)">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeSource} onChange={e => setMergeSource(e.target.value)}>
+              <option value="">— select —</option>
+              {(payees as Record<string, unknown>[]).map(p => (
+                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({p.transactions_count} txns)</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Target payee (will be kept)">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeTarget} onChange={e => setMergeTarget(e.target.value)}>
+              <option value="">— select —</option>
+              {(payees as Record<string, unknown>[]).filter(p => String(p.id) !== mergeSource).map(p => (
+                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({p.transactions_count} txns)</option>
+              ))}
+            </select>
+          </Field>
+          {mergeSource && (
+            <div className="mt-2">
+              <p className="text-xs font-medium text-slate-500 mb-1">Transactions to be reassigned</p>
+              {(mergePreview as Record<string, unknown>[]).length === 0
+                ? <p className="text-xs text-slate-400 italic">No transactions found.</p>
+                : <div className="max-h-48 overflow-y-auto rounded border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Date</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Account</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Description</th>
+                          <th className="px-2 py-1 text-right font-medium text-slate-500">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(mergePreview as Record<string, unknown>[]).map((tx, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.date ?? '').slice(0, 10)}</td>
+                            <td className="px-2 py-1 text-slate-600">{String(tx.account ?? '')}</td>
+                            <td className="px-2 py-1 text-slate-600 truncate max-w-[180px]">{String(tx.description ?? '')}</td>
+                            <td className="px-2 py-1 text-right font-mono text-slate-700">{Number(tx.amount ?? 0).toFixed(2)} {String(tx.currency ?? '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+              }
+            </div>
+          )}
+          {mergeError && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{mergeError}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Categories Tab ────────────────────────────────────────────────────────────
+function CategoriesTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState({ name: '', parent_id: '', type: 'Expense' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSource, setMergeSource] = useState('')
+  const [mergeTarget, setMergeTarget] = useState('')
+  const [merging, setMerging] = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const { data: categories = [], isLoading } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const { data: catMergePreview = [] } = useQuery({
+    queryKey: ['category-tx-preview', mergeSource],
+    queryFn: () => getCategoryTransactions(Number(mergeSource)),
+    enabled: !!mergeSource,
+  })
+
+  const filtered = search
+    ? (categories as Record<string, unknown>[]).filter(r =>
+        String(r.full_path ?? '').toLowerCase().includes(search.toLowerCase()) ||
+        String(r.type ?? '').toLowerCase().includes(search.toLowerCase()))
+    : categories as Record<string, unknown>[]
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    const namePart = String(row.full_path ?? '').split(' : ').pop() ?? ''
+    setForm({ name: namePart, parent_id: '', type: String(row.type ?? 'Expense') })
+    setError(null)
+  }
+
+  const openNew = () => {
+    setEditRow({})
+    setForm({ name: '', parent_id: '', type: 'Expense' })
+    setError(null)
+  }
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      await upsertCategory({
+        id: editRow?.id ?? undefined,
+        name: form.name,
+        parent_id: form.parent_id ? Number(form.parent_id) : null,
+        type: form.type,
+      })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      setEditRow(null)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this category? This will also delete all sub-categories.')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('categories', id)
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    } catch (e) { setDeleteError(extractError(e)) }
+  }
+
+  const handleMerge = async () => {
+    if (!mergeSource || !mergeTarget || mergeSource === mergeTarget) return
+    setMerging(true); setMergeError(null)
+    try {
+      await mergeCategories(Number(mergeSource), Number(mergeTarget))
+      qc.invalidateQueries({ queryKey: ['categories'] })
+      setMergeOpen(false); setMergeSource(''); setMergeTarget('')
+    } catch (e: unknown) { setMergeError(e instanceof Error ? e.message : 'Merge failed') }
+    finally { setMerging(false) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  const catList = categories as Record<string, unknown>[]
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Category</Button>
+        <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
+          <ArrowRightLeft size={13} /> Merge Categories
+        </Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} categories</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
+            { field: 'type', headerName: 'Type', width: 120 },
+            { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' },
+            { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          pagination paginationPageSize={50}
+        />
+      </div>
+
+      {editRow !== null && (
+        <Modal title={editRow.id ? 'Edit Category' : 'New Category'} onClose={() => setEditRow(null)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !form.name.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <Field label="Name *">
+            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Category name" />
+          </Field>
+          {!editRow.id && (
+            <Field label="Parent category">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}>
+                <option value="">— top level —</option>
+                {catList.map(c => (
+                  <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label="Type *">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+              {CATEGORY_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+
+      {mergeOpen && (
+        <Modal title="Merge Categories" wide onClose={() => setMergeOpen(false)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setMergeOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleMerge} disabled={merging || !mergeSource || !mergeTarget || mergeSource === mergeTarget}>
+              <ArrowRightLeft size={14} /> {merging ? 'Merging…' : 'Merge'}
+            </Button>
+          </>}>
+          <p className="text-sm text-slate-600">All transaction splits assigned to the <strong>source</strong> category will be reassigned to the <strong>target</strong>, then the source is deleted.</p>
+          <Field label="Source category (will be deleted)">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeSource} onChange={e => setMergeSource(e.target.value)}>
+              <option value="">— select —</option>
+              {catList.map(c => (
+                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({c.transactions_count} splits)</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Target category (will be kept)">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeTarget} onChange={e => setMergeTarget(e.target.value)}>
+              <option value="">— select —</option>
+              {catList.filter(c => String(c.id) !== mergeSource).map(c => (
+                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({c.transactions_count} splits)</option>
+              ))}
+            </select>
+          </Field>
+          {mergeSource && (
+            <div className="mt-2">
+              <p className="text-xs font-medium text-slate-500 mb-1">Splits to be reassigned</p>
+              {(catMergePreview as Record<string, unknown>[]).length === 0
+                ? <p className="text-xs text-slate-400 italic">No transactions found.</p>
+                : <div className="max-h-48 overflow-y-auto rounded border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500 whitespace-nowrap">Date</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Account</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Payee</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Description</th>
+                          <th className="px-2 py-1 text-right font-medium text-slate-500 whitespace-nowrap">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(catMergePreview as Record<string, unknown>[]).map((tx, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.date ?? '').slice(0, 10)}</td>
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.account ?? '')}</td>
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.payee ?? '')}</td>
+                            <td className="px-2 py-1 text-slate-600 truncate max-w-[220px]">{String(tx.description ?? '')}</td>
+                            <td className="px-2 py-1 text-right font-mono text-slate-700 whitespace-nowrap">{Number(tx.amount ?? 0).toFixed(2)} {String(tx.currency ?? '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+              }
+            </div>
+          )}
+          {mergeError && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{mergeError}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Accounts Tab ──────────────────────────────────────────────────────────────
+function AccountsTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState<Record<string, unknown>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: accounts = [], isLoading } = useQuery({ queryKey: ['accounts-master'], queryFn: () => getAccountsMaster() })
+  const { data: institutions = [] } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
+
+  const filtered = search
+    ? (accounts as Record<string, unknown>[]).filter(r =>
+        Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : accounts as Record<string, unknown>[]
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setForm({ ...row })
+    setError(null)
+  }
+
+  const openNew = () => {
+    setEditRow({})
+    setForm({ name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '' })
+    setError(null)
+  }
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      await api.post('/static-data/accounts', {
+        id: form.id ?? undefined,
+        name: form.name,
+        type: form.type,
+        currencies_id: form.currencies_id ? Number(form.currencies_id) : null,
+        institutions_id: form.institutions_id ? Number(form.institutions_id) : null,
+        iban: form.iban || null,
+        credit_limit: form.credit_limit ? Number(form.credit_limit) : 0,
+        is_active: form.is_active,
+        accounts_id_linked: form.accounts_id_linked ? Number(form.accounts_id_linked) : null,
+      })
+      qc.invalidateQueries({ queryKey: ['accounts-master'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      setEditRow(null)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDeactivate = async (id: number) => {
+    if (!confirm('Delete this account?')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('accounts', id)
+      qc.invalidateQueries({ queryKey: ['accounts-master'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    } catch (e) { setDeleteError(extractError(e)) }
+  }
+
+  const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  const instList = institutions as Record<string, unknown>[]
+  const currList = currencies as Record<string, unknown>[]
+  const acctList = accounts as Record<string, unknown>[]
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} accounts · click pencil to edit</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
+            { field: 'type', headerName: 'Type', width: 130 },
+            { field: 'currency', headerName: 'Currency', width: 90 },
+            { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—' },
+            { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
+            { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
+            { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
+            { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDeactivate(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          pagination paginationPageSize={50}
+        />
+      </div>
+
+      {editRow !== null && (
+        <Modal title={form.id ? 'Edit Account' : 'New Account'} onClose={() => setEditRow(null)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !String(form.name ?? '').trim() || !form.currencies_id}>
+              <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Field label="Account Name *">
+                <Input value={String(form.name ?? '')} onChange={e => set('name', e.target.value)} placeholder="e.g. Revolut - Main" />
+              </Field>
+            </div>
+            <Field label="Type *">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.type ?? '')} onChange={e => set('type', e.target.value)}>
+                {ACCOUNT_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="Currency *">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.currencies_id ?? '')} onChange={e => set('currencies_id', e.target.value)}>
+                <option value="">— select —</option>
+                {currList.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} – {String(c.name)}</option>)}
+              </select>
+            </Field>
+            <div className="col-span-2">
+              <Field label="Institution">
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.institutions_id ?? '')} onChange={e => set('institutions_id', e.target.value)}>
+                  <option value="">— none —</option>
+                  {instList.map(i => <option key={String(i.id)} value={String(i.id)}>{String(i.name)}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label="IBAN">
+                <Input value={String(form.iban ?? '')} onChange={e => set('iban', e.target.value)} placeholder="GR12 3456 7890 1234 5678 901" />
+              </Field>
+            </div>
+            <Field label="Credit Limit">
+              <Input type="number" step="0.01" value={String(form.credit_limit ?? '')} onChange={e => set('credit_limit', e.target.value)} placeholder="0.00" />
+            </Field>
+            <Field label="Linked Account">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
+                <option value="">— none —</option>
+                {acctList.filter(a => String(a.id) !== String(form.id) && !['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? ''))).map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+              </select>
+            </Field>
+            <div className="col-span-2">
+              <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={Boolean(form.is_active)} onChange={e => set('is_active', e.target.checked)} className="rounded" />
+                Active
+              </label>
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── GridTab (Institutions, Securities, Currencies) ────────────────────────────
+const INSTITUTION_COLS: ColDef[] = [
+  { field: 'id', headerName: 'ID', width: 70, editable: false },
+  { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160, editable: true },
+  { field: 'type', headerName: 'Type', width: 130, editable: true },
+  { field: 'bic', headerName: 'BIC', width: 110, editable: true },
+  { field: 'moodys', headerName: "Moody's", width: 90, editable: true },
+  { field: 'sp', headerName: 'S&P', width: 80, editable: true },
+  { field: 'fitch', headerName: 'Fitch', width: 80, editable: true },
+  { field: 'website', headerName: 'Website', flex: 1, minWidth: 140, editable: true },
+  { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120, editable: true },
+  { field: 'phone', headerName: 'Phone', width: 130, editable: true },
+  { field: 'email', headerName: 'Email', flex: 1, minWidth: 140, editable: true },
+  { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 140, editable: true },
+]
+
+const SECURITY_COLS: ColDef[] = [
+  { field: 'id', headerName: 'ID', width: 70, editable: false },
+  { field: 'ticker', headerName: 'Ticker', width: 100, editable: true, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
+  { field: 'name', headerName: 'Name', flex: 2, minWidth: 180, editable: true },
+  { field: 'type', headerName: 'Type', width: 130, editable: true },
+  { field: 'instrument_type', headerName: 'Instrument', width: 120, editable: true },
+  { field: 'currency', headerName: 'Currency', width: 90, editable: false },
+  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 4 }) : '—' },
+  { field: 'price_date', headerName: 'Price Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+  { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn', editable: false },
+]
+
+const CURRENCY_COLS: ColDef[] = [
+  { field: 'id', headerName: 'ID', width: 70, editable: false },
+  { field: 'code', headerName: 'Code', width: 90, editable: true },
+  { field: 'name', headerName: 'Name', flex: 2, minWidth: 160, editable: true },
+  { field: 'symbol', headerName: 'Symbol', width: 80, editable: true },
+  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 120, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+  { field: 'rate_date', headerName: 'Rate Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+]
+
+const GRID_TAB_CONFIG: Record<string, {
+  queryKey: string
+  queryFn: (s?: string) => Promise<unknown>
+  colDefs: ColDef[]
+  upsertFn: (d: Record<string, unknown>) => Promise<unknown>
+  deleteTable: string
+  idField: string
+  newRow: () => Record<string, unknown>
+}> = {
+  Institutions: {
+    queryKey: 'institutions',
+    queryFn: (s) => getInstitutions(s),
+    colDefs: INSTITUTION_COLS,
+    upsertFn: upsertInstitution,
+    deleteTable: 'institutions',
+    idField: 'id',
+    newRow: () => ({ name: 'New Institution', type: 'Bank' }),
+  },
+  Securities: {
+    queryKey: 'securities-master',
+    queryFn: (s) => getSecuritiesMaster(s),
+    colDefs: SECURITY_COLS,
+    upsertFn: upsertSecurity,
+    deleteTable: 'securities',
+    idField: 'id',
+    newRow: () => ({ ticker: 'NEW', name: 'New Security', type: 'Stock' }),
+  },
+  Currencies: {
+    queryKey: 'currencies-master',
+    queryFn: () => getCurrenciesMaster(),
+    colDefs: CURRENCY_COLS,
+    upsertFn: upsertCurrency,
+    deleteTable: 'currencies',
+    idField: 'id',
+    newRow: () => ({ code: 'XXX', name: 'New Currency', symbol: '$' }),
+  },
+}
+
+// ── Institutions modal for full edit ─────────────────────────────────────────
+function InstitutionsTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data = [], isLoading } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
+
+  const filtered = search
+    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : data as Record<string, unknown>[]
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
+    setError(null)
+  }
+
+  const openNew = () => {
+    setEditRow({})
+    setForm({ name: '', type: 'Bank', bic: '', moodys: '', sp: '', fitch: '', contact: '', phone: '', email: '', website: '', notes: '' })
+    setError(null)
+  }
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      await upsertInstitution({ id: editRow?.id ?? undefined, ...form })
+      qc.invalidateQueries({ queryKey: ['institutions'] })
+      setEditRow(null)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this institution?')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('institutions', id)
+      qc.invalidateQueries({ queryKey: ['institutions'] })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (e instanceof Error ? e.message : 'Delete failed')
+      setDeleteError(msg)
+    }
+  }
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} institutions</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
+            { field: 'type', headerName: 'Type', width: 130 },
+            { field: 'bic', headerName: 'BIC', width: 110 },
+            { field: 'moodys', headerName: "Moody's", width: 90 },
+            { field: 'sp', headerName: 'S&P', width: 80 },
+            { field: 'fitch', headerName: 'Fitch', width: 80 },
+            { field: 'website', headerName: 'Website', flex: 1, minWidth: 140 },
+            { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120 },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          pagination paginationPageSize={50}
+        />
+      </div>
+
+      {editRow !== null && (
+        <Modal title={form.id ? 'Edit Institution' : 'New Institution'} onClose={() => setEditRow(null)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} /></Field>
+            </div>
+            <Field label="Type *">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type ?? 'Bank'} onChange={e => set('type', e.target.value)}>
+                {INSTITUTION_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="BIC Code"><Input value={form.bic ?? ''} onChange={e => set('bic', e.target.value)} placeholder="ABCDGRAA" /></Field>
+            <Field label="Moody's"><Input value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)} placeholder="Aaa" /></Field>
+            <Field label="S&P"><Input value={form.sp ?? ''} onChange={e => set('sp', e.target.value)} placeholder="AAA" /></Field>
+            <Field label="Fitch"><Input value={form.fitch ?? ''} onChange={e => set('fitch', e.target.value)} placeholder="AAA" /></Field>
+            <Field label="Contact"><Input value={form.contact ?? ''} onChange={e => set('contact', e.target.value)} /></Field>
+            <Field label="Phone"><Input value={form.phone ?? ''} onChange={e => set('phone', e.target.value)} /></Field>
+            <div className="col-span-2">
+              <Field label="Email"><Input value={form.email ?? ''} onChange={e => set('email', e.target.value)} /></Field>
+            </div>
+            <div className="col-span-2">
+              <Field label="Website"><Input value={form.website ?? ''} onChange={e => set('website', e.target.value)} placeholder="https://…" /></Field>
+            </div>
+            <div className="col-span-2">
+              <Field label="Notes">
+                <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm resize-none" rows={2} value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} />
+              </Field>
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function GridTab({ tabName, search }: { tabName: string; search: string }) {
+  const cfg = GRID_TAB_CONFIG[tabName]
+  const qc = useQueryClient()
+  const [gridApi, setGridApi] = useState<GridApi | null>(null)
+  const [pendingChanges, setPendingChanges] = useState<Map<string, Record<string, unknown>>>(new Map())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data = [], isLoading } = useQuery({ queryKey: [cfg.queryKey], queryFn: () => cfg.queryFn() })
+
+  const filtered = search
+    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : data as Record<string, unknown>[]
+
+  const onGridReady = useCallback((e: GridReadyEvent) => setGridApi(e.api), [])
+
+  const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
+    const row = e.data as Record<string, unknown>
+    const key = String(row[cfg.idField] ?? `_new_${Date.now()}`)
+    setPendingChanges(prev => new Map(prev).set(key, { ...row }))
+  }, [cfg.idField])
+
+  const saveChanges = async () => {
+    setSaving(true); setError(null)
+    try {
+      for (const row of pendingChanges.values()) await cfg.upsertFn(row)
+      setPendingChanges(new Map())
+      qc.invalidateQueries({ queryKey: [cfg.queryKey] })
+    } catch (e: unknown) { setError(extractError(e)) }
+    finally { setSaving(false) }
+  }
+
+  const deleteSelected = async () => {
+    if (!gridApi) return
+    const selected = gridApi.getSelectedRows() as Record<string, unknown>[]
+    if (selected.length === 0) return
+    if (!confirm(`Delete ${selected.length} row(s)?`)) return
+    setSaving(true); setError(null)
+    try {
+      for (const row of selected) if (row[cfg.idField]) await deleteRow(cfg.deleteTable, Number(row[cfg.idField]))
+      qc.invalidateQueries({ queryKey: [cfg.queryKey] })
+    } catch (e: unknown) { setError(extractError(e)) }
+    finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <Button size="sm" variant="secondary" onClick={() => {
+          if (!gridApi) return
+          const newRow = cfg.newRow()
+          gridApi.applyTransaction({ add: [newRow], addIndex: 0 })
+          const key = `_new_${Date.now()}`
+          setPendingChanges(prev => new Map(prev).set(key, newRow))
+          gridApi.startEditingCell({ rowIndex: 0, colKey: cfg.colDefs.find(c => c.editable)?.field ?? '' })
+        }}><Plus size={13} /> Add</Button>
+        <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={saving}><Trash2 size={13} /> Delete Selected</Button>
+        {pendingChanges.size > 0 && (
+          <Button size="sm" onClick={saveChanges} disabled={saving}>
+            <Save size={13} /> {saving ? 'Saving…' : `Save (${pendingChanges.size} changed)`}
+          </Button>
+        )}
+        {error && <span className="text-xs text-red-600 ml-2">{error}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} rows · Double-click cell to edit</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={cfg.colDefs}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          pagination paginationPageSize={50}
+          rowSelection="multiple"
+          onGridReady={onGridReady}
+          onCellValueChanged={onCellValueChanged}
+          stopEditingWhenCellsLoseFocus
+        />
+      </div>
+    </div>
+  )
+}
+
+// ── Budgets Tab ───────────────────────────────────────────────────────────────
+function BudgetsTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [year, setYear] = useState(new Date().getFullYear())
+  const [pending, setPending] = useState<Map<string, Record<string, unknown>>>(new Map())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const { data: budgets = [], isLoading } = useQuery({ queryKey: ['budgets', year], queryFn: () => getBudgets(year) })
+  const deleteMut = useMutation({ mutationFn: (id: number) => deleteBudget(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['budgets'] }) })
+
+  const catList = (categories as Record<string, unknown>[]).filter(c => !search || String(c.full_path ?? '').toLowerCase().includes(search.toLowerCase()))
+  const budgetMap = new Map((budgets as Record<string, unknown>[]).map(b => [Number(b.categories_id), b]))
+  const rows = catList.map(c => {
+    const b = budgetMap.get(Number(c.id))
+    return { ...c, budget_id: b ? b.id : null, budget_amount: b ? b.budget_amount : '' }
+  }).filter(r => r.type === 'Expense' || r.budget_amount)
+
+  const handleAmountChange = (catId: number, amount: string, budgetId: number | null) => {
+    setPending(prev => new Map(prev).set(String(catId), { categories_id: catId, year, budget_amount: amount, id: budgetId ?? undefined }))
+  }
+
+  const saveAll = async () => {
+    setSaving(true); setError(null)
+    try {
+      for (const row of pending.values()) {
+        if (!row.budget_amount) { if (row.id) await deleteBudget(Number(row.id)) }
+        else await upsertBudget(row)
+      }
+      setPending(new Map())
+      qc.invalidateQueries({ queryKey: ['budgets'] })
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <label className="text-sm font-medium text-slate-600">Year</label>
+        <Input type="number" className="w-24" value={year} onChange={e => { setYear(Number(e.target.value)); setPending(new Map()) }} />
+        {pending.size > 0 && <Button size="sm" onClick={saveAll} disabled={saving}><Save size={13} /> {saving ? 'Saving…' : `Save (${pending.size} changed)`}</Button>}
+        {error && <span className="text-xs text-red-600">{error}</span>}
+        <span className="ml-auto text-xs text-slate-400">Edit budget amounts · blank = no budget</span>
+      </div>
+      <div className="overflow-auto" style={{ maxHeight: '560px' }}>
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left font-semibold text-slate-600 text-xs">Category</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-600 text-xs w-32">Type</th>
+              <th className="px-3 py-2 text-right font-semibold text-slate-600 text-xs w-36">Budget Amount (€)</th>
+              <th className="w-8"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(r => {
+              const pendingVal = pending.get(String(r.id))
+              const displayVal = pendingVal !== undefined ? String(pendingVal.budget_amount ?? '') : (r.budget_amount != null && r.budget_amount !== '' ? String(r.budget_amount) : '')
+              const isDirty = pendingVal !== undefined
+              return (
+                <tr key={String(r.id)} className={isDirty ? 'bg-blue-50' : 'hover:bg-slate-50'}>
+                  <td className="px-3 py-1.5 text-slate-700" style={{ paddingLeft: `${(Number(r.level ?? 0)) * 16 + 12}px` }}>
+                    {String(r.full_path ?? '').split(' : ').pop()}
+                  </td>
+                  <td className="px-3 py-1.5 text-slate-500 text-xs">{String(r.type ?? '')}</td>
+                  <td className="px-3 py-1 text-right">
+                    <input type="number" step="0.01"
+                      className="w-28 text-right rounded border border-slate-300 px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={displayVal} placeholder="—"
+                      onChange={e => handleAmountChange(Number(r.id), e.target.value, r.budget_id as number | null)}
+                    />
+                  </td>
+                  <td className="px-2 py-1 text-center">
+                    {r.budget_id != null && (
+                      <button onClick={() => { deleteMut.mutate(Number(r.budget_id)); setPending(prev => { const m = new Map(prev); m.delete(String(r.id)); return m }) }}
+                        className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function StaticData() {
+  const [tab, setTab] = useState('Payees')
+  const [search, setSearch] = useState('')
+
+  return (
+    <div>
+      <PageHeader title="Static Data" subtitle="Master reference data" />
+      <div className="px-6 py-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1 border-b border-slate-200 flex-1 overflow-x-auto">
+            {TABS.map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="relative ml-4 shrink-0">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-52" placeholder="Filter…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+        </div>
+
+        <Card className="overflow-hidden">
+          {tab === 'Payees'       && <PayeesTab search={search} />}
+          {tab === 'Categories'   && <CategoriesTab search={search} />}
+          {tab === 'Institutions' && <InstitutionsTab search={search} />}
+          {tab === 'Accounts'     && <AccountsTab search={search} />}
+          {tab === 'Budgets'      && <BudgetsTab search={search} />}
+        </Card>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --sidebar-width: 220px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    background: #f8fafc;
+    color: #1e293b;
+  }
+  #root {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+/* AG Grid customisation */
+.ag-theme-alpine { --ag-font-family: inherit; --ag-font-size: 13px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+/* ── Dark mode overrides ─────────────────────────────────────────────────── */
+html.dark body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+/* Surfaces */
+html.dark .bg-white        { background-color: #1e293b !important; }
+html.dark .bg-slate-50     { background-color: #1e293b !important; }
+html.dark .bg-slate-100    { background-color: #293548 !important; }
+html.dark .bg-slate-200    { background-color: #334155 !important; }
+
+/* Borders */
+html.dark .border-slate-100 { border-color: #293548 !important; }
+html.dark .border-slate-200 { border-color: #334155 !important; }
+html.dark .border-slate-300 { border-color: #475569 !important; }
+
+/* Text */
+html.dark .text-slate-900 { color: #f1f5f9 !important; }
+html.dark .text-slate-800 { color: #e2e8f0 !important; }
+html.dark .text-slate-700 { color: #cbd5e1 !important; }
+html.dark .text-slate-600 { color: #94a3b8 !important; }
+html.dark .text-slate-500 { color: #64748b !important; }
+html.dark .text-slate-400 { color: #475569 !important; }
+
+/* Hover states */
+html.dark .hover\:bg-slate-50:hover  { background-color: #293548 !important; }
+html.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
+html.dark .hover\:bg-slate-200:hover { background-color: #3e4f66 !important; }
+html.dark .hover\:bg-blue-50:hover   { background-color: #1e3a5f !important; }
+
+/* Form controls */
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #1e293b !important;
+  color: #e2e8f0 !important;
+  border-color: #475569 !important;
+}
+html.dark input::placeholder { color: #64748b !important; }
+
+/* AG Grid */
+html.dark .ag-theme-alpine {
+  --ag-background-color: #1e293b;
+  --ag-header-background-color: #293548;
+  --ag-odd-row-background-color: #1e293b;
+  --ag-row-hover-color: #293548;
+  --ag-border-color: #334155;
+  --ag-header-foreground-color: #94a3b8;
+  --ag-foreground-color: #e2e8f0;
+  --ag-selected-row-background-color: #1e3a5f;
+  --ag-input-focus-border-color: #3b82f6;
+  --ag-range-selection-border-color: #3b82f6;
+}
+
+/* Shadow softening */
+html.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4) !important; }
+html.dark .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6) !important; }
+
+/* Modal backdrop */
+html.dark .bg-black\/40 { background-color: rgba(0,0,0,0.65) !important; }
+
+/* Pre/code blocks */
+html.dark pre.bg-slate-900 { background: #0d1117 !important; }
+
+/* Sidebar stays dark regardless */
+html.dark .bg-slate-900 { background-color: #0f172a !important; }
+html.dark .bg-slate-700 { background-color: #1e293b !important; }
+html.dark .hover\:bg-slate-700:hover { background-color: #293548 !important; }

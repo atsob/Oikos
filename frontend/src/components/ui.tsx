@@ -1,0 +1,218 @@
+import { cn } from '@/lib/utils'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+
+// ── Card ──────────────────────────────────────────────────────────────────────
+export function Card({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn('bg-white rounded-xl border border-slate-200 shadow-sm', className)}>
+      {children}
+    </div>
+  )
+}
+
+export function CardHeader({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <div className={cn('px-5 py-4 border-b border-slate-100', className)}>{children}</div>
+}
+
+export function CardTitle({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <h2 className={cn('text-base font-semibold text-slate-800', className)}>{children}</h2>
+}
+
+export function CardBody({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <div className={cn('p-5', className)}>{children}</div>
+}
+
+// ── Button ────────────────────────────────────────────────────────────────────
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: 'primary' | 'secondary' | 'destructive' | 'ghost'
+  size?: 'sm' | 'md' | 'lg'
+}
+
+export function Button({ variant = 'primary', size = 'md', className, children, ...props }: ButtonProps) {
+  return (
+    <button
+      className={cn(
+        'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed',
+        {
+          'bg-blue-600 text-white hover:bg-blue-700': variant === 'primary',
+          'bg-slate-100 text-slate-700 hover:bg-slate-200': variant === 'secondary',
+          'bg-red-600 text-white hover:bg-red-700': variant === 'destructive',
+          'text-slate-600 hover:bg-slate-100': variant === 'ghost',
+          'text-xs px-2.5 py-1.5': size === 'sm',
+          'text-sm px-3.5 py-2': size === 'md',
+          'text-sm px-5 py-2.5': size === 'lg',
+        },
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ── Badge ─────────────────────────────────────────────────────────────────────
+interface BadgeProps { label: string; variant?: 'green' | 'red' | 'blue' | 'gray' | 'yellow' }
+export function Badge({ label, variant = 'gray' }: BadgeProps) {
+  return (
+    <span className={cn(
+      'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+      variant === 'green' && 'bg-green-100 text-green-700',
+      variant === 'red' && 'bg-red-100 text-red-700',
+      variant === 'blue' && 'bg-blue-100 text-blue-700',
+      variant === 'yellow' && 'bg-yellow-100 text-yellow-700',
+      variant === 'gray' && 'bg-slate-100 text-slate-600',
+    )}>
+      {label}
+    </span>
+  )
+}
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, ...props }, ref) => (
+    <input
+      ref={ref}
+      className={cn(
+        'block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-500',
+        className,
+      )}
+      {...props}
+    />
+  )
+)
+Input.displayName = 'Input'
+
+// ── Select ────────────────────────────────────────────────────────────────────
+export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(
+  ({ className, children, ...props }, ref) => (
+    <select
+      ref={ref}
+      className={cn(
+        'block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </select>
+  )
+)
+Select.displayName = 'Select'
+
+// ── SearchableSelect ──────────────────────────────────────────────────────────
+export interface SearchableOption { value: string; label: string; disabled?: boolean }
+
+export function SearchableSelect({ value, onChange, options, placeholder = '— none —', className }: {
+  value: string
+  onChange: (value: string) => void
+  options: SearchableOption[]
+  placeholder?: string
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selectedLabel = options.find(o => o.value === value && !o.disabled)?.label ?? ''
+
+  const filtered = query
+    ? options.filter(o => o.disabled || o.label.toLowerCase().includes(query.toLowerCase()))
+    : options
+
+  const handleOpen = () => { setOpen(true); setQuery(''); setTimeout(() => inputRef.current?.focus(), 0) }
+
+  const handleSelect = useCallback((val: string) => { onChange(val); setOpen(false); setQuery('') }, [onChange])
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { setOpen(false); setQuery('') }
+    if (e.key === 'Enter') {
+      const first = filtered.find(o => !o.disabled)
+      if (first) handleSelect(first.value)
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => { if (!containerRef.current?.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={containerRef} className={cn('relative', className)}>
+      <button type="button" onClick={handleOpen}
+        className="w-full flex items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-left focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <span className={selectedLabel ? 'text-slate-900' : 'text-slate-400'}>{selectedLabel || placeholder}</span>
+        <svg className="w-4 h-4 text-slate-400 shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg">
+          <div className="p-2 border-b border-slate-100">
+            <input ref={inputRef} type="text" value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown} placeholder="Search…"
+              className="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <ul className="max-h-52 overflow-y-auto py-1">
+            <li className="px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50 cursor-pointer"
+              onMouseDown={() => handleSelect('')}>{placeholder}</li>
+            {filtered.map((o, i) => o.disabled
+              ? <li key={i} className="px-3 py-1 text-xs text-slate-400 italic select-none">{o.label}</li>
+              : <li key={i} onMouseDown={() => handleSelect(o.value)}
+                  className={cn('px-3 py-1.5 text-sm cursor-pointer hover:bg-blue-50 hover:text-blue-700',
+                    o.value === value && 'bg-blue-50 text-blue-700 font-medium')}>
+                  {o.label}
+                </li>
+            )}
+            {filtered.filter(o => !o.disabled).length === 0 && (
+              <li className="px-3 py-3 text-sm text-slate-400 text-center">No results</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+export function Spinner({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      className="animate-spin text-blue-500"
+      width={size} height={size}
+      viewBox="0 0 24 24" fill="none"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+    </svg>
+  )
+}
+
+// ── PageHeader ────────────────────────────────────────────────────────────────
+export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
+      <div>
+        <h1 className="text-lg font-semibold text-slate-900">{title}</h1>
+        {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
+  )
+}
+
+// ── Stat card ─────────────────────────────────────────────────────────────────
+export function StatCard({ label, value, sub, color, subs }: {
+  label: string; value: string; sub?: string; color?: string
+  subs?: { text: string; color?: string }[]
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
+      <p className={cn('text-2xl font-bold mt-1', color ?? 'text-slate-900')}>{value}</p>
+      {subs?.map((s, i) => <p key={i} className={cn('text-xs mt-0.5', s.color ?? 'text-slate-400')}>{s.text}</p>)}
+      {!subs && sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    </div>
+  )
+}

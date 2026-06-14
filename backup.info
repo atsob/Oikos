@@ -1,0 +1,41 @@
+
+## Key Features of Docker-to-Docker Backup:
+
+1. **Auto-detects Docker environment** - Knows if running in container
+2. **Runs backup inside PostgreSQL container** - Uses `docker exec` to run pg_dump directly in the DB container
+3. **No client tools needed** - Doesn't require pg_dump on the app container or client machine
+4. **Works from any client** - Can run from Windows, Mac, or mobile browsers
+5. **Backup files stored in app container** - Can be downloaded to client via browser
+
+## Docker Setup Requirements
+
+Ensure your PostgreSQL container has a name that can be detected:
+
+```yaml
+# docker-compose.yml example
+services:
+  postgres:
+    image: postgres:16
+    container_name: finance_postgres  # Give it a recognizable name
+    environment:
+      POSTGRES_DB: Finance
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: your_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups  # Optional: mount backup directory
+    ports:
+      - "5432:5432"
+
+  streamlit:
+    build: .
+    container_name: finance_app
+    volumes:
+      - ./database_backups:/app/database_backups  # Mount for backups
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres  # Use service name, not IP
+      DB_USER: admin
+      DB_PASSWORD: your_password
+      DB_NAME: Finance

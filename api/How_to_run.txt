@@ -1,0 +1,14 @@
+How to run
+1. Start the FastAPI server (from the project root):
+
+pip install fastapi uvicorn
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+2. Set your server IP in mobile/constants/api.ts:
+
+export const API_BASE = "http://192.168.X.X:8000";  // your PC's LAN IP
+3. Install and run the app:
+
+cd mobile
+npm install
+npx expo start
+Scan the QR code with the Expo Go app on your iPhone.

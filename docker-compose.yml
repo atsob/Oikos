@@ -1,0 +1,99 @@
+services:
+
+  personal_finance:
+    image: atsob/personal_finance:latest
+    container_name: personal_finance
+    network_mode: host
+    environment:
+      - DB_NAME=Finance
+      - DB_USER=admin
+      - DB_PASSWORD=31.12.1969
+      - DB_HOST=127.0.0.1
+      - DB_PORT=5432
+      - DB_TIMEZONE=Europe/Athens
+      - APP_DATA_DIR=/app
+      - OLLAMA_IP=127.0.0.1
+      - OLLAMA_PORT=11434
+      - OLLAMA_MODEL=llama3.2:3b
+      - PERSIST_DIR=/app/storage_rag
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /mnt/dockerapps/docker/docker_data/personal_finance/data:/app
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── FastAPI backend (serves React frontend + REST API) ─────────────────────
+  oikos_api:
+    image: atsob/personal_finance:latest
+    container_name: oikos_api
+    network_mode: host
+    environment:
+      - DB_NAME=Finance
+      - DB_USER=admin
+      - DB_PASSWORD=31.12.1969
+      - DB_HOST=127.0.0.1
+      - DB_PORT=5432
+      - DB_TIMEZONE=Europe/Athens
+      - APP_DATA_DIR=/app
+      - OLLAMA_IP=127.0.0.1
+      - OLLAMA_PORT=11434
+      - OLLAMA_MODEL=llama3.2:3b
+      - PERSIST_DIR=/app/storage_rag
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /mnt/dockerapps/docker/docker_data/personal_finance/data:/app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── React frontend (development — in production, serve dist/ from nginx) ───
+  oikos_frontend:
+    image: node:22-alpine
+    container_name: oikos_frontend
+    network_mode: host
+    working_dir: /app/frontend
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+    volumes:
+      - .:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    restart: unless-stopped
+
+  # ── Background scheduler ───────────────────────────────────────────────────
+  personal_finance_scheduler:
+    image: atsob/personal_finance:latest
+    container_name: personal_finance_scheduler
+    network_mode: host
+    environment:
+      - DB_NAME=Finance
+      - DB_USER=admin
+      - DB_PASSWORD=31.12.1969
+      - DB_HOST=127.0.0.1
+      - DB_PORT=5432
+      - DB_TIMEZONE=Europe/Athens
+      - APP_DATA_DIR=/app
+      - OLLAMA_IP=127.0.0.1
+      - OLLAMA_PORT=11434
+      - OLLAMA_MODEL=llama3.2:3b
+      - PERSIST_DIR=/app/storage_rag
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /mnt/dockerapps/docker/docker_data/personal_finance/data:/app
+    command: python scheduler.py
+    restart: unless-stopped
