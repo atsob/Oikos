@@ -220,16 +220,23 @@ function TxModal({
 
           {form.is_transfer ? (
             /* Transfer fields */
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Transfer To Account *</label>
-              <select
-                className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-                value={form.transfer_account_id}
-                onChange={e => set('transfer_account_id', e.target.value)}
-              >
-                <option value="">— select target account —</option>
-                {otherAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
-              </select>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Transfer To Account *</label>
+                <select
+                  className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={form.transfer_account_id}
+                  onChange={e => set('transfer_account_id', e.target.value)}
+                >
+                  <option value="">— select target account —</option>
+                  {otherAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
+                <SearchableSelect value={form.payees_id} onChange={v => set('payees_id', v)}
+                  options={payees.map(p => ({ value: String(p.id), label: String(p.name) }))} />
+              </div>
             </div>
           ) : (
             /* Regular transaction fields */
@@ -414,13 +421,21 @@ const PERIODS = [
   { label: 'All', from: () => '2000-01-01' },
 ]
 
+function usePersist<T>(key: string, defaultVal: T) {
+  const [val, setVal] = useState<T>(() => {
+    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : defaultVal } catch { return defaultVal }
+  })
+  const set = useCallback((v: T) => { setVal(v); try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key])
+  return [val, set] as const
+}
+
 // ── Register page ─────────────────────────────────────────────────────────────
 export default function Register() {
   const gridRef = useRef<AgGridReact>(null)
   const [, setGridApi] = useState<GridApi | null>(null)
   const qc = useQueryClient()
 
-  const [accountId, setAccountId] = useState<number | null>(null)
+  const [accountId, setAccountId] = usePersist<number | null>('register_accountId', null)
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState(monthsAgo(1))
@@ -464,6 +479,7 @@ export default function Register() {
   const [reconciling, setReconciling] = useState(false)
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
+  const { data: accountsFuture = [] } = useQuery({ queryKey: ['accounts', 'future'], queryFn: () => getAccounts(true) })
   const cashAccounts = (accounts as Record<string, unknown>[])
     .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
     .filter(a => showInactive || Boolean(a.is_active))
@@ -551,6 +567,7 @@ export default function Register() {
           date: form.date,
           amount: parseFloat(form.total_amount),
           description: form.description || null,
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
           ...statusFields,
         })
       } else if (form.is_transfer && form.id) {
@@ -559,6 +576,7 @@ export default function Register() {
           date: form.date,
           description: form.description || null,
           total_amount: parseFloat(form.total_amount),
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
           accounts_id_target: form.transfer_account_id ? Number(form.transfer_account_id) : null,
           ...statusFields,
         })
@@ -655,6 +673,8 @@ export default function Register() {
   }
 
   const selectedAccount = (accounts as Record<string, unknown>[]).find(a => a.id === accountId)
+  const selectedAccountFuture = (accountsFuture as Record<string, unknown>[]).find(a => a.id === accountId)
+  const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
 
   return (
     <div className="flex flex-col h-full">
@@ -742,6 +762,56 @@ export default function Register() {
 
         <span className="text-xs text-slate-400 ml-auto">{txQuery.data?.total != null ? `${txQuery.data.total.toLocaleString()} transactions` : ''}</span>
       </div>
+
+      {/* Credit Card / Loan info bar */}
+      {accountId && selectedAccount && (isCreditCard || String(selectedAccount.type) === 'Loan') && (
+        <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex flex-wrap gap-6 items-center">
+          {(() => {
+            const balToDate = Number(selectedAccount.balance ?? 0)
+            const balWithFuture = Number(selectedAccountFuture?.balance ?? selectedAccount.balance ?? 0)
+            const creditLimit = Number(selectedAccount.credit_limit ?? 0)
+            const availCredit = creditLimit > 0 ? creditLimit + balToDate : null  // balance is negative for CC
+            return (
+              <>
+                <div>
+                  <p className="text-xs text-slate-500 mb-0.5">Balance to Date</p>
+                  <p className={`text-sm font-bold tabular-nums ${balToDate < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(balToDate)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-0.5">Balance incl. Future Transactions</p>
+                  <p className={`text-sm font-bold tabular-nums ${balWithFuture < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(balWithFuture)}</p>
+                </div>
+                {creditLimit > 0 && (
+                  <>
+                    <div>
+                      <p className="text-xs text-slate-500 mb-0.5">Available Credit</p>
+                      <p className={`text-sm font-bold tabular-nums ${(availCredit ?? 0) < creditLimit * 0.1 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(availCredit ?? 0)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 mb-0.5">Credit Limit</p>
+                      <p className="text-sm font-bold tabular-nums text-slate-700">{fmtEur(creditLimit)}</p>
+                    </div>
+                    <div className="flex-1 min-w-48">
+                      <p className="text-xs text-slate-500 mb-1">Credit Used</p>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                          {(() => {
+                            const usedPct = Math.min(Math.abs(balToDate) / creditLimit * 100, 100)
+                            return <div className={`h-full rounded-full transition-all ${usedPct > 90 ? 'bg-red-500' : usedPct > 70 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${usedPct}%` }} />
+                          })()}
+                        </div>
+                        <span className="text-xs tabular-nums text-slate-600 whitespace-nowrap">
+                          {fmtEur(Math.abs(balToDate))} / {fmtEur(creditLimit)}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            )
+          })()}
+        </div>
+      )}
 
       {/* Grid */}
       <div className="px-6 py-4 flex-1">

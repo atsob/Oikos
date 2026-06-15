@@ -206,7 +206,8 @@ def get_drafts():
                    p.Payees_Name AS payee,
                    rt.name AS template_name,
                    rt.periodicity AS template_periodicity,
-                   t.templates_id AS template_id
+                   t.templates_id AS template_id,
+                   t.Accounts_Id_Target AS accounts_id_target
             FROM Transactions t
             LEFT JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
             LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
@@ -293,7 +294,7 @@ def update_draft(tx_id: int, data: dict):
         cur = conn.cursor()
         cur.execute("""
             UPDATE Transactions
-            SET date=%s, description=%s, total_amount=%s, payees_id=%s, accounts_id=%s
+            SET date=%s, description=%s, total_amount=%s, payees_id=%s, accounts_id=%s, accounts_id_target=%s
             WHERE Transactions_Id=%s AND Is_Draft=TRUE
         """, (
             data.get("date") or None,
@@ -301,6 +302,7 @@ def update_draft(tx_id: int, data: dict):
             data.get("amount") if data.get("amount") is not None else None,
             data.get("payees_id") or None,
             data.get("accounts_id") or None,
+            data.get("accounts_id_target") or None,
             tx_id,
         ))
         if cur.rowcount == 0:
@@ -326,13 +328,32 @@ def update_draft(tx_id: int, data: dict):
 
 @router.post("/drafts/{tx_id}/confirm")
 def confirm_draft(tx_id: int):
-    """Confirm a single draft transaction."""
+    """Confirm a single draft transaction. For transfers, creates the mirror leg."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s AND Is_Draft = TRUE", (tx_id,))
-        if cur.rowcount == 0:
+        cur.execute("""
+            SELECT Accounts_Id, Date, Description, Total_Amount, Payees_Id, Accounts_Id_Target, Transfers_Id
+            FROM Transactions WHERE Transactions_Id = %s AND Is_Draft = TRUE
+        """, (tx_id,))
+        row = cur.fetchone()
+        if row is None:
             raise HTTPException(404, "Draft not found")
+        src_account, date, description, amount, payees_id, target_account, existing_transfers_id = row
+
+        cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
+
+        if target_account and not existing_transfers_id:
+            # Create the mirror inflow leg in the target account
+            cur.execute("""
+                INSERT INTO Transactions
+                    (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
+                VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
+                RETURNING Transactions_Id
+            """, (target_account, date, description, abs(float(amount or 0)), payees_id, src_account, tx_id))
+            mirror_id = cur.fetchone()[0]
+            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
+
         conn.commit()
         return {"confirmed": tx_id}
     except HTTPException:

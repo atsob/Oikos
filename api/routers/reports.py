@@ -282,29 +282,13 @@ def get_net_worth_report(
         CROSS JOIN Accounts a
         WHERE a.Accounts_Type NOT IN ('Brokerage','Margin','Pension','Other Investment')
     ),
-    other_inv_like AS (
-        SELECT
-            p.period_end,
-            a.Accounts_Type,
-            GREATEST(0, a.Accounts_Balance - COALESCE((
-                SELECT SUM(CASE
-                    WHEN Action IN ('CashIn','IntInc') THEN  Total_Amount_AccCur
-                    WHEN Action IN ('CashOut')         THEN -Total_Amount_AccCur
-                    ELSE 0 END)
-                FROM Investments
-                WHERE Accounts_Id = a.Accounts_Id AND Date > p.period_end
-            ), 0)) * COALESCE(
-                (SELECT fx_rate FROM daily_fx
-                 WHERE period_end = p.period_end AND Currencies_Id = a.Currencies_Id), 1
-            ) AS balance_eur
-        FROM period_dates p
-        CROSS JOIN Accounts a
-        WHERE a.Accounts_Type = 'Other Investment'
-    ),
     investment_universe AS (
         SELECT DISTINCT Securities_Id, Accounts_Id
         FROM Investments
         WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')
+    ),
+    inv_accounts AS (
+        SELECT DISTINCT Accounts_Id FROM investment_universe
     ),
     investment_holdings AS (
         SELECT
@@ -335,7 +319,7 @@ def get_net_worth_report(
         CROSS JOIN investment_universe i
         JOIN Accounts   a ON i.Accounts_Id   = a.Accounts_Id
         JOIN Securities s ON i.Securities_Id = s.Securities_Id
-        WHERE a.Accounts_Type IN ('Brokerage','Margin')
+        WHERE a.Accounts_Type IN ('Brokerage','Margin','Pension','Other Investment')
         GROUP BY p.period_end, a.Accounts_Type
     ),
     pension_like AS (
@@ -355,7 +339,8 @@ def get_net_worth_report(
             ) AS balance_eur
         FROM period_dates p
         CROSS JOIN Accounts a
-        WHERE a.Accounts_Type = 'Pension'
+        WHERE a.Accounts_Type IN ('Pension','Other Investment')
+          AND a.Accounts_Id NOT IN (SELECT Accounts_Id FROM inv_accounts)
     ),
     combined AS (
         SELECT period_end, Accounts_Type, balance_eur FROM cash_like
@@ -368,9 +353,9 @@ def get_net_worth_report(
     )
     SELECT
         period_end AS period,
-        SUM(CASE WHEN Accounts_Type IN ('Cash','Checking','Savings','Other','Other Investment')
+        SUM(CASE WHEN Accounts_Type IN ('Cash','Checking','Savings','Other')
             THEN balance_eur ELSE 0 END) AS cash,
-        SUM(CASE WHEN Accounts_Type IN ('Brokerage','Margin')
+        SUM(CASE WHEN Accounts_Type IN ('Brokerage','Margin','Other Investment')
             THEN balance_eur ELSE 0 END) AS investments,
         SUM(CASE WHEN Accounts_Type = 'Pension'
             THEN balance_eur ELSE 0 END) AS pension,
@@ -657,6 +642,9 @@ def get_pnl(
         )
         SELECT
             pf.Accounts_Name, pf.Securities_Name,
+            pf.qty_today,
+            pf.price_today,
+            c.Currencies_ShortName AS currency,
             (pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) as current_value_eur,
             ((pf.qty_today * pf.price_today) - (pf.qty_dtd * pf.price_dtd) - COALESCE(cf.cf_dtd, 0)) * COALESCE(pf.fx_today, 1) as pnl_dtd_market_eur,
             (pf.qty_dtd * pf.price_dtd) * (COALESCE(pf.fx_today, 1) - COALESCE(pf.fx_dtd, 1)) as pnl_dtd_fx_eur,
@@ -717,6 +705,7 @@ def get_pnl(
         LEFT JOIN dividend_yoc dy ON dy.Accounts_Id = pf.Accounts_Id AND dy.Securities_Id = pf.Securities_Id
         LEFT JOIN account_direct_flows adf ON adf.Accounts_Id = pf.Accounts_Id
         LEFT JOIN account_linked_flows alf ON alf.inv_acc_id = pf.Accounts_Id
+        LEFT JOIN Currencies c ON c.Currencies_Id = pf.sec_curr_id
         WHERE (pf.qty_today != 0 OR cf.cf_all_time IS NOT NULL)
         ORDER BY pf.Accounts_Name, pf.Securities_Name
     """
@@ -839,7 +828,8 @@ def get_dividends(
     JOIN Securities s ON i.Securities_Id = s.Securities_Id
     JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
     JOIN Currencies c2 ON a.Currencies_Id = c2.Currencies_Id
-    WHERE i.Action IN ('Dividend','DivX','ReinvDiv')
+    WHERE i.Action IN ('Dividend','IntInc','Reinvest','MiscInc','RtrnCap')
+      AND i.Total_Amount_AccCur > 0
       AND i.Date BETWEEN %(start_date)s AND %(end_date)s
     ORDER BY i.Date DESC
     """
@@ -849,26 +839,53 @@ def get_dividends(
 
 
 @router.get("/capital-gains")
-def get_capital_gains(year: int = Query(2024)):
+def get_capital_gains(year: int = Query(None)):
     """Realized capital gains for the year from investment sell transactions."""
+    from datetime import date as _date
+    if year is None:
+        # Default to the most recent year that has sell transactions
+        with get_db() as conn:
+            yr_df = pd.read_sql(
+                "SELECT EXTRACT(YEAR FROM Date)::int AS yr FROM Investments WHERE Action IN ('Sell','ShrOut','Expire') ORDER BY Date DESC LIMIT 1",
+                conn
+            )
+        year = int(yr_df.iloc[0]["yr"]) if not yr_df.empty else _date.today().year
+
     query = """
+    WITH fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+    ),
+    buys AS (
+        SELECT i.Securities_Id, i.Accounts_Id,
+               SUM(ABS(i.Total_Amount_AccCur)) / NULLIF(SUM(ABS(i.Quantity)), 0) AS wac_native
+        FROM Investments i
+        WHERE i.Action IN ('Buy','ShrIn','Reinvest','Vest','CashIn')
+          AND i.Quantity > 0
+        GROUP BY i.Securities_Id, i.Accounts_Id
+    )
     SELECT
         i.Date::text AS date,
         s.Securities_Name AS security,
         s.Ticker AS ticker,
         a.Accounts_Name AS account,
         i.Action AS action,
-        i.Quantity AS quantity,
+        ABS(i.Quantity) AS quantity,
         i.Price_Per_Share AS sell_price,
-        h.simple_avg_price AS avg_cost,
-        i.Quantity * (i.Price_Per_Share - h.simple_avg_price) AS gain_loss,
+        COALESCE(b.wac_native, h.simple_avg_price, 0) AS avg_cost,
+        ABS(i.Quantity) * (i.Price_Per_Share - COALESCE(b.wac_native, h.simple_avg_price, 0))
+            * COALESCE(fx.FX_Rate, 1) AS gain_loss_eur,
+        ABS(i.Quantity) * i.Price_Per_Share * COALESCE(fx.FX_Rate, 1) AS proceeds_eur,
+        ABS(i.Quantity) * COALESCE(b.wac_native, h.simple_avg_price, 0) * COALESCE(fx.FX_Rate, 1) AS cost_eur,
         c.Currencies_ShortName AS currency
     FROM Investments i
     JOIN Securities s ON i.Securities_Id = s.Securities_Id
     JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
-    LEFT JOIN Holdings h ON h.Securities_Id = i.Securities_Id AND h.Accounts_Id = i.Accounts_Id
     JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-    WHERE i.Action IN ('Sell','SellX')
+    LEFT JOIN Holdings h ON h.Securities_Id = i.Securities_Id AND h.Accounts_Id = i.Accounts_Id
+    LEFT JOIN buys b ON b.Securities_Id = i.Securities_Id AND b.Accounts_Id = i.Accounts_Id
+    LEFT JOIN fx ON fx.Currencies_Id_1 = c.Currencies_Id
+    WHERE i.Action IN ('Sell','ShrOut','Expire')
       AND EXTRACT(YEAR FROM i.Date) = %(year)s
     ORDER BY i.Date DESC
     """
@@ -925,27 +942,65 @@ def get_budget_vs_actual(year: int = Query(2024), month: Optional[int] = Query(N
 
 @router.get("/cash-flow-forecast")
 def get_cash_flow_forecast(months_ahead: int = Query(6)):
-    """Cash flow forecast from recurring templates."""
+    """Cash flow forecast from recurring templates — all active, projecting next occurrence."""
+    import datetime as _dt
     query = """
     SELECT
-        rt.Templates_Id AS template_id,
-        rt.Templates_Name AS name,
-        a.Accounts_Name AS account,
-        p.Payees_Name AS payee,
-        rt.Total_Amount AS amount,
-        rt.Next_Due_Date::text AS next_due_date,
-        rt.Periodicity AS periodicity,
-        rt.Is_Active AS is_active
+        rt.templates_id AS template_id,
+        rt.name,
+        a.accounts_name AS account,
+        py.payees_name AS payee,
+        rt.total_amount AS amount,
+        rt.next_due_date AS next_due_date_raw,
+        rt.periodicity
     FROM Recurring_Templates rt
-    LEFT JOIN Accounts a ON rt.Accounts_Id = a.Accounts_Id
-    LEFT JOIN Payees p ON rt.Payees_Id = p.Payees_Id
-    WHERE rt.Is_Active = TRUE
-      AND rt.Next_Due_Date <= (CURRENT_DATE + (%(months_ahead)s || ' months')::interval)
-    ORDER BY rt.Next_Due_Date ASC
+    LEFT JOIN Accounts a  ON a.accounts_id  = rt.accounts_id
+    LEFT JOIN Payees   py ON py.payees_id   = rt.payees_id
+    WHERE rt.active = TRUE
+      AND (rt.end_date IS NULL OR rt.end_date >= CURRENT_DATE)
+    ORDER BY rt.next_due_date ASC NULLS LAST
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"months_ahead": months_ahead})
-    return _df_to_list(df)
+        df = pd.read_sql(query, conn)
+
+    if df.empty:
+        return []
+
+    # Project next_due_date forward to the next upcoming occurrence
+    cutoff = _dt.date.today() + _dt.timedelta(days=months_ahead * 30)
+    period_days = {
+        'Daily': 1, 'Weekly': 7, 'Bi-Weekly': 14, 'Monthly': 30,
+        'Bi-Monthly': 61, 'Quarterly': 91, 'Semi-Annual': 182, 'Annual': 365,
+    }
+    rows = []
+    today = _dt.date.today()
+    for _, r in df.iterrows():
+        raw = r['next_due_date_raw']
+        if raw is None or (hasattr(raw, '__class__') and str(raw) == 'NaT'):
+            proj = today
+        else:
+            proj = raw.date() if hasattr(raw, 'date') else _dt.date.fromisoformat(str(raw)[:10])
+
+        # Advance past-due date forward by one period at a time (max 500 steps)
+        step = period_days.get(r.get('periodicity') or 'Monthly', 30)
+        steps = 0
+        while proj < today and steps < 500:
+            proj += _dt.timedelta(days=step)
+            steps += 1
+
+        if proj <= cutoff:
+            rows.append({
+                'template_id': r['template_id'],
+                'name': r['name'],
+                'account': r['account'],
+                'payee': r['payee'],
+                'amount': r['amount'],
+                'next_due_date': proj.isoformat(),
+                'periodicity': r['periodicity'],
+            })
+
+    rows.sort(key=lambda x: x['next_due_date'])
+    return rows
 
 
 @router.get("/budgets")
@@ -1058,16 +1113,17 @@ def get_net_worth_by_account(
     trunc_unit  = trunc_map.get(grouping, "month")
     pg_interval = intv_map.get(grouping, "1 month")
 
+    eff_end = f"LEAST('{end_date}'::date, CURRENT_DATE)"
     query = f"""
     WITH
     period_dates AS (
         SELECT (gs - INTERVAL '1 day')::date AS period_end
         FROM generate_series(
             date_trunc('{trunc_unit}', '{start_date}'::date) + '{pg_interval}'::interval,
-            date_trunc('{trunc_unit}', CURRENT_DATE),
+            date_trunc('{trunc_unit}', {eff_end}),
             '{pg_interval}'::interval
         ) gs
-        UNION SELECT CURRENT_DATE::date ORDER BY 1
+        UNION SELECT {eff_end} ORDER BY 1
     ),
     daily_fx AS (
         SELECT p.period_end, cur.Currencies_Id,
@@ -1084,6 +1140,7 @@ def get_net_worth_by_account(
         WHERE a.Accounts_Type NOT IN ('Brokerage','Margin','Pension','Other Investment')
     ),
     inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
+    inv_accounts AS (SELECT DISTINCT Accounts_Id FROM inv_universe),
     inv_bal AS (
         SELECT p.period_end, a.Accounts_Name, a.Accounts_Type,
             SUM(GREATEST(COALESCE((
@@ -1094,7 +1151,7 @@ def get_net_worth_by_account(
         FROM period_dates p CROSS JOIN inv_universe iu
         JOIN Accounts a ON iu.Accounts_Id=a.Accounts_Id
         JOIN Securities s ON iu.Securities_Id=s.Securities_Id
-        WHERE a.Accounts_Type IN ('Brokerage','Margin')
+        WHERE a.Accounts_Type IN ('Brokerage','Margin','Pension','Other Investment')
         GROUP BY p.period_end, a.Accounts_Name, a.Accounts_Type
     ),
     pension_bal AS (
@@ -1103,7 +1160,9 @@ def get_net_worth_by_account(
                 SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur WHEN Action='CashOut' THEN -Total_Amount_AccCur ELSE 0 END)
                 FROM Investments WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end
             ),0)) * COALESCE((SELECT fx_rate FROM daily_fx WHERE period_end=p.period_end AND Currencies_Id=a.Currencies_Id),1) AS balance_eur
-        FROM period_dates p CROSS JOIN Accounts a WHERE a.Accounts_Type IN ('Pension','Other Investment')
+        FROM period_dates p CROSS JOIN Accounts a
+        WHERE a.Accounts_Type IN ('Pension','Other Investment')
+          AND a.Accounts_Id NOT IN (SELECT Accounts_Id FROM inv_accounts)
     )
     SELECT period_end::text AS period, accounts_name, accounts_type,
            ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur
@@ -1509,7 +1568,7 @@ def get_dividend_income_tax(year: int = Query(None)):
     query = """
     SELECT i.Date::text AS date, s.Securities_Name, a.Accounts_Name AS account_name,
            i.Action,
-           COALESCE(s.Is_Tax_Exempt, FALSE) AS is_tax_exempt,
+           FALSE AS is_tax_exempt,
            CASE WHEN cur.Currencies_ShortName='EUR' THEN i.Total_Amount_AccCur
                 ELSE i.Total_Amount_AccCur * COALESCE(
                     (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=s.Currencies_Id AND Date<=i.Date ORDER BY Date DESC LIMIT 1),1)

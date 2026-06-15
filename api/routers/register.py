@@ -163,6 +163,18 @@ def create_transaction(tx: TransactionIn):
                 INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
                 VALUES (%s, %s, %s, %s)
             """, (tx_id, tx.categories_id, tx.total_amount, tx.memo))
+        # Create mirror leg for transfers
+        if tx.accounts_id_target:
+            cur.execute("""
+                INSERT INTO Transactions
+                    (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft,
+                     Accounts_Id_Target, Transfers_Id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING Transactions_Id
+            """, (tx.accounts_id_target, tx.date, tx.description, -float(tx.total_amount or 0),
+                  tx.payees_id, tx.cleared, tx.reconciled, tx.is_draft, tx.accounts_id, tx_id))
+            mirror_id = cur.fetchone()[0]
+            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
         conn.commit()
         return {"id": tx_id}
     except Exception as e:
@@ -210,26 +222,49 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
                 cur.execute("INSERT INTO Splits (Transactions_Id, Categories_Id, Memo) VALUES (%s, %s, %s)",
                             (tx_id, split_updates.get("categories_id"), split_updates.get("memo")))
 
-        # Mirror changes to the paired transfer leg
-        if paired_id and tx_updates:
-            mirror = {}
-            for k in ("date", "description", "cleared", "reconciled", "is_draft"):
-                if k in tx_updates:
-                    mirror[k] = tx_updates[k]
-            if "total_amount" in tx_updates:
-                mirror["total_amount"] = -float(tx_updates["total_amount"])
+        # Re-read current state after update to get effective accounts_id_target
+        new_target_id = tx_updates.get("accounts_id_target", old_target_id)
 
-            new_target_id = tx_updates.get("accounts_id_target")
-            if new_target_id is not None and int(new_target_id) != (old_target_id or 0):
-                # Target account changed — move the paired leg to the new account
-                # and update its back-pointer to point to the source account
-                mirror["accounts_id"] = int(new_target_id)
-                mirror["accounts_id_target"] = src_account_id
-
-            if mirror:
-                set_clause = ", ".join(f"{k} = %s" for k in mirror)
-                cur.execute(f"UPDATE Transactions SET {set_clause} WHERE Transactions_Id = %s",
-                            list(mirror.values()) + [paired_id])
+        if paired_id:
+            if new_target_id is None:
+                # Transfer target removed — delete the mirror leg
+                cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (paired_id,))
+                cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (paired_id,))
+                cur.execute("UPDATE Transactions SET Transfers_Id = NULL WHERE Transactions_Id = %s", (tx_id,))
+            else:
+                # Mirror existing paired leg
+                mirror = {}
+                for k in ("date", "description", "payees_id", "cleared", "reconciled", "is_draft"):
+                    if k in tx_updates:
+                        mirror[k] = tx_updates[k]
+                if "total_amount" in tx_updates:
+                    mirror["total_amount"] = -float(tx_updates["total_amount"])
+                if "accounts_id_target" in tx_updates and int(new_target_id) != (old_target_id or 0):
+                    mirror["accounts_id"] = int(new_target_id)
+                    mirror["accounts_id_target"] = src_account_id
+                if mirror:
+                    set_clause = ", ".join(f"{k} = %s" for k in mirror)
+                    cur.execute(f"UPDATE Transactions SET {set_clause} WHERE Transactions_Id = %s",
+                                list(mirror.values()) + [paired_id])
+        elif new_target_id:
+            # No existing mirror but transfer target just set — create mirror leg
+            cur.execute("""
+                SELECT Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft
+                FROM Transactions WHERE Transactions_Id = %s
+            """, (tx_id,))
+            tx_row = cur.fetchone()
+            if tx_row:
+                t_date, t_desc, t_amt, t_payees_id, t_cleared, t_reconciled, t_draft = tx_row
+                cur.execute("""
+                    INSERT INTO Transactions
+                        (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft,
+                         Accounts_Id_Target, Transfers_Id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING Transactions_Id
+                """, (new_target_id, t_date, t_desc, -float(t_amt or 0),
+                      t_payees_id, t_cleared, t_reconciled, t_draft, src_account_id, tx_id))
+                mirror_id = cur.fetchone()[0]
+                cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
 
         conn.commit()
         return {"updated": tx_id}
@@ -324,6 +359,7 @@ def create_transfer(data: dict):
     cleared = data.get("cleared", False)
     reconciled = data.get("reconciled", False)
     is_draft = data.get("is_draft", False)
+    payees_id = data.get("payees_id")
 
     if not from_account or not to_account or not date or amount is None:
         raise HTTPException(400, "from_account_id, to_account_id, date and amount are required")
@@ -334,19 +370,19 @@ def create_transfer(data: dict):
         # Outflow from source account (negative)
         cur.execute("""
             INSERT INTO Transactions
-                (Accounts_Id, Date, Description, Total_Amount, Cleared, Reconciled, Is_Draft, Accounts_Id_Target)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING Transactions_Id
-        """, (from_account, date, description, -abs(amount), cleared, reconciled, is_draft, to_account))
+        """, (from_account, date, description, -abs(amount), payees_id, cleared, reconciled, is_draft, to_account))
         from_id = cur.fetchone()[0]
 
         # Inflow to target account (positive)
         cur.execute("""
             INSERT INTO Transactions
-                (Accounts_Id, Date, Description, Total_Amount, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING Transactions_Id
-        """, (to_account, date, description, abs(amount), cleared, reconciled, is_draft, from_account, from_id))
+        """, (to_account, date, description, abs(amount), payees_id, cleared, reconciled, is_draft, from_account, from_id))
         to_id = cur.fetchone()[0]
 
         # Back-link the source transaction to the target

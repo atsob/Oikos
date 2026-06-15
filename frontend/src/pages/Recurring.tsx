@@ -200,7 +200,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
 interface DraftSplit { categories_id: string; amount: string; memo: string }
 interface DraftForm {
   date: string; description: string; amount: string
-  accounts_id: string; payees_id: string
+  accounts_id: string; payees_id: string; accounts_id_target: string
 }
 
 function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSaved, onConfirmed, onDeleted }: {
@@ -217,6 +217,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
     amount: draft.amount != null ? String(draft.amount) : '',
     accounts_id: draft.accounts_id != null ? String(draft.accounts_id) : '',
     payees_id: draft.payees_id != null ? String(draft.payees_id) : '',
+    accounts_id_target: draft.accounts_id_target != null ? String(draft.accounts_id_target) : '',
   })
   const [splits, setSplits] = useState<DraftSplit[]>([])
   const [splitsLoaded, setSplitsLoaded] = useState(false)
@@ -247,6 +248,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
     amount: form.amount ? parseFloat(form.amount) : null,
     accounts_id: form.accounts_id ? Number(form.accounts_id) : null,
     payees_id: form.payees_id ? Number(form.payees_id) : null,
+    accounts_id_target: form.accounts_id_target ? Number(form.accounts_id_target) : null,
     splits: splits.filter(s => s.amount).map(s => ({
       categories_id: s.categories_id ? Number(s.categories_id) : null,
       amount: parseFloat(s.amount),
@@ -294,7 +296,10 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
             <span>{form.date}</span>
             {form.accounts_id && <span className="text-slate-400">|</span>}
             <span className="truncate">{accounts.find(a => String(a.id) === form.accounts_id)?.name as string ?? ''}</span>
-            {form.payees_id && <><span className="text-slate-400">|</span><span>{payees.find(p => String(p.id) === form.payees_id)?.name as string ?? ''}</span></>}
+            {form.accounts_id_target
+              ? <><span className="text-slate-400">|</span><span className="text-blue-600">⇒ {accounts.find(a => String(a.id) === form.accounts_id_target)?.name as string ?? ''}</span></>
+              : form.payees_id && <><span className="text-slate-400">|</span><span>{payees.find(p => String(p.id) === form.payees_id)?.name as string ?? ''}</span></>
+            }
             {form.amount && <><span className="text-slate-400">|</span>
               <span className={`font-semibold ${amtNum < 0 ? 'text-red-600' : 'text-green-600'}`}>{fmtEur(amtNum)}</span></>}
             {draft.template_name && <span className="text-slate-400 italic text-xs font-normal">(from: {String(draft.template_name)}{draft.template_periodicity ? ` · ${draft.template_periodicity}` : ''})</span>}
@@ -319,7 +324,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
             </div>
           </div>
 
-          {/* Account + Payee */}
+          {/* Account + Payee / Transfer To */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Account</label>
@@ -329,13 +334,28 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.payees_id} onChange={e => set('payees_id', e.target.value)}>
-                <option value="">— none —</option>
-                {payees.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>)}
+              <label className="text-xs font-medium text-slate-500 block mb-1">
+                Transfer To Account
+                {!form.accounts_id_target && <span className="text-slate-400 font-normal"> — or use Payee below</span>}
+              </label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id_target} onChange={e => { set('accounts_id_target', e.target.value); if (e.target.value) set('payees_id', '') }}>
+                <option value="">— none (not a transfer) —</option>
+                {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
               </select>
             </div>
           </div>
+          {!form.accounts_id_target && (
+            <div className="grid grid-cols-2 gap-4">
+              <div />
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.payees_id} onChange={e => set('payees_id', e.target.value)}>
+                  <option value="">— none —</option>
+                  {payees.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Splits */}
           <div>

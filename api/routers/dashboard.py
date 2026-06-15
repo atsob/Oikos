@@ -192,6 +192,7 @@ def get_accounts(include_future: bool = Query(False)):
                 a.Is_Active        AS is_active,
                 c.Currencies_ShortName AS currency,
                 i.Institutions_Name    AS institution,
+                COALESCE(a.Credit_Limit, 0) AS credit_limit,
                 CASE
                     WHEN a.Accounts_Type IN ('Brokerage','Margin','Other Investment')
                     THEN COALESCE(hv.value_eur, 0)
