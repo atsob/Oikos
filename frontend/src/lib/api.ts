@@ -355,6 +355,15 @@ export const revtImport = (file: File, accountId: number, replaceMode: boolean, 
   }).then(r => r.data)
 }
 
+export const revsParse = (file: File, accountId: number, mode: 'inv' | 'tx') => {
+  const fd = new FormData(); fd.append('file', file)
+  return api.post('/bank/revolut-savings-parse', fd, { params: { account_id: accountId, mode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+}
+export const revsImport = (file: File, accountId: number, mode: 'inv' | 'tx', replaceMode: boolean) => {
+  const fd = new FormData(); fd.append('file', file)
+  return api.post('/bank/revolut-savings-import', fd, { params: { account_id: accountId, mode, replace_mode: replaceMode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+}
+
 // ── Saxo Bank ─────────────────────────────────────────────────────────────────
 export const saxoGetSettings = () => api.get('/bank/saxo-settings').then(r => r.data)
 export const saxoSaveAccountMap = (accountMap: Record<string, number>) =>
@@ -392,6 +401,57 @@ export const runVacuum = () => api.post('/tools/vacuum').then(r => r.data)
 export const runBackup = () => api.post('/tools/backup').then(r => r.data)
 export const getSchedulerStatus = () => api.get('/tools/scheduler-status').then(r => r.data)
 export const runSql = (sql: string) => api.post('/tools/run-sql', { sql }).then(r => r.data)
+export const getDbHealth = () => api.get('/tools/db-health').then(r => r.data)
+export const runDbMaintenance = (operation: string, table?: string, dbName?: string) =>
+  api.post('/tools/db-maintenance', { operation, table, db_name: dbName }).then(r => r.data)
+export const toolsSyncBalances = (target: string) => api.post('/tools/sync-balances', { target }).then(r => r.data)
+export const getReferentialIntegrity = () => api.get('/tools/referential-integrity').then(r => r.data)
+export const exportExcel = () => api.get('/tools/export-excel', { responseType: 'blob' }).then(r => r.data)
+export const getToolsPriceAnomalies = (threshold: number) =>
+  api.get('/tools/price-anomalies', { params: { threshold } }).then(r => r.data)
+export const deleteHistoricalPrices = (rows: {securities_id: number, date: string}[]) =>
+  api.delete('/tools/historical-prices', { data: { rows } }).then(r => r.data)
+export const getMissingTxPrices = () => api.get('/tools/missing-tx-prices').then(r => r.data)
+export const insertMissingPrices = (rows: {securities_id: number, date: string, price: number}[]) =>
+  api.post('/tools/insert-missing-prices', { rows }).then(r => r.data)
+export const getDummyPrices = (tolerancePct: number) =>
+  api.get('/tools/dummy-prices', { params: { tolerance_pct: tolerancePct } }).then(r => r.data)
+export const normalizeInvestments = (ids: number[]) =>
+  api.post('/tools/normalize-investments', { ids }).then(r => r.data)
+export const refreshHoldings = () => api.post('/tools/refresh-holdings').then(r => r.data)
+export const getInvestmentConsistency = (accountIds?: number[]) =>
+  api.get('/tools/investment-consistency', { params: accountIds?.length ? { account_ids: accountIds.join(',') } : {} }).then(r => r.data)
+export const updateInvestmentRow = (investments_id: number, fields: Record<string, number | null>) =>
+  api.put('/tools/investment-row', { investments_id, fields }).then(r => r.data)
+export const getMissingTransferMirrors = () => api.get('/tools/missing-transfer-mirrors').then(r => r.data)
+export const fixTransferMirrors = (ids: number[]) =>
+  api.post('/tools/fix-transfer-mirrors', { ids }).then(r => r.data)
+export const getUnlinkedTransferPairs = () => api.get('/tools/unlinked-transfer-pairs').then(r => r.data)
+export const linkTransferPairs = (pairs: Record<string, number>[]) =>
+  api.post('/tools/link-transfer-pairs', { pairs }).then(r => r.data)
+export const getTransferSignMismatches = () => api.get('/tools/transfer-sign-mismatches').then(r => r.data)
+export const fixTransferSign = (txIds: number[], allAccIds: number[]) =>
+  api.post('/tools/fix-transfer-sign', { tx_ids: txIds, all_acc_ids: allAccIds }).then(r => r.data)
+export const getMissingInvCashLinks = () => api.get('/tools/missing-investment-cash-links').then(r => r.data)
+export const fixInvCashLinks = (pairs: {investments_id: number, candidate_tx_id: number}[]) =>
+  api.post('/tools/fix-investment-cash-links', { pairs }).then(r => r.data)
+export const getLogs = (lines: number, level?: string, search?: string) =>
+  api.get('/tools/logs', { params: { lines, level, search } }).then(r => r.data)
+
+export const getSchedulerJobs = () =>
+  api.get('/tools/scheduler-jobs').then(r => r.data)
+
+export const createSchedulerJob = (data: Record<string, unknown>) =>
+  api.post('/tools/scheduler-jobs', data).then(r => r.data)
+
+export const updateSchedulerJob = (jobId: string, data: Record<string, unknown>) =>
+  api.put(`/tools/scheduler-jobs/${jobId}`, data).then(r => r.data)
+
+export const deleteSchedulerJob = (jobId: string) =>
+  api.delete(`/tools/scheduler-jobs/${jobId}`).then(r => r.data)
+
+export const triggerSchedulerJob = (jobId: string) =>
+  api.post(`/tools/run-scheduler-job/${jobId}`).then(r => r.data)
 
 // ── Budgets (write) ───────────────────────────────────────────────────────────
 export const upsertBudget = (data: Record<string, unknown>) =>
@@ -421,11 +481,14 @@ export const getSpendingTrends = (months: number) =>
 export const getSavingsRateDetail = (months: number) =>
   api.get('/reports/savings-rate-detail', { params: { months } }).then(r => r.data)
 
-export const getTwr = (startDate: string, endDate: string) =>
-  api.get('/reports/twr', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
+export const getTwr = (lookbackDays: number, accountIds?: number[]) =>
+  api.get('/reports/twr', { params: { lookback_days: lookbackDays, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getRiskMetrics = (startDate: string, endDate: string) =>
-  api.get('/reports/risk-metrics', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
+export const getRiskMetrics = (lookbackDays: number, benchmarkSecId?: number | null, accountIds?: number[]) =>
+  api.get('/reports/risk-metrics', { params: { lookback_days: lookbackDays, benchmark_sec_id: benchmarkSecId ?? undefined, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getBenchmarkCandidates = () =>
+  api.get('/reports/benchmark-candidates').then(r => r.data)
 
 export const getTaxLossHarvesting = () =>
   api.get('/reports/tax-loss-harvesting').then(r => r.data)
@@ -436,6 +499,9 @@ export const getDividendIncomeTax = (year: number) =>
 export const getPriceChanges = () =>
   api.get('/reports/price-changes').then(r => r.data)
 
+export const getPortfolioSignals = () =>
+  api.get('/reports/portfolio-signals').then(r => r.data)
+
 export const getGoals = () =>
   api.get('/reports/goals').then(r => r.data)
 
@@ -444,3 +510,49 @@ export const upsertGoal = (data: object) =>
 
 export const deleteGoal = (id: number) =>
   api.delete(`/reports/goals/${id}`).then(r => r.data)
+
+export const getSavingsAccounts = () =>
+  api.get('/reports/savings-accounts').then(r => r.data)
+
+export const getDividendsTracker = (period: string, startDate?: string, endDate?: string) =>
+  api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)
+
+export const getBondSchedule = () =>
+  api.get('/reports/bond-schedule').then(r => r.data)
+
+export const getBenchmark = (benchmarkId: number, lookbackDays = 252, accountIds?: number[], resample = 'Daily') =>
+  api.get('/reports/benchmark', { params: { benchmark_id: benchmarkId, lookback_days: lookbackDays, account_ids: accountIds?.join(',') || undefined, resample } }).then(r => r.data)
+
+export const getCorrelation = (lookbackDays = 252, maxHoldings = 20, accountIds?: number[]) =>
+  api.get('/reports/correlation', { params: { lookback_days: lookbackDays, max_holdings: maxHoldings, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getPortfolioPresets = () =>
+  api.get('/reports/portfolio-presets').then(r => r.data)
+
+export const upsertPortfolioPreset = (name: string, accountIds: number[]) =>
+  api.post('/reports/portfolio-presets', { name, account_ids: accountIds }).then(r => r.data)
+
+export const deletePortfolioPreset = (presetId: number) =>
+  api.delete(`/reports/portfolio-presets/${presetId}`).then(r => r.data)
+
+export const getIncomeExpenseFull = (
+  startDate: string, endDate: string,
+  cashTypes?: string[], invTypes?: string[], categoryId?: number | null,
+) =>
+  api.get('/reports/income-expense-full', { params: {
+    start_date: startDate,
+    end_date: endDate,
+    cash_account_types: cashTypes?.join(',') || undefined,
+    inv_account_types: invTypes?.join(',') || undefined,
+    category_id: categoryId || undefined,
+  }}).then(r => r.data)
+
+export const getMonteCarlo = (params: {
+  yearsAhead?: number; numSims?: number; monthlyContrib?: number; lookbackDays?: number;
+  accountIds?: number[]; initialValue?: number; overrideReturnPct?: number; overrideVolPct?: number;
+}) =>
+  api.get('/reports/monte-carlo', { params: {
+    years_ahead: params.yearsAhead, num_sims: params.numSims, monthly_contrib: params.monthlyContrib,
+    lookback_days: params.lookbackDays, account_ids: params.accountIds?.join(',') || undefined,
+    initial_value: params.initialValue, override_return_pct: params.overrideReturnPct, override_vol_pct: params.overrideVolPct,
+  } }).then(r => r.data)

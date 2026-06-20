@@ -49,7 +49,9 @@ def get_income_expense(
     )
     SELECT month,
            SUM(CASE WHEN cat_type = 'Income' THEN amount ELSE 0 END) AS income,
-           SUM(CASE WHEN cat_type = 'Expense' THEN ABS(amount) ELSE 0 END) AS expense
+           SUM(CASE WHEN cat_type = 'Interest' THEN amount ELSE 0 END) AS interest,
+           SUM(CASE WHEN cat_type = 'Expense' THEN ABS(amount) ELSE 0 END) AS expense,
+           SUM(CASE WHEN cat_type = 'Tax' THEN ABS(amount) ELSE 0 END) AS tax
     FROM tx_with_cat
     GROUP BY month
     ORDER BY month ASC
@@ -63,7 +65,7 @@ def get_income_expense(
 def get_top_categories(
     start_date: str = Query("2024-01-01"),
     end_date: str = Query("2099-12-31"),
-    cat_type: str = Query("Expense"),
+    cat_type: str = Query(pattern="^(Tax|Expense|Income|Interest)$"),
     top_n: int = Query(10),
 ):
     """Top N income or expense categories for the period."""
@@ -838,6 +840,232 @@ def get_dividends(
     return _df_to_list(df)
 
 
+# ── Dividend & Interest Income Tracker ─────────────────────────────────────────
+@router.get("/dividends-tracker")
+def get_dividends_tracker(
+    period: str = Query("YTD"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+):
+    """Monthly dividend/interest income with FIFO cost basis & annualised YOC per security."""
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    period_days = {"1 Year": 365, "2 Years": 730, "3 Years": 1095, "5 Years": 1825}
+
+    if period == "Custom":
+        sd = _date.fromisoformat(start_date) if start_date else today - _td(days=365)
+        ed = _date.fromisoformat(end_date) if end_date else today
+    elif period == "All Time":
+        sd, ed = _date(1900, 1, 1), today
+    elif period == "YTD":
+        sd, ed = _date(today.year, 1, 1), today
+    elif period == "Previous Year":
+        sd, ed = _date(today.year - 1, 1, 1), _date(today.year - 1, 12, 31)
+    elif period in period_days:
+        sd, ed = today - _td(days=period_days[period]), today
+    else:
+        sd, ed = _date(today.year, 1, 1), today
+
+    period_label = {
+        "All Time": "All Time", "Custom": "Custom",
+        "YTD": f"YTD {today.year}",
+        "Previous Year": str(today.year - 1),
+    }.get(period, f"Last {period}")
+
+    query = """
+        WITH fx AS (
+            SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+            FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+        ),
+        income AS (
+            SELECT
+                i.Date,
+                DATE_TRUNC('month', i.Date)::date AS month,
+                i.Securities_Id,
+                s.Securities_Name,
+                s.Securities_Type,
+                a.Accounts_Name,
+                a.Currencies_Id,
+                SUM(
+                    CASE WHEN i.Action = 'MiscExp'
+                    THEN -i.Total_Amount_AccCur * COALESCE(fx.FX_Rate, 1)
+                    ELSE  i.Total_Amount_AccCur * COALESCE(fx.FX_Rate, 1)
+                    END
+                ) AS income_eur,
+                i.Action
+            FROM Investments i
+            JOIN Securities s ON i.Securities_Id = s.Securities_Id
+            JOIN Accounts   a ON i.Accounts_Id   = a.Accounts_Id
+            LEFT JOIN fx      ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
+              AND i.Date BETWEEN %(start_date)s AND %(end_date)s
+            GROUP BY i.Date, i.Securities_Id, s.Securities_Name, s.Securities_Type,
+                     a.Accounts_Name, a.Currencies_Id, i.Action
+        )
+        SELECT
+            i.Date AS date,
+            i.month,
+            i.Securities_Name AS securities_name,
+            i.Securities_Type AS securities_type,
+            i.Accounts_Name AS accounts_name,
+            i.Action AS action,
+            ROUND(i.income_eur::numeric, 2) AS income_eur,
+            ROUND(COALESCE(fc.cost_eur, 0)::numeric, 2) AS cost_basis_eur,
+            fc.position_start_date
+        FROM income i
+        CROSS JOIN LATERAL (
+            WITH buys AS (
+                SELECT
+                    b.Date AS buy_date,
+                    b.Quantity AS buy_qty,
+                    ABS(b.Total_Amount_AccCur) * COALESCE(fx2.FX_Rate, 1) / NULLIF(b.Quantity, 0) AS cost_per_unit_eur,
+                    SUM(b.Quantity) OVER (ORDER BY b.Date, b.Investments_Id) AS running_buy_qty
+                FROM Investments b
+                JOIN  Accounts a2 ON b.Accounts_Id      = a2.Accounts_Id
+                LEFT JOIN fx fx2  ON fx2.Currencies_Id_1 = a2.Currencies_Id
+                WHERE b.Securities_Id = i.Securities_Id
+                  AND (
+                      b.Action IN ('Buy','ShrIn','Vest')
+                      OR (b.Action = 'Reinvest' AND i.Securities_Type NOT IN ('CD','Bond'))
+                  )
+                  AND b.Date    <= i.Date
+                  AND b.Quantity > 0
+            ),
+            sells AS (
+                SELECT COALESCE(SUM(s.Quantity), 0) AS total_sell_qty
+                FROM Investments s
+                WHERE s.Securities_Id = i.Securities_Id
+                  AND s.Action IN ('Sell','ShrOut','Expire')
+                  AND s.Date     < i.Date
+            ),
+            fifo AS (
+                SELECT
+                    b.buy_date,
+                    GREATEST(0.0, LEAST(b.buy_qty, b.running_buy_qty - s.total_sell_qty)) AS remaining_qty,
+                    GREATEST(0.0, LEAST(b.buy_qty, b.running_buy_qty - s.total_sell_qty)) * b.cost_per_unit_eur AS lot_cost
+                FROM buys b CROSS JOIN sells s
+            )
+            SELECT
+                COALESCE(SUM(lot_cost), 0) AS cost_eur,
+                MIN(CASE WHEN remaining_qty > 0 THEN buy_date END) AS position_start_date
+            FROM fifo
+        ) AS fc
+        ORDER BY i.Date DESC, i.income_eur DESC
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params={"start_date": str(sd), "end_date": str(ed)})
+
+    if df.empty:
+        return {"period_label": period_label, "monthly": [], "by_security": [],
+                "by_type": [], "detail": [], "summary": {}}
+
+    df["month"] = pd.to_datetime(df["month"])
+    df["date"] = pd.to_datetime(df["date"])
+    df["position_start_date"] = pd.to_datetime(df["position_start_date"])
+
+    df = df[df["cost_basis_eur"] > 0].copy()
+    if df.empty:
+        return {"period_label": period_label, "monthly": [], "by_security": [],
+                "by_type": [], "detail": [], "summary": {}}
+
+    period_months = {"1 Year": 12, "2 Years": 24, "3 Years": 36, "5 Years": 60, "Previous Year": 12}
+    if period in period_months:
+        max_span_days = (period_months[period] - 1) * 365.25 / 12
+    elif period in ("Custom", "YTD"):
+        custom_months = (ed - sd).days / (365.25 / 12)
+        max_span_days = max(custom_months - 1, 0) * 365.25 / 12
+    else:
+        max_span_days = None
+
+    if max_span_days is not None:
+        last_per_sec = df.groupby("securities_name")["date"].transform("max")
+        df = df[(last_per_sec - df["date"]).dt.days <= max_span_days].copy()
+        if df.empty:
+            return {"period_label": period_label, "monthly": [], "by_security": [],
+                    "by_type": [], "detail": [], "summary": {}}
+
+    monthly = df.groupby("month")["income_eur"].sum().reset_index().sort_values("month")
+
+    df_sorted = df.sort_values(["securities_name", "date"])
+
+    def _wtd_cost(g):
+        abs_inc = g["income_eur"].abs()
+        total_w = abs_inc.sum()
+        if total_w == 0:
+            return g["cost_basis_eur"].iloc[-1]
+        return (g["cost_basis_eur"] * abs_inc).sum() / total_w
+
+    rows = []
+    for (sec_name, sec_type), g in df_sorted.groupby(["securities_name", "securities_type"]):
+        rows.append({
+            "securities_name": sec_name,
+            "securities_type": sec_type,
+            "period_income_eur": g["income_eur"].sum(),
+            "cost_basis_eur": _wtd_cost(g),
+            "position_start_date": g["position_start_date"].min(),
+            "last_income_date": g["date"].max(),
+        })
+    df_t12 = pd.DataFrame(rows).sort_values("period_income_eur", ascending=False)
+
+    ann_days_map = {"1 Year": 365, "2 Years": 730, "3 Years": 1095, "5 Years": 1825, "Previous Year": 365}
+    if period == "All Time":
+        ann_days = (df_t12["last_income_date"] - df_t12["position_start_date"]).dt.days.clip(lower=1)
+    elif period in ann_days_map:
+        ann_days = ann_days_map[period]
+    else:
+        ann_days = max((ed - sd).days, 1)
+
+    df_t12["yoc_pct"] = (
+        df_t12["period_income_eur"] / df_t12["cost_basis_eur"].replace(0, float("nan"))
+        * 100 * 365 / ann_days
+    ).fillna(0)
+
+    with get_db() as conn2:
+        df_sec_meta = pd.read_sql("""
+            SELECT Securities_Name, Dividend_Yield AS fwd_yield_pct,
+                   Ex_Dividend_Date AS ex_div_date, Dividend_Frequency AS div_frequency
+            FROM Securities
+            WHERE Dividend_Yield IS NOT NULL OR Ex_Dividend_Date IS NOT NULL OR Dividend_Frequency IS NOT NULL
+        """, conn2)
+
+    if not df_sec_meta.empty:
+        df_sec_meta.columns = df_sec_meta.columns.str.lower()
+        df_t12 = df_t12.merge(df_sec_meta, on="securities_name", how="left")
+    else:
+        df_t12["fwd_yield_pct"] = None
+        df_t12["ex_div_date"] = None
+        df_t12["div_frequency"] = None
+
+    total_income = float(df_t12["period_income_eur"].sum())
+    yoc_positive = df_t12[df_t12["yoc_pct"] > 0]["yoc_pct"]
+    avg_yoc = float(yoc_positive.mean()) if not yoc_positive.empty else None
+
+    by_type = (
+        df_t12.groupby("securities_type")["period_income_eur"].sum()
+        .reset_index().sort_values("period_income_eur", ascending=False)
+    )
+
+    summary = {
+        "total_income_eur": round(total_income, 2),
+        "securities_paying": len(df_t12),
+        "avg_yoc_pct": round(avg_yoc, 4) if avg_yoc is not None else None,
+    }
+
+    disp_cols = ["securities_name", "securities_type", "period_income_eur", "cost_basis_eur",
+                 "yoc_pct", "fwd_yield_pct", "ex_div_date", "div_frequency"]
+    detail_cols = ["month", "securities_name", "accounts_name", "action", "income_eur"]
+
+    return {
+        "period_label": period_label,
+        "monthly": _df_to_list(monthly),
+        "by_security": _df_to_list(df_t12[disp_cols]),
+        "by_type": _df_to_list(by_type),
+        "detail": _df_to_list(df_sorted[detail_cols]),
+        "summary": summary,
+    }
+
+
 @router.get("/capital-gains")
 def get_capital_gains(year: int = Query(None)):
     """Realized capital gains for the year from investment sell transactions."""
@@ -1381,8 +1609,9 @@ def get_savings_rate_detail(months: int = Query(24)):
 
 
 # ── Monthly portfolio values helper ───────────────────────────────────────────
-def _get_monthly_portfolio_values(start_date: str, end_date: str, conn) -> pd.DataFrame:
-    query = """
+def _get_monthly_portfolio_values(start_date: str, end_date: str, conn, account_ids: Optional[list] = None) -> pd.DataFrame:
+    acct_clause = _acct_clause(account_ids, "Accounts_Id") if account_ids else ""
+    query = f"""
     WITH RECURSIVE months AS (
         SELECT (date_trunc('month', %(start_date)s::date) + INTERVAL '1 month' - INTERVAL '1 day')::date AS d
         UNION ALL
@@ -1390,7 +1619,7 @@ def _get_monthly_portfolio_values(start_date: str, end_date: str, conn) -> pd.Da
         FROM months WHERE d < date_trunc('month', %(end_date)s::date)
     ),
     dates AS (SELECT d FROM months WHERE d <= %(end_date)s::date UNION SELECT %(end_date)s::date),
-    inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
+    inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut'){acct_clause}),
     qty_at AS (
         SELECT dt.d AS date_pt, iu.Securities_Id, iu.Accounts_Id,
             GREATEST(COALESCE((
@@ -1412,123 +1641,292 @@ def _get_monthly_portfolio_values(start_date: str, end_date: str, conn) -> pd.Da
     return pd.read_sql(query, conn, params={"start_date": start_date, "end_date": end_date})
 
 
-# ── TWR ───────────────────────────────────────────────────────────────────────
+# ── TWR / MWR ─────────────────────────────────────────────────────────────────
+def _xirr(cashflows: list, dates: list) -> float:
+    """Solve for annualised IRR given irregular cash flows using Brent's method."""
+    from datetime import date as _date
+    if len(cashflows) < 2:
+        return 0.0
+    d0 = dates[0]
+    years = [(d - d0).days / 365.25 for d in dates]
+
+    def npv(r):
+        if r <= -1:
+            return float('inf')
+        return sum(cf / (1 + r) ** t for cf, t in zip(cashflows, years))
+
+    # Try a wide bracket first, fall back to sign-search
+    try:
+        import scipy.optimize as _opt
+        return float(_opt.brentq(npv, -0.999, 50.0, maxiter=500, xtol=1e-6))
+    except Exception:
+        pass
+    # Newton fallback
+    r = 0.1
+    for _ in range(200):
+        f = npv(r)
+        df = sum(-t * cf / (1 + r) ** (t + 1) for cf, t in zip(cashflows, years))
+        if df == 0:
+            break
+        r -= f / df
+        if abs(f) < 1e-8:
+            break
+    return round(r, 6) if -1 < r < 50 else 0.0
+
+
 @router.get("/twr")
 def get_twr(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
+    lookback_days: int = Query(756),
+    account_ids: Optional[str] = Query(None),
 ):
-    from datetime import date as _date
     import numpy as np
-    if not start_date:
-        start_date = (_date.today().replace(year=_date.today().year - 3)).isoformat()
-    if not end_date:
-        end_date = _date.today().isoformat()
+    from datetime import date as _date, timedelta
+    from database.queries import get_price_returns, get_portfolio_weights, get_investable_portfolio_value
 
+    acct_ids = tuple(_parse_account_ids(account_ids)) if _parse_account_ids(account_ids) else None
+    cf_acct_clause = _acct_clause(list(acct_ids) if acct_ids else [], "i.Accounts_Id")
+
+    empty = {
+        "twr_window_pct": 0, "twr_ann_pct": 0, "mwr_pct": None,
+        "trading_days": 0, "date_from": None, "date_to": None,
+        "chart": [], "cashflows": [], "insufficient": True,
+    }
+
+    # ── Daily TWR via price returns (same engine as Risk Metrics) ──────────────
+    df_prices = get_price_returns(lookback_days, acct_ids)
+    if df_prices is None or df_prices.empty:
+        return empty
+
+    daily_returns = df_prices.ffill(limit=5).pct_change(fill_method=None).dropna(how='all')
+    if daily_returns.empty or len(daily_returns) < 5:
+        return empty
+
+    df_weights = get_portfolio_weights(acct_ids)
+    if not df_weights.empty:
+        wmap  = dict(zip(df_weights["ticker"], df_weights["weight"]))
+        avail = [c for c in daily_returns.columns if c in wmap]
+        if avail:
+            w = pd.Series([wmap[t] for t in avail], index=avail)
+            w = w / w.sum()
+            port_returns = daily_returns[avail].fillna(0).dot(w)
+        else:
+            port_returns = daily_returns.mean(axis=1)
+    else:
+        port_returns = daily_returns.mean(axis=1)
+
+    cum = (1 + port_returns).cumprod()
+    twr_total = float(cum.iloc[-1]) - 1.0
+    n_days = len(port_returns)
+    twr_ann = float((1 + twr_total) ** (252 / n_days) - 1) if n_days >= 2 else twr_total
+
+    chart = [
+        {"date": str(d)[:10], "twr_cumulative_pct": round((v - 1) * 100, 4)}
+        for d, v in cum.items()
+    ]
+
+    # ── MWR / XIRR (all-time, regardless of lookback) ─────────────────────────
+    # Use Buy/Sell/Dividend/IntInc as the investor cash-flow series.
+    # Buy  → investor cash out  → negative CF
+    # Sell → investor cash in   → positive CF
+    # Dividend/IntInc/RtrnCap   → positive CF
+    # Terminal value (current portfolio) → positive CF
     with get_db() as conn:
-        vals_df = _get_monthly_portfolio_values(start_date, end_date, conn)
-        cf_df = pd.read_sql("""
-            SELECT DATE_TRUNC('month', Date)::date::text AS month,
-                SUM(CASE WHEN Action='CashIn' THEN Total_Amount_AccCur * COALESCE(
-                        (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=a.Currencies_Id AND Date<=i.Date ORDER BY Date DESC LIMIT 1),1)
-                         WHEN Action='CashOut' THEN -Total_Amount_AccCur * COALESCE(
-                        (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=a.Currencies_Id AND Date<=i.Date ORDER BY Date DESC LIMIT 1),1)
-                         ELSE 0 END) AS net_cashflow_eur
-            FROM Investments i JOIN Accounts a ON a.Accounts_Id=i.Accounts_Id
-            WHERE Action IN ('CashIn','CashOut') AND Date BETWEEN %(start_date)s AND %(end_date)s
-            GROUP BY DATE_TRUNC('month', Date) ORDER BY 1
-        """, conn, params={"start_date": start_date, "end_date": end_date})
+        cf_df = pd.read_sql(f"""
+            SELECT i.Date::date AS cf_date,
+                   i.Action,
+                   acc.Accounts_Name AS account_name,
+                   COALESCE(s.Securities_Name, '') AS security_name,
+                   CASE
+                     WHEN i.Action IN ('Buy','MiscExp') THEN
+                       COALESCE(NULLIF(i.Total_Amount_AccCur,0),
+                                i.Quantity * i.Price_Per_Share + COALESCE(i.Commission,0))
+                          * COALESCE(
+                              (SELECT FX_Rate FROM Historical_FX
+                               WHERE Currencies_Id_1=acc.Currencies_Id AND Date<=i.Date
+                               ORDER BY Date DESC LIMIT 1), 1)
+                     WHEN i.Action IN ('Sell','Dividend','IntInc','Reinvest','RtrnCap','CashIn','CashOut') THEN
+                       COALESCE(NULLIF(i.Total_Amount_AccCur,0),
+                                i.Quantity * i.Price_Per_Share - COALESCE(i.Commission,0))
+                          * COALESCE(
+                              (SELECT FX_Rate FROM Historical_FX
+                               WHERE Currencies_Id_1=acc.Currencies_Id AND Date<=i.Date
+                               ORDER BY Date DESC LIMIT 1), 1)
+                     ELSE 0
+                   END AS amount_eur
+            FROM Investments i
+            JOIN Accounts acc ON acc.Accounts_Id=i.Accounts_Id
+            LEFT JOIN Securities s ON s.Securities_Id=i.Securities_Id
+            WHERE i.Action IN ('Buy','Sell','Dividend','IntInc','Reinvest','RtrnCap','MiscExp','CashIn','CashOut')
+            {cf_acct_clause}
+            ORDER BY i.Date
+        """, conn)
 
-    if vals_df.empty:
-        return {"summary": {"twr_total_pct": 0, "twr_ann_pct": 0, "months": 0}, "chart": []}
+    mwr_pct = None
+    if not cf_df.empty:
+        xirr_cfs: list = []
+        xirr_dates: list = []
+        for _, row in cf_df.iterrows():
+            d = row["cf_date"]
+            if hasattr(d, 'date'):
+                d = d.date()
+            amt = float(row["amount_eur"] or 0)
+            action = str(row["action"])
+            # Buy/MiscExp = cash out (negative); everything else = cash in (positive)
+            if action in ('Buy', 'MiscExp'):
+                xirr_cfs.append(-abs(amt))
+            else:
+                xirr_cfs.append(abs(amt))
+            xirr_dates.append(d)
+        # Terminal cash flow = current portfolio value
+        port_val = float(get_investable_portfolio_value(acct_ids))
+        xirr_cfs.append(port_val)
+        xirr_dates.append(_date.today())
+        if len(xirr_cfs) >= 2 and any(c < 0 for c in xirr_cfs) and any(c > 0 for c in xirr_cfs):
+            r = _xirr(xirr_cfs, xirr_dates)
+            mwr_pct = round(r * 100, 2)
 
-    vals_df = vals_df.set_index("date")
-    cf_map = dict(zip(cf_df["month"].tolist(), cf_df["net_cashflow_eur"].tolist())) if not cf_df.empty else {}
-    dates = list(vals_df.index)
-    running = 1.0
-    chart = []
-    for i, d in enumerate(dates):
-        v_end = float(vals_df.loc[d, "portfolio_value_eur"] or 0)
-        if i == 0:
-            chart.append({"date": d, "twr_cumulative_pct": 0.0, "portfolio_value_eur": round(v_end, 2)})
-            continue
-        v_start = float(vals_df.loc[dates[i-1], "portfolio_value_eur"] or 0)
-        cf = float(cf_map.get(d, 0) or 0)
-        denom = v_start + cf
-        r = (v_end - v_start - cf) / denom if denom > 0 else 0.0
-        running *= (1 + r)
-        chart.append({"date": d, "twr_cumulative_pct": round((running - 1) * 100, 4), "portfolio_value_eur": round(v_end, 2)})
+    cashflows = []
+    if not cf_df.empty:
+        for _, row in cf_df.iterrows():
+            cashflows.append({
+                "date": str(row["cf_date"])[:10],
+                "action": str(row["action"]),
+                "account": str(row["account_name"]),
+                "security": str(row["security_name"]),
+                "amount_eur": float(row["amount_eur"] or 0),
+            })
 
-    n = len(dates)
-    twr_total = running - 1
-    twr_ann = (running ** (12.0 / max(n, 1)) - 1) if n > 1 else twr_total
     return {
-        "summary": {
-            "twr_total_pct": round(twr_total * 100, 2),
-            "twr_ann_pct": round(twr_ann * 100, 2),
-            "months": n,
-        },
+        "twr_window_pct": round(twr_total * 100, 2),
+        "twr_ann_pct": round(twr_ann * 100, 2),
+        "mwr_pct": mwr_pct,
+        "trading_days": n_days,
+        "date_from": str(port_returns.index[0])[:10],
+        "date_to": str(port_returns.index[-1])[:10],
         "chart": chart,
+        "cashflows": cashflows,
+        "insufficient": n_days < 10,
     }
 
 
 # ── Risk Metrics ──────────────────────────────────────────────────────────────
 @router.get("/risk-metrics")
 def get_risk_metrics(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
+    lookback_days: int = Query(756),
+    benchmark_sec_id: Optional[int] = Query(None),
+    account_ids: Optional[str] = Query(None),
 ):
-    from datetime import date as _date
     import numpy as np
-    if not start_date:
-        start_date = (_date.today().replace(year=_date.today().year - 3)).isoformat()
-    if not end_date:
-        end_date = _date.today().isoformat()
+    from database.queries import (
+        get_price_returns, get_portfolio_weights,
+        get_investable_portfolio_value, get_benchmark_returns,
+    )
+    acct_ids = tuple(_parse_account_ids(account_ids)) if _parse_account_ids(account_ids) else None
 
-    with get_db() as conn:
-        vals_df = _get_monthly_portfolio_values(start_date, end_date, conn)
+    df_prices = get_price_returns(lookback_days, acct_ids)
+    empty = {"ann_vol_pct": None, "sharpe": None, "sortino": None, "max_drawdown_pct": None,
+             "var_95_pct": None, "cvar_95_pct": None, "var_95_eur": None, "cvar_95_eur": None,
+             "beta": None, "alpha": None, "trading_days": 0, "date_from": None, "date_to": None,
+             "portfolio_value": 0, "rolling_sharpe": [], "insufficient": True}
 
-    if vals_df.empty or len(vals_df) < 2:
-        return {"ann_vol_pct": 0, "ann_return_pct": 0, "sharpe": 0, "sortino": 0,
-                "max_drawdown_pct": 0, "var_95_pct": 0, "cvar_95_pct": 0, "months": 0, "drawdown_chart": []}
+    if df_prices is None or df_prices.empty or df_prices.shape[1] < 1:
+        return empty
 
-    vals = vals_df["portfolio_value_eur"].astype(float).values
-    rets = np.diff(vals) / np.where(vals[:-1] > 0, vals[:-1], np.nan)
-    rets = rets[~np.isnan(rets)]
-    n = len(rets)
-    if n < 2:
-        return {"ann_vol_pct": 0, "ann_return_pct": 0, "sharpe": 0, "sortino": 0,
-                "max_drawdown_pct": 0, "var_95_pct": 0, "cvar_95_pct": 0, "months": n, "drawdown_chart": []}
+    daily_returns = df_prices.ffill(limit=5).pct_change(fill_method=None).dropna(how='all')
+    if daily_returns.empty or len(daily_returns) < 10:
+        return empty
 
-    ann_vol = float(np.std(rets, ddof=1) * np.sqrt(12))
-    ann_ret = float((1 + np.mean(rets)) ** 12 - 1)
-    rf = 0.03
-    sharpe = (ann_ret - rf) / ann_vol if ann_vol > 0 else 0.0
-    down = rets[rets < 0]
-    down_dev = float(np.std(down, ddof=1) * np.sqrt(12)) if len(down) > 1 else 0.0
-    sortino = (ann_ret - rf) / down_dev if down_dev > 0 else 0.0
-    cum = np.cumprod(1 + rets)
-    roll_max = np.maximum.accumulate(cum)
-    dd = (cum - roll_max) / roll_max
-    max_dd = float(dd.min())
-    var_95 = float(np.percentile(rets, 5))
-    tail = rets[rets <= var_95]
-    cvar_95 = float(tail.mean()) if len(tail) > 0 else var_95
+    df_weights = get_portfolio_weights(acct_ids)
+    if not df_weights.empty:
+        wmap  = dict(zip(df_weights["ticker"], df_weights["weight"]))
+        avail = [c for c in daily_returns.columns if c in wmap]
+        if avail:
+            w = pd.Series([wmap[t] for t in avail], index=avail)
+            w = w / w.sum()
+            port_returns = daily_returns[avail].fillna(0).dot(w)
+        else:
+            port_returns = daily_returns.mean(axis=1)
+    else:
+        port_returns = daily_returns.mean(axis=1)
 
-    dates = vals_df["date"].tolist()[1:]
-    drawdown_chart = [{"date": dates[i], "drawdown_pct": round(float(dd[i]) * 100, 4)} for i in range(len(dates))]
+    portfolio_value = float(get_investable_portfolio_value(acct_ids))
+
+    rf_rate    = 0.03
+    ann_vol    = float(port_returns.std() * np.sqrt(252))
+    ann_return = float((1 + port_returns.mean()) ** 252 - 1)
+    excess     = ann_return - rf_rate
+    sharpe     = excess / ann_vol if ann_vol > 0 else 0.0
+
+    down_ret = port_returns[port_returns < 0]
+    down_dev = float(down_ret.std() * np.sqrt(252)) if len(down_ret) > 0 else 0.0
+    sortino  = excess / down_dev if down_dev > 0 else 0.0
+
+    cum_ret  = (1 + port_returns).cumprod()
+    roll_max = cum_ret.cummax()
+    drawdown = (cum_ret - roll_max) / roll_max
+    max_dd   = float(drawdown.min())
+
+    var_95      = float(np.percentile(port_returns, 5))
+    tail        = port_returns[port_returns <= var_95]
+    cvar_95     = float(tail.mean()) if len(tail) > 0 else var_95
+    var_95_eur  = round(abs(var_95)  * portfolio_value, 0)
+    cvar_95_eur = round(abs(cvar_95) * portfolio_value, 0)
+
+    beta  = None
+    alpha = None
+    if benchmark_sec_id is not None:
+        bench_prices = get_benchmark_returns(benchmark_sec_id, lookback_days)
+        if not bench_prices.empty:
+            all_dates     = port_returns.index.union(bench_prices.index).sort_values()
+            bench_aligned = bench_prices.reindex(all_dates).ffill().reindex(port_returns.index)
+            bench_ret     = bench_aligned.pct_change(fill_method=None).dropna()
+            common_idx    = port_returns.index.intersection(bench_ret.index)
+            if len(common_idx) >= 30:
+                p = port_returns.loc[common_idx].values
+                b = bench_ret.loc[common_idx].values
+                bench_var = float(np.var(b))
+                if bench_var > 0:
+                    beta  = round(float(np.cov(p, b)[0, 1] / bench_var), 3)
+                    bench_ann_ret = float((1 + bench_ret.mean()) ** 252 - 1)
+                    alpha = round(float(ann_return - (rf_rate + beta * (bench_ann_ret - rf_rate))) * 100, 2)
+
+    n_days    = len(port_returns)
+    date_from = port_returns.index.min().strftime("%Y-%m-%d")
+    date_to   = port_returns.index.max().strftime("%Y-%m-%d")
+    insufficient = n_days < lookback_days * 0.5
+
+    rolling_sharpe = port_returns.rolling(30).apply(
+        lambda x: (x.mean() * 252 - rf_rate) / (x.std() * np.sqrt(252)) if x.std() > 0 else 0,
+        raw=True,
+    )
+    rs_df = pd.DataFrame({"date": port_returns.index.strftime("%Y-%m-%d"), "sharpe": rolling_sharpe.round(4)}).dropna()
 
     return {
-        "ann_vol_pct": round(ann_vol * 100, 2),
-        "ann_return_pct": round(ann_ret * 100, 2),
-        "sharpe": round(sharpe, 3),
-        "sortino": round(sortino, 3),
-        "max_drawdown_pct": round(max_dd * 100, 2),
-        "var_95_pct": round(var_95 * 100, 2),
-        "cvar_95_pct": round(cvar_95 * 100, 2),
-        "months": n,
-        "drawdown_chart": drawdown_chart,
+        "ann_vol_pct":       round(ann_vol * 100, 2),
+        "sharpe":            round(sharpe, 3),
+        "sortino":           round(sortino, 3),
+        "max_drawdown_pct":  round(max_dd * 100, 2),
+        "var_95_pct":        round(var_95 * 100, 2),
+        "cvar_95_pct":       round(cvar_95 * 100, 2),
+        "var_95_eur":        var_95_eur,
+        "cvar_95_eur":       cvar_95_eur,
+        "beta":              beta,
+        "alpha":             alpha,
+        "trading_days":      n_days,
+        "date_from":         date_from,
+        "date_to":           date_to,
+        "portfolio_value":   round(portfolio_value, 0),
+        "rolling_sharpe":    rs_df.to_dict(orient="records"),
+        "insufficient":      insufficient,
     }
+
+
+# ── Benchmark candidates (for Risk Metrics benchmark selector) ────────────────
+@router.get("/benchmark-candidates")
+def get_benchmark_candidates_endpoint(min_days: int = Query(30)):
+    from database.queries import get_benchmark_candidates
+    df = get_benchmark_candidates(min_days=min_days)
+    return _df_to_list(df)
 
 
 # ── Tax-Loss Harvesting ───────────────────────────────────────────────────────
@@ -1706,3 +2104,625 @@ def delete_goal(goal_id: int):
         raise HTTPException(500, str(e))
     finally:
         conn.close()
+
+
+# ── Savings Accounts — Yield over Cost & APY ───────────────────────────────────
+@router.get("/savings-accounts")
+def get_savings_accounts():
+    """Per-savings-account principal, interest, YOC%, and APY% — lifetime and last interest period."""
+    query = """
+    WITH CategorizedSplits AS (
+        SELECT
+            t.Accounts_Id, t.Transactions_Id, t.Date, t.Transfers_Id,
+            CASE WHEN t.Transfers_Id IS NOT NULL THEN t.Total_Amount ELSE s.Amount END AS Amount,
+            cat.Categories_Type,
+            CASE WHEN t.Transfers_Id IS NOT NULL THEN 'Principal'
+                 WHEN cat.Categories_Type = 'Interest' THEN 'Interest'
+                 ELSE 'Principal' END AS Kind
+        FROM Transactions t
+        LEFT JOIN Splits s   ON s.Transactions_Id = t.Transactions_Id
+        LEFT JOIN Categories cat ON cat.Categories_Id = s.Categories_Id
+        LEFT JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+        WHERE a.Accounts_Type = 'Savings'
+    ),
+    NonEURAccounts AS (
+        SELECT DISTINCT a.Accounts_Id, a.Currencies_Id
+        FROM Accounts a
+        WHERE a.Currencies_Id NOT IN (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+    ),
+    Last_FXRates AS (
+        SELECT nea.Accounts_Id, hfx.FX_Rate
+        FROM Historical_FX hfx
+        JOIN NonEURAccounts nea ON nea.Currencies_Id = hfx.Currencies_Id_1
+        WHERE hfx.Currencies_Id_2 = (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+          AND hfx.Date = (
+                SELECT MAX(h2.Date) FROM Historical_FX h2
+                WHERE h2.Currencies_Id_1 = hfx.Currencies_Id_1 AND h2.Currencies_Id_2 = hfx.Currencies_Id_2
+                  AND h2.Date <= CURRENT_DATE
+              )
+    ),
+    AccountStats AS (
+        SELECT
+            cs.Accounts_Id,
+            MIN(cs.Date) AS first_tx_date,
+            MAX(cs.Date) AS last_tx_date,
+            SUM(CASE WHEN cs.Kind = 'Principal' THEN COALESCE(cs.Amount,0) ELSE 0 END) AS principal,
+            SUM(CASE WHEN cs.Kind = 'Principal' THEN COALESCE(cs.Amount,0) * COALESCE(fx.FX_Rate,1) ELSE 0 END) AS principal_eur,
+            SUM(CASE WHEN cs.Kind = 'Interest' THEN COALESCE(cs.Amount,0) ELSE 0 END) AS total_interest,
+            SUM(CASE WHEN cs.Kind = 'Interest' THEN COALESCE(cs.Amount,0) * COALESCE(fx.FX_Rate,1) ELSE 0 END) AS total_interest_eur
+        FROM CategorizedSplits cs
+        LEFT JOIN Last_FXRates fx ON fx.Accounts_Id = cs.Accounts_Id
+        GROUP BY cs.Accounts_Id
+    ),
+    InterestDates AS (
+        SELECT cs.Accounts_Id, cs.Date AS interest_date,
+               ROW_NUMBER() OVER (PARTITION BY cs.Accounts_Id ORDER BY cs.Date DESC) AS rn
+        FROM (SELECT DISTINCT Accounts_Id, Date FROM CategorizedSplits WHERE Kind = 'Interest') cs
+    ),
+    LastInterestDate  AS (SELECT Accounts_Id, interest_date AS last_interest_date  FROM InterestDates WHERE rn = 1),
+    PriorInterestDate AS (SELECT Accounts_Id, interest_date AS prior_interest_date FROM InterestDates WHERE rn = 2),
+    LastPeriodInterest AS (
+        SELECT cs.Accounts_Id,
+               SUM(cs.Amount) AS last_interest_sum,
+               SUM(cs.Amount * COALESCE(fx.FX_Rate,1)) AS last_interest_sum_eur
+        FROM CategorizedSplits cs
+        JOIN LastInterestDate li ON li.Accounts_Id = cs.Accounts_Id
+        LEFT JOIN Last_FXRates fx ON fx.Accounts_Id = cs.Accounts_Id
+        WHERE cs.Kind = 'Interest' AND cs.Date = li.last_interest_date
+        GROUP BY cs.Accounts_Id
+    ),
+    PeriodDates AS (
+        SELECT pid.Accounts_Id,
+               pid.prior_interest_date + generate_series(0, (lid.last_interest_date - pid.prior_interest_date) - 1)::int AS calendar_day
+        FROM PriorInterestDate pid
+        JOIN LastInterestDate lid ON pid.Accounts_Id = lid.Accounts_Id
+    ),
+    DailyBalances AS (
+        SELECT pd.Accounts_Id, pd.calendar_day,
+               (SELECT SUM(cs.Amount) FROM CategorizedSplits cs
+                WHERE cs.Accounts_Id = pd.Accounts_Id AND cs.Date <= pd.calendar_day) AS daily_balance
+        FROM PeriodDates pd
+    ),
+    PeriodAverageBalance AS (
+        SELECT dbal.Accounts_Id, AVG(dbal.daily_balance) AS avg_period_balance
+        FROM DailyBalances dbal
+        GROUP BY dbal.Accounts_Id
+    )
+    SELECT
+        a.Accounts_Id AS accounts_id,
+        a.Accounts_Name AS accounts_name,
+        a.Accounts_Type AS accounts_type,
+        c.Currencies_ShortName AS currency,
+        a.Accounts_Balance AS current_balance,
+        ast.first_tx_date::text AS first_tx_date,
+        ast.last_tx_date::text AS last_tx_date,
+        lid.last_interest_date::text AS last_interest_date,
+        ast.principal,
+        ast.principal_eur,
+        ast.total_interest,
+        ast.total_interest_eur,
+        pid.prior_interest_date::text AS prior_interest_date,
+        lpi.last_interest_sum,
+        pab.avg_period_balance
+    FROM Accounts a
+    JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
+    LEFT JOIN AccountStats ast ON ast.Accounts_Id = a.Accounts_Id
+    LEFT JOIN PriorInterestDate pid ON pid.Accounts_Id = a.Accounts_Id
+    LEFT JOIN LastInterestDate lid ON lid.Accounts_Id = a.Accounts_Id
+    LEFT JOIN LastPeriodInterest lpi ON lpi.Accounts_Id = a.Accounts_Id
+    LEFT JOIN PeriodAverageBalance pab ON pab.Accounts_Id = a.Accounts_Id
+    WHERE a.Accounts_Type = 'Savings'
+    ORDER BY a.Accounts_Name
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn)
+
+    if df.empty:
+        return {"summary": {}, "detail": [], "detail_last": []}
+
+    for dc in ["first_tx_date", "last_tx_date", "last_interest_date", "prior_interest_date"]:
+        df[dc] = pd.to_datetime(df[dc], errors="coerce")
+
+    df["holding_days_total"] = (df["last_tx_date"] - df["first_tx_date"]).dt.days.clip(lower=1)
+    principal_safe = df["principal"].replace(0, float("nan"))
+
+    df["annual_interest_cash"] = df["total_interest"] / df["holding_days_total"] * 365
+    df["annual_yoc_pct"] = (df["annual_interest_cash"] / principal_safe * 100).fillna(0)
+
+    r_total = df["total_interest"] / principal_safe
+    df["apy_pct"] = (((1 + r_total) ** (365 / df["holding_days_total"]) - 1) * 100).fillna(0)
+
+    period_start = df["prior_interest_date"].fillna(df["first_tx_date"])
+    df["period_start_date"] = period_start
+    df["holding_days_last"] = (df["last_interest_date"] - period_start).dt.days.clip(lower=1)
+
+    avg_p_safe = df["avg_period_balance"].replace(0, float("nan"))
+    df["avg_principal_last"] = avg_p_safe
+    df["annual_interest_cash_last"] = df["last_interest_sum"] / df["holding_days_last"] * 365
+    df["annual_yoc_pct_last"] = (df["annual_interest_cash_last"] / avg_p_safe * 100).fillna(0)
+
+    r_last = df["last_interest_sum"] / avg_p_safe
+    df["apy_pct_last"] = (((1 + r_last) ** (365 / df["holding_days_last"]) - 1) * 100).fillna(0)
+
+    savings_accounts_count = len(df)
+    total_principal_eur = float(df["principal_eur"].sum())
+    total_interest_eur = float(df["total_interest_eur"].sum())
+    yoc_nonzero = df["annual_yoc_pct"].replace(0, float("nan"))
+    apy_nonzero = df["apy_pct"].replace(0, float("nan"))
+    avg_yoc = float(yoc_nonzero.mean()) if not yoc_nonzero.dropna().empty else None
+    avg_apy = float(apy_nonzero.mean()) if not apy_nonzero.dropna().empty else None
+
+    detail_cols = [
+        "accounts_name", "accounts_type", "currency",
+        "principal", "total_interest", "annual_interest_cash",
+        "current_balance", "annual_yoc_pct", "apy_pct",
+        "holding_days_total", "first_tx_date", "last_tx_date",
+    ]
+    detail_cols_last = [
+        "accounts_name", "accounts_type", "currency",
+        "avg_principal_last", "last_interest_sum", "annual_interest_cash_last",
+        "annual_yoc_pct_last", "apy_pct_last",
+        "holding_days_last", "period_start_date", "last_interest_date",
+    ]
+
+    detail_df = df[detail_cols].copy()
+    detail_last_df = df[detail_cols_last].copy()
+
+    summary = {
+        "savings_accounts_count": savings_accounts_count,
+        "total_principal_eur": round(total_principal_eur, 2),
+        "total_interest_eur": round(total_interest_eur, 2),
+        "avg_yoc_pct": round(avg_yoc, 4) if avg_yoc is not None else None,
+        "avg_apy_pct": round(avg_apy, 4) if avg_apy is not None else None,
+        "chart": [
+            {"accounts_name": r["accounts_name"], "annual_yoc_pct": round(float(r["annual_yoc_pct"]), 4)}
+            for _, r in df[df["annual_yoc_pct"] != 0].sort_values("annual_yoc_pct").iterrows()
+        ],
+    }
+
+    return {
+        "summary": summary,
+        "detail": _df_to_list(detail_df),
+        "detail_last": _df_to_list(detail_last_df),
+    }
+
+
+# ── Bond Schedule ─────────────────────────────────────────────────────────────
+@router.get("/bond-schedule")
+def get_bond_schedule():
+    query = """
+    WITH fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+    ),
+    bond_holdings AS (
+        SELECT h.Securities_Id, s.Securities_Name, h.Quantity,
+               s.Maturity_Date, s.Coupon_Rate, s.Face_Value, s.Coupon_Frequency,
+               s.Currencies_Id, c.Currencies_ShortName AS currency
+        FROM Holdings h
+        JOIN Securities s ON h.Securities_Id = s.Securities_Id
+        JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
+        WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond'
+    )
+    SELECT
+        bh.Securities_Name,
+        bh.Quantity,
+        bh.Face_Value,
+        ROUND((bh.Quantity * COALESCE(bh.Face_Value,0))::numeric, 2) AS total_face_native,
+        ROUND((bh.Quantity * COALESCE(bh.Face_Value,0) * COALESCE(fx.FX_Rate,1))::numeric, 2) AS total_face_eur,
+        bh.Coupon_Rate,
+        bh.Coupon_Frequency,
+        ROUND((bh.Quantity * COALESCE(bh.Face_Value,0) * COALESCE(bh.Coupon_Rate,0) / 100 *
+            CASE bh.Coupon_Frequency
+                WHEN 'At Maturity' THEN 0 WHEN 'Semi-Annual' THEN 0.5
+                WHEN 'Quarterly'   THEN 0.25 WHEN 'Monthly'  THEN 1.0/12
+                ELSE 1.0 END * COALESCE(fx.FX_Rate,1))::numeric, 2) AS next_coupon_eur,
+        ROUND((bh.Quantity * COALESCE(bh.Face_Value,0) * COALESCE(bh.Coupon_Rate,0) / 100 *
+            CASE bh.Coupon_Frequency WHEN 'At Maturity' THEN 0 ELSE 1.0 END
+            * COALESCE(fx.FX_Rate,1))::numeric, 2) AS annual_coupon_eur,
+        bh.Maturity_Date::text AS maturity_date,
+        (bh.Maturity_Date - CURRENT_DATE) AS days_to_maturity,
+        bh.currency
+    FROM bond_holdings bh
+    LEFT JOIN fx ON fx.Currencies_Id_1 = bh.Currencies_Id
+    ORDER BY bh.Maturity_Date ASC NULLS LAST
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn)
+    return _df_to_list(df)
+
+
+def _parse_account_ids(account_ids: Optional[str]) -> Optional[list]:
+    if not account_ids:
+        return None
+    ids = [int(x) for x in account_ids.split(",") if x.strip()]
+    return ids or None
+
+
+def _acct_clause(account_ids: Optional[list], col: str = "h.Accounts_Id") -> str:
+    if not account_ids:
+        return ""
+    ids_sql = ",".join(str(i) for i in account_ids)
+    return f" AND {col} IN ({ids_sql})"
+
+
+# ── Portfolio Presets ───────────────────────────────────────────────────────────
+def _ensure_presets_table(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Portfolio_Presets (
+            Preset_Id   SERIAL PRIMARY KEY,
+            Preset_Name VARCHAR(100) UNIQUE NOT NULL,
+            Account_Ids INTEGER[] NOT NULL DEFAULT '{}',
+            Created_At  TIMESTAMP DEFAULT NOW(),
+            Updated_At  TIMESTAMP DEFAULT NOW()
+        )
+    """)
+
+
+@router.get("/portfolio-presets")
+def get_portfolio_presets():
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        _ensure_presets_table(cur)
+        conn.commit()
+        df = pd.read_sql("""
+            SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Account_Ids AS account_ids
+            FROM Portfolio_Presets ORDER BY Preset_Name
+        """, conn)
+        return _df_to_list(df)
+    finally:
+        conn.close()
+
+
+@router.post("/portfolio-presets")
+def upsert_portfolio_preset(data: dict):
+    name = (data.get("name") or "").strip()
+    account_ids = data.get("account_ids") or []
+    if not name:
+        raise HTTPException(400, "Preset name is required")
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        _ensure_presets_table(cur)
+        cur.execute("""
+            INSERT INTO Portfolio_Presets (Preset_Name, Account_Ids, Updated_At)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (Preset_Name) DO UPDATE
+                SET Account_Ids = EXCLUDED.Account_Ids, Updated_At = NOW()
+        """, (name, account_ids))
+        conn.commit()
+        return {"saved": name}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/portfolio-presets/{preset_id}")
+def delete_portfolio_preset(preset_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        _ensure_presets_table(cur)
+        cur.execute("DELETE FROM Portfolio_Presets WHERE Preset_Id = %s", (preset_id,))
+        conn.commit()
+        return {"deleted": preset_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+# ── Benchmark candidates ───────────────────────────────────────────────────────
+@router.get("/benchmark-candidates")
+def get_benchmark_candidates(min_days: int = Query(30)):
+    query = """
+    SELECT s.Securities_Id AS id, s.Securities_Name AS name, s.Ticker AS ticker,
+           COUNT(hp.Date) AS price_days
+    FROM Securities s
+    JOIN Historical_Prices hp ON hp.Securities_Id = s.Securities_Id
+    WHERE s.Securities_Type = 'Market Index'
+    GROUP BY s.Securities_Id, s.Securities_Name, s.Ticker
+    HAVING COUNT(hp.Date) >= %(min_days)s
+    ORDER BY s.Securities_Name
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params={"min_days": min_days})
+    return _df_to_list(df)
+
+
+# ── Benchmark comparison ───────────────────────────────────────────────────────
+@router.get("/benchmark")
+def get_benchmark(
+    benchmark_id: int = Query(...),
+    lookback_days: int = Query(252),
+    account_ids: Optional[str] = Query(None),
+    resample: str = Query("Daily"),
+):
+    """Portfolio (weighted avg of holdings) vs benchmark, both indexed to 100."""
+    acct_ids = _parse_account_ids(account_ids)
+    held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    weights_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+
+    with get_db() as conn:
+        prices_df = pd.read_sql(f"""
+            WITH held AS (
+                SELECT DISTINCT h.Securities_Id FROM Holdings h WHERE h.Quantity > 0{held_clause}
+            ),
+            price_counts AS (
+                SELECT hp.Securities_Id FROM Historical_Prices hp
+                JOIN held ON held.Securities_Id = hp.Securities_Id
+                GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
+            )
+            SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
+            FROM Historical_Prices hp
+            JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
+            JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+            WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+            ORDER BY hp.Date
+        """, conn, params={"lb": lookback_days})
+
+        weights_df = pd.read_sql(f"""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+                 lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+            SELECT s.Securities_Name AS ticker,
+                   SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id=h.Securities_Id
+            JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
+            JOIN lp ON lp.Securities_Id=h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+            WHERE h.Quantity > 0{weights_clause}
+            GROUP BY s.Securities_Name
+            HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
+        """, conn)
+
+        bench_df = pd.read_sql("""
+            SELECT Date AS date, Close AS close FROM Historical_Prices
+            WHERE Securities_Id = %(bid)s AND Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+            ORDER BY Date
+        """, conn, params={"bid": benchmark_id, "lb": lookback_days})
+
+    if prices_df.empty or weights_df.empty or bench_df.empty:
+        return []
+
+    prices_df["date"] = pd.to_datetime(prices_df["date"])
+    bench_df["date"]  = pd.to_datetime(bench_df["date"])
+
+    wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean")
+    total = weights_df["value_eur"].sum()
+    weights_df["weight"] = weights_df["value_eur"] / total
+    w = weights_df.set_index("ticker")["weight"]
+    common = wide.columns.intersection(w.index)
+    wide = wide[common]
+    w = w[common]
+    w = w / w.sum()
+
+    wide_ffill = wide.ffill()
+    ret = wide_ffill.pct_change().fillna(0)
+    port_ret = ret.dot(w)
+    port_idx = (1 + port_ret).cumprod() * 100
+    port_idx.iloc[0] = 100
+
+    bench_s = bench_df.set_index("date")["close"].reindex(port_idx.index).ffill().bfill()
+    first_bench = bench_s.iloc[0] if not pd.isna(bench_s.iloc[0]) else bench_s.dropna().iloc[0] if not bench_s.dropna().empty else None
+    bench_idx = bench_s / first_bench * 100 if first_bench else pd.Series(index=port_idx.index, dtype=float)
+
+    combined = pd.DataFrame({"portfolio": port_idx, "benchmark": bench_idx})
+
+    resample_map = {"Daily": None, "Weekly": "W", "Monthly": "ME"}
+    freq = resample_map.get(resample)
+    if freq:
+        combined = combined.resample(freq).last().dropna(how="all")
+
+    result = []
+    for d, row in combined.iterrows():
+        result.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "portfolio": round(float(row["portfolio"]), 4) if not pd.isna(row["portfolio"]) else None,
+            "benchmark": round(float(row["benchmark"]), 4) if not pd.isna(row["benchmark"]) else None,
+        })
+    return result
+
+
+# ── Correlation matrix ─────────────────────────────────────────────────────────
+@router.get("/correlation")
+def get_correlation(
+    lookback_days: int = Query(252),
+    max_holdings: int = Query(20),
+    account_ids: Optional[str] = Query(None),
+):
+    acct_ids = _parse_account_ids(account_ids)
+    weights_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    with get_db() as conn:
+        weights_df = pd.read_sql(f"""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+                 lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+            SELECT s.Securities_Name AS ticker,
+                   SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id=h.Securities_Id
+            JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
+            JOIN lp ON lp.Securities_Id=h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+            WHERE h.Quantity > 0{weights_clause}
+            GROUP BY s.Securities_Name
+            HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
+            ORDER BY value_eur DESC
+            LIMIT %(max_h)s
+        """, conn, params={"max_h": max_holdings})
+
+        if weights_df.empty:
+            return {"tickers": [], "matrix": []}
+
+        tickers = tuple(weights_df["ticker"].tolist())
+        prices_df = pd.read_sql("""
+            SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
+            FROM Historical_Prices hp
+            JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+            WHERE s.Securities_Name IN %(tickers)s
+              AND hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+            ORDER BY hp.Date
+        """, conn, params={"tickers": tickers, "lb": lookback_days})
+
+    if prices_df.empty:
+        return {"tickers": [], "matrix": []}
+
+    prices_df["date"] = pd.to_datetime(prices_df["date"])
+    wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean").ffill()
+    ret = wide.pct_change().dropna(how="all")
+    corr = ret.corr()
+    tickers = corr.columns.tolist()
+    matrix = [[round(float(v), 4) if not pd.isna(v) else None for v in row] for row in corr.values]
+    return {"tickers": tickers, "matrix": matrix}
+
+
+# ── Monte Carlo projection ──────────────────────────────────────────────────────
+@router.get("/monte-carlo")
+def get_monte_carlo(
+    years_ahead: int = Query(10),
+    num_sims: int = Query(500),
+    monthly_contrib: float = Query(500.0),
+    lookback_days: int = Query(756),
+    account_ids: Optional[str] = Query(None),
+    initial_value: Optional[float] = Query(None),
+    override_return_pct: Optional[float] = Query(None),
+    override_vol_pct: Optional[float] = Query(None),
+):
+    import numpy as np
+    acct_ids = _parse_account_ids(account_ids)
+    held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+
+    with get_db() as conn:
+        prices_df = pd.read_sql(f"""
+            WITH held AS (
+                SELECT DISTINCT h.Securities_Id FROM Holdings h WHERE h.Quantity > 0{held_clause}
+            ),
+            price_counts AS (
+                SELECT hp.Securities_Id FROM Historical_Prices hp
+                JOIN held ON held.Securities_Id = hp.Securities_Id
+                GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
+            )
+            SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
+            FROM Historical_Prices hp
+            JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
+            JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+            WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+            ORDER BY hp.Date
+        """, conn, params={"lb": lookback_days})
+
+        weights_df = pd.read_sql(f"""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+                 lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+            SELECT s.Securities_Name AS ticker,
+                   SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id=h.Securities_Id
+            JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
+            JOIN lp ON lp.Securities_Id=h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+            WHERE h.Quantity > 0{held_clause}
+            GROUP BY s.Securities_Name
+            HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
+        """, conn)
+
+    current_value = float(weights_df["value_eur"].sum()) if not weights_df.empty else 0.0
+    init_val = initial_value if initial_value is not None else current_value
+
+    ann_return = None
+    ann_vol = None
+    if not prices_df.empty and not weights_df.empty:
+        prices_df["date"] = pd.to_datetime(prices_df["date"])
+        wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean")
+        total = weights_df["value_eur"].sum()
+        weights_df["weight"] = weights_df["value_eur"] / total
+        w = weights_df.set_index("ticker")["weight"]
+        common = wide.columns.intersection(w.index)
+        wide = wide[common]
+        w = w[common]
+        if w.sum() > 0:
+            w = w / w.sum()
+            ret = wide.ffill().pct_change().dropna(how="all").fillna(0)
+            port_ret = ret.dot(w)
+            if len(port_ret) > 5:
+                ann_return = float(port_ret.mean() * 252)
+                ann_vol = float(port_ret.std() * np.sqrt(252))
+
+    if ann_return is None:
+        ann_return, ann_vol = 0.06, 0.12
+
+    used_return = (override_return_pct / 100) if override_return_pct is not None else ann_return
+    used_vol = (override_vol_pct / 100) if override_vol_pct is not None else ann_vol
+
+    n_steps = max(1, years_ahead * 12)
+    monthly_mean = (1 + used_return) ** (1 / 12) - 1
+    monthly_vol = used_vol / np.sqrt(12)
+
+    rng = np.random.default_rng(42)
+    sim_returns = rng.normal(monthly_mean, monthly_vol, size=(num_sims, n_steps))
+    paths = np.zeros((num_sims, n_steps + 1))
+    paths[:, 0] = init_val
+    for t in range(1, n_steps + 1):
+        paths[:, t] = paths[:, t - 1] * (1 + sim_returns[:, t - 1]) + monthly_contrib
+
+    p10 = np.percentile(paths, 10, axis=0)
+    p50 = np.percentile(paths, 50, axis=0)
+    p90 = np.percentile(paths, 90, axis=0)
+
+    chart = [{"month": m, "p10": round(float(p10[m]), 2), "p50": round(float(p50[m]), 2), "p90": round(float(p90[m]), 2)}
+             for m in range(n_steps + 1)]
+
+    targets = [50000, 100000, 250000, 500000, 1000000]
+    final_vals = paths[:, -1]
+    probabilities = [{"target": t, "probability_pct": round(float((final_vals >= t).mean() * 100), 1)} for t in targets]
+
+    return {
+        "calibration": {
+            "ann_return_pct": round(ann_return * 100, 2),
+            "ann_vol_pct": round(ann_vol * 100, 2),
+        },
+        "used": {
+            "ann_return_pct": round(used_return * 100, 2),
+            "ann_vol_pct": round(used_vol * 100, 2),
+            "initial_value": round(init_val, 2),
+        },
+        "chart": chart,
+        "probabilities": probabilities,
+    }
+
+
+# ── Portfolio Signals (Securities & Portfolio Analysis) ────────────────────────
+@router.get("/portfolio-signals")
+def get_portfolio_signals_endpoint():
+    from database.queries import get_portfolio_signals
+    df = get_portfolio_signals(None)
+    if df is None or df.empty:
+        return []
+    return _df_to_list(df)
+
+
+# ── Income & Expense Full (Streamlit-equivalent) ───────────────────────────────
+@router.get("/income-expense-full")
+def get_income_expense_full(
+    start_date: str = Query("2024-01-01"),
+    end_date: str = Query("2099-12-31"),
+    cash_account_types: str = Query("Cash,Checking,Savings,Credit Card,Loan,Real Estate,Vehicle,Asset,Liability,Other"),
+    inv_account_types: str = Query("Brokerage,Other Investment,Margin"),
+    category_id: Optional[int] = Query(None),
+):
+    from database.queries import get_income_expense_data
+    cash_list = [t.strip() for t in cash_account_types.split(",") if t.strip()]
+    inv_list = [t.strip() for t in inv_account_types.split(",") if t.strip()]
+    df = get_income_expense_data(start_date, end_date, category_id, cash_list, inv_list)
+    if df is None or df.empty:
+        return []
+    # Normalise column name casing coming from DB
+    df.columns = [c.lower() for c in df.columns]
+    if "date" in df.columns:
+        df["date"] = df["date"].astype(str).str[:10]
+    if "month_date" in df.columns:
+        df["month_date"] = df["month_date"].astype(str).str[:10]
+    return _df_to_list(df)

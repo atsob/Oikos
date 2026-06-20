@@ -609,18 +609,34 @@ export default function Dashboard() {
   // For trend chart — use backend data (all accounts)
   const nwData = netWorth as Record<string, unknown>[]
 
-  // Delta vs previous month: last end-of-month point before the current month
-  const thisMonth = new Date().toISOString().slice(0, 7) // "YYYY-MM"
-  const prevMonthPoint = [...nwData].reverse().find(d => String(d.date).slice(0, 7) < thisMonth)
-  const deltaPrevMonth = prevMonthPoint != null ? totalNetWorth - Number(prevMonthPoint.total_net_worth) : null
+  const today      = new Date().toISOString().slice(0, 10)
+  const yesterday  = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  const thisMonth  = today.slice(0, 7)
+  const thisYear   = today.slice(0, 4)
 
-  // Delta YTD: last end-of-month point before this year (i.e. Dec of last year)
-  const thisYear = new Date().getFullYear().toString()
-  const ytdPoint = [...nwData].reverse().find(d => String(d.date).slice(0, 4) < thisYear)
-  const deltaYTD = ytdPoint != null ? totalNetWorth - Number(ytdPoint.total_net_worth) : null
+  const nwReversed = [...nwData].reverse()
+  const prevMonthPoint   = nwReversed.find(d => String(d.date).slice(0, 7) < thisMonth)
+  const ytdPoint         = nwReversed.find(d => String(d.date).slice(0, 4) < thisYear)
+  const yesterdayPoint   = nwData.find(d => String(d.date).slice(0, 10) === yesterday)
 
-  const fmtDelta = (v: number) => `${v >= 0 ? '+' : ''}${fmtEur(v)}`
+  const fmtDelta  = (v: number) => `${v >= 0 ? '+' : ''}${fmtEur(v)}`
   const deltaColor = (v: number | null) => v == null ? 'text-slate-400' : v >= 0 ? 'text-green-600' : 'text-red-600'
+
+  // Net Worth deltas
+  const deltaPrevMonth = prevMonthPoint != null ? totalNetWorth - Number(prevMonthPoint.total_net_worth) : null
+  const deltaYTD       = ytdPoint       != null ? totalNetWorth - Number(ytdPoint.total_net_worth)       : null
+
+  // Cash & Savings deltas
+  const deltaCashPrevMonth = prevMonthPoint != null ? totalCash - Number(prevMonthPoint.total_cash) : null
+  const deltaCashYTD       = ytdPoint       != null ? totalCash - Number(ytdPoint.total_cash)       : null
+
+  // Investments deltas
+  const deltaInvDaily = yesterdayPoint != null ? totalInv - Number(yesterdayPoint.total_invested) : null
+  const deltaInvYTD   = ytdPoint       != null ? totalInv - Number(ytdPoint.total_invested)       : null
+
+  // Pension deltas
+  const deltaPenPrevMonth = prevMonthPoint != null ? totalPension - Number(prevMonthPoint.total_pension) : null
+  const deltaPenYTD       = ytdPoint       != null ? totalPension - Number(ytdPoint.total_pension)       : null
 
   // Build period lists for AI summaries
   const monthPeriods: string[] = []
@@ -693,9 +709,30 @@ export default function Dashboard() {
               deltaYTD != null ? { text: `${fmtDelta(deltaYTD)} YTD`, color: deltaColor(deltaYTD) } : { text: '— YTD' },
             ]}
           />
-          <StatCard label="Cash & Savings" value={fmtEur(totalCash)} />
-          <StatCard label="Investments" value={fmtEur(totalInv)} />
-          <StatCard label="Pension" value={fmtEur(totalPension)} />
+          <StatCard
+            label="Cash & Savings"
+            value={fmtEur(totalCash)}
+            subs={[
+              deltaCashPrevMonth != null ? { text: `${fmtDelta(deltaCashPrevMonth)} vs prev month`, color: deltaColor(deltaCashPrevMonth) } : { text: '— vs prev month' },
+              deltaCashYTD != null ? { text: `${fmtDelta(deltaCashYTD)} YTD`, color: deltaColor(deltaCashYTD) } : { text: '— YTD' },
+            ]}
+          />
+          <StatCard
+            label="Investments"
+            value={fmtEur(totalInv)}
+            subs={[
+              deltaInvDaily != null ? { text: `${fmtDelta(deltaInvDaily)} daily`, color: deltaColor(deltaInvDaily) } : { text: '— daily' },
+              deltaInvYTD != null ? { text: `${fmtDelta(deltaInvYTD)} YTD`, color: deltaColor(deltaInvYTD) } : { text: '— YTD' },
+            ]}
+          />
+          <StatCard
+            label="Pension"
+            value={fmtEur(totalPension)}
+            subs={[
+              deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
+              deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
+            ]}
+          />
         </div>
 
         {/* Insights + Drafts */}

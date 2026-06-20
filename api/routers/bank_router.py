@@ -426,6 +426,12 @@ def ib_flex_parse(data: dict):
                 k: {"sec_id": v[0], "match_type": v[1]}
                 for k, v in sec_matches.items()
             },
+            "diag_dedup": {
+                "existing_inv": len(existing_inv),
+                "fuzzy_inv": len(fuzzy_inv),
+                "existing_tx": len(existing_tx),
+                "fuzzy_tx": len(fuzzy_tx),
+            },
         }
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -930,9 +936,100 @@ def coinbase_import(data: dict):
                 tx_records  = [r for r in tx_records  if r["desc"] not in existing_tx]
 
         counts = run_coinbase_import(
-            inv_records, tx_records, acc_id, cash_acc_id,
+            inv_records, tx_records, acc_id,
             replace_mode=replace_mode,
+            cash_account_id=cash_acc_id,
         )
+        return counts
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── Revolut Savings ───────────────────────────────────────────────────────────
+
+@router.post("/revolut-savings-parse")
+async def revolut_savings_parse(
+    file: UploadFile = File(...),
+    account_id: int = Query(...),
+    mode: str = Query("inv"),   # 'inv' or 'tx'
+):
+    try:
+        from data.revolut_importer import (
+            parse_revolut_savings_csv, build_savings_records, build_savings_records_as_tx,
+            check_existing_records, check_fuzzy_duplicates, preview_savings_security,
+        )
+        file_bytes = await file.read()
+        df_raw = parse_revolut_savings_csv(file_bytes)
+        if mode == "inv":
+            inv_records, tx_records = build_savings_records(df_raw)
+        else:
+            inv_records, tx_records = build_savings_records_as_tx(df_raw)
+
+        existing_inv, existing_tx = check_existing_records(inv_records, tx_records, account_id)
+        fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(inv_records, tx_records, account_id)
+        fuzzy_inv -= existing_inv
+        fuzzy_tx -= existing_tx
+
+        def _annotate(records, existing, fuzzy):
+            out = []
+            for r in records:
+                d = dict(r)
+                if r["desc"] in existing:
+                    d["status"] = "exists"
+                elif r["desc"] in fuzzy:
+                    d["status"] = "likely_dup"
+                else:
+                    d["status"] = "new"
+                if hasattr(d.get("date"), "isoformat"):
+                    d["date"] = d["date"].isoformat()
+                out.append(d)
+            return out
+
+        summary = {
+            "rows": int(len(df_raw)),
+            "date_from": str(df_raw["date"].min()) if not df_raw.empty else None,
+            "date_to":   str(df_raw["date"].max()) if not df_raw.empty else None,
+        }
+        result = {
+            "inv_records": _annotate(inv_records, existing_inv, fuzzy_inv),
+            "tx_records":  _annotate(tx_records, existing_tx, fuzzy_tx),
+            "summary": summary,
+        }
+        if mode == "inv":
+            result["sec_info"] = preview_savings_security()
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/revolut-savings-import")
+async def revolut_savings_import(
+    file: UploadFile = File(...),
+    account_id: int = Query(...),
+    mode: str = Query("inv"),
+    replace_mode: bool = Query(False),
+):
+    try:
+        from data.revolut_importer import (
+            parse_revolut_savings_csv, build_savings_records, build_savings_records_as_tx,
+            check_existing_records, check_fuzzy_duplicates, run_savings_import,
+        )
+        file_bytes = await file.read()
+        df_raw = parse_revolut_savings_csv(file_bytes)
+        if mode == "inv":
+            inv_records, tx_records = build_savings_records(df_raw)
+        else:
+            inv_records, tx_records = build_savings_records_as_tx(df_raw)
+
+        if not replace_mode:
+            existing_inv, existing_tx = check_existing_records(inv_records, tx_records, account_id)
+            fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(inv_records, tx_records, account_id)
+            fuzzy_inv -= existing_inv
+            fuzzy_tx -= existing_tx
+            inv_records = [r for r in inv_records if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
+            tx_records  = [r for r in tx_records  if r["desc"] not in existing_tx  and r["desc"] not in fuzzy_tx]
+
+        counts = run_savings_import(inv_records, tx_records, account_id, replace_mode=replace_mode)
         return counts
     except Exception as e:
         raise HTTPException(500, str(e))

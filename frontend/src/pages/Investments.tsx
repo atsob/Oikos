@@ -59,7 +59,7 @@ const INV_COLS: ColDef[] = [
   }) },
   { field: 'ticker', headerName: 'Ticker', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
   { field: 'security', headerName: 'Security', flex: 2, minWidth: 160 },
-  { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { maximumFractionDigits: 6 }) : '—' },
+  { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { maximumFractionDigits: 8 }) : '—' },
   { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
@@ -145,7 +145,7 @@ function InvModal({ form, onChange, accounts, allAccounts, securities, onSave, o
       const isIncome = ['Dividend', 'Reinvest', 'IntInc', 'ShrIn', 'MiscInc', 'RtrnCap'].includes(next.action)
       const baseSec = qty * price
       const totalSec = isIncome ? baseSec : baseSec + comm
-      next.total_amount_seccur = totalSec.toFixed(6)
+      next.total_amount_seccur = totalSec.toFixed(8)
       next.total_amount_acccur = (totalSec * fx).toFixed(2)
     }
     onChange(next)
@@ -1142,6 +1142,9 @@ export default function Investments() {
                     columnDefs={CASH_COLS}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openCashEdit(e.data as Record<string, unknown>) }}
+                    onGridReady={e => e.api.autoSizeAllColumns()}
+                    onFirstDataRendered={e => e.api.autoSizeAllColumns()}
+                    onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                   />
                 </div>
               )}
@@ -1157,6 +1160,9 @@ export default function Investments() {
                     columnDefs={INV_COLS}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
+                    onGridReady={e => e.api.autoSizeAllColumns()}
+                    onFirstDataRendered={e => e.api.autoSizeAllColumns()}
+                    onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                   />
                 </div>
                 {(invData?.total ?? 0) > PAGE_SIZE && (

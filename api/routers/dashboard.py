@@ -31,6 +31,7 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
     dates AS (
         SELECT d FROM months WHERE d <= CURRENT_DATE
         UNION SELECT CURRENT_DATE::date
+        UNION SELECT (CURRENT_DATE - 1)::date
     ),
     historical_assets AS (
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,

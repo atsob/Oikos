@@ -4167,6 +4167,7 @@ def get_investment_consistency_data(account_ids=None):
     df = pd.read_sql(f"""
         SELECT
             i.Investments_Id                        AS investments_id,
+            i.Accounts_Id                           AS accounts_id,
             i.Date                                  AS date,
             a.Accounts_Name                         AS account,
             s.Securities_Name                       AS security,

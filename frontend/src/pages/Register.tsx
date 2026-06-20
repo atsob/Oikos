@@ -46,7 +46,7 @@ function ClearedCell({ data }: { data: Record<string, unknown> }) {
 }
 
 const COL_DEFS: ColDef[] = [
-  { field: 'date', headerName: 'Date', width: 100, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
+  { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180 },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
@@ -497,7 +497,7 @@ export default function Register() {
     staleTime: 30_000,
   })
 
-  const onGridReady = useCallback((e: GridReadyEvent) => setGridApi(e.api), [])
+  const onGridReady = useCallback((e: GridReadyEvent) => { setGridApi(e.api); e.api.autoSizeAllColumns() }, [])
 
   const setPeriod = (label: string, from: string) => {
     setFromDate(from)
@@ -828,6 +828,8 @@ export default function Register() {
                 columnDefs={COL_DEFS}
                 onGridReady={onGridReady}
                 onRowClicked={onRowClicked}
+                onFirstDataRendered={e => e.api.autoSizeAllColumns()}
+                onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                 defaultColDef={{ resizable: true, sortable: true, filter: true }}
                 rowSelection="single"
                 suppressCellFocus={false}

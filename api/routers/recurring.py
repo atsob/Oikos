@@ -344,15 +344,15 @@ def confirm_draft(tx_id: int):
         cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
 
         if target_account and not existing_transfers_id:
+            cur.execute("SELECT nextval('transfers_id_seq')")
+            shared_tid = cur.fetchone()[0]
             # Create the mirror inflow leg in the target account
             cur.execute("""
                 INSERT INTO Transactions
                     (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
                 VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
-                RETURNING Transactions_Id
-            """, (target_account, date, description, abs(float(amount or 0)), payees_id, src_account, tx_id))
-            mirror_id = cur.fetchone()[0]
-            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
+            """, (target_account, date, description, abs(float(amount or 0)), payees_id, src_account, shared_tid))
+            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
 
         conn.commit()
         return {"confirmed": tx_id}

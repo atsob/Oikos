@@ -10,8 +10,8 @@ import {
   getBankPayees as getPayees, getBankCategories as getCategories,
   parseStatement, getAppTransactions, applyBankImport,
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport,
-  revtParse, revtImport, importFile,
-  getImporterSettings, saveImporterSettings,
+  revtParse, revtImport, revsParse, revsImport, importFile,
+  getImporterSettings, saveImporterSettings, getLinkedAccount,
   saxoGetSettings, saxoSaveAccountMap, saxoGetAuthUrl, saxoExchangeCode, saxoRefreshToken,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
@@ -805,22 +805,48 @@ function RevolutPersonalTab() {
 
 function RevolutSavingsTab() {
   const [file, setFile] = useState<File | null>(null)
-  const [mode, setMode] = useState<'tx' | 'inv'>('tx')
+  const [mode, setMode] = useState<'tx' | 'inv'>('inv')
   const [accountId, setAccountId] = useState<number | null>(null)
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
-  const { data: accounts = [] } = useQuery({ queryKey: ['bank-accounts'], queryFn: getBankAccounts })
+  const [replaceMode, setReplaceMode] = useState(false)
+  const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+  const [expandedInv, setExpandedInv] = useState(true)
+  const [expandedTx, setExpandedTx] = useState(true)
+
+  const { data: allAccounts = [] } = useQuery({ queryKey: ['all-accounts'], queryFn: getAllAccounts })
+  const brokerAccTypes = ['Brokerage', 'Margin', 'Other Investment', 'Pension']
+  const invAccounts  = (allAccounts as Record<string, unknown>[]).filter(a => brokerAccTypes.includes(a.type as string))
+  const cashAccounts = (allAccounts as Record<string, unknown>[]).filter(a => !brokerAccTypes.includes(a.type as string))
+  const accounts = mode === 'inv' ? invAccounts : cashAccounts
+
   const saveSettings = useImporterSettings('revs', s => {
     if (s.account_id) setAccountId(s.account_id as number)
     if (s.mode) setMode(s.mode as 'tx' | 'inv')
   })
 
-  const importMut = useMutation({
-    mutationFn: () => {
-      const fd = new FormData(); fd.append('file', file!)
-      return importFile('revolut', fd)
-    },
-    onSuccess: (d) => { setResult(d); saveSettings({ account_id: accountId, mode }) },
+  // Reset account when mode changes to avoid showing wrong account type
+  const handleModeChange = (m: 'tx' | 'inv') => {
+    setMode(m)
+    setAccountId(null)
+    setParseResult(null)
+  }
+
+  const parseMut = useMutation({
+    mutationFn: () => revsParse(file!, accountId!, mode),
+    onSuccess: (d) => { setParseResult(d); saveSettings({ account_id: accountId, mode }) },
   })
+
+  const importMut = useMutation({
+    mutationFn: () => revsImport(file!, accountId!, mode, replaceMode),
+    onSuccess: (d) => { setImportResult(d); saveSettings({ account_id: accountId, mode }) },
+  })
+
+  const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
+  const tx  = (parseResult?.tx_records  as Record<string, unknown>[]) ?? []
+  const newInv = inv.filter(r => r.status === 'new').length
+  const newTx  = tx.filter(r => r.status === 'new').length
+  const summary = parseResult?.summary as Record<string, unknown> ?? {}
+  const secInfo = parseResult?.sec_info as Record<string, unknown> | null ?? null
 
   return (
     <div className="space-y-4">
@@ -835,11 +861,11 @@ function RevolutSavingsTab() {
             <label className="block text-xs font-medium text-slate-600 mb-2">Import Mode</label>
             <div className="flex gap-3">
               {[
-                { value: 'tx', label: '💳 Transaction mode', desc: 'Map events to plain cash transactions (Savings/Checking account)' },
-                { value: 'inv', label: '📈 Investment mode', desc: 'Record fund units as Buy/Dividend (Brokerage account)' },
+                { value: 'inv', label: '📈 Investment mode', desc: 'Record fund units as Buy/Dividend (Brokerage / Other Investment account)' },
+                { value: 'tx',  label: '💳 Transaction mode', desc: 'Map events to plain cash transactions (Savings/Checking account)' },
               ].map(o => (
                 <label key={o.value} className={`flex-1 border rounded-lg p-3 cursor-pointer ${mode === o.value ? 'border-blue-500 bg-blue-50' : 'border-slate-200'}`}>
-                  <input type="radio" name="revs_mode" value={o.value} checked={mode === o.value} onChange={() => setMode(o.value as 'tx' | 'inv')} className="sr-only" />
+                  <input type="radio" name="revs_mode" value={o.value} checked={mode === o.value} onChange={() => handleModeChange(o.value as 'tx' | 'inv')} className="sr-only" />
                   <div className="text-sm font-medium">{o.label}</div>
                   <div className="text-xs text-slate-500 mt-1">{o.desc}</div>
                 </label>
@@ -847,28 +873,150 @@ function RevolutSavingsTab() {
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Target Account</label>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Target Account {mode === 'inv' ? '(Brokerage / Other Investment)' : '(Savings / Checking)'}
+            </label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {(accounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              {accounts.map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
             </Select>
           </div>
           {file ? (
             <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
               <CheckCircle size={16} className="text-green-500" />
               <span className="text-sm font-medium">{file.name}</span>
-              <button className="ml-auto text-xs text-red-500" onClick={() => setFile(null)}>Remove</button>
+              <button className="ml-auto text-xs text-red-500" onClick={() => { setFile(null); setParseResult(null) }}>Remove</button>
             </div>
           ) : (
             <FileDropZone accept=".csv" onChange={setFile} label="Upload Revolut Savings CSV statement" />
           )}
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
-            {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="revs_replace" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} />
+            <label htmlFor="revs_replace" className="text-sm text-slate-700">Replace mode (delete existing Revolut Savings records)</label>
+          </div>
+          <Button onClick={() => parseMut.mutate()} disabled={!file || !accountId || parseMut.isPending}>
+            {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Parse & Preview</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
-          {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
+          {parseMut.isError && <ErrorBox msg={String((parseMut.error as {message?: string})?.message)} />}
         </CardBody>
       </Card>
+
+      {parseResult && (
+        <div className="space-y-4">
+          {summary.rows != null && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Rows in file</p><p className="text-2xl font-bold">{summary.rows as number}</p></div>
+              <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range from</p><p className="text-sm font-medium">{summary.date_from as string}</p></div>
+              <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range to</p><p className="text-sm font-medium">{summary.date_to as string}</p></div>
+            </div>
+          )}
+          {secInfo && (
+            <div className="text-xs bg-blue-50 border border-blue-200 rounded px-3 py-2 text-blue-700">
+              ℹ️ Security match: <strong>{secInfo.name as string}</strong> ({secInfo.match_type as string})
+            </div>
+          )}
+
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: '🆕 New investments', value: newInv },
+              { label: '🔄 Skip investments', value: inv.length - newInv },
+              { label: '🆕 New transactions', value: newTx },
+              { label: '🔄 Skip transactions', value: tx.length - newTx },
+            ].map(s => (
+              <div key={s.label} className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-500">{s.label}</p>
+                <p className="text-2xl font-bold">{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {inv.length > 0 && (
+            <Card>
+              <CardHeader>
+                <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedInv(x => !x)}>
+                  <CardTitle>Preview — Investments ({inv.length})</CardTitle>
+                  {expandedInv ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </CardHeader>
+              {expandedInv && (
+                <CardBody>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left">Status</th>
+                        <th className="py-1 px-2 text-left">Date</th>
+                        <th className="py-1 px-2 text-left">Action</th>
+                        <th className="py-1 px-2 text-right">Qty</th>
+                        <th className="py-1 px-2 text-right">Price</th>
+                        <th className="py-1 px-2 text-right">Total (€)</th>
+                      </tr></thead>
+                      <tbody>
+                        {inv.slice(0, 100).map((r, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2">{r.date as string}</td>
+                            <td className="py-1 px-2">{r.action as string}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {inv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {inv.length} records</p>}
+                  </div>
+                </CardBody>
+              )}
+            </Card>
+          )}
+
+          {tx.length > 0 && (
+            <Card>
+              <CardHeader>
+                <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedTx(x => !x)}>
+                  <CardTitle>Preview — Cash Transactions ({tx.length})</CardTitle>
+                  {expandedTx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </CardHeader>
+              {expandedTx && (
+                <CardBody>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left">Status</th>
+                        <th className="py-1 px-2 text-left">Date</th>
+                        <th className="py-1 px-2 text-left">Description</th>
+                        <th className="py-1 px-2 text-right">Amount (€)</th>
+                      </tr></thead>
+                      <tbody>
+                        {tx.slice(0, 100).map((r, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2">{r.date as string}</td>
+                            <td className="py-1 px-2">{r.description as string}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {tx.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {tx.length} records</p>}
+                  </div>
+                </CardBody>
+              )}
+            </Card>
+          )}
+
+          {newInv + newTx > 0 ? (
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+            </Button>
+          ) : (
+            <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
+          )}
+          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
+        </div>
+      )}
     </div>
   )
 }
@@ -879,6 +1027,7 @@ function IBFlexTab() {
   const [sourceMode, setSourceMode] = useState<'api' | 'paste'>('api')
   const [token, setToken] = useState('')
   const [queryId, setQueryId] = useState('')
+  const [showToken, setShowToken] = useState(false)
   const [rawXml, setRawXml] = useState('')
   const [xml, setXml] = useState('')
   const [accountId, setAccountId] = useState<number | null>(null)
@@ -895,16 +1044,21 @@ function IBFlexTab() {
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
   const [expandedInv, setExpandedInv] = useState(true)
+  const [expandedTx, setExpandedTx] = useState(true)
 
   const { data: allAccounts = [] } = useQuery({ queryKey: ['all-accounts'], queryFn: getAllAccounts })
   const brokerageAccTypes = ['Brokerage', 'Margin', 'Other Investment', 'Pension']
   const brokerAccounts = (allAccounts as Record<string, unknown>[]).filter(a => brokerageAccTypes.includes(a.type as string))
   const cashAccounts = (allAccounts as Record<string, unknown>[]).filter(a => !brokerageAccTypes.includes(a.type as string))
 
+  const _persistSettings = () =>
+    saveSettings({ token, query_id: queryId, account_id: accountId, cash_account_id: cashAccountId })
+
   const fetchMut = useMutation({
     mutationFn: () => ibFlexFetch(token, queryId),
     onSuccess: async (data) => {
       setXml(data.xml)
+      _persistSettings()
       if (accountId) {
         const parsed = await ibFlexParse(data.xml, accountId, cashAccountId ?? undefined)
         setParseResult(parsed)
@@ -914,7 +1068,7 @@ function IBFlexTab() {
 
   const parseMut = useMutation({
     mutationFn: () => ibFlexParse(rawXml, accountId!, cashAccountId ?? undefined),
-    onSuccess: setParseResult,
+    onSuccess: (d) => { setParseResult(d); _persistSettings() },
   })
 
   const importMut = useMutation({
@@ -930,15 +1084,26 @@ function IBFlexTab() {
     }),
     onSuccess: (d) => {
       setImportResult(d)
-      saveSettings({ token, query_id: queryId, account_id: accountId, cash_account_id: cashAccountId })
+      _persistSettings()
     },
   })
 
   const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const meta = parseResult?.meta as Record<string, unknown> ?? {}
-  const newInv = inv.filter(r => r.status === 'new').length
-  const newTx = tx.filter(r => r.status === 'new').length
+
+  // Apply date filter to preview display (same logic as server-side import filter)
+  const filterRecord = (r: Record<string, unknown>) => {
+    const d = r.date as string
+    if (filterFrom && d < filterFrom) return false
+    if (filterTo && d > filterTo) return false
+    return true
+  }
+  const visibleInv = (filterFrom || filterTo) ? inv.filter(filterRecord) : inv
+  const visibleTx  = (filterFrom || filterTo) ? tx.filter(filterRecord)  : tx
+
+  const newInv = visibleInv.filter(r => r.status === 'new').length
+  const newTx = visibleTx.filter(r => r.status === 'new').length
 
   return (
     <div className="space-y-6">
@@ -971,8 +1136,14 @@ function IBFlexTab() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Flex Token</label>
-                <input type="password" value={token} onChange={e => setToken(e.target.value)}
-                  className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
+                <div className="relative">
+                  <input type={showToken ? 'text' : 'password'} value={token} onChange={e => setToken(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm pr-16" />
+                  <button type="button" onClick={() => setShowToken(x => !x)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700">
+                    {showToken ? 'Hide' : 'Show'}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Query ID</label>
@@ -1066,9 +1237,9 @@ function IBFlexTab() {
           <div className="grid grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
-              { label: '🔄 Skip investments', value: inv.length - newInv },
+              { label: '🔄 Skip investments', value: visibleInv.length - newInv },
               { label: '🆕 New transactions', value: newTx },
-              { label: '🔄 Skip transactions', value: tx.length - newTx },
+              { label: '🔄 Skip transactions', value: visibleTx.length - newTx },
             ].map(s => (
               <div key={s.label} className="bg-slate-50 rounded-lg p-3">
                 <p className="text-xs text-slate-500">{s.label}</p>
@@ -1076,11 +1247,16 @@ function IBFlexTab() {
               </div>
             ))}
           </div>
+          {(filterFrom || filterTo) && (inv.length !== visibleInv.length || tx.length !== visibleTx.length) && (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              ⚠️ Date filter active: showing {visibleInv.length} of {inv.length} investment records and {visibleTx.length} of {tx.length} cash records from the XML.
+            </p>
+          )}
 
           <Card>
             <CardHeader>
               <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedInv(x => !x)}>
-                <CardTitle>Preview — Investments ({inv.length})</CardTitle>
+                <CardTitle>Preview — Investments ({visibleInv.length})</CardTitle>
                 {expandedInv ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
             </CardHeader>
@@ -1098,7 +1274,7 @@ function IBFlexTab() {
                       <th className="py-1 px-2 text-right">Total (€)</th>
                     </tr></thead>
                     <tbody>
-                      {inv.slice(0, 100).map((r, i) => (
+                      {visibleInv.slice(0, 100).map((r, i) => (
                         <tr key={i} className="border-b border-slate-100">
                           <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
@@ -1111,11 +1287,47 @@ function IBFlexTab() {
                       ))}
                     </tbody>
                   </table>
-                  {inv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {inv.length} records</p>}
+                  {visibleInv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {visibleInv.length} records</p>}
                 </div>
               </CardBody>
             )}
           </Card>
+
+          {visibleTx.length > 0 && (
+            <Card>
+              <CardHeader>
+                <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedTx(x => !x)}>
+                  <CardTitle>Preview — Cash Transactions ({visibleTx.length})</CardTitle>
+                  {expandedTx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </CardHeader>
+              {expandedTx && (
+                <CardBody>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left">Status</th>
+                        <th className="py-1 px-2 text-left">Date</th>
+                        <th className="py-1 px-2 text-left">Description</th>
+                        <th className="py-1 px-2 text-right">Amount (€)</th>
+                      </tr></thead>
+                      <tbody>
+                        {visibleTx.slice(0, 100).map((r, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2">{r.date as string}</td>
+                            <td className="py-1 px-2">{r.description as string}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {visibleTx.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {visibleTx.length} records</p>}
+                  </div>
+                </CardBody>
+              )}
+            </Card>
+          )}
 
           {newInv + newTx > 0 ? (
             <div className="flex gap-2 items-center">
@@ -1140,6 +1352,8 @@ function RevolutTradingTab() {
   const [file, setFile] = useState<File | null>(null)
   const [accountId, setAccountId] = useState<number | null>(null)
   const [replaceMode, setReplaceMode] = useState(false)
+  const [importInv, setImportInv] = useState(true)
+  const [importTx, setImportTx] = useState(true)
   const saveSettings = useImporterSettings('revt', s => {
     if (s.account_id) setAccountId(s.account_id as number)
   })
@@ -1150,13 +1364,25 @@ function RevolutTradingTab() {
   const brokerAccounts = (allAccounts as Record<string, unknown>[]).filter(a =>
     ['Brokerage', 'Margin', 'Other Investment', 'Pension'].includes(a.type as string))
 
+  const { data: linkedAccountData } = useQuery({
+    queryKey: ['linked-account', accountId],
+    queryFn: () => getLinkedAccount(accountId!),
+    enabled: !!accountId,
+  })
+  const linkedAccountName = linkedAccountData?.linked_account_id
+    ? (allAccounts as Record<string, unknown>[]).find(a => a.id === linkedAccountData.linked_account_id)?.name as string | undefined
+    : undefined
+
+  const [expandedInv, setExpandedInv] = useState(true)
+  const [expandedTx, setExpandedTx] = useState(true)
+
   const parseMut = useMutation({
     mutationFn: () => revtParse(file!, accountId!),
-    onSuccess: setParseResult,
+    onSuccess: (d) => { setParseResult(d); saveSettings({ account_id: accountId }) },
   })
 
   const importMut = useMutation({
-    mutationFn: () => revtImport(file!, accountId!, replaceMode, true, true),
+    mutationFn: () => revtImport(file!, accountId!, replaceMode, importInv, importTx),
     onSuccess: (d) => { setImportResult(d); saveSettings({ account_id: accountId }) },
   })
 
@@ -1196,6 +1422,29 @@ function RevolutTradingTab() {
           ) : (
             <FileDropZone accept=".csv" onChange={setFile} label="Upload Revolut Trading CSV export" />
           )}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-slate-600">What to import</p>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={importInv} onChange={e => setImportInv(e.target.checked)} />
+                Investments (trades, dividends)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={importTx} onChange={e => setImportTx(e.target.checked)} />
+                Cash transactions (top-ups, withdrawals)
+              </label>
+            </div>
+            {importTx && linkedAccountName && (
+              <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-3 py-2">
+                ℹ️ Cash transactions will be recorded on <strong>{linkedAccountName}</strong> (linked cash account). Matching entries in that account will be auto-created.
+              </p>
+            )}
+            {importTx && !linkedAccountName && accountId && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                ⚠️ No linked cash account configured for this brokerage account. Cash transactions will be recorded directly on the brokerage account.
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="revt_replace" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} />
             <label htmlFor="revt_replace" className="text-sm text-slate-700">Replace mode (delete existing Revolut Trading records)</label>
@@ -1241,46 +1490,104 @@ function RevolutTradingTab() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle>Preview — Investments ({inv.length})</CardTitle></CardHeader>
-            <CardBody>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-1 px-2 text-left">Status</th>
-                    <th className="py-1 px-2 text-left">Date</th>
-                    <th className="py-1 px-2 text-left">Action</th>
-                    <th className="py-1 px-2 text-left">Symbol</th>
-                    <th className="py-1 px-2 text-right">Qty</th>
-                    <th className="py-1 px-2 text-right">Price</th>
-                    <th className="py-1 px-2 text-right">Total</th>
-                  </tr></thead>
-                  <tbody>
-                    {inv.slice(0, 100).map((r, i) => (
-                      <tr key={i} className="border-b border-slate-100">
-                        <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
-                        <td className="py-1 px-2">{r.date as string}</td>
-                        <td className="py-1 px-2">{r.action as string}</td>
-                        <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
-                        <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
-                        <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
-                        <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardBody>
+            <CardHeader>
+              <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedInv(x => !x)}>
+                <CardTitle>Preview — Investments ({inv.length})</CardTitle>
+                {expandedInv ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </CardHeader>
+            {expandedInv && (
+              <CardBody>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left">Status</th>
+                      <th className="py-1 px-2 text-left">Date</th>
+                      <th className="py-1 px-2 text-left">Action</th>
+                      <th className="py-1 px-2 text-left">Symbol</th>
+                      <th className="py-1 px-2 text-right">Qty</th>
+                      <th className="py-1 px-2 text-right">Price</th>
+                      <th className="py-1 px-2 text-right">Total</th>
+                    </tr></thead>
+                    <tbody>
+                      {inv.slice(0, 100).map((r, i) => (
+                        <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2">{r.date as string}</td>
+                          <td className="py-1 px-2">{r.action as string}</td>
+                          <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
+                          <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
+                          <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
+                          <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {inv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {inv.length} records</p>}
+                </div>
+              </CardBody>
+            )}
           </Card>
 
-          {newInv + newTx > 0 ? (
+          {tx.length > 0 && (
+            <Card>
+              <CardHeader>
+                <button className="flex items-center gap-2 w-full text-left" onClick={() => setExpandedTx(x => !x)}>
+                  <CardTitle>Preview — Cash Transactions ({tx.length})</CardTitle>
+                  {expandedTx ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </CardHeader>
+              {expandedTx && (
+                <CardBody>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left">Status</th>
+                        <th className="py-1 px-2 text-left">Date</th>
+                        <th className="py-1 px-2 text-left">Description</th>
+                        <th className="py-1 px-2 text-right">Amount (€)</th>
+                      </tr></thead>
+                      <tbody>
+                        {tx.slice(0, 100).map((r, i) => (
+                          <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2">{r.date as string}</td>
+                            <td className="py-1 px-2">{r.description as string}</td>
+                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {tx.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {tx.length} records</p>}
+                  </div>
+                </CardBody>
+              )}
+            </Card>
+          )}
+
+          <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={importInv} onChange={e => setImportInv(e.target.checked)} />
+              Investments ({newInv} new)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={importTx} onChange={e => setImportTx(e.target.checked)} />
+              Cash transactions ({newTx} new)
+            </label>
+            {linkedAccountName && importTx && (
+              <span className="text-xs text-blue-600">→ will land on <strong>{linkedAccountName}</strong></span>
+            )}
+          </div>
+
+          {(importInv ? newInv : 0) + (importTx ? newTx : 0) > 0 ? (
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
-              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({(importInv ? newInv : 0) + (importTx ? newTx : 0)} records)</>}
             </Button>
           ) : (
             <InfoBox>Nothing new to import.</InfoBox>
           )}
           {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
-          {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported.`} />}
+          {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
         </div>
       )}
     </div>

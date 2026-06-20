@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,8 +9,12 @@ import {
   getBudgetVsActual, getCashFlowForecast, getPnl, getCategoryBreakdown,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
   getSpendingByPayee, getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
+  getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
+  getDividendsTracker, getAccounts,
+  getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
+  getIncomeExpenseFull,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button } from '@/components/ui'
 import { fmtEur, fmtPct } from '@/lib/utils'
@@ -67,11 +71,26 @@ function GroupingPicker({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
-function KpiCard({ label, value, color = '' }: { label: string; value: string; color?: string }) {
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="relative group inline-flex items-center gap-0.5">
+      {children}
+      <span className="ml-0.5 text-slate-400 cursor-help text-[10px] leading-none">ⓘ</span>
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 rounded bg-slate-800 px-2.5 py-1.5 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-lg whitespace-normal text-center">
+        {text}
+      </span>
+    </span>
+  )
+}
+
+function KpiCard({ label, value, color = '', subtitle, tooltip }: { label: string; value: string; color?: string; subtitle?: string; tooltip?: string }) {
   return (
     <div className="bg-slate-50 rounded-lg p-3">
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <p className="text-xs text-slate-500 mb-1">
+        {tooltip ? <Tooltip text={tooltip}>{label}</Tooltip> : label}
+      </p>
       <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
+      {subtitle && <p className="text-xs text-slate-400 mt-0.5 truncate">{subtitle}</p>}
     </div>
   )
 }
@@ -484,13 +503,19 @@ function NetWorthSection() {
   const [endDate, setEndDate] = usePersist('nw_endDate', today)
   const [grouping, setGrouping] = usePersist<'year'|'quarter'|'month'>('nw_grouping', 'year')
   const [showZeroBalance, setShowZeroBalance] = usePersist('nw_showZeroBalance', false)
+  const [ytdMode, setYtdMode] = usePersist('nw_ytdMode', false)
+
+  const ytdStart = `${today.slice(0, 4)}-01-01`
+  const effStart   = ytdMode ? ytdStart : startDate
+  const effEnd     = ytdMode ? today    : endDate
+  const effGrouping: 'year'|'quarter'|'month' = ytdMode ? 'month' : grouping
   const [savedSelection, setSavedSelection] = usePersist<Record<string, boolean>>('nw_account_selection', {})
   const [draftSelection, setDraftSelection] = useState<Record<string, boolean> | null>(null)
   const [selOpen, setSelOpen] = useState(false)
 
   const { data: rawData = [], isLoading } = useQuery({
-    queryKey: ['nw-by-account', startDate, endDate, grouping],
-    queryFn: () => getNetWorthByAccount(startDate, endDate, grouping),
+    queryKey: ['nw-by-account', effStart, effEnd, effGrouping],
+    queryFn: () => getNetWorthByAccount(effStart, effEnd, effGrouping),
   })
   const allRows = rawData as Row[]
 
@@ -529,18 +554,19 @@ function NetWorthSection() {
     <div className="space-y-3">
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 pb-3 border-b border-slate-100">
-        <div className="flex items-center gap-1.5">
+        <ChkBox label="YTD" checked={ytdMode} onChange={setYtdMode} />
+        <div className={`flex items-center gap-1.5 ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           <label className="text-xs text-slate-500 whitespace-nowrap">Start Date</label>
-          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effStart} onChange={e => setStartDate(e.target.value)} />
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className={`flex items-center gap-1.5 ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           <label className="text-xs text-slate-500 whitespace-nowrap">End Date</label>
-          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={endDate} onChange={e => setEndDate(e.target.value)} />
+          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effEnd} onChange={e => setEndDate(e.target.value)} />
         </div>
-        <div className="flex rounded border border-slate-300 overflow-hidden text-xs">
+        <div className={`flex rounded border border-slate-300 overflow-hidden text-xs ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           {(['year','quarter','month'] as const).map(g => (
             <button key={g} onClick={() => setGrouping(g)}
-              className={`px-3 py-1 font-medium capitalize ${grouping === g ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+              className={`px-3 py-1 font-medium capitalize ${effGrouping === g ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
               {g.charAt(0).toUpperCase() + g.slice(1)}
             </button>
           ))}
@@ -608,10 +634,10 @@ function NetWorthSection() {
       {isLoading
         ? <div className="flex justify-center py-12"><Spinner /></div>
         : <>
-            {tab === 'Overview'          && <NwOverview rows={filteredRows} allPeriods={allPeriods} grouping={grouping} />}
-            {tab === 'Account Balances'  && <NwAccountBalances rows={filteredRows} allPeriods={allPeriods} accountMeta={Object.fromEntries(Object.entries(accountMeta).filter(([n]) => filteredRows.some(r => String(r.accounts_name) === n)))} grouping={grouping} />}
-            {tab === 'Summary per Type'  && <NwSummaryByType rows={filteredRows} allPeriods={allPeriods} grouping={grouping} />}
-            {tab === 'Detail Analysis'   && <NwDetailAnalysis rows={filteredRows} allPeriods={allPeriods} accountMeta={accountMeta} grouping={grouping} />}
+            {tab === 'Overview'          && <NwOverview rows={filteredRows} allPeriods={allPeriods} grouping={effGrouping} />}
+            {tab === 'Account Balances'  && <NwAccountBalances rows={filteredRows} allPeriods={allPeriods} accountMeta={Object.fromEntries(Object.entries(accountMeta).filter(([n]) => filteredRows.some(r => String(r.accounts_name) === n)))} grouping={effGrouping} />}
+            {tab === 'Summary per Type'  && <NwSummaryByType rows={filteredRows} allPeriods={allPeriods} grouping={effGrouping} />}
+            {tab === 'Detail Analysis'   && <NwDetailAnalysis rows={filteredRows} allPeriods={allPeriods} accountMeta={accountMeta} grouping={effGrouping} />}
           </>
       }
     </div>
@@ -908,10 +934,10 @@ function PnlReport() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" />
-        <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} />
-        <KpiCard label="Unrealized P&L" value={fmtEur(totalUnreal)} color={totalUnreal >= 0 ? 'text-green-700' : 'text-red-600'} />
-        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} />
+        <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
+        <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`} />
+        <KpiCard label="Unrealized P&L" value={fmtEur(totalUnreal)} color={totalUnreal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Open position gain/loss: current market value minus the cost basis of all currently held securities." />
+        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed." />
       </div>
       <div className="flex gap-1">
         {PNL_WINDOWS.map(w => (
@@ -927,15 +953,15 @@ function PnlReport() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <th className="px-3 py-2 text-left">Security</th>
-                  <th className="px-3 py-2 text-right">Qty</th>
-                  <th className="px-3 py-2 text-right">Price</th>
-                  <th className="px-3 py-2 text-right">Value (€)</th>
-                  <th className="px-3 py-2 text-right">P&L ({win.toUpperCase()})</th>
-                  {showFxSplit && mktKey && <><th className="px-3 py-2 text-right">Market</th><th className="px-3 py-2 text-right">FX</th></>}
-                  <th className="px-3 py-2 text-right">Unrealized</th>
-                  <th className="px-3 py-2 text-right">Realized</th>
-                  <th className="px-3 py-2 text-right">YOC %</th>
+                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your portfolio.">Security</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Current quantity held.">Qty</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Last available market price in the security's native currency.">Price</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains.`}>P&L ({win.toUpperCase()})</Tooltip></th>
+                  {showFxSplit && mktKey && <><th className="px-3 py-2 text-right"><Tooltip text="Part of the P&L attributable to the security's price movement in its local currency.">Market</Tooltip></th><th className="px-3 py-2 text-right"><Tooltip text="Part of the P&L attributable to currency (FX) rate movements when converting to EUR.">FX</Tooltip></th></>}
+                  <th className="px-3 py-2 text-right"><Tooltip text="Unrealized gain/loss: current value minus cost basis for still-open positions.">Unrealized</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Realized gain/loss from already-closed (sold) positions in this security.">Realized</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Dividend Yield on Cost: annual dividends received divided by your cost basis, as a percentage.">YOC %</Tooltip></th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {drillRows.map((r, i) => (
@@ -961,13 +987,13 @@ function PnlReport() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left">Account</th>
-                <th className="px-3 py-2 text-right">Value (€)</th>
-                <th className="px-3 py-2 text-right">P&L ({win.toUpperCase()})</th>
-                {showPct && <th className="px-3 py-2 text-right">P&L %</th>}
-                {showFxSplit && mktKey && <><th className="px-3 py-2 text-right">Market</th><th className="px-3 py-2 text-right">FX</th></>}
-                <th className="px-3 py-2 text-right">Unrealized</th>
-                <th className="px-3 py-2 text-right">Realized</th>
+                <th className="px-3 py-2 text-left"><Tooltip text="Brokerage or investment account. Click a row to drill into individual security positions.">Account</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Current total market value of all holdings in this account, in EUR.">Value (€)</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`}>P&L ({win.toUpperCase()})</Tooltip></th>
+                {showPct && <th className="px-3 py-2 text-right"><Tooltip text="P&L as a percentage of the account's current market value.">P&L %</Tooltip></th>}
+                {showFxSplit && mktKey && <><th className="px-3 py-2 text-right"><Tooltip text="P&L from price moves in local currency, excluding FX effects.">Market</Tooltip></th><th className="px-3 py-2 text-right"><Tooltip text="P&L from EUR/foreign-currency exchange rate movements.">FX</Tooltip></th></>}
+                <th className="px-3 py-2 text-right"><Tooltip text="Unrealized gain/loss: current value minus cost basis for open positions.">Unrealized</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Realized gain/loss from closed positions in this account.">Realized</Tooltip></th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {accounts.map(a => (
@@ -990,123 +1016,1277 @@ function PnlReport() {
   )
 }
 
-function TwrTab({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['twr', startDate, endDate],
-    queryFn: () => getTwr(startDate, endDate),
-  })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  if (!data) return null
-  const d = data as { summary: { twr_total_pct: number; twr_ann_pct: number; months: number }; chart: Row[] }
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="TWR Total" value={`${d.summary.twr_total_pct.toFixed(2)}%`} color={d.summary.twr_total_pct >= 0 ? 'text-green-700' : 'text-red-600'} />
-        <KpiCard label="TWR Annualised" value={`${d.summary.twr_ann_pct.toFixed(2)}%`} color={d.summary.twr_ann_pct >= 0 ? 'text-green-700' : 'text-red-600'} />
-        <KpiCard label="Months" value={String(d.summary.months)} />
-      </div>
-      <Plot
-        data={[{
-          x: d.chart.map(r => String(r.date)), y: d.chart.map(r => Number(r.twr_cumulative_pct)),
-          name: 'Cumulative TWR %', type: 'scatter', mode: 'lines',
-          line: { color: '#3b82f6', width: 2 }, fill: 'tozeroy', fillcolor: 'rgba(59,130,246,0.08)',
-        }]}
-        layout={{ height: 360, margin: { t: 10, r: 10, b: 40, l: 60 }, yaxis: { ticksuffix: '%' }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-    </div>
-  )
-}
+function TwrTab({ accountIds }: { accountIds?: number[] }) {
+  const [lookback, setLookback] = usePersist('twr_lookback', 756)
+  const [cfOpen, setCfOpen] = useState(false)
 
-function RiskMetricsTab({ startDate, endDate }: { startDate: string; endDate: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['risk-metrics', startDate, endDate],
-    queryFn: () => getRiskMetrics(startDate, endDate),
+    queryKey: ['twr', lookback, accountIds],
+    queryFn: () => getTwr(lookback, accountIds),
   })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  if (!data) return null
-  const d = data as { ann_vol_pct: number; ann_return_pct: number; sharpe: number; sortino: number; max_drawdown_pct: number; var_95_pct: number; cvar_95_pct: number; months: number; drawdown_chart: Row[] }
+
+  type TwrData = {
+    twr_window_pct: number; twr_ann_pct: number; mwr_pct: number | null
+    trading_days: number; date_from: string; date_to: string
+    chart: { date: string; twr_cumulative_pct: number }[]
+    cashflows: { date: string; action: string; account: string; security: string; amount_eur: number }[]
+    insufficient: boolean
+  }
+  const d = data as TwrData | undefined
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Annual Return" value={`${d.ann_return_pct.toFixed(2)}%`} color={d.ann_return_pct >= 0 ? 'text-green-700' : 'text-red-600'} />
-        <KpiCard label="Annual Volatility" value={`${d.ann_vol_pct.toFixed(2)}%`} />
-        <KpiCard label="Sharpe Ratio" value={d.sharpe.toFixed(3)} color={d.sharpe >= 1 ? 'text-green-700' : d.sharpe < 0 ? 'text-red-600' : ''} />
-        <KpiCard label="Sortino Ratio" value={d.sortino.toFixed(3)} color={d.sortino >= 1 ? 'text-green-700' : d.sortino < 0 ? 'text-red-600' : ''} />
-        <KpiCard label="Max Drawdown" value={`${d.max_drawdown_pct.toFixed(2)}%`} color="text-red-600" />
-        <KpiCard label="VaR 95%" value={`${d.var_95_pct.toFixed(2)}%`} color="text-amber-600" />
-        <KpiCard label="CVaR 95%" value={`${d.cvar_95_pct.toFixed(2)}%`} color="text-amber-600" />
-        <KpiCard label="Months" value={String(d.months)} />
+    <div className="space-y-5">
+      {/* Description */}
+      <div className="text-xs text-slate-500 space-y-1">
+        <p className="font-medium text-slate-600">Two complementary measures of portfolio performance:</p>
+        <ul className="list-disc pl-4 space-y-1">
+          <li><strong>TWR (Time-Weighted Return)</strong>: eliminates the effect of <em>when</em> you deposited or withdrew money. It measures the portfolio manager's performance — directly comparable to an index return.</li>
+          <li><strong>MWR (Money-Weighted Return / XIRR)</strong>: reflects <em>your actual experience</em> — the return you personally earned given the size and timing of your deposits and withdrawals. If you invested heavily before a downturn, MWR will be lower than TWR.</li>
+        </ul>
+        <p>TWR is computed from daily price-based portfolio returns. MWR uses all recorded Buy/Sell/Dividend cash flows plus the current portfolio value.</p>
       </div>
-      {d.drawdown_chart.length > 0 && (
-        <Plot
-          data={[{
-            x: d.drawdown_chart.map(r => String(r.date)), y: d.drawdown_chart.map(r => Number(r.drawdown_pct)),
-            name: 'Drawdown %', type: 'scatter', mode: 'lines',
-            fill: 'tozeroy', fillcolor: 'rgba(239,68,68,0.15)', line: { color: '#ef4444', width: 1.5 },
-          }]}
-          layout={{ height: 280, margin: { t: 10, r: 10, b: 40, l: 60 }, yaxis: { ticksuffix: '%' }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
-          config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+
+      {/* Lookback slider */}
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">
+          <Tooltip text="How many calendar days of price history to use for TWR. MWR always uses all-time cash flows regardless of this setting.">TWR lookback (calendar days)</Tooltip>
+          {' '}— <span className="text-blue-600 font-semibold">{lookback}</span>
+        </label>
+        <input type="range" min={60} max={3650} step={92} value={lookback}
+          onChange={e => setLookback(Number(e.target.value))}
+          className="w-full accent-blue-600" />
+        <div className="flex justify-between text-xs text-slate-400 mt-1">
+          {['60d', '1y', '3y', '5y', '10y'].map(l => <span key={l}>{l}</span>)}
+        </div>
+      </div>
+
+      {isLoading && <div className="flex justify-center py-12"><Spinner /></div>}
+
+      {d && (
+        <>
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <KpiCard
+              label={`TWR (${lookback}d window)`}
+              value={`${d.twr_window_pct >= 0 ? '+' : ''}${d.twr_window_pct.toFixed(2)}%`}
+              color={d.twr_window_pct >= 0 ? 'text-green-700' : 'text-red-600'}
+              tooltip="Total Time-Weighted Return over the selected lookback window. Eliminates the distortion caused by deposit/withdrawal timing." />
+            <KpiCard
+              label="TWR (Annualised)"
+              value={`${d.twr_ann_pct >= 0 ? '+' : ''}${d.twr_ann_pct.toFixed(2)}%`}
+              color={d.twr_ann_pct >= 0 ? 'text-green-700' : 'text-red-600'}
+              tooltip="TWR scaled to a one-year equivalent compound rate, comparable across periods of different lengths." />
+            <KpiCard
+              label="MWR / XIRR (All-time)"
+              value={d.mwr_pct != null ? `${d.mwr_pct >= 0 ? '+' : ''}${d.mwr_pct.toFixed(2)}%` : '—'}
+              color={d.mwr_pct != null ? (d.mwr_pct >= 0 ? 'text-green-700' : 'text-red-600') : ''}
+              tooltip="Money-Weighted Return (XIRR) computed from all-time cash flows. Reflects your personal return given the actual size and timing of each deposit and withdrawal." />
+            <KpiCard
+              label="Trading Days Used (TWR)"
+              value={String(d.trading_days)}
+              tooltip="Number of trading days with price data used to compute TWR in the selected lookback window." />
+          </div>
+
+          {d.trading_days > 0 && d.date_from && (
+            <p className="text-xs text-slate-500">TWR window: <strong>{d.date_from}</strong> → <strong>{d.date_to}</strong>.</p>
+          )}
+
+          {d.insufficient && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded px-3 py-2">
+              ⚠️ Less than 10 days of price data available for the selected window. Extend the lookback or download more historical prices.
+            </div>
+          )}
+
+          {/* Cumulative TWR chart */}
+          {d.chart.length > 1 && (
+            <div>
+              <p className="text-sm font-semibold text-slate-700 mb-1">Cumulative Time-Weighted Return (%)</p>
+              <Plot
+                data={[{
+                  x: d.chart.map(r => r.date),
+                  y: d.chart.map(r => r.twr_cumulative_pct),
+                  name: 'TWR (%)', type: 'scatter', mode: 'lines',
+                  line: { color: '#6366f1', width: 1.5 },
+                }]}
+                layout={{
+                  height: 360,
+                  margin: { t: 10, r: 20, b: 50, l: 60 },
+                  yaxis: { title: 'TWR (%)', zeroline: false },
+                  xaxis: { title: 'Date' },
+                  shapes: [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#94a3b8', dash: 'dash', width: 1 } }],
+                  plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+                }}
+                config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+            </div>
+          )}
+
+          {/* Cash Flow Detail collapsible */}
+          {d.cashflows.length > 0 && (
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <button onClick={() => setCfOpen(!cfOpen)}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+                <span className="text-xs">{cfOpen ? '▼' : '▶'}</span>
+                <span>📋 Cash Flow Detail (MWR inputs)</span>
+              </button>
+              {cfOpen && (
+                <div className="p-3">
+                  <WithCopy>
+                    <div className="overflow-x-auto max-h-96">
+                      <table className="w-full text-sm">
+                        <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                          <th className="px-3 py-2 text-left">Date</th>
+                          <th className="px-3 py-2 text-left">Action</th>
+                          <th className="px-3 py-2 text-left">Account</th>
+                          <th className="px-3 py-2 text-left">Security</th>
+                          <th className="px-3 py-2 text-right">Amount (€)</th>
+                          <th className="px-3 py-2 text-right">CF Sign</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {d.cashflows.map((r, i) => {
+                            const isOut = ['Buy', 'MiscExp'].includes(r.action)
+                            const actionColor = isOut
+                              ? 'bg-red-50 text-red-700'
+                              : ['Sell'].includes(r.action) ? 'bg-green-50 text-green-700'
+                              : ['Dividend', 'IntInc', 'RtrnCap'].includes(r.action) ? 'bg-blue-50 text-blue-700'
+                              : 'bg-slate-100 text-slate-600'
+                            return (
+                              <tr key={i} className="hover:bg-slate-50">
+                                <td className="px-3 py-2 text-slate-500">{r.date}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${actionColor}`}>{r.action}</span>
+                                </td>
+                                <td className="px-3 py-2 text-slate-600 text-xs">{r.account}</td>
+                                <td className="px-3 py-2 text-slate-500 text-xs">{r.security || '—'}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Math.abs(r.amount_eur))}</td>
+                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${isOut ? 'text-red-600' : 'text-green-700'}`}>
+                                  {isOut ? '−' : '+'}{fmtEur(Math.abs(r.amount_eur))}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </WithCopy>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Interpretation guide */}
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-800">
+            <strong>Interpretation guide:</strong> If TWR &gt; MWR, you tended to invest more capital <em>before</em> underperforming periods. If MWR &gt; TWR, your larger investments coincided with stronger performance — good market timing added personal value beyond the portfolio's intrinsic return.
+          </div>
+        </>
       )}
     </div>
   )
 }
 
-function DividendsReport({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['dividends', startDate, endDate],
-    queryFn: () => getDividends(startDate, endDate),
+function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
+  const [lookback, setLookback] = usePersist('risk_lookback', 756)
+  const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
+
+  const { data: bmCandidates = [] } = useQuery({
+    queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates, staleTime: 3_600_000,
   })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const d = data as Row[]
-  const total = d.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
-  const monthly: Record<string, number> = {}
-  for (const r of d) {
-    const m = String(r.date ?? '').slice(0, 7)
-    monthly[m] = (monthly[m] ?? 0) + Number(r.amount_eur ?? 0)
+  const bms = bmCandidates as Row[]
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['risk-metrics', lookback, benchSecId, accountIds],
+    queryFn: () => getRiskMetrics(lookback, benchSecId, accountIds),
+  })
+
+  type RiskData = {
+    ann_vol_pct: number; sharpe: number; sortino: number; max_drawdown_pct: number
+    var_95_pct: number; cvar_95_pct: number; var_95_eur: number; cvar_95_eur: number
+    beta: number | null; alpha: number | null
+    trading_days: number; date_from: string; date_to: string
+    portfolio_value: number; rolling_sharpe: { date: string; sharpe: number }[]
+    insufficient: boolean
   }
-  const months = Object.keys(monthly).sort()
+  const d = data as RiskData | undefined
+
+  const LOOKBACK_MARKS = [60, 252, 365, 756, 1260, 1825, 3650]
+
+  return (
+    <div className="space-y-5">
+      {/* Description */}
+      <div className="text-xs text-slate-500 space-y-1">
+        <p>Quantifies the risk profile of your current portfolio using historical price data. Returns are <strong>value-weighted</strong> by current position size and use a <strong>3% risk-free rate</strong>.</p>
+        <ul className="list-disc pl-4 space-y-0.5">
+          <li><strong>Ann. Volatility</strong> — annualised standard deviation of daily returns; higher = more volatile.</li>
+          <li><strong>Sharpe Ratio</strong> — excess return per unit of total risk. Above 1.0 is good; above 2.0 is excellent.</li>
+          <li><strong>Sortino Ratio</strong> — like Sharpe but only penalises downside volatility. Preferred when returns are skewed.</li>
+          <li><strong>Max Drawdown</strong> — largest peak-to-trough decline in the period.</li>
+          <li><strong>VaR 95%</strong> — on a typical day there is only a 5% chance the portfolio loses <em>more</em> than this percentage.</li>
+          <li><strong>CVaR 95%</strong> — average loss on the worst 5% of days (Expected Shortfall); a more conservative tail-risk measure.</li>
+          <li><strong>Beta</strong> — sensitivity of portfolio returns to the chosen benchmark. &gt;1 means more volatile than the market.</li>
+          <li><strong>Alpha (Jensen's)</strong> — annualised excess return above what CAPM predicts given your Beta. Positive = outperformance.</li>
+        </ul>
+      </div>
+
+      {/* Controls */}
+      <div className="grid grid-cols-2 gap-6">
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">
+            <Tooltip text="How many calendar days of price history to use. Longer windows smooth out short-term noise but may include outdated market regimes.">Lookback days</Tooltip> — <span className="text-blue-600 font-semibold">{lookback}</span>
+          </label>
+          <input type="range" min={60} max={3650} step={92} value={lookback}
+            onChange={e => setLookback(Number(e.target.value))}
+            className="w-full accent-blue-600" />
+          <div className="flex justify-between text-xs text-slate-400 mt-1">
+            {['60d', '1y', '3y', '5y', '10y'].map(l => <span key={l}>{l}</span>)}
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1"><Tooltip text="Market index used to compute Beta (sensitivity) and Jensen's Alpha (excess return vs CAPM prediction). Leave blank to skip both.">Benchmark for Beta / Alpha</Tooltip></label>
+          <select className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-400"
+            value={benchSecId ?? ''}
+            onChange={e => setBenchSecId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">— None —</option>
+            {bms.map(b => <option key={b.id as number} value={b.id as number}>{b.name as string}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {isLoading && <div className="flex justify-center py-12"><Spinner /></div>}
+
+      {d && (
+        <>
+          {/* Data range info / warning */}
+          {d.insufficient
+            ? <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded px-3 py-2">
+                ⚠️ Only <strong>{d.trading_days} trading days</strong> of data available ({d.date_from} → {d.date_to}), covering less than half the requested {lookback}-day window. Download more historical prices to extend the analysis.
+              </div>
+            : d.trading_days > 0
+              ? <p className="text-xs text-slate-500">Using <strong>{d.trading_days} trading days</strong> of return data ({d.date_from} → {d.date_to}).</p>
+              : <p className="text-xs text-slate-400">Insufficient price history — need at least 30 days of data for current holdings.</p>
+          }
+
+          {d.trading_days > 0 && (
+            <>
+              {/* Metrics grid — 2 rows of 4 */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <KpiCard label="Ann. Volatility"    value={`${d.ann_vol_pct.toFixed(2)}%`} tooltip="Annualised standard deviation of daily returns, value-weighted by current position size. Higher = more volatile portfolio." />
+                <KpiCard label="Sharpe Ratio"       value={d.sharpe.toFixed(2)}  color={d.sharpe >= 1 ? 'text-green-700' : d.sharpe < 0 ? 'text-red-600' : ''} tooltip="Excess return over the 3% risk-free rate, divided by total volatility. Above 1.0 is good; above 2.0 is excellent." />
+                <KpiCard label="Sortino Ratio"      value={d.sortino.toFixed(2)} color={d.sortino >= 1 ? 'text-green-700' : d.sortino < 0 ? 'text-red-600' : ''} tooltip="Like Sharpe but only penalises downside volatility, ignoring upside swings. Better metric when return distribution is positively skewed." />
+                <KpiCard label="Max Drawdown"       value={`${d.max_drawdown_pct.toFixed(2)}%`} color="text-red-600" tooltip="Largest peak-to-trough decline in portfolio value during the selected lookback period." />
+                <KpiCard label="VaR 95% (daily)"    value={`${d.var_95_pct.toFixed(2)}%  ·  € ${d.var_95_eur.toLocaleString()}`}  color="text-amber-600" tooltip="Value at Risk: on a typical day, there is only a 5% chance of losing more than this amount. Shown as % and EUR at current portfolio value." />
+                <KpiCard label="CVaR 95% (daily)"   value={`${d.cvar_95_pct.toFixed(2)}%  ·  € ${d.cvar_95_eur.toLocaleString()}`} color="text-amber-600" tooltip="Conditional VaR (Expected Shortfall): average loss on the worst 5% of days. A more conservative tail-risk measure than plain VaR." />
+                <KpiCard label="Beta"               value={d.beta  != null ? d.beta.toFixed(2)   : '—'} subtitle={benchSecId ? bms.find(b => b.id === benchSecId)?.name as string : undefined} tooltip="Sensitivity of your portfolio's returns to the chosen benchmark. Beta > 1 means the portfolio amplifies benchmark moves; < 1 means it dampens them." />
+                <KpiCard label="Alpha (annualised)" value={d.alpha != null ? `${d.alpha.toFixed(2)}%` : '—'} color={d.alpha != null ? (d.alpha > 0 ? 'text-green-700' : 'text-red-600') : ''} tooltip="Jensen's Alpha: annualised excess return above what CAPM predicts given your Beta. Positive = genuine outperformance after adjusting for market risk." />
+              </div>
+
+              {/* Rolling 30-day Sharpe chart */}
+              {d.rolling_sharpe.length > 0 && (
+                <div>
+                  <p className="text-sm font-semibold text-slate-700 mb-1">Rolling 30-Day Sharpe Ratio</p>
+                  <Plot
+                    data={[{
+                      x: d.rolling_sharpe.map(r => r.date),
+                      y: d.rolling_sharpe.map(r => r.sharpe),
+                      type: 'scatter', mode: 'lines',
+                      line: { color: '#6366f1', width: 1.5 },
+                      name: 'Sharpe',
+                    }]}
+                    layout={{
+                      height: 300,
+                      margin: { t: 10, r: 10, b: 40, l: 60 },
+                      yaxis: { title: 'Sharpe Ratio', zeroline: false },
+                      xaxis: { title: 'Date' },
+                      shapes: [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#E74C3C', dash: 'dash', width: 1.5 } }],
+                      plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+                    }}
+                    config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+                  {d.portfolio_value > 0 && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      Returns are value-weighted by current position size (total: € {d.portfolio_value.toLocaleString()}). VaR/CVaR EUR figures assume this portfolio size.
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+const DIV_PERIODS = ['YTD', 'Previous Year', '1 Year', '2 Years', '3 Years', '5 Years', 'All Time', 'Custom']
+const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b82f6', '#ec4899', '#84cc16']
+
+function DividendTrackerTab() {
+  const [period, setPeriod] = usePersist('div_period', 'YTD')
+  const [customFrom, setCustomFrom] = usePersist('div_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
+  const [customTo, setCustomTo] = usePersist('div_to', new Date().toISOString().slice(0, 10))
+  const [detailOpen, setDetailOpen] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
+    queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
+  })
+
+  type TrackerResult = {
+    period_label: string
+    monthly: { month: string; income_eur: number }[]
+    by_security: Row[]
+    by_type: { securities_type: string; period_income_eur: number }[]
+    detail: Row[]
+    summary: Row
+  }
+  const result = data as TrackerResult | undefined
+
   return (
     <div className="space-y-4">
-      <KpiCard label="Total Dividends (EUR)" value={fmtEur(total)} color="text-green-700" />
-      <Plot
-        data={[{ x: months, y: months.map(m => monthly[m]), type: 'bar', marker: { color: '#10b981' } }]}
-        layout={{ height: 280, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.2f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      <WithCopy>
-      <div className="overflow-x-auto text-xs">
-        <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
-            <th className="px-2 py-1.5 text-left border-b border-slate-200 font-semibold">Date</th>
-            <th className="px-2 py-1.5 text-left border-b border-slate-200 font-semibold">Security</th>
-            <th className="px-2 py-1.5 text-left border-b border-slate-200 font-semibold">Account</th>
-            <th className="px-2 py-1.5 text-right border-b border-slate-200 font-semibold">EUR</th>
-          </tr></thead>
-          <tbody>
-            {d.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                <td className="px-2 py-1.5">{String(r.security)}</td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-green-700 font-medium">{fmtEur(Number(r.amount_eur))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div>
+        <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Time window for aggregating dividend and interest income. Custom lets you pick any date range.">Period:</Tooltip></label>
+        <div className="flex flex-wrap gap-1.5">
+          {DIV_PERIODS.map(p => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded border font-medium ${period === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+        {period === 'Custom' && (
+          <div className="flex items-center gap-2 mt-2">
+            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+            <span className="text-slate-400 text-xs">to</span>
+            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+          </div>
+        )}
       </div>
+
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : !result || !result.monthly.length ? (
+        <p className="text-slate-400 text-sm py-8 text-center">No dividend or interest income found for the selected period.</p>
+      ) : (
+        <>
+          <Plot
+            data={[{ x: result.monthly.map(m => m.month), y: result.monthly.map(m => m.income_eur), type: 'bar', marker: { color: '#2ecc71' } }]}
+            layout={{
+              title: `Monthly Dividend & Interest Income (€) — ${result.period_label}`,
+              height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
+              yaxis: { title: 'Income (€)' },
+            }}
+            config={{ displayModeBar: false }} style={{ width: '100%' }}
+          />
+
+          <h4 className="text-sm font-semibold text-slate-700">Income by Security — {result.period_label}</h4>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total dividend and interest income received in the selected period, in EUR.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.total_income_eur ?? 0))}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities that paid dividends or interest in the selected period.">Securities paying</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.securities_paying ?? 0)}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average annualised Yield on Cost across all paying securities — income received divided by your cost basis, scaled to a yearly rate.">Avg Ann. YOC</Tooltip></p><p className="text-xl font-bold">{result.summary.avg_yoc_pct != null ? `${Number(result.summary.avg_yoc_pct).toFixed(2)}%` : 'N/A'}</p></div>
+          </div>
+
+          <WithCopy>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left"><Tooltip text="Security name.">Security</Tooltip></th>
+                  <th className="px-3 py-2 text-left"><Tooltip text="Asset type — Stock, ETF, Bond, etc.">Type</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Total dividends and interest received from this security in the selected period.">Income ({result.period_label})</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Your total cost to acquire current holdings (purchase price × quantity).">Cost Basis (€)</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Annualised Yield on Cost: period income scaled to a yearly rate, divided by your cost basis.">Ann. YOC %</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Forward dividend yield based on the most recently declared dividend and the current market price.">Fwd. Yield %</Tooltip></th>
+                  <th className="px-3 py-2 text-right"><Tooltip text="Last known ex-dividend date. You must hold the security before this date to qualify for the dividend.">Ex-Div Date</Tooltip></th>
+                  <th className="px-3 py-2 text-left"><Tooltip text="How often dividends are paid — monthly, quarterly, semi-annually, or annually.">Frequency</Tooltip></th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {result.by_security.map((r, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-blue-700">{String(r.securities_name)}</td>
+                      <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(Number(r.period_income_eur ?? 0))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.yoc_pct != null ? `${Number(r.yoc_pct).toFixed(2)}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.fwd_yield_pct != null ? `${Number(r.fwd_yield_pct).toFixed(2)}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{r.ex_div_date ? String(r.ex_div_date).slice(0, 10) : '—'}</td>
+                      <td className="px-3 py-2 text-slate-500">{r.div_frequency != null ? String(r.div_frequency) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
+
+          {result.by_type.length > 0 && (
+            <Plot
+              data={[{
+                type: 'pie', hole: 0.35,
+                labels: result.by_type.map(t => t.securities_type),
+                values: result.by_type.map(t => t.period_income_eur),
+                marker: { colors: PIE_COLORS },
+                textinfo: 'percent+label',
+                hovertemplate: '<b>%{label}</b><br>€ %{value:,.2f}<br>%{percent}<extra></extra>',
+              }]}
+              layout={{ title: `Income Allocation by Security Type — ${result.period_label}`, height: 380, margin: { t: 50, l: 20, r: 20, b: 20 } }}
+              config={{ displayModeBar: false }} style={{ width: '100%' }}
+            />
+          )}
+
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <button onClick={() => setDetailOpen(!detailOpen)}
+              className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+              <span className="text-xs">{detailOpen ? '▼' : '▶'}</span>
+              <span>Full transaction detail</span>
+            </button>
+            {detailOpen && (
+              <div className="p-3">
+                <WithCopy>
+                  <div className="overflow-x-auto max-h-96">
+                    <table className="w-full text-sm">
+                      <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                        <th className="px-3 py-2 text-left">Month</th>
+                        <th className="px-3 py-2 text-left">Security</th>
+                        <th className="px-3 py-2 text-left">Account</th>
+                        <th className="px-3 py-2 text-left">Action</th>
+                        <th className="px-3 py-2 text-right">Income (€)</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {result.detail.map((r, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 text-slate-500">{String(r.month).slice(0, 10)}</td>
+                            <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
+                            <td className="px-3 py-2 text-blue-700">{String(r.accounts_name)}</td>
+                            <td className="px-3 py-2 text-slate-500">{String(r.action)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.income_eur ?? 0))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </WithCopy>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
+  'Daily':    ['pnl_dtd_eur',          'pnl_dtd_pct',              null],
+  'WTD':      ['pnl_wtd_eur',          'pnl_wtd_pct',              null],
+  'MTD':      ['pnl_mtd_eur',          'pnl_mtd_pct',              null],
+  'QTD':      ['pnl_qtd_eur',          'pnl_qtd_pct',              null],
+  'YTD':      ['pnl_ytd_eur',          'pnl_ytd_percent',          null],
+  'All-Time': ['pnl_net_all_time_eur', 'pnl_net_all_time_percent', 'gross_invested_all_time_eur'],
+}
+
+function PerformanceTab() {
+  const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl() })
+  const [period, setPeriod] = usePersist('perf_period', 'Daily')
+  const [viewPct, setViewPct] = usePersist('perf_view_pct', false)
+  const [topN, setTopN] = usePersist('perf_top_n', 15)
+  const [rankedOpen, setRankedOpen] = useState(false)
+
+  const rows = data as Row[]
+
+  const bySec = useMemo(() => {
+    const agg: Record<string, Record<string, number>> = {}
+    const sumCols = ['current_value_eur', 'gross_invested_all_time_eur', 'pnl_net_all_time_eur',
+      'unrealized_pnl_eur', 'realized_pnl_eur', 'pnl_dtd_eur', 'pnl_ytd_eur', 'pnl_qtd_eur', 'pnl_mtd_eur', 'pnl_wtd_eur']
+    for (const r of rows) {
+      const name = String(r.securities_name)
+      if (!agg[name]) agg[name] = {}
+      for (const c of sumCols) agg[name][c] = (agg[name][c] ?? 0) + Number(r[c] ?? 0)
+    }
+    const list = Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name }))
+    for (const v of list) {
+      const prev = v.current_value_eur - (v.pnl_dtd_eur ?? 0)
+      v.pnl_dtd_pct = prev !== 0 ? (v.pnl_dtd_eur ?? 0) / prev * 100 : NaN
+      const inv = v.gross_invested_all_time_eur
+      if (inv) {
+        v.pnl_net_all_time_percent = v.pnl_net_all_time_eur / inv * 100
+        v.pnl_ytd_percent = v.pnl_ytd_eur / inv * 100
+        v.pnl_wtd_pct = v.pnl_wtd_eur / inv * 100
+        v.pnl_mtd_pct = v.pnl_mtd_eur / inv * 100
+        v.pnl_qtd_pct = v.pnl_qtd_eur / inv * 100
+      } else {
+        v.pnl_net_all_time_percent = NaN; v.pnl_ytd_percent = NaN
+        v.pnl_wtd_pct = NaN; v.pnl_mtd_pct = NaN; v.pnl_qtd_pct = NaN
+      }
+    }
+    return list
+  }, [rows])
+
+  const [eurCol, pctCol, invCol] = PERF_PERIOD_MAP[period]
+  const primary = viewPct ? pctCol : eurCol
+
+  const valid = bySec.filter(v => !isNaN(v[eurCol]))
+  const sortable = valid.filter(v => !isNaN(v[primary]))
+  const top = [...sortable].sort((a, b) => b[primary] - a[primary]).slice(0, topN)
+  const bottom = [...sortable].sort((a, b) => a[primary] - b[primary]).slice(0, topN)
+
+  const totalPnl = valid.reduce((s, v) => s + (v[eurCol] ?? 0), 0)
+  const winners = valid.filter(v => v[eurCol] > 0).length
+  const losers = valid.filter(v => v[eurCol] < 0).length
+
+  const chartMap = new Map<string, Record<string, number>>()
+  for (const v of [...top, ...bottom]) chartMap.set(v.securities_name as unknown as string, v)
+  const chartRows = [...chartMap.values()].sort((a, b) => a[primary] - b[primary])
+
+  const allRanked = [...sortable].sort((a, b) => b[primary] - a[primary])
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
+    <tr className="hover:bg-slate-50">
+      {rank != null && <td className="px-3 py-2 text-slate-400">{rank}</td>}
+      <td className="px-3 py-2 font-medium text-blue-700">{String(v.securities_name)}</td>
+      {viewPct ? (
+        <>
+          <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
+          <td className={`px-3 py-2 text-right tabular-nums ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
+        </>
+      ) : (
+        <>
+          <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
+          {pctCol && !isNaN(Number(v[pctCol])) && <td className={`px-3 py-2 text-right tabular-nums ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>}
+        </>
+      )}
+      {invCol && <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtEur(Number(v[invCol] ?? 0))}</td>}
+    </tr>
+  )
+
+  const fmtDelta = (v: number) => `${v >= 0 ? '+' : ''}${fmtEur(v)}`
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">
+            <Tooltip text="Which time window to measure P&L over. Daily = today vs yesterday's close; WTD/MTD/QTD/YTD = since the start of the current week/month/quarter/year; All-Time = since first purchase.">Period</Tooltip>
+          </label>
+          <div className="flex rounded border border-slate-300 overflow-hidden text-xs">
+            {([
+              ['Daily',    'Change since yesterday\'s close'],
+              ['WTD',      'Week-to-date: since Monday\'s open'],
+              ['MTD',      'Month-to-date: since 1st of this month'],
+              ['QTD',      'Quarter-to-date: since start of this quarter'],
+              ['YTD',      'Year-to-date: since 1 Jan'],
+              ['All-Time', 'Total P&L since the first recorded purchase'],
+            ] as const).map(([p, tip]) => (
+              <button key={p} title={tip} onClick={() => setPeriod(p)}
+                className={`px-3 py-1.5 font-medium ${period === p ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">
+            <Tooltip text="Sort and display P&L as an absolute euro change, or as a percentage of invested capital for the selected period.">View by</Tooltip>
+          </label>
+          <div className="flex rounded border border-slate-300 overflow-hidden text-xs">
+            <button onClick={() => setViewPct(false)} className={`px-3 py-1.5 font-medium ${!viewPct ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>€ Change</button>
+            <button onClick={() => setViewPct(true)} className={`px-3 py-1.5 font-medium ${viewPct ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>% Change</button>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">
+            <Tooltip text="How many securities to show in the Top Gainers and Top Losers lists and the bar chart.">Top N</Tooltip>
+          </label>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setTopN(Math.max(3, topN - 1))} className="px-2 py-1 text-xs rounded border border-slate-300 hover:bg-slate-50">−</button>
+            <span className="w-10 text-center text-sm tabular-nums">{topN}</span>
+            <button onClick={() => setTopN(Math.min(50, topN + 1))} className="px-2 py-1 text-xs rounded border border-slate-300 hover:bg-slate-50">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4">
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities with a P&L value for the selected period.">Securities</Tooltip></p>
+          <p className="text-xl font-bold">{valid.length}</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Sum of P&L across all securities for the ${period} period in euros.`}>Total P&L ({period})</Tooltip></p>
+          <p className={`text-xl font-bold ${totalPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(totalPnl)}</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Securities with a positive P&L for the ${period} period.`}>Winners</Tooltip></p>
+          <p className="text-xl font-bold text-green-700">{winners}</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Securities with a negative P&L for the ${period} period.`}>Losers</Tooltip></p>
+          <p className="text-xl font-bold text-red-600">{losers}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-green-700">📈 Top {topN} Gainers</div>
+          <WithCopy>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                  {viewPct ? <>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                  </> : <>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                  </>}
+                  {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">{top.map((v, i) => <PerfRow key={i} v={v} />)}</tbody>
+              </table>
+            </div>
+          </WithCopy>
+        </div>
+        <div>
+          <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-red-600">📉 Top {topN} Losers</div>
+          <WithCopy>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                  {viewPct ? <>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                  </> : <>
+                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                  </>}
+                  {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">{bottom.map((v, i) => <PerfRow key={i} v={v} />)}</tbody>
+              </table>
+            </div>
+          </WithCopy>
+        </div>
+      </div>
+
+      {chartRows.length > 0 && (
+        <Plot
+          data={[{
+            type: 'bar', orientation: 'h',
+            x: chartRows.map(v => v[primary]),
+            y: chartRows.map(v => v.securities_name),
+            marker: { color: chartRows.map(v => v[primary] >= 0 ? '#2ecc71' : '#e74c3c') },
+          }]}
+          layout={{
+            title: `Top & Least Performers — ${period} (${viewPct ? '% Change' : '€ Change'})`,
+            height: Math.max(320, chartRows.length * 28),
+            margin: { t: 40, l: 10, r: 40, b: 40 },
+            yaxis: { automargin: true },
+            xaxis: { title: viewPct ? 'Change %' : `P&L (€) — ${period}`, ticksuffix: viewPct ? '%' : '' },
+          }}
+          config={{ displayModeBar: false }} style={{ width: '100%' }}
+        />
+      )}
+
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <button onClick={() => setRankedOpen(!rankedOpen)}
+          className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+          <span className="text-xs">{rankedOpen ? '▼' : '▶'}</span>
+          <span>📋 All Securities Ranked</span>
+        </button>
+        {rankedOpen && (
+          <div className="p-3">
+            <WithCopy>
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                    <th className="px-3 py-2 text-left w-12"><Tooltip text="Performance rank for the selected period — 1 = best performer.">Rank</Tooltip></th>
+                    <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                    {viewPct ? <>
+                      <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                      <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    </> : <>
+                      <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                      {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                    </>}
+                    {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {allRanked.map((v, i) => <PerfRow key={i} v={v} rank={i + 1} />)}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SavingsAccountsTab() {
+  const { data, isLoading } = useQuery({ queryKey: ['savings-accounts'], queryFn: getSavingsAccounts })
+  const result = data as { summary: Row; detail: Row[]; detail_last: Row[] } | undefined
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!result || !result.detail?.length) return <p className="text-slate-400 text-sm py-8 text-center">No savings accounts found.</p>
+
+  const s = result.summary
+  const pct = (v: unknown) => v != null ? `${Number(v).toFixed(2)}%` : '—'
+  const days = (v: unknown) => v != null ? String(Math.round(Number(v))) : '—'
+  const dateStr = (v: unknown) => v ? String(v).slice(0, 10) : '—'
+  const chart = (s.chart as unknown as { accounts_name: string; annual_yoc_pct: number }[]) ?? []
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500">
+        <strong>Principal</strong> = non-interest cash inflows (deposits/transfers in, excluding interest). <strong>Total Interest</strong> = sum of splits categorised as 'Interest'. <strong>Cumulative YoC</strong> = Total Interest ÷ Principal × 100. <strong>APY</strong> = (1 + Total Interest / Principal) ^ (365 / holding days) − 1, i.e. the compound annualised rate implied by actual interest earned over the holding period.
+      </div>
+
+      <div className="grid grid-cols-5 gap-3">
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of savings accounts tracked (accounts whose transactions include interest income).">Savings Accounts</Tooltip></p><p className="text-xl font-bold">{Number(s.savings_accounts_count ?? 0)}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Sum of non-interest inflows (deposits and transfers in) across all savings accounts.">Total Principal</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(s.total_principal_eur ?? 0))}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest credited to all savings accounts, from all time.">Total Interest Received</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(Number(s.total_interest_eur ?? 0))}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average Annual Yield on Cost: interest ÷ principal × 100, averaged across all accounts.">Avg Annual YOC</Tooltip></p><p className="text-xl font-bold">{pct(s.avg_yoc_pct)}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average Annual Percentage Yield: compound annualised rate implied by actual interest earned over the holding period — (1 + interest/principal)^(365/days) − 1.">Avg APY</Tooltip></p><p className="text-xl font-bold">{pct(s.avg_apy_pct)}</p></div>
+      </div>
+
+      {chart.length > 0 && (
+        <Plot
+          data={[{
+            type: 'bar', orientation: 'h',
+            x: chart.map(c => c.annual_yoc_pct),
+            y: chart.map(c => c.accounts_name),
+            text: chart.map(c => `${c.annual_yoc_pct.toFixed(2)}%`),
+            textposition: 'outside',
+            marker: { color: chart.map(c => c.annual_yoc_pct), colorscale: 'RdYlGn' },
+          }]}
+          layout={{ title: 'Annual Yield over Cost (%) per Savings Account', height: Math.max(280, chart.length * 45), margin: { t: 40, l: 10, r: 40, b: 40 }, yaxis: { automargin: true }, xaxis: { title: '%' } }}
+          config={{ displayModeBar: false }} style={{ width: '100%' }}
+        />
+      )}
+
+      <div>
+        <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail</h4>
+        <WithCopy>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
+                <th className="px-3 py-2 text-left"><Tooltip text="Account type (e.g. Savings, Fixed Deposit).">Type</Tooltip></th>
+                <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Total non-interest cash inflows (deposits and transfers in).">Principal</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Sum of all interest income credited to this account.">Total Interest</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annualised interest based on the most recent interest payment, extrapolated over a full year.">Annual Interest (cash)</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Current ledger balance of the account.">Current Balance</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annual Yield on Cost: total interest ÷ principal × 100. Reflects what the account has actually returned relative to deposits.">Annual YOC%</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annual Percentage Yield: compound annualised rate — (1 + interest/principal)^(365/holding_days) − 1.">APY%</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Total number of days between the first and last transaction recorded for this account.">Holding Days</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Date of the earliest recorded transaction.">First Tx</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Date of the most recent recorded transaction.">Last Tx</Tooltip></th>
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {result.detail.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                    <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                    <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.principal ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{Number(r.total_interest ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.annual_interest_cash ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{Number(r.current_balance ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_total)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.first_tx_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.last_tx_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </WithCopy>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail for Last Interest Period</h4>
+        <WithCopy>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
+                <th className="px-3 py-2 text-left"><Tooltip text="Account type.">Type</Tooltip></th>
+                <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Average principal balance during the last interest period.">Avg Principal</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Total interest received in the most recent interest period.">Last Interest</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Last period's interest extrapolated to a full year.">Annual Interest (cash)</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annual Yield on Cost for the last period: interest ÷ average principal × 100.">Annual YOC%</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Compound annualised rate for the last period — (1 + interest/principal)^(365/days) − 1.">APY%</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Number of days in the last interest period.">Holding Days</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Start date of the last interest period.">Period Start</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Date when the last interest payment was credited.">Last Interest Date</Tooltip></th>
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {result.detail_last.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                    <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                    <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? Number(r.avg_principal_last).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{r.last_interest_sum != null ? Number(r.last_interest_sum).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.annual_interest_cash_last != null ? Number(r.annual_interest_cash_last).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct_last)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct_last)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_last)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.period_start_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.last_interest_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </WithCopy>
+      </div>
+    </div>
+  )
+}
+
+function BondScheduleTab() {
+  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
+  const rows = data as Row[]
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!rows.length) return <p className="text-slate-400 text-sm py-8 text-center">No bond holdings found.</p>
+
+  const totalFace = rows.reduce((s, r) => s + Number(r.total_face_eur ?? 0), 0)
+  const totalCoupon = rows.reduce((s, r) => s + Number(r.annual_coupon_eur ?? 0), 0)
+  const maturingIn12m = rows.filter(r => r.days_to_maturity != null && Number(r.days_to_maturity) <= 365).length
+
+  const chartData = rows.filter(r => r.maturity_date).map(r => ({
+    x: String(r.maturity_date),
+    y: Number(r.total_face_eur ?? 0),
+    name: String(r.securities_name),
+  }))
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Sum of face (par) values across all held bonds, converted to EUR. This is the amount you will receive back at maturity for each bond.">Total Face Value (EUR)</Tooltip></p><p className="text-xl font-bold">{fmtEur(totalFace)}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Expected annual coupon payments from all held bonds based on stated coupon rates and current quantities.">Annual Coupon Income (EUR)</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(totalCoupon)}</p></div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of bond positions maturing within the next 12 months — these will return face value and stop paying coupons.">Maturing in 12 months</Tooltip></p><p className="text-xl font-bold text-amber-600">{maturingIn12m}</p></div>
+      </div>
+      <Plot
+        data={[{ type: 'bar', x: chartData.map(d => d.x), y: chartData.map(d => d.y), text: chartData.map(d => d.name), hovertemplate: '%{text}<br>%{x}<br>%{y:,.0f} EUR<extra></extra>', marker: { color: '#3b82f6' } }]}
+        layout={{ title: 'Maturity Timeline', height: 300, xaxis: { title: 'Maturity Date' }, yaxis: { title: 'Face Value (EUR)' }, margin: { t: 40, b: 60, l: 80, r: 20 } }}
+        config={{ displayModeBar: false }} style={{ width: '100%' }}
+      />
+      <WithCopy>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <th className="px-3 py-2 text-left"><Tooltip text="Bond security name.">Security</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Number of units held.">Qty</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Par (face) value per unit — the amount repaid at maturity per bond.">Face Value</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Total par value of your position (quantity × face value), converted to EUR.">Total Face (EUR)</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Annual coupon rate stated on the bond, as a percentage of face value.">Coupon %</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="How often coupon payments are made — annual, semi-annual, quarterly, or monthly.">Frequency</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Estimated next coupon payment in EUR based on your quantity and coupon rate.">Next Coupon (EUR)</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Total expected coupon income from this bond over a full year.">Annual Coupon (EUR)</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Date when the bond matures and face value is repaid.">Maturity</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Calendar days remaining until maturity. Highlighted amber when under 365 days.">Days Left</Tooltip></th>
+              <th className="px-3 py-2 text-right"><Tooltip text="Currency the bond is denominated in.">Ccy</Tooltip></th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => (
+                <tr key={i} className="hover:bg-slate-50">
+                  <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{Number(r.face_value ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.total_face_eur ?? 0))}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{r.coupon_rate != null ? `${Number(r.coupon_rate).toFixed(2)}%` : '—'}</td>
+                  <td className="px-3 py-2 text-right">{String(r.coupon_frequency ?? '—')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtEur(Number(r.next_coupon_eur ?? 0))}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtEur(Number(r.annual_coupon_eur ?? 0))}</td>
+                  <td className="px-3 py-2 text-right">{r.maturity_date ? String(r.maturity_date).slice(0, 10) : '—'}</td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${Number(r.days_to_maturity ?? 999) <= 365 ? 'text-amber-600 font-semibold' : ''}`}>{r.days_to_maturity != null ? Number(r.days_to_maturity) : '—'}</td>
+                  <td className="px-3 py-2 text-right text-slate-400">{String(r.currency ?? '')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </WithCopy>
     </div>
   )
 }
 
-function InvPerformanceSection({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const [tab, setTab] = useState('P&L')
+function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
+  const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
+  const [benchmarkId, setBenchmarkId] = usePersist<number | null>('bench_id', null)
+  const [lookback, setLookback] = usePersist('bench_lookback', 252)
+  const [resample, setResample] = usePersist('bench_resample', 'Daily')
+  const cands = candidates as Row[]
+
+  const effId = benchmarkId ?? (cands[0] ? Number(cands[0].id) : null)
+
+  const { data = [], isLoading } = useQuery({
+    queryKey: ['benchmark', effId, lookback, accountIds, resample],
+    queryFn: () => getBenchmark(effId!, lookback, accountIds, resample),
+    enabled: effId != null,
+  })
+  const rows = data as { date: string; portfolio: number; benchmark: number | null }[]
+
+  const portReturn  = rows.length ? ((rows[rows.length - 1].portfolio / 100 - 1) * 100).toFixed(2) : null
+  const benchReturn = rows.length && rows[rows.length - 1].benchmark != null
+    ? ((rows[rows.length - 1].benchmark! / 100 - 1) * 100).toFixed(2) : null
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500"><Tooltip text="Market index or security to compare your portfolio against. Both series are indexed to 100 at the start date.">Benchmark</Tooltip></label>
+          <select className="rounded border border-slate-300 px-2 py-1 text-sm"
+            value={effId ?? ''} onChange={e => setBenchmarkId(Number(e.target.value))}>
+            {cands.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500"><Tooltip text="How many trading days of history to include. Both portfolio and benchmark are indexed from the same start date.">Lookback</Tooltip></label>
+          {([63, 126, 252, 504, 756] as const).map(d => (
+            <button key={d} onClick={() => setLookback(d)}
+              className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {d === 63 ? 'QTD' : d === 126 ? '6M' : d === 252 ? '1Y' : d === 504 ? '2Y' : '3Y'}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500"><Tooltip text="Frequency at which data points are plotted. Daily shows every trading day; Weekly/Monthly reduce noise and improve readability for long windows.">Resample</Tooltip></label>
+          <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={resample} onChange={e => setResample(e.target.value)}>
+            <option value="Daily">Daily</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Monthly">Monthly</option>
+          </select>
+        </div>
+      </div>
+      {portReturn != null && benchReturn != null && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Your portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings.">Portfolio Return</Tooltip></p><p className={`text-xl font-bold ${Number(portReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(portReturn) >= 0 ? '+' : ''}{portReturn}%</p></div>
+          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Selected benchmark's total return over the same period, indexed to the same start date as your portfolio.">Benchmark Return</Tooltip></p><p className={`text-xl font-bold ${Number(benchReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(benchReturn) >= 0 ? '+' : ''}{benchReturn}%</p></div>
+        </div>
+      )}
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : rows.length > 0 && (
+        <Plot
+          data={[
+            { x: rows.map(r => r.date), y: rows.map(r => r.portfolio), name: 'Portfolio', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2 } },
+            { x: rows.map(r => r.date), y: rows.map(r => r.benchmark), name: cands.find(c => Number(c.id) === effId)?.name as string ?? 'Benchmark', type: 'scatter', mode: 'lines', line: { color: '#f59e0b', width: 2, dash: 'dot' } },
+          ]}
+          layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 } }}
+          config={{ displayModeBar: false }} style={{ width: '100%' }}
+        />
+      )}
+    </div>
+  )
+}
+
+function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
+  const [lookback, setLookback] = usePersist('corr_lookback', 252)
+  const [maxH, setMaxH] = usePersist('corr_max', 20)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['correlation', lookback, maxH, accountIds],
+    queryFn: () => getCorrelation(lookback, maxH, accountIds),
+  })
+  const result = data as { tickers: string[]; matrix: (number | null)[][] } | undefined
+
+  const colorScale = (v: number | null) => {
+    if (v === null) return '#e2e8f0'
+    const r = v >= 0 ? Math.round(v * 220) : 0
+    const b = v < 0 ? Math.round(-v * 220) : 0
+    const g = Math.round((1 - Math.abs(v)) * 180)
+    return `rgb(${r},${g},${b})`
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500"><Tooltip text="Number of trading days of daily price returns used to compute pairwise correlations. Shorter windows are more reactive to recent market regimes.">Lookback</Tooltip></label>
+          {([60, 126, 252, 504] as const).map(d => (
+            <button key={d} onClick={() => setLookback(d)}
+              className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {d === 60 ? '3M' : d === 126 ? '6M' : d === 252 ? '1Y' : '2Y'}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500"><Tooltip text="Limit the matrix to your top N holdings by value. Larger numbers can make the matrix harder to read.">Max Holdings</Tooltip></label>
+          {([10, 15, 20, 30] as const).map(n => (
+            <button key={n} onClick={() => setMaxH(n)}
+              className={`px-2 py-1 text-xs rounded border ${maxH === n ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div>
+        : !result || !result.tickers.length ? <p className="text-slate-400 text-sm py-8 text-center">No price data available.</p>
+        : (
+          <div className="overflow-x-auto">
+            <table className="text-xs border-collapse">
+              <thead>
+                <tr>
+                  <th className="px-2 py-1 text-left text-slate-500 font-normal min-w-32"></th>
+                  {result.tickers.map(t => (
+                    <th key={t} className="px-1 py-1 text-center font-medium text-slate-600" style={{ minWidth: 60, maxWidth: 90 }}>
+                      <div style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: 80 }} className="text-xs">{t.length > 20 ? t.slice(0, 18) + '…' : t}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {result.matrix.map((row, i) => (
+                  <tr key={i}>
+                    <td className="px-2 py-1 font-medium text-slate-700 whitespace-nowrap">{result.tickers[i].length > 28 ? result.tickers[i].slice(0, 26) + '…' : result.tickers[i]}</td>
+                    {row.map((v, j) => (
+                      <td key={j} className="text-center tabular-nums font-mono" style={{ backgroundColor: colorScale(v), padding: '4px 6px', border: '1px solid #f1f5f9' }}>
+                        <span style={{ color: v != null && Math.abs(v) > 0.5 ? '#fff' : '#1e293b' }}>
+                          {v != null ? v.toFixed(2) : '—'}
+                        </span>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex items-center gap-3 mt-3 text-xs text-slate-500">
+              <div className="flex items-center gap-1"><div className="w-4 h-4 rounded" style={{ background: 'rgb(220,0,0)' }} />Strong positive</div>
+              <div className="flex items-center gap-1"><div className="w-4 h-4 rounded" style={{ background: 'rgb(0,180,0)' }} />Uncorrelated</div>
+              <div className="flex items-center gap-1"><div className="w-4 h-4 rounded" style={{ background: 'rgb(0,0,220)' }} />Strong negative</div>
+            </div>
+          </div>
+        )}
+    </div>
+  )
+}
+
+const FULL_PORTFOLIO = 'Full Portfolio'
+const INV_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Investment']
+
+function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined) => void }) {
+  const [open, setOpen] = useState(false)
+  const [selPreset, setSelPreset] = usePersist('perf_preset_sel', FULL_PORTFOLIO)
+  const [nameInput, setNameInput] = useState('')
+  const [draftIds, setDraftIds] = useState<Set<number> | null>(null)
+
+  const { data: accounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
+  const { data: presets = [], refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets'], queryFn: getPortfolioPresets })
+
+  const invAccounts = (accounts as Row[]).filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)))
+  const presetList = presets as { preset_id: number; preset_name: string; account_ids: number[] }[]
+  const presetMap = useMemo(() => {
+    const m: Record<string, number[]> = {}
+    for (const p of presetList) m[p.preset_name] = p.account_ids ?? []
+    return m
+  }, [presetList])
+
+  const savedIds = selPreset === FULL_PORTFOLIO ? invAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
+  const currentIds = draftIds ?? new Set(savedIds)
+
+  useEffect(() => {
+    onChange(selPreset === FULL_PORTFOLIO ? undefined : Array.from(currentIds))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selPreset, presetMap])
+
+  const toggleAccount = (id: number) => {
+    const next = new Set(draftIds ?? savedIds)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    setDraftIds(next)
+    if (selPreset !== FULL_PORTFOLIO) onChange(Array.from(next))
+  }
+
+  const handleSave = async () => {
+    const name = nameInput.trim()
+    if (!name || name === FULL_PORTFOLIO) { alert("Please enter a valid preset name (not 'Full Portfolio')."); return }
+    const ids = Array.from(currentIds)
+    if (!ids.length) { alert('Select at least one account before saving.'); return }
+    await upsertPortfolioPreset(name, ids)
+    await refetchPresets()
+    setSelPreset(name)
+    setDraftIds(null)
+    onChange(ids)
+  }
+
+  const handleDelete = async () => {
+    const match = presetList.find(p => p.preset_name === selPreset)
+    if (!match) return
+    if (!window.confirm(`Delete preset '${selPreset}'? This cannot be undone.`)) return
+    await deletePortfolioPreset(match.preset_id)
+    await refetchPresets()
+    setSelPreset(FULL_PORTFOLIO)
+    setDraftIds(null)
+    onChange(undefined)
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+        <span className="text-xs">{open ? '▼' : '▶'}</span>
+        <span>⚙️ Portfolio Preset {selPreset !== FULL_PORTFOLIO && <span className="text-blue-600">— {selPreset}</span>}</span>
+      </button>
+      {open && (
+        <div className="p-3 space-y-3 border-t border-slate-200">
+          <div className="flex flex-wrap items-center gap-2">
+            <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={selPreset}
+              onChange={e => { setSelPreset(e.target.value); setDraftIds(null); setNameInput(e.target.value === FULL_PORTFOLIO ? '' : e.target.value) }}>
+              <option value={FULL_PORTFOLIO}>{FULL_PORTFOLIO}</option>
+              {[...presetList].sort((a, b) => a.preset_name.localeCompare(b.preset_name)).map(p => (
+                <option key={p.preset_id} value={p.preset_name}>{p.preset_name}</option>
+              ))}
+            </select>
+            <input className="rounded border border-slate-300 px-2 py-1 text-sm flex-1 min-w-[160px]" placeholder="Name to save as…"
+              value={nameInput} onChange={e => setNameInput(e.target.value)} />
+            <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
+            <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
+              className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+          </div>
+          <div className="max-h-48 overflow-y-auto border border-slate-200 rounded">
+            {invAccounts.map(a => {
+              const id = Number(a.id)
+              const checked = selPreset === FULL_PORTFOLIO ? true : currentIds.has(id)
+              return (
+                <label key={id} className={`flex items-center gap-2 px-3 py-1.5 text-sm border-b border-slate-100 last:border-0 ${selPreset === FULL_PORTFOLIO ? 'opacity-50' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                  <input type="checkbox" className="rounded" checked={checked} disabled={selPreset === FULL_PORTFOLIO} onChange={() => toggleAccount(id)} />
+                  <span>{String(a.name)}</span>
+                  <span className="text-xs text-slate-400">({String(a.type)})</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const MC_TARGETS = [50000, 100000, 250000, 500000, 1000000]
+
+function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
+  const [yearsAhead, setYearsAhead] = usePersist('mc_years', 10)
+  const [numSims, setNumSims] = usePersist('mc_sims', 500)
+  const [monthlyContrib, setMonthlyContrib] = usePersist('mc_contrib', 500)
+  const [lookbackMc, setLookbackMc] = usePersist('mc_lookback', 756)
+  const [overrideOpen, setOverrideOpen] = useState(false)
+  const [overrideReturn, setOverrideReturn] = useState<string>('')
+  const [overrideVol, setOverrideVol] = useState<string>('')
+  const [initialOverride, setInitialOverride] = useState<string>('')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['monte-carlo', yearsAhead, numSims, monthlyContrib, lookbackMc, accountIds, overrideReturn, overrideVol, initialOverride],
+    queryFn: () => getMonteCarlo({
+      yearsAhead, numSims, monthlyContrib, lookbackDays: lookbackMc, accountIds,
+      overrideReturnPct: overrideReturn ? Number(overrideReturn) : undefined,
+      overrideVolPct: overrideVol ? Number(overrideVol) : undefined,
+      initialValue: initialOverride ? Number(initialOverride) : undefined,
+    }),
+  })
+
+  type MCResult = {
+    calibration: { ann_return_pct: number; ann_vol_pct: number }
+    used: { ann_return_pct: number; ann_vol_pct: number; initial_value: number }
+    chart: { month: number; p10: number; p50: number; p90: number }[]
+    probabilities: { target: number; probability_pct: number }[]
+  }
+  const result = data as MCResult | undefined
+  const unrealistic = result != null && Math.abs(result.calibration.ann_return_pct) > 20
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div>
+          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="How many years into the future to project the portfolio. Longer horizons show wider uncertainty bands.">Years Ahead</Tooltip></label>
+          <input type="range" min={1} max={30} value={yearsAhead} onChange={e => setYearsAhead(Number(e.target.value))} className="w-full" />
+          <span className="text-xs text-slate-600">{yearsAhead} years</span>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Number of random scenarios to run. More simulations give smoother percentile bands but take longer to compute.">Simulations</Tooltip></label>
+          <input type="range" min={100} max={2000} step={100} value={numSims} onChange={e => setNumSims(Number(e.target.value))} className="w-full" />
+          <span className="text-xs text-slate-600">{numSims}</span>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Fixed amount added to the portfolio each month throughout the projection. Set to 0 to model a buy-and-hold scenario.">Monthly Contribution (€)</Tooltip></label>
+          <input type="number" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={monthlyContrib} onChange={e => setMonthlyContrib(Number(e.target.value))} />
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Historical window used to estimate expected return and volatility for the simulation. Shorter windows react faster to recent market conditions.">Calibration Window (days)</Tooltip></label>
+          <input type="range" min={252} max={1260} step={42} value={lookbackMc} onChange={e => setLookbackMc(Number(e.target.value))} className="w-full" />
+          <span className="text-xs text-slate-600">{lookbackMc}</span>
+        </div>
+      </div>
+
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <button onClick={() => setOverrideOpen(!overrideOpen)} className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+          <span className="text-xs">{overrideOpen || unrealistic ? '▼' : '▶'}</span>
+          <span>Calibration & Overrides</span>
+          {result && <span className="text-xs text-slate-400 ml-2">historical: {result.calibration.ann_return_pct.toFixed(2)}% return / {result.calibration.ann_vol_pct.toFixed(2)}% vol</span>}
+        </button>
+        {(overrideOpen || unrealistic) && (
+          <div className="p-3 border-t border-slate-200 space-y-2">
+            {unrealistic && <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1.5">⚠️ Calibrated return looks unrealistic — consider overriding below.</p>}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Override Return %</label>
+                <input type="number" step="0.1" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" placeholder={result ? result.calibration.ann_return_pct.toFixed(2) : ''} value={overrideReturn} onChange={e => setOverrideReturn(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Override Volatility %</label>
+                <input type="number" step="0.1" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" placeholder={result ? result.calibration.ann_vol_pct.toFixed(2) : ''} value={overrideVol} onChange={e => setOverrideVol(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Initial Value (€)</label>
+                <input type="number" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" placeholder={result ? String(result.used.initial_value) : ''} value={initialOverride} onChange={e => setInitialOverride(e.target.value)} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : result && (
+        <>
+          <Plot
+            data={[
+              { x: result.chart.map(c => c.month), y: result.chart.map(c => c.p90), name: 'p90', type: 'scatter', mode: 'lines', line: { width: 0 }, showlegend: false },
+              { x: result.chart.map(c => c.month), y: result.chart.map(c => c.p10), name: '10th–90th percentile', type: 'scatter', mode: 'lines', fill: 'tonexty', fillcolor: 'rgba(59,130,246,0.15)', line: { width: 0 } },
+              { x: result.chart.map(c => c.month), y: result.chart.map(c => c.p50), name: 'Median (p50)', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2.5 } },
+            ]}
+            layout={{ height: 400, margin: { t: 30, r: 20, b: 50, l: 70 }, xaxis: { title: 'Months ahead' }, yaxis: { title: 'Portfolio Value (€)', tickformat: ',.0f' }, legend: { orientation: 'h', y: -0.2 } }}
+            config={{ displayModeBar: false }} style={{ width: '100%' }}
+          />
+          <h4 className="text-sm font-semibold text-slate-700"><Tooltip text="Percentage of simulated paths that reach or exceed each target value at any point within the projection horizon.">Probability of Reaching Target Amounts</Tooltip></h4>
+          <div className="grid grid-cols-5 gap-3">
+            {result.probabilities.map(p => (
+              <div key={p.target} className="bg-slate-50 rounded-lg p-3 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Probability that the portfolio reaches €${p.target.toLocaleString()} within ${yearsAhead} years across ${numSims} simulated scenarios.`}>€{p.target.toLocaleString()}</Tooltip></p>
+                <p className="text-lg font-bold">{p.probability_pct.toFixed(1)}%</p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function InvPerformanceSection() {
+  const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
+  const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  const TABS = ['P&L', 'Performance', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR']
+  const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR'].includes(tab)
   return (
     <div>
-      <SubTabs tabs={['P&L', 'TWR/MWR', 'Dividends', 'Risk Metrics']} active={tab} onChange={setTab} />
-      {tab === 'P&L' && <PnlReport />}
-      {tab === 'TWR/MWR' && <TwrTab startDate={startDate} endDate={endDate} />}
-      {tab === 'Dividends' && <DividendsReport startDate={startDate} endDate={endDate} />}
-      {tab === 'Risk Metrics' && <RiskMetricsTab startDate={startDate} endDate={endDate} />}
+      <SubTabs tabs={TABS} active={tab} onChange={setTab} />
+      {needsPreset && <PortfolioPresetBar onChange={setPresetAccountIds} />}
+      {tab === 'P&L'              && <PnlReport />}
+      {tab === 'Performance'      && <PerformanceTab />}
+      {tab === 'TWR/MWR'          && <TwrTab accountIds={presetAccountIds} />}
+      {tab === 'Savings'          && <SavingsAccountsTab />}
+      {tab === 'Dividend Tracker' && <DividendTrackerTab />}
+      {tab === 'Bond Schedule'    && <BondScheduleTab />}
+      {tab === 'Benchmark'        && <BenchmarkTab accountIds={presetAccountIds} />}
+      {tab === 'Risk Metrics'     && <RiskMetricsTab accountIds={presetAccountIds} />}
+      {tab === 'Correlation'      && <CorrelationTab accountIds={presetAccountIds} />}
+      {tab === 'Monte Carlo'      && <MonteCarloTab accountIds={presetAccountIds} />}
     </div>
   )
 }
@@ -1165,11 +2345,431 @@ function PriceChangesTab() {
   )
 }
 
+// ── Shared hook for portfolio signals data ────────────────────────────────────
+function usePortfolioSignals() {
+  return useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+}
+
+type Signal = {
+  securities_name: string
+  price_today: number | null
+  price_today_date: string | null
+  daily_chg_pct: number | null
+  weekly_chg_pct: number | null
+  monthly_chg_pct: number | null
+  quarterly_chg_pct: number | null
+  semiannual_chg_pct: number | null
+  annual_chg_pct: number | null
+  triannual_chg_pct: number | null
+  ytd_chg_pct: number | null
+  vol_1m_ann: number | null
+  vol_3m_ann: number | null
+  vol_1y_ann: number | null
+  vol_ytd_ann: number | null
+  quality_score: number | null
+  sharpe_ratio: number | null
+  current_value_eur: number | null
+  unrealized_pnl_eur: number | null
+  total_cost_eur: number | null
+  wall_street_view: string | null
+  target_price: number | null
+  upside_pct: number | null
+  high_3y: number | null
+  low_3y: number | null
+  pct_from_high_3y: number | null
+  pct_from_low_3y: number | null
+  recommendation_signal: string | null
+  final_signal: string | null
+}
+
+// ── Volatility Tab ────────────────────────────────────────────────────────────
+function VolatilityTab() {
+  const { data = [], isLoading } = usePortfolioSignals()
+  const [volPeriod, setVolPeriod] = usePersist('vol_period', 'Annual Vol (ann)')
+  const rows = data as Signal[]
+
+  const VOL_MAP: Record<string, keyof Signal> = {
+    'Monthly Vol (ann)':   'vol_1m_ann',
+    'Quarterly Vol (ann)': 'vol_3m_ann',
+    'Annual Vol (ann)':    'vol_1y_ann',
+    'YTD Vol (ann)':       'vol_ytd_ann',
+  }
+
+  const col = VOL_MAP[volPeriod]
+  const filtered = rows
+    .filter(r => r[col] != null && Number(r[col]) > 0)
+    .map(r => ({ name: r.securities_name, vol: Number(r[col]) }))
+
+  const highVol = [...filtered].sort((a, b) => b.vol - a.vol).slice(0, 10)
+  const lowVol  = [...filtered].sort((a, b) => a.vol - b.vol).slice(0, 10)
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  const VolTable = ({ items, label, style }: { items: typeof highVol; label: string; style: string }) => (
+    <div>
+      <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${style}`}>{label}</div>
+      <WithCopy>
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <th className="px-3 py-2 text-left">Security</th>
+            <th className="px-3 py-2 text-right">Volatility %</th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.map((r, i) => (
+              <tr key={i} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium">{r.name}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{r.vol.toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </WithCopy>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1.5">
+        {Object.keys(VOL_MAP).map(p => (
+          <button key={p} onClick={() => setVolPeriod(p)}
+            className={`px-3 py-1.5 text-xs rounded border font-medium ${volPeriod === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            {p}
+          </button>
+        ))}
+      </div>
+      {filtered.length === 0
+        ? <p className="text-slate-400 text-sm py-8 text-center">No volatility data available.</p>
+        : <div className="grid grid-cols-2 gap-6">
+            <VolTable items={highVol} label="⚡ High Volatility" style="bg-amber-50 border border-amber-200 text-amber-800" />
+            <VolTable items={lowVol}  label="🛡️ Low Volatility"  style="bg-blue-50 border border-blue-100 text-blue-800" />
+          </div>
+      }
+    </div>
+  )
+}
+
+// ── Investment Signals Tab ────────────────────────────────────────────────────
+function InvestmentSignalsTab() {
+  const { data = [], isLoading } = usePortfolioSignals()
+  const [volCap, setVolCap] = usePersist('inv_sig_vol_cap', 95)
+  const rows = data as Signal[]
+
+  const plotRows = rows.filter(r => r.vol_1y_ann != null && r.annual_chg_pct != null && Number(r.vol_1y_ann) > 0)
+
+  const vols = [...plotRows.map(r => Number(r.vol_1y_ann))].sort((a, b) => a - b)
+  const capValue = volCap >= 100
+    ? Infinity
+    : Math.max(vols[Math.floor(vols.length * volCap / 100)] ?? 10, 10)
+
+  const chartRows = volCap >= 100 ? plotRows : plotRows.filter(r => Number(r.vol_1y_ann) <= capValue)
+  const hiddenNames = plotRows.filter(r => Number(r.vol_1y_ann) > capValue).map(r => r.securities_name)
+
+  const topPicks = [...rows]
+    .filter(r => r.sharpe_ratio != null)
+    .sort((a, b) => Number(b.sharpe_ratio) - Number(a.sharpe_ratio))
+    .slice(0, 20)
+
+  const sharpeValues = chartRows.map(r => r.sharpe_ratio ?? 0)
+  const minSharpe = Math.min(...sharpeValues)
+  const maxSharpe = Math.max(...sharpeValues)
+
+  const sharpeColor = (v: number) => {
+    if (maxSharpe === minSharpe) return '#94a3b8'
+    const t = (v - minSharpe) / (maxSharpe - minSharpe)
+    if (t < 0.5) {
+      const r = Math.round(220 + (255 - 220) * (1 - t * 2))
+      const g = Math.round(38 + (200 - 38) * (t * 2))
+      return `rgb(${r},${g},38)`
+    }
+    const t2 = (t - 0.5) * 2
+    const r2 = Math.round(255 - (255 - 34) * t2)
+    const g2 = Math.round(200 - (200 - 197) * t2)
+    return `rgb(${r2},${g2},${Math.round(38 + (94 - 38) * t2)})`
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-4">
+        <div className="flex-1">
+          <label className="text-xs font-medium text-slate-600 block mb-1">
+            <Tooltip text="Securities above this volatility percentile are hidden from the scatter chart for readability. They always appear in the table below.">
+              Volatility cap (percentile)
+            </Tooltip>
+            {' '}— <span className="text-blue-600 font-semibold">{volCap}%</span>
+          </label>
+          <input type="range" min={50} max={100} step={1} value={volCap}
+            onChange={e => setVolCap(Number(e.target.value))}
+            className="w-full accent-blue-600" />
+        </div>
+        {volCap < 100 && (
+          <div className="text-right">
+            <p className="text-xs text-slate-500">Cap at</p>
+            <p className="text-sm font-bold text-blue-600">{capValue === Infinity ? '∞' : `${capValue.toFixed(0)}%`}</p>
+          </div>
+        )}
+      </div>
+
+      {hiddenNames.length > 0 && (
+        <p className="text-xs text-slate-400">
+          ℹ️ {hiddenNames.length} securit{hiddenNames.length === 1 ? 'y' : 'ies'} with volatility &gt; {capValue.toFixed(0)}% hidden from chart ({hiddenNames.join(', ')}). They appear in the table below.
+        </p>
+      )}
+
+      {/* Risk vs Reward scatter */}
+      {chartRows.length > 0 && (
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-1">Risk vs. Reward Matrix</p>
+          <Plot
+            data={[{
+              type: 'scatter',
+              mode: 'markers',
+              x: chartRows.map(r => r.vol_1y_ann),
+              y: chartRows.map(r => r.annual_chg_pct),
+              text: chartRows.map(r => r.securities_name),
+              hovertemplate: '<b>%{text}</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>',
+              marker: {
+                size: chartRows.map(r => Math.max((r.quality_score ?? 0) + 5, 5)),
+                color: chartRows.map(r => r.sharpe_ratio ?? 0),
+                colorscale: [
+                  [0, '#ef4444'], [0.25, '#f97316'], [0.5, '#eab308'],
+                  [0.75, '#22c55e'], [1, '#16a34a'],
+                ],
+                colorbar: { title: 'Sharpe', thickness: 12, len: 0.6 },
+                showscale: true,
+                line: { width: 0.5, color: '#ffffff' },
+              },
+            }]}
+            layout={{
+              height: 420,
+              margin: { t: 20, r: 80, b: 60, l: 70 },
+              xaxis: { title: 'Annual Volatility (%)' },
+              yaxis: { title: 'Annual Return (%)' },
+              shapes: [
+                { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#94a3b8', dash: 'dash', width: 1 } },
+                { type: 'line', x0: chartRows.reduce((s, r) => s + Number(r.vol_1y_ann ?? 0), 0) / chartRows.length, x1: chartRows.reduce((s, r) => s + Number(r.vol_1y_ann ?? 0), 0) / chartRows.length, y0: 0, y1: 1, yref: 'paper', line: { color: '#94a3b8', dash: 'dash', width: 1 } },
+              ],
+              plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'closest',
+            }}
+            config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+        </div>
+      )}
+
+      {/* Top efficiency picks table */}
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">🏆 Top Efficiency Picks (High Sharpe Ratio)</p>
+        <WithCopy>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <th className="px-3 py-2 text-left"><Tooltip text="Security name.">Security</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annual price return over the last 12 months.">Return 1Y</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Annualised volatility over the last 12 months.">Vol 1Y</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Excess return over risk-free rate divided by volatility. Higher is better.">Sharpe</Tooltip></th>
+                <th className="px-3 py-2 text-right"><Tooltip text="Composite momentum score: 50% 1M + 30% 3M + 20% 1Y return.">Quality Score</Tooltip></th>
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {topPicks.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-medium">{r.securities_name}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${Number(r.annual_chg_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {r.annual_chg_pct != null ? `${Number(r.annual_chg_pct) >= 0 ? '+' : ''}${Number(r.annual_chg_pct).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-amber-600">
+                      {r.vol_1y_ann != null ? `${Number(r.vol_1y_ann).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: sharpeColor(Number(r.sharpe_ratio ?? 0)) }}>
+                      {r.sharpe_ratio != null ? Number(r.sharpe_ratio).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                      {r.quality_score != null ? Number(r.quality_score).toFixed(2) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </WithCopy>
+      </div>
+    </div>
+  )
+}
+
+// ── Portfolio Action Signals Tab ──────────────────────────────────────────────
+function PortfolioActionSignalsTab() {
+  const { data = [], isLoading } = usePortfolioSignals()
+  const [view, setView] = usePersist<'all' | 'hide_neutral' | 'open_only'>('sig_view', 'all')
+  const rows = data as Signal[]
+
+  const filtered = rows.filter(r => {
+    if (view === 'hide_neutral') return r.recommendation_signal !== '⚪ NEUTRAL'
+    if (view === 'open_only')    return Number(r.current_value_eur ?? 0) > 0
+    return true
+  })
+
+  const signalStyle = (sig: string | null): string => {
+    if (!sig) return ''
+    const v = sig.toUpperCase()
+    if (v.includes('CONVICTION SELL') || v.includes('UNDERPERFORM')) return 'text-red-900 font-bold'
+    if (v.includes('SELL') || v.includes('CAUTION'))                  return 'text-red-600 font-bold'
+    if (v.includes('HIGH CONVICTION BUY'))                            return 'text-green-900 font-bold'
+    if (v.includes('STRONG') || v.includes('CONVICTION BUY'))        return 'text-green-700 font-bold'
+    if (v.includes('BUY') || v.includes('UPGRADE'))                  return 'text-green-600 font-semibold'
+    if (v.includes('CONTRARIAN'))                                     return 'text-orange-600 font-semibold'
+    return 'text-slate-500'
+  }
+
+  const analystBadge = (v: string | null) => {
+    if (!v) return null
+    const color = v === 'strong_buy' ? 'bg-green-100 text-green-800'
+      : v === 'buy' ? 'bg-emerald-50 text-emerald-700'
+      : v === 'hold' ? 'bg-yellow-50 text-yellow-700'
+      : v === 'sell' ? 'bg-red-50 text-red-700'
+      : v === 'underperform' ? 'bg-red-100 text-red-900'
+      : 'bg-slate-100 text-slate-600'
+    return <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${color}`}>{v.replace('_', ' ')}</span>
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="space-y-4">
+      {/* Filter */}
+      <div className="flex flex-wrap gap-1.5">
+        {([
+          ['all',          'Show All'],
+          ['hide_neutral', 'Hide Neutral'],
+          ['open_only',    'Open Positions Only'],
+        ] as const).map(([v, label]) => (
+          <button key={v} onClick={() => setView(v)}
+            className={`px-3 py-1.5 text-xs rounded border font-medium ${view === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <WithCopy>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <th className="px-3 py-2 text-left sticky left-0 bg-slate-50">
+                <Tooltip text="Security name.">Security</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-left">
+                <Tooltip text="Combined signal: math signal + analyst rating. Conviction signals appear when both agree.">Final Signal</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-left">
+                <Tooltip text="Quantitative signal derived from Sharpe ratio and quality score.">Math Signal</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-left">
+                <Tooltip text="Wall Street analyst consensus rating.">Analyst View</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Unrealized P&L: market value minus FIFO cost basis.">Unreal. P&L</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Unrealized P&L as % of cost basis.">P&L %</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Sharpe ratio: excess return divided by annual volatility.">Sharpe</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).">Quality</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Most recent available market price.">Price</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Highest price in the last 3 years (post-split adjusted).">3Y High</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Current price vs 3-year high as a percentage.">% from High</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Lowest price in the last 3 years (post-split adjusted).">3Y Low</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Current price vs 3-year low as a percentage.">% from Low</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Analyst target price vs current price — expected upside.">Upside %</Tooltip>
+              </th>
+              <th className="px-3 py-2 text-right">
+                <Tooltip text="Analyst consensus target price.">Target</Tooltip>
+              </th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.map((r, i) => {
+                const pnl = r.unrealized_pnl_eur
+                const cost = r.total_cost_eur
+                const pnlPct = pnl != null && cost != null && Number(cost) > 0
+                  ? Number(pnl) / Number(cost) * 100 : null
+                return (
+                  <tr key={i} className={`hover:bg-slate-50 ${Number(r.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}`}>
+                    <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap sticky left-0 bg-white">{r.securities_name}</td>
+                    <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.final_signal)}`}>{r.final_signal ?? '—'}</td>
+                    <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.recommendation_signal)}`}>{r.recommendation_signal ?? '—'}</td>
+                    <td className="px-3 py-2">{analystBadge(r.wall_street_view)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.current_value_eur != null && Number(r.current_value_eur) > 0 ? fmtEur(Number(r.current_value_eur)) : '—'}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pnl != null ? (Number(pnl) >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
+                      {pnl != null && cost != null && Number(cost) > 0 ? `${Number(pnl) >= 0 ? '+' : ''}${fmtEur(Number(pnl))}` : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${pnlPct != null ? (pnlPct >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
+                      {pnlPct != null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%` : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.sharpe_ratio ?? 0) >= 1 ? 'text-green-700' : Number(r.sharpe_ratio ?? 0) < 0 ? 'text-red-600' : 'text-slate-600'}`}>
+                      {r.sharpe_ratio != null ? Number(r.sharpe_ratio).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                      {r.quality_score != null ? Number(r.quality_score).toFixed(2) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                      {r.price_today != null ? Number(r.price_today).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                      {r.high_3y != null ? Number(r.high_3y).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_high_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {r.pct_from_high_3y != null ? `${Number(r.pct_from_high_3y) >= 0 ? '+' : ''}${Number(r.pct_from_high_3y).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                      {r.low_3y != null ? Number(r.low_3y).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_low_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {r.pct_from_low_3y != null ? `${Number(r.pct_from_low_3y) >= 0 ? '+' : ''}${Number(r.pct_from_low_3y).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.upside_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {r.upside_pct != null ? `${Number(r.upside_pct) >= 0 ? '+' : ''}${Number(r.upside_pct).toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                      {r.target_price != null ? Number(r.target_price).toFixed(2) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </WithCopy>
+    </div>
+  )
+}
+
+// ── Securities Section ────────────────────────────────────────────────────────
 function SecuritiesSection() {
+  const [tab, setTab] = usePersist('sec_tab', 'Price Changes')
+  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals']
   return (
     <div>
-      <SubTabs tabs={['Price Changes']} active="Price Changes" onChange={() => {}} />
-      <PriceChangesTab />
+      <SubTabs tabs={TABS} active={tab} onChange={setTab} />
+      {tab === 'Price Changes'             && <PriceChangesTab />}
+      {tab === 'Volatility'                && <VolatilityTab />}
+      {tab === 'Investment Signals'        && <InvestmentSignalsTab />}
+      {tab === 'Portfolio Action Signals'  && <PortfolioActionSignalsTab />}
     </div>
   )
 }
@@ -1177,133 +2777,615 @@ function SecuritiesSection() {
 // ════════════════════════════════════════════════════════════════════════════
 // 5. INCOME & EXPENSE
 // ════════════════════════════════════════════════════════════════════════════
-function IncomeExpenseChartPivot({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const [grouping, setGrouping] = useState('month')
-  const [view, setView] = useState<'chart' | 'income' | 'expense'>('chart')
-  const { data: simple = [], isLoading } = useQuery({
-    queryKey: ['income-expense', startDate, endDate],
-    queryFn: () => getIncomeExpense(startDate, endDate),
-  })
-  const { data: detail = [], isLoading: detailLoading } = useQuery({
-    queryKey: ['income-expense-detail', startDate, endDate, grouping],
-    queryFn: () => getIncomeExpenseDetail(startDate, endDate, grouping),
-    enabled: view !== 'chart',
-  })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const d = simple as Row[]
-  const totIncome = d.reduce((s, r) => s + Number(r.income ?? 0), 0)
-  const totExpense = d.reduce((s, r) => s + Number(r.expense ?? 0), 0)
-  const net = totIncome - totExpense
-  const detailRows = detail as Row[]
-  const periods = [...new Set(detailRows.map(r => String(r.period)))].sort()
+
+const DEFAULT_CASH_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
+const DEFAULT_INV_TYPES = ['Brokerage', 'Other Investment', 'Margin']
+const ALL_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
+const REPORT_TYPES = ['Total Summary', 'Income Analysis', 'Expense Analysis', 'Tax Analysis', 'Dividend Analysis', 'Interest Analysis'] as const
+type ReportType = typeof REPORT_TYPES[number]
+const PERIOD_TYPES = ['Monthly', 'Quarterly', 'Yearly'] as const
+type PeriodType = typeof PERIOD_TYPES[number]
+
+const TYPE_COLORS: Record<string, string> = {
+  Income: '#27AE60', Dividend: '#1ABC9C', Interest: '#2980B9', Expense: '#E74C3C', Tax: '#8E44AD',
+}
+const INCOME_TYPES = ['Income', 'Dividend', 'Interest']
+const EXPENSE_TYPES = ['Expense', 'Tax']
+
+function catTypeForReport(rt: ReportType): string | null {
+  if (rt === 'Income Analysis') return 'Income'
+  if (rt === 'Expense Analysis') return 'Expense'
+  if (rt === 'Tax Analysis') return 'Tax'
+  if (rt === 'Dividend Analysis') return 'Dividend'
+  if (rt === 'Interest Analysis') return 'Interest'
+  return null
+}
+
+function getPeriodKey(dateStr: string, pt: PeriodType): string {
+  const d = new Date(dateStr)
+  if (pt === 'Monthly') return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  if (pt === 'Quarterly') return `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`
+  return String(d.getFullYear())
+}
+
+function IEMultiSelect({ label, options, value, onChange }: {
+  label: string; options: string[]; value: string[]; onChange: (v: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-4 flex-wrap">
-        {view !== 'chart' && <GroupingPicker value={grouping} onChange={setGrouping} />}
-        <div className="flex gap-1 ml-auto">
-          {([['chart', 'Chart'], ['income', 'Income Detail'], ['expense', 'Expense Detail']] as const).map(([v, lbl]) => (
-            <button key={v} onClick={() => setView(v)}
-              className={`px-2.5 py-1 rounded text-xs font-medium ${view === v ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{lbl}</button>
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 px-3 py-1.5 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 min-w-[160px] justify-between">
+        <span className="text-slate-600 truncate">{label}: {value.length} selected</span>
+        <span className="text-slate-400">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-slate-200 rounded shadow-lg p-2 min-w-[200px] max-h-64 overflow-y-auto">
+          {options.map(opt => (
+            <label key={opt} className="flex items-center gap-2 px-1 py-0.5 text-xs cursor-pointer hover:bg-slate-50 rounded">
+              <input type="checkbox" checked={value.includes(opt)}
+                onChange={e => onChange(e.target.checked ? [...value, opt] : value.filter(v => v !== opt))} />
+              {opt}
+            </label>
           ))}
         </div>
-      </div>
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-green-50 rounded-lg p-3"><p className="text-xs text-slate-500">Total Income</p><p className="text-sm font-bold text-green-700 tabular-nums">{fmtEur(totIncome)}</p></div>
-        <div className="bg-red-50 rounded-lg p-3"><p className="text-xs text-slate-500">Total Expense</p><p className="text-sm font-bold text-red-600 tabular-nums">{fmtEur(totExpense)}</p></div>
-        <div className={`rounded-lg p-3 ${net >= 0 ? 'bg-blue-50' : 'bg-orange-50'}`}><p className="text-xs text-slate-500">Net</p><p className={`text-sm font-bold tabular-nums ${net >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>{fmtEur(net)}</p></div>
-      </div>
-      {view === 'chart' ? (
-        <Plot
-          data={[
-            { x: d.map(r => String(r.month)), y: d.map(r => Number(r.income)), name: 'Income', type: 'bar', marker: { color: '#10b981' } },
-            { x: d.map(r => String(r.month)), y: d.map(r => Number(r.expense)), name: 'Expense', type: 'bar', marker: { color: '#ef4444' } },
-            { x: d.map(r => String(r.month)), y: d.map(r => Number(r.income) - Number(r.expense)), name: 'Net', type: 'scatter', mode: 'lines+markers', line: { color: '#3b82f6', width: 2 } },
-          ]}
-          layout={{ barmode: 'group', height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.2 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
-          config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      ) : detailLoading ? (
-        <div className="flex justify-center py-8"><Spinner /></div>
-      ) : (
-        <HierarchicalPivotTable data={detailRows} catTypeFilter={view === 'income' ? 'Income' : 'Expense'} periods={periods} />
       )}
     </div>
   )
 }
 
-function CategoriesReport({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const [catType, setCatType] = useState<'Expense' | 'Income'>('Expense')
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['top-categories', startDate, endDate, catType],
-    queryFn: () => getTopCategories(startDate, endDate, catType, 20),
-  })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const sorted = [...(data as Row[])].sort((a, b) => Number(a.total) - Number(b.total))
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        {(['Expense', 'Income'] as const).map(t => (
-          <button key={t} onClick={() => setCatType(t)}
-            className={`px-3 py-1 rounded text-sm font-medium ${catType === t ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{t}</button>
-        ))}
-      </div>
-      <Plot
-        data={[{ x: sorted.map(r => Number(r.total)), y: sorted.map(r => String(r.category)), type: 'bar', orientation: 'h', marker: { color: catType === 'Expense' ? '#ef4444' : '#10b981' }, text: sorted.map(r => fmtEur(Number(r.total))), textposition: 'outside' }]}
-        layout={{ height: Math.max(350, sorted.length * 22), margin: { t: 10, r: 120, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-    </div>
-  )
-}
+function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { startDate: string; endDate: string }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const ytdStart = `${new Date().getFullYear()}-01-01`
+  const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
+  const [endDate, setEndDate] = usePersist('ie_end_date', today)
+  const [reportType, setReportType] = usePersist<ReportType>('ie_report_type', 'Total Summary')
+  const [periodType, setPeriodType] = usePersist<PeriodType>('ie_period_type', 'Monthly')
+  const [cashTypes, setCashTypes] = useState<string[]>(DEFAULT_CASH_TYPES)
+  const [invTypes, setInvTypes] = useState<string[]>(DEFAULT_INV_TYPES)
+  const [topN, setTopN] = useState(10)
+  const [ieTab, setIeTab] = useState('Chart')
+  const [drillCat, setDrillCat] = useState<string>('All Categories')
+  const [drillPayee, setDrillPayee] = useState<string>('All Payees')
 
-function TopPayeesTab({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['spending-by-payee', startDate, endDate],
-    queryFn: () => getSpendingByPayee(startDate, endDate, 20),
+  const { data: rawData = [], isLoading } = useQuery({
+    queryKey: ['ie-full', startDate, endDate, cashTypes.join(','), invTypes.join(',')],
+    queryFn: () => getIncomeExpenseFull(startDate, endDate, cashTypes, invTypes),
+    staleTime: 60_000,
   })
+
+  const allRows = rawData as Row[]
+
+  // Filter by report type
+  const ctFilter = catTypeForReport(reportType)
+  const rows = ctFilter ? allRows.filter(r => String(r.categories_type).toLowerCase() === ctFilter.toLowerCase()) : allRows
+
+  // Summary metrics
+  const bankIncome = allRows.filter(r => r.source_type === 'Bank' && r.categories_type === 'Income').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const bankInterest = allRows.filter(r => r.source_type === 'Bank' && r.categories_type === 'Interest').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invIncome = allRows.filter(r => r.source_type === 'Investment' && r.categories_type === 'Income').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invDiv = allRows.filter(r => r.source_type === 'Investment' && r.categories_type === 'Dividend').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invInt = allRows.filter(r => r.source_type === 'Investment' && r.categories_type === 'Interest').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const overallIncome = bankIncome + bankInterest + invIncome + invDiv + invInt
+
+  const bankExpense = allRows.filter(r => r.source_type === 'Bank' && r.categories_type === 'Expense').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const taxTotal = allRows.filter(r => r.categories_type === 'Tax').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invExpense = allRows.filter(r => r.source_type === 'Investment' && r.categories_type === 'Expense').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const overallExpense = bankExpense + taxTotal + invExpense
+
+  const netSavings = overallIncome + overallExpense
+  const savingsRate = overallIncome > 0 ? (netSavings / overallIncome) * 100 : 0
+
+  const bankTotal = allRows.filter(r => r.source_type === 'Bank').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invTotal = allRows.filter(r => r.source_type === 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+
+  // Pivot rows by period
+  type PivotRow = { category: string; cat_type: string; periods: Record<string, number>; total: number }
+  const pivotMap = useMemo<PivotRow[]>(() => {
+    const map: Record<string, PivotRow> = {}
+    for (const r of rows) {
+      const cat = String(r.category_full_path ?? 'Uncategorized')
+      const ct = String(r.categories_type ?? '')
+      const pk = getPeriodKey(String(r.date ?? ''), periodType)
+      const amt = Number(r.split_amount ?? 0)
+      if (!map[cat]) map[cat] = { category: cat, cat_type: ct, periods: {}, total: 0 }
+      map[cat].periods[pk] = (map[cat].periods[pk] ?? 0) + amt
+      map[cat].total += amt
+    }
+    return Object.values(map).sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
+  }, [rows, periodType])
+
+  const allPeriods = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of pivotMap) Object.keys(r.periods).forEach(p => s.add(p))
+    return [...s].sort()
+  }, [pivotMap])
+
+  // Bar chart data grouped by categories_type
+  const barByType = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {}
+    for (const r of rows) {
+      const ct = String(r.categories_type ?? 'Other')
+      const pk = getPeriodKey(String(r.date ?? ''), periodType)
+      if (!map[ct]) map[ct] = {}
+      map[ct][pk] = (map[ct][pk] ?? 0) + Math.abs(Number(r.split_amount ?? 0))
+    }
+    return map
+  }, [rows, periodType])
+
+  // All categories for drill-down
+  const allCats = useMemo(() => ['All Categories', ...new Set(rows.map(r => String(r.category_full_path ?? '')).filter(Boolean)).values()].sort(), [rows])
+  const allPayees = useMemo(() => ['All Payees', ...new Set(rows.filter(r => r.payees_name).map(r => String(r.payees_name))).values()].sort(), [rows])
+
+  // Category summary for top-cats
+  const catSummary = useMemo(() => {
+    const map: Record<string, { total: number; count: number; cat_type: string }> = {}
+    for (const r of rows) {
+      const cat = String(r.category_full_path ?? '')
+      const ct = String(r.categories_type ?? '')
+      if (!map[cat]) map[cat] = { total: 0, count: 0, cat_type: ct }
+      map[cat].total += Number(r.split_amount ?? 0)
+      map[cat].count++
+    }
+    return Object.entries(map).map(([cat, v]) => ({ cat, ...v, abs: Math.abs(v.total) }))
+  }, [rows])
+
+  // Payee summary for top-payees
+  const payeeSummary = useMemo(() => {
+    const map: Record<string, { total: number; count: number; top_cat: string }> = {}
+    for (const r of rows) {
+      if (!r.payees_name) continue
+      const p = String(r.payees_name)
+      const cat = String(r.category_full_path ?? '')
+      if (!map[p]) map[p] = { total: 0, count: 0, top_cat: cat }
+      map[p].total += Number(r.split_amount ?? 0)
+      map[p].count++
+    }
+    return Object.entries(map).map(([p, v]) => ({ payee: p, ...v, abs: Math.abs(v.total) }))
+      .sort((a, b) => b.abs - a.abs)
+  }, [rows])
+
+  // Monthly trend for top 8 cats
+  const trendData = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {}
+    const catTotals: Record<string, number> = {}
+    for (const r of rows) {
+      if (!r.date) continue
+      const cat = String(r.category_full_path ?? '')
+      const mo = String(r.date ?? '').slice(0, 7)
+      if (!map[cat]) map[cat] = {}
+      map[cat][mo] = (map[cat][mo] ?? 0) + Number(r.split_amount ?? 0)
+      catTotals[cat] = (catTotals[cat] ?? 0) + Math.abs(Number(r.split_amount ?? 0))
+    }
+    const top8 = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c]) => c)
+    const months = [...new Set(rows.map(r => String(r.date ?? '').slice(0, 7)).filter(Boolean))].sort()
+    return { top8, months, map }
+  }, [rows])
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const rows = data as Row[]
-  const sorted = [...rows].sort((a, b) => Number(a.amount_eur) - Number(b.amount_eur))
+
   return (
     <div className="space-y-4">
-      <Plot
-        data={[{ x: sorted.map(r => Number(r.amount_eur)), y: sorted.map(r => String(r.payee)), type: 'bar', orientation: 'h', marker: { color: '#f59e0b' }, text: sorted.map(r => fmtEur(Number(r.amount_eur))), textposition: 'outside' }]}
-        layout={{ height: Math.max(350, sorted.length * 22), margin: { t: 10, r: 120, b: 40, l: 200 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      <WithCopy>
-      <div className="overflow-x-auto text-xs">
-        <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Payee</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold"># Tx</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">First Seen</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Last Seen</th>
-          </tr></thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 font-medium">{String(r.payee)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{String(r.tx_count)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.amount_eur))}</td>
-                <td className="px-2 py-1.5 text-right text-slate-500">{String(r.first_seen ?? '').slice(0, 10)}</td>
-                <td className="px-2 py-1.5 text-right text-slate-500">{String(r.last_seen ?? '').slice(0, 10)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Controls */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <div>
+          <label className="block text-xs text-slate-500 mb-0.5">Start Date</label>
+          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-0.5">End Date</label>
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-0.5">Report Type</label>
+          <select value={reportType} onChange={e => setReportType(e.target.value as ReportType)}
+            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            {REPORT_TYPES.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-0.5">Period</label>
+          <select value={periodType} onChange={e => setPeriodType(e.target.value as PeriodType)}
+            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            {PERIOD_TYPES.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </div>
+        <div className="mt-4">
+          <IEMultiSelect label="Cash Accounts" options={ALL_ACCOUNT_TYPES.filter(t => !invTypes.includes(t))}
+            value={cashTypes} onChange={setCashTypes} />
+        </div>
+        <div className="mt-4">
+          <IEMultiSelect label="Investment Accounts" options={ALL_ACCOUNT_TYPES.filter(t => !cashTypes.includes(t))}
+            value={invTypes} onChange={setInvTypes} />
+        </div>
+        <button onClick={() => { setCashTypes(DEFAULT_CASH_TYPES); setInvTypes(DEFAULT_INV_TYPES) }}
+          className="mt-4 px-3 py-1.5 text-xs bg-slate-100 text-slate-600 rounded hover:bg-slate-200 border border-slate-300">
+          Reset Defaults
+        </button>
       </div>
-      </WithCopy>
-    </div>
-  )
-}
 
-function IncomeExpenseSection({ startDate, endDate }: { startDate: string; endDate: string }) {
-  const [tab, setTab] = useState('Chart & Pivot')
-  return (
-    <div>
-      <SubTabs tabs={['Chart & Pivot', 'Top Categories', 'Top Payees']} active={tab} onChange={setTab} />
-      {tab === 'Chart & Pivot' && <IncomeExpenseChartPivot startDate={startDate} endDate={endDate} />}
-      {tab === 'Top Categories' && <CategoriesReport startDate={startDate} endDate={endDate} />}
-      {tab === 'Top Payees' && <TopPayeesTab startDate={startDate} endDate={endDate} />}
+      {/* KPI row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-green-50 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Overall Income</p>
+          <p className="text-base font-bold text-green-700 tabular-nums">{fmtEur(overallIncome)}</p>
+        </div>
+        <div className="bg-red-50 rounded-lg p-3">
+          <p className="text-xs text-slate-500">Overall Expenses</p>
+          <p className="text-base font-bold text-red-600 tabular-nums">{fmtEur(Math.abs(overallExpense))}</p>
+        </div>
+        {reportType === 'Total Summary' && <>
+          <div className={`rounded-lg p-3 ${netSavings >= 0 ? 'bg-blue-50' : 'bg-orange-50'}`}>
+            <p className="text-xs text-slate-500">Net Savings</p>
+            <p className={`text-base font-bold tabular-nums ${netSavings >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>{fmtEur(netSavings)}</p>
+          </div>
+          <div className={`rounded-lg p-3 ${savingsRate >= 0 ? 'bg-teal-50' : 'bg-orange-50'}`}>
+            <p className="text-xs text-slate-500">Savings Rate</p>
+            <p className={`text-base font-bold tabular-nums ${savingsRate >= 0 ? 'text-teal-700' : 'text-orange-600'}`}>{savingsRate.toFixed(1)}%</p>
+          </div>
+        </>}
+      </div>
+
+      {/* Sub-breakdown row */}
+      <div className="grid grid-cols-3 gap-3 text-xs">
+        <div className="bg-slate-50 rounded p-2 text-center">
+          <p className="text-slate-400 mb-0.5">Earned & Reimbursed / Investments</p>
+          <p className="font-semibold">
+            <span className={bankIncome + bankInterest >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankIncome + bankInterest)}</span>
+            {' / '}
+            <span className={invIncome + invDiv + invInt >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invIncome + invDiv + invInt)}</span>
+          </p>
+        </div>
+        <div className="bg-slate-50 rounded p-2 text-center">
+          <p className="text-slate-400 mb-0.5">Expenses / Taxes / Investments</p>
+          <p className="font-semibold">
+            <span className={bankExpense >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankExpense)}</span>
+            {' / '}
+            <span className={taxTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(taxTotal)}</span>
+            {' / '}
+            <span className={invExpense >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invExpense)}</span>
+          </p>
+        </div>
+        <div className="bg-slate-50 rounded p-2 text-center">
+          <p className="text-slate-400 mb-0.5">Savings by Cash / Investments</p>
+          <p className="font-semibold">
+            <span className={bankTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankTotal)}</span>
+            {' / '}
+            <span className={invTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invTotal)}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="border-t border-slate-200" />
+
+      {/* Inner tabs */}
+      <SubTabs tabs={['Chart', 'Detailed Table', 'Trend Analysis', 'Top Categories', 'Top Payees']} active={ieTab} onChange={setIeTab} />
+
+      {/* ── CHART TAB ── */}
+      {ieTab === 'Chart' && (
+        <div className="space-y-6">
+          {/* Stacked bar: income vs expense */}
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">Income vs Expenses Comparison</p>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="text-xs text-slate-500">Top N categories</label>
+              <input type="range" min={5} max={20} value={topN} onChange={e => setTopN(Number(e.target.value))} className="w-28" />
+              <span className="text-xs text-slate-600 font-medium">{topN}</span>
+            </div>
+            {(() => {
+              const incomeTypes = Object.keys(barByType).filter(t => INCOME_TYPES.includes(t))
+              const expenseTypes = Object.keys(barByType).filter(t => EXPENSE_TYPES.includes(t))
+              const periods = [...new Set([...incomeTypes, ...expenseTypes].flatMap(t => Object.keys(barByType[t] ?? {})))].sort()
+              const traces: object[] = []
+              incomeTypes.forEach((ct, i) => {
+                traces.push({ x: periods, y: periods.map(p => barByType[ct]?.[p] ?? 0), name: ct, type: 'bar', offsetgroup: 'Income', legendgroup: 'Income', marker: { color: TYPE_COLORS[ct] ?? '#16A085' }, hovertemplate: `%{x}<br>${ct}: %{y:,.2f}<extra></extra>`, ...(i === 0 ? { legendgrouptitle: { text: 'Income' } } : {}) })
+              })
+              expenseTypes.forEach((ct, i) => {
+                traces.push({ x: periods, y: periods.map(p => barByType[ct]?.[p] ?? 0), name: ct, type: 'bar', offsetgroup: 'Expenses', legendgroup: 'Expenses', marker: { color: TYPE_COLORS[ct] ?? '#922B21' }, hovertemplate: `%{x}<br>${ct}: %{y:,.2f}<extra></extra>`, ...(i === 0 ? { legendgrouptitle: { text: 'Expenses' } } : {}) })
+              })
+              return <Plot data={traces} layout={{ barmode: 'stack', height: 420, margin: { t: 10, r: 20, b: 60, l: 70 }, xaxis: { type: 'category', tickangle: -45 }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', legend: { groupclick: 'toggleitem' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+            })()}
+          </div>
+
+          {/* Side-by-side pie charts */}
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">Distribution Analysis</p>
+            <div className="grid grid-cols-2 gap-4">
+              {([['Income', INCOME_TYPES, '#10b981'] as const, ['Expenses', EXPENSE_TYPES, '#ef4444'] as const]).map(([label, types, color]) => {
+                const subset = catSummary.filter(r => types.includes(r.cat_type as string)).sort((a, b) => b.abs - a.abs)
+                const topCats = subset.slice(0, topN).map(r => r.cat)
+                const agg: Record<string, number> = {}
+                let other = 0
+                subset.forEach(r => { if (topCats.includes(r.cat)) agg[r.cat] = (agg[r.cat] ?? 0) + r.abs; else other += r.abs })
+                if (other > 0) agg['Other'] = other
+                const vals = Object.values(agg), labs = Object.keys(agg)
+                if (vals.length === 0) return <div key={label} className="text-xs text-slate-400 py-4 text-center">No {label} data</div>
+                return <Plot key={label} data={[{ type: 'pie', values: vals, labels: labs, hole: 0.4, textposition: 'inside', textinfo: 'percent+label' }]}
+                  layout={{ title: { text: `${label} Breakdown`, font: { size: 14 } }, showlegend: false, height: 380, margin: { t: 50, b: 10, l: 10, r: 10 }, paper_bgcolor: 'white' }}
+                  config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DETAILED TABLE TAB ── */}
+      {ieTab === 'Detailed Table' && (
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">{reportType} — {periodType} Breakdown</p>
+          <WithCopy>
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-slate-50">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Type</th>
+                  {allPeriods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">{p}</th>)}
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pivotMap.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-2 py-1 sticky left-0 bg-white font-medium">{r.category}</td>
+                    <td className="px-2 py-1 text-slate-500">{r.cat_type}</td>
+                    {allPeriods.map(p => <td key={p} className={`px-2 py-1 text-right tabular-nums ${(r.periods[p] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.periods[p] ?? 0)}</td>)}
+                    <td className={`px-2 py-1 text-right tabular-nums font-semibold ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
+
+      {/* ── TREND TAB ── */}
+      {ieTab === 'Trend Analysis' && (
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">Monthly Trend — Top 8 Categories</p>
+          {trendData.top8.length === 0
+            ? <p className="text-xs text-slate-400">No trend data available.</p>
+            : <Plot
+                data={trendData.top8.map(cat => ({
+                  x: trendData.months,
+                  y: trendData.months.map(m => trendData.map[cat]?.[m] ?? 0),
+                  name: cat, type: 'scatter', mode: 'lines+markers',
+                }))}
+                layout={{ height: 480, margin: { t: 10, r: 20, b: 80, l: 70 }, xaxis: { tickangle: -45, title: 'Month' }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', plot_bgcolor: 'white', paper_bgcolor: 'white', legend: { orientation: 'h', y: -0.35 } }}
+                config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+          }
+        </div>
+      )}
+
+      {/* ── TOP CATEGORIES TAB ── */}
+      {ieTab === 'Top Categories' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500">Show Top N</label>
+            <input type="range" min={5} max={30} value={topN} onChange={e => setTopN(Number(e.target.value))} className="w-28" />
+            <span className="text-xs text-slate-600 font-medium">{topN}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Income */}
+            {(() => {
+              const inc = catSummary.filter(r => INCOME_TYPES.includes(r.cat_type)).sort((a, b) => a.total - b.total).slice(-topN)
+              return inc.length === 0
+                ? <p className="text-xs text-slate-400">No income categories.</p>
+                : <>
+                  <div>
+                    <p className="text-xs font-semibold text-green-700 mb-1">Top Income Categories</p>
+                    <Plot data={[{ x: inc.map(r => r.total), y: inc.map(r => r.cat), type: 'bar', orientation: 'h', marker: { color: '#27AE60' }, text: inc.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
+                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+                  </div>
+                </>
+            })()}
+            {/* Expense */}
+            {(() => {
+              const exp = catSummary.filter(r => EXPENSE_TYPES.includes(r.cat_type)).sort((a, b) => a.abs - b.abs).slice(-topN)
+              return exp.length === 0
+                ? <p className="text-xs text-slate-400">No expense categories.</p>
+                : <div>
+                    <p className="text-xs font-semibold text-red-600 mb-1">Top Expense Categories</p>
+                    <Plot data={[{ x: exp.map(r => r.abs), y: exp.map(r => r.cat), type: 'bar', orientation: 'h', marker: { color: '#E74C3C' }, text: exp.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
+                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+                  </div>
+            })()}
+          </div>
+
+          {/* Category detail table */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-1">Category Detail</p>
+            <WithCopy>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
+                    <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Type</th>
+                    {allPeriods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">{p}</th>)}
+                    <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total</th>
+                    <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold"># Txs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pivotMap.map((r, i) => {
+                    const cnt = catSummary.find(c => c.cat === r.category)?.count ?? 0
+                    return (
+                      <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1 sticky left-0 bg-white font-medium">{r.category}</td>
+                        <td className="px-2 py-1 text-slate-500">{r.cat_type}</td>
+                        {allPeriods.map(p => <td key={p} className={`px-2 py-1 text-right tabular-nums ${(r.periods[p] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.periods[p] ?? 0)}</td>)}
+                        <td className={`px-2 py-1 text-right tabular-nums font-semibold ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
+                        <td className="px-2 py-1 text-right text-slate-500">{cnt}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            </WithCopy>
+          </div>
+
+          {/* Drill-down */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-1">Category Drill Down</p>
+            <select value={drillCat} onChange={e => setDrillCat(e.target.value)}
+              className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white mb-2 focus:outline-none">
+              {allCats.map(c => <option key={c}>{c}</option>)}
+            </select>
+            {(() => {
+              const drillRows = drillCat === 'All Categories' ? rows : rows.filter(r => r.category_full_path === drillCat)
+              return (
+                <WithCopy>
+                <div className="overflow-x-auto text-xs">
+                  <table className="w-full border-collapse">
+                    <thead><tr className="bg-slate-50">
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Payee</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
+                      <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount (€)</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Source</th>
+                    </tr></thead>
+                    <tbody>
+                      {drillRows.map((r, i) => (
+                        <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="px-2 py-1">{String(r.date ?? '').slice(0, 10)}</td>
+                          <td className="px-2 py-1 max-w-[180px] truncate">{String(r.description ?? '')}</td>
+                          <td className="px-2 py-1">{String(r.payees_name ?? '')}</td>
+                          <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
+                          <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
+                          <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                          <td className="px-2 py-1 text-slate-500">{String(r.source_type ?? '')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                </WithCopy>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ── TOP PAYEES TAB ── */}
+      {ieTab === 'Top Payees' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500">Show Top N</label>
+            <input type="range" min={5} max={30} value={topN} onChange={e => setTopN(Number(e.target.value))} className="w-28" />
+            <span className="text-xs text-slate-600 font-medium">{topN}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {(() => {
+              const inc = payeeSummary.filter(r => r.total > 0).slice(0, topN).sort((a, b) => a.total - b.total)
+              return inc.length === 0
+                ? <p className="text-xs text-slate-400">No income payees.</p>
+                : <div>
+                    <p className="text-xs font-semibold text-green-700 mb-1">Top Income Payees</p>
+                    <Plot data={[{ x: inc.map(r => r.total), y: inc.map(r => r.payee), type: 'bar', orientation: 'h', marker: { color: '#27AE60' }, text: inc.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
+                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+                  </div>
+            })()}
+            {(() => {
+              const exp = payeeSummary.filter(r => r.total < 0).slice(0, topN).sort((a, b) => a.abs - b.abs)
+              return exp.length === 0
+                ? <p className="text-xs text-slate-400">No expense payees.</p>
+                : <div>
+                    <p className="text-xs font-semibold text-red-600 mb-1">Top Expense Payees</p>
+                    <Plot data={[{ x: exp.map(r => r.abs), y: exp.map(r => r.payee), type: 'bar', orientation: 'h', marker: { color: '#E74C3C' }, text: exp.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
+                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+                  </div>
+            })()}
+          </div>
+
+          {/* Payee summary table */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-1">Payee Summary</p>
+            <WithCopy>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead><tr className="bg-slate-50">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Payee</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total (€)</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold"># Txs</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Avg / Tx</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Top Category</th>
+                </tr></thead>
+                <tbody>
+                  {payeeSummary.map((r, i) => (
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="px-2 py-1 sticky left-0 bg-white font-medium">{r.payee}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums font-medium ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
+                      <td className="px-2 py-1 text-right text-slate-500">{r.count}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums ${r.total / r.count >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total / r.count)}</td>
+                      <td className="px-2 py-1 text-slate-500 truncate max-w-[180px]">{r.top_cat}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            </WithCopy>
+          </div>
+
+          {/* Payee drill-down */}
+          <div>
+            <p className="text-xs font-semibold text-slate-600 mb-1">Payee Drill Down</p>
+            <select value={drillPayee} onChange={e => setDrillPayee(e.target.value)}
+              className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white mb-2 focus:outline-none">
+              {allPayees.map(p => <option key={p}>{p}</option>)}
+            </select>
+            {(() => {
+              const drillRows = drillPayee === 'All Payees' ? rows.filter(r => r.payees_name) : rows.filter(r => r.payees_name === drillPayee)
+              const dTotal = drillRows.reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+              return (
+                <div className="space-y-2">
+                  {drillPayee !== 'All Payees' && (
+                    <div className="flex gap-4 text-xs">
+                      <span className={`font-bold ${dTotal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Total: {fmtEur(dTotal)}</span>
+                      <span className="text-slate-500">Transactions: {drillRows.length}</span>
+                    </div>
+                  )}
+                  <WithCopy>
+                  <div className="overflow-x-auto text-xs">
+                    <table className="w-full border-collapse">
+                      <thead><tr className="bg-slate-50">
+                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
+                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
+                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
+                        <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount (€)</th>
+                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
+                      </tr></thead>
+                      <tbody>
+                        {drillRows.map((r, i) => (
+                          <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                            <td className="px-2 py-1">{String(r.date ?? '').slice(0, 10)}</td>
+                            <td className="px-2 py-1 max-w-[180px] truncate">{String(r.description ?? '')}</td>
+                            <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
+                            <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
+                            <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  </WithCopy>
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1972,7 +4054,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>
@@ -1986,7 +4068,7 @@ export default function Reports() {
             <CardBody>
               {activeTab === 'net-worth' && <NetWorthSection />}
               {activeTab === 'inv-positions' && <InvPositionsSection startDate={startDate} />}
-              {activeTab === 'inv-performance' && <InvPerformanceSection startDate={startDate} endDate={endDate} />}
+              {activeTab === 'inv-performance' && <InvPerformanceSection />}
               {activeTab === 'securities' && <SecuritiesSection />}
               {activeTab === 'income-expense' && <IncomeExpenseSection startDate={startDate} endDate={endDate} />}
               {activeTab === 'cashflow' && <CashFlowSection />}

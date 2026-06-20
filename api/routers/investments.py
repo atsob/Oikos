@@ -1,6 +1,6 @@
 """Investments and Holdings API endpoints."""
-from fastapi import APIRouter, Query
-from typing import Optional
+from fastapi import APIRouter, Query, Body
+from typing import Optional, List, Dict, Any
 import math
 import pandas as pd
 from database.connection import get_db
@@ -271,7 +271,7 @@ def update_holding(holding_id: int, data: dict):
 
 
 @router.post("/staking-reinvest")
-def staking_reinvest(entries: list):
+def staking_reinvest(entries: List[Dict[str, Any]] = Body(...)):
     """Insert Reinvest entries for staking quantity increases."""
     from database.connection import get_connection
     from fastapi import HTTPException

@@ -165,16 +165,16 @@ def create_transaction(tx: TransactionIn):
             """, (tx_id, tx.categories_id, tx.total_amount, tx.memo))
         # Create mirror leg for transfers
         if tx.accounts_id_target:
+            cur.execute("SELECT nextval('transfers_id_seq')")
+            shared_tid = cur.fetchone()[0]
             cur.execute("""
                 INSERT INTO Transactions
                     (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft,
                      Accounts_Id_Target, Transfers_Id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING Transactions_Id
             """, (tx.accounts_id_target, tx.date, tx.description, -float(tx.total_amount or 0),
-                  tx.payees_id, tx.cleared, tx.reconciled, tx.is_draft, tx.accounts_id, tx_id))
-            mirror_id = cur.fetchone()[0]
-            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
+                  tx.payees_id, tx.cleared, tx.reconciled, tx.is_draft, tx.accounts_id, shared_tid))
+            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
         conn.commit()
         return {"id": tx_id}
     except Exception as e:
@@ -203,7 +203,16 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
         row = cur.fetchone()
         if row is None:
             raise HTTPException(404, "Transaction not found")
-        paired_id, src_account_id, old_target_id = row
+        group_tid, src_account_id, old_target_id = row
+        # Resolve the actual paired transaction using the shared Transfers_Id group key
+        paired_id = None
+        if group_tid:
+            cur.execute(
+                "SELECT Transactions_Id FROM Transactions WHERE Transfers_Id = %s AND Transactions_Id != %s LIMIT 1",
+                (group_tid, tx_id),
+            )
+            prow = cur.fetchone()
+            paired_id = prow[0] if prow else None
 
         # Update the main transaction
         if tx_updates:
@@ -255,16 +264,16 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
             tx_row = cur.fetchone()
             if tx_row:
                 t_date, t_desc, t_amt, t_payees_id, t_cleared, t_reconciled, t_draft = tx_row
+                cur.execute("SELECT nextval('transfers_id_seq')")
+                shared_tid = cur.fetchone()[0]
                 cur.execute("""
                     INSERT INTO Transactions
                         (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft,
                          Accounts_Id_Target, Transfers_Id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING Transactions_Id
                 """, (new_target_id, t_date, t_desc, -float(t_amt or 0),
-                      t_payees_id, t_cleared, t_reconciled, t_draft, src_account_id, tx_id))
-                mirror_id = cur.fetchone()[0]
-                cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (mirror_id, tx_id))
+                      t_payees_id, t_cleared, t_reconciled, t_draft, src_account_id, shared_tid))
+                cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
 
         conn.commit()
         return {"updated": tx_id}
@@ -329,7 +338,16 @@ def delete_transaction(tx_id: int):
         row = cur.fetchone()
         if row is None:
             raise HTTPException(404, "Transaction not found")
-        paired_id = row[0]
+        group_tid = row[0]
+        # Resolve actual paired leg via shared group key
+        paired_id = None
+        if group_tid:
+            cur.execute(
+                "SELECT Transactions_Id FROM Transactions WHERE Transfers_Id = %s AND Transactions_Id != %s LIMIT 1",
+                (group_tid, tx_id),
+            )
+            prow = cur.fetchone()
+            paired_id = prow[0] if prow else None
         # Delete paired leg first (to avoid FK issues with Transfers_Id)
         if paired_id:
             cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (paired_id,))
@@ -367,13 +385,17 @@ def create_transfer(data: dict):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # Get a shared transfer group ID
+        cur.execute("SELECT nextval('transfers_id_seq')")
+        shared_tid = cur.fetchone()[0]
+
         # Outflow from source account (negative)
         cur.execute("""
             INSERT INTO Transactions
-                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING Transactions_Id
-        """, (from_account, date, description, -abs(amount), payees_id, cleared, reconciled, is_draft, to_account))
+        """, (from_account, date, description, -abs(amount), payees_id, cleared, reconciled, is_draft, to_account, shared_tid))
         from_id = cur.fetchone()[0]
 
         # Inflow to target account (positive)
@@ -382,11 +404,8 @@ def create_transfer(data: dict):
                 (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING Transactions_Id
-        """, (to_account, date, description, abs(amount), payees_id, cleared, reconciled, is_draft, from_account, from_id))
+        """, (to_account, date, description, abs(amount), payees_id, cleared, reconciled, is_draft, from_account, shared_tid))
         to_id = cur.fetchone()[0]
-
-        # Back-link the source transaction to the target
-        cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (to_id, from_id))
 
         conn.commit()
         return {"from_id": from_id, "to_id": to_id}

@@ -571,8 +571,13 @@ def check_existing_records(
     cash_account_id: int | None = None,
 ) -> tuple[set, set]:
     """Return (existing_inv_descs, existing_tx_descs) — description keys that
-    already exist in the DB for this account.  Uses IN-list queries so it works
-    across all psycopg2 versions (avoids ANY(%s) array adaptation edge-cases).
+    already exist in the DB.
+
+    Investment dedup is intentionally checked across ALL accounts because IB
+    order IDs / cash-tx keys are globally unique — the same record can't be
+    imported twice regardless of which account is selected in the UI.
+
+    Transaction dedup is scoped to the target cash account.
     """
     from database.connection import get_connection as _get_conn
     conn = _get_conn()
@@ -584,10 +589,10 @@ def check_existing_records(
         inv_descs = [r["desc"] for r in inv_records]
         if inv_descs:
             placeholders = ",".join(["%s"] * len(inv_descs))
+            # No Accounts_Id filter — IB order IDs are globally unique
             cur.execute(
-                f"SELECT Description FROM Investments "
-                f"WHERE Accounts_Id = %s AND Description IN ({placeholders})",
-                [account_id] + inv_descs,
+                f"SELECT Description FROM Investments WHERE Description IN ({placeholders})",
+                inv_descs,
             )
             existing_inv = {row[0] for row in cur.fetchall()}
 
@@ -630,12 +635,11 @@ def check_fuzzy_duplicates(
         for rec in inv_records:
             cur.execute(
                 """SELECT 1 FROM Investments
-                   WHERE Accounts_Id     = %s
-                     AND Date            = %s
+                   WHERE Date            = %s
                      AND Action::text    ILIKE %s
                      AND ABS(Quantity - %s) < 0.001
                    LIMIT 1""",
-                (account_id, rec["date"], rec["action"], rec["quantity"]),
+                (rec["date"], rec["action"], rec["quantity"]),
             )
             if cur.fetchone():
                 fuzzy_inv.add(rec["desc"])
