@@ -11,6 +11,10 @@ Jobs
 • Securities info   : once per calendar day (at startup).
 """
 
+import warnings
+warnings.filterwarnings("ignore", message="No runtime found", category=UserWarning)
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", category=UserWarning)
+
 import logging
 import time
 import warnings

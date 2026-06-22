@@ -4,7 +4,7 @@ WORKDIR /build
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+RUN npm run build:docker
 
 # ── Stage 2: Python app ───────────────────────────────────────────────────────
 FROM python:3.13-slim

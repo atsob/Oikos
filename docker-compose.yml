@@ -4,13 +4,12 @@ services:
     build: .
     image: atsob/oikos:latest
     container_name: oikos
-    ports:
-      - "8080:8000"
+    network_mode: host
     environment:
       - DB_NAME=Finance
       - DB_USER=admin
       - DB_PASSWORD=31.12.1969
-      - DB_HOST=host-gateway
+      - DB_HOST=127.0.0.1
       - DB_PORT=5432
       - DB_TIMEZONE=Europe/Athens
       - APP_DATA_DIR=/app
@@ -18,14 +17,13 @@ services:
       - OLLAMA_PORT=11434
       - OLLAMA_MODEL=llama3.2:3b
       - PERSIST_DIR=/app/storage_rag
-    extra_hosts:
-      - "host-gateway:host-gateway"
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 2
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -34,11 +32,12 @@ services:
     build: .
     image: atsob/oikos:latest
     container_name: oikos_scheduler
+    network_mode: host
     environment:
       - DB_NAME=Finance
       - DB_USER=admin
       - DB_PASSWORD=31.12.1969
-      - DB_HOST=host-gateway
+      - DB_HOST=127.0.0.1
       - DB_PORT=5432
       - DB_TIMEZONE=Europe/Athens
       - APP_DATA_DIR=/app
@@ -46,8 +45,6 @@ services:
       - OLLAMA_PORT=11434
       - OLLAMA_MODEL=llama3.2:3b
       - PERSIST_DIR=/app/storage_rag
-    extra_hosts:
-      - "host-gateway:host-gateway"
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
