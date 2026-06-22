@@ -14,19 +14,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
-          'vendor-plotly': ['plotly.js', 'react-plotly.js'],
-          'vendor-aggrid': ['ag-grid-community', 'ag-grid-react'],
-          'vendor-radix': [
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-dropdown-menu',
-            '@radix-ui/react-select',
-            '@radix-ui/react-tabs',
-            '@radix-ui/react-toast',
-            '@radix-ui/react-tooltip',
-          ],
+        manualChunks(id) {
+          if (id.includes('plotly') || id.includes('react-plotly')) return 'vendor-plotly'
+          if (id.includes('ag-grid')) return 'vendor-aggrid'
+          if (id.includes('@radix-ui')) return 'vendor-radix'
+          if (id.includes('@tanstack')) return 'vendor-query'
+          if (id.includes('node_modules/react') || id.includes('react-router')) return 'vendor-react'
         },
       },
     },
