@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getRecurringTemplates, getTemplateSplits, createRecurringTemplate,
@@ -6,10 +6,11 @@ import {
   getRecurringDrafts, generateRecurringDrafts, updateRecurringDraft,
   confirmRecurringDraft, deleteRecurringDraft,
   getAccounts, getPayees, getCategories, getSplits,
+  getRecentTransactionsForTemplate, createTemplateFromTransaction,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner } from '@/components/ui'
+import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
-import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar } from 'lucide-react'
+import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
 
 type Row = Record<string, unknown>
 
@@ -519,11 +520,124 @@ function DraftsTab() {
   )
 }
 
+// ── From-Transaction picker modal ─────────────────────────────────────────────
+function FromTransactionModal({ onCreated, onClose }: { onCreated: (id: number) => void; onClose: () => void }) {
+  const [search, setSearch] = useState('')
+  const [months, setMonths] = useState(24)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const { data = [], isLoading } = useQuery({
+    queryKey: ['recent-transactions-for-template', months],
+    queryFn: () => getRecentTransactionsForTemplate(months),
+    staleTime: 60_000,
+  })
+  const rows = data as Row[]
+
+  const { sorted: sortedRows, sortKey: ftSK, sortDir: ftSD, toggleSort: ftSort } = useSortTable(rows, 'date', 'desc')
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return sortedRows.filter(r =>
+      !q ||
+      String(r.description ?? '').toLowerCase().includes(q) ||
+      String(r.payees_name ?? '').toLowerCase().includes(q) ||
+      String(r.accounts_name ?? '').toLowerCase().includes(q)
+    )
+  }, [rows, search])
+
+  const handleCreate = async () => {
+    if (!selectedId) return
+    setCreating(true); setError(null)
+    try {
+      const res = await createTemplateFromTransaction(selectedId) as { id: number }
+      onCreated(res.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create template')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <h2 className="text-base font-semibold text-slate-800">Create Template from Transaction</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 py-3 border-b border-slate-100 flex gap-2 items-center">
+          <Input
+            placeholder="Search by description, payee, account…"
+            value={search} onChange={e => setSearch(e.target.value)}
+            className="flex-1 text-sm"
+          />
+          <select value={months} onChange={e => setMonths(Number(e.target.value))}
+            className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none shrink-0">
+            {[3, 6, 12, 24, 36, 60].map(m => <option key={m} value={m}>Last {m}mo</option>)}
+          </select>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Spinner /></div>
+          ) : filtered.length === 0 ? (
+            <p className="text-center text-slate-400 py-8 text-sm">No transactions found</p>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr className="text-slate-600">
+                  <ColHeader label="Date" sortKey="date" currentKey={ftSK} currentDir={ftSD} onSort={ftSort} className="px-3 py-2 border-b border-slate-200" />
+                  <ColHeader label="Account" sortKey="accounts_name" currentKey={ftSK} currentDir={ftSD} onSort={ftSort} className="px-3 py-2 border-b border-slate-200" />
+                  <ColHeader label="Payee" sortKey="payees_name" currentKey={ftSK} currentDir={ftSD} onSort={ftSort} className="px-3 py-2 border-b border-slate-200" />
+                  <ColHeader label="Description" sortKey="description" currentKey={ftSK} currentDir={ftSD} onSort={ftSort} className="px-3 py-2 border-b border-slate-200" />
+                  <ColHeader label="Amount" sortKey="total_amount" currentKey={ftSK} currentDir={ftSD} onSort={ftSort} align="right" className="px-3 py-2 border-b border-slate-200" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => {
+                  const id = Number(r.id)
+                  const selected = selectedId === id
+                  return (
+                    <tr key={id} onClick={() => setSelectedId(id)}
+                      className={`border-b border-slate-100 cursor-pointer ${selected ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                      <td className="px-3 py-1.5 tabular-nums">{String(r.date ?? '').slice(0, 10)}</td>
+                      <td className="px-3 py-1.5 text-slate-500">{String(r.accounts_name ?? '')}</td>
+                      <td className="px-3 py-1.5">{String(r.payees_name ?? '')}</td>
+                      <td className="px-3 py-1.5 max-w-[180px] truncate text-slate-600">{String(r.description ?? '')}</td>
+                      <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${Number(r.total_amount ?? 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                        {fmtEur(Number(r.total_amount ?? 0))}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {error && <p className="px-5 py-2 text-xs text-red-600 border-t border-red-100">{error}</p>}
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-200">
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={handleCreate} disabled={!selectedId || creating}>
+            {creating ? <Spinner /> : <Copy size={13} />}
+            {creating ? 'Creating…' : 'Create Template'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Recurring() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<'templates' | 'drafts'>('templates')
   const [modalOpen, setModalOpen] = useState(false)
+  const [fromTxOpen, setFromTxOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState<TplForm>(emptyForm())
   const [splits, setSplits] = useState<SplitRow[]>([])
@@ -624,6 +738,9 @@ export default function Recurring() {
               <Button size="sm" variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['recurring-templates'] })}>
                 <RefreshCw size={13} /> Refresh
               </Button>
+              <Button size="sm" variant="secondary" onClick={() => setFromTxOpen(true)}>
+                <Copy size={13} /> From Transaction
+              </Button>
               <Button size="sm" onClick={openNew}><Plus size={13} /> New Template</Button>
             </div>
           ) : undefined
@@ -709,6 +826,20 @@ export default function Recurring() {
           saving={saving}
           error={saveError}
           isEdit={editId !== null}
+        />
+      )}
+
+      {fromTxOpen && (
+        <FromTransactionModal
+          onClose={() => setFromTxOpen(false)}
+          onCreated={async (newId) => {
+            setFromTxOpen(false)
+            await qc.invalidateQueries({ queryKey: ['recurring-templates'] })
+            // Load the newly created template into the edit modal
+            const all = await qc.fetchQuery({ queryKey: ['recurring-templates'], queryFn: getRecurringTemplates }) as Row[]
+            const t = all.find(r => Number(r.id) === newId)
+            if (t) openEdit(t)
+          }}
         />
       )}
     </div>

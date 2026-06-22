@@ -17,6 +17,22 @@ def _df_to_list(df: pd.DataFrame) -> list:
     return [{k: None if isinstance(v, float) and math.isnan(v) else v for k, v in r.items()} for r in records]
 
 
+def _refresh_balance(cur, *account_ids: int) -> None:
+    """Recalculate Accounts_Balance from confirmed Transactions for each account_id."""
+    for acc_id in account_ids:
+        if acc_id is None:
+            continue
+        cur.execute("""
+            UPDATE Accounts
+               SET Accounts_Balance = COALESCE((
+                   SELECT SUM(Total_Amount)
+                   FROM Transactions
+                   WHERE Accounts_Id = %s AND Is_Draft = FALSE
+               ), 0)
+             WHERE Accounts_Id = %s
+        """, (acc_id, acc_id))
+
+
 @router.get("/transactions")
 def get_transactions(
     account_id: int = Query(...),
@@ -175,6 +191,8 @@ def create_transaction(tx: TransactionIn):
             """, (tx.accounts_id_target, tx.date, tx.description, -float(tx.total_amount or 0),
                   tx.payees_id, tx.cleared, tx.reconciled, tx.is_draft, tx.accounts_id, shared_tid))
             cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
+        if not tx.is_draft:
+            _refresh_balance(cur, tx.accounts_id, tx.accounts_id_target)
         conn.commit()
         return {"id": tx_id}
     except Exception as e:
@@ -275,6 +293,9 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
                       t_payees_id, t_cleared, t_reconciled, t_draft, src_account_id, shared_tid))
                 cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
 
+        # Refresh balance for all accounts that may have been touched
+        new_src = tx_updates.get("accounts_id", src_account_id)
+        _refresh_balance(cur, src_account_id, new_src, old_target_id, new_target_id)
         conn.commit()
         return {"updated": tx_id}
     except HTTPException:
@@ -352,9 +373,17 @@ def delete_transaction(tx_id: int):
         if paired_id:
             cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (paired_id,))
             cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (paired_id,))
+        # Collect affected accounts before deletion
+        cur.execute(
+            "SELECT Accounts_Id, Accounts_Id_Target FROM Transactions WHERE Transactions_Id = %s", (tx_id,)
+        )
+        tx_acc_row = cur.fetchone()
+        affected_accounts = list(tx_acc_row) if tx_acc_row else []
+
         # Delete the requested transaction
         cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (tx_id,))
         cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+        _refresh_balance(cur, *affected_accounts)
         conn.commit()
         return {"deleted": tx_id, "paired_deleted": paired_id}
     except HTTPException:

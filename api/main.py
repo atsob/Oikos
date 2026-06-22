@@ -43,3 +43,18 @@ app.include_router(bank_router.router,         prefix="/api/bank",         tags=
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+# ── Serve React build (production) ────────────────────────────────────────────
+# Only active when frontend/dist exists (i.e. inside Docker). In dev the Vite
+# dev server runs separately and proxies /api to this process.
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+if os.path.isdir(_dist):
+    app.mount('/assets', StaticFiles(directory=os.path.join(_dist, 'assets')), name='assets')
+
+    @app.get('/{full_path:path}', include_in_schema=False)
+    def spa_fallback(full_path: str):
+        return FileResponse(os.path.join(_dist, 'index.html'))

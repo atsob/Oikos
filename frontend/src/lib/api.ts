@@ -227,6 +227,27 @@ export const downloadTvPrices = (period: string, securityId?: number) =>
 export const downloadSolidusBonds = () =>
   api.post('/market-data/download/solidus-bonds').then(r => r.data)
 
+export const getWatchlist = () =>
+  api.get('/market-data/watchlist').then(r => r.data)
+
+export const upsertWatchlistItem = (data: Record<string, unknown>) =>
+  api.post('/market-data/watchlist', data).then(r => r.data)
+
+export const deleteWatchlistItem = (id: number) =>
+  api.delete(`/market-data/watchlist/${id}`).then(r => r.data)
+
+export const getAlertsDefinitions = () =>
+  api.get('/market-data/alerts').then(r => r.data)
+
+export const saveAlert = (data: Record<string, unknown>) =>
+  api.post('/market-data/alerts', data).then(r => r.data)
+
+export const toggleAlert = (id: number, is_active: boolean) =>
+  api.patch(`/market-data/alerts/${id}/toggle`, { is_active }).then(r => r.data)
+
+export const deleteAlert = (id: number) =>
+  api.delete(`/market-data/alerts/${id}`).then(r => r.data)
+
 export const addPrice = (data: { security_id: number; date: string; close: number }) =>
   api.post('/market-data/prices', data).then(r => r.data)
 
@@ -275,6 +296,12 @@ export const deleteRecurringDraft = (id: number) =>
 
 export const upsertRecurringTemplate = (data: Record<string, unknown>) =>
   api.post('/recurring/templates', data).then(r => r.data)
+
+export const getRecentTransactionsForTemplate = (months = 24) =>
+  api.get('/recurring/recent-transactions', { params: { months } }).then(r => r.data)
+
+export const createTemplateFromTransaction = (txId: number) =>
+  api.post(`/recurring/templates/from-transaction/${txId}`).then(r => r.data)
 
 // ── Importers ─────────────────────────────────────────────────────────────────
 export const importFile = (source: string, formData: FormData) =>

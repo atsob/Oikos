@@ -16,7 +16,7 @@ import {
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Input, Spinner, Button } from '@/components/ui'
+import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtPct } from '@/lib/utils'
 import { Trash2, Plus, Check, X } from 'lucide-react'
 
@@ -71,17 +71,6 @@ function GroupingPicker({ value, onChange }: { value: string; onChange: (v: stri
   )
 }
 
-function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
-  return (
-    <span className="relative group inline-flex items-center gap-0.5">
-      {children}
-      <span className="ml-0.5 text-slate-400 cursor-help text-[10px] leading-none">ⓘ</span>
-      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 rounded bg-slate-800 px-2.5 py-1.5 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-lg whitespace-normal text-center">
-        {text}
-      </span>
-    </span>
-  )
-}
 
 function KpiCard({ label, value, color = '', subtitle, tooltip }: { label: string; value: string; color?: string; subtitle?: string; tooltip?: string }) {
   return (
@@ -304,12 +293,21 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
 }
 
 function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
+  const [accSortKey, setAccSortKey] = useState<'name' | 'latest'>('latest')
+  const [accSortDir, setAccSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const toggleAccSort = (key: 'name' | 'latest') => {
+    if (accSortKey === key) setAccSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setAccSortKey(key); setAccSortDir(key === 'name' ? 'asc' : 'desc') }
+  }
+
   const lookup: Record<string, Record<string, number>> = {}
   for (const r of rows) {
     const a = String(r.accounts_name), p = String(r.period)
     if (!lookup[a]) lookup[a] = {}
     lookup[a][p] = Number(r.balance_eur ?? 0)
   }
+  const lastPeriod = allPeriods[allPeriods.length - 1]
   const accounts = Object.keys(accountMeta)
     .filter(a => lookup[a])
     .sort((a, b) => accountMeta[a].localeCompare(accountMeta[b]) || a.localeCompare(b))
@@ -319,6 +317,12 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
     if (!typeGroups[t]) typeGroups[t] = []
     typeGroups[t].push(a)
   }
+  const sortAccounts = (accs: string[]) => [...accs].sort((a, b) => {
+    if (accSortKey === 'name') return accSortDir === 'asc' ? a.localeCompare(b) : b.localeCompare(a)
+    const av = lookup[a]?.[lastPeriod] ?? 0
+    const bv = lookup[b]?.[lastPeriod] ?? 0
+    return accSortDir === 'asc' ? av - bv : bv - av
+  })
   const headers = allPeriods.map(p => fmtPeriodHeader(p, grouping))
 
   // Stacked bar chart by account type group
@@ -344,9 +348,22 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
         <table className="w-full border-collapse">
           <thead>
             <tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-52">Account</th>
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-52 bg-slate-50 whitespace-nowrap">row_type</th>
-              {headers.map((h, i) => <th key={i} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{h}</th>)}
+              <th className="text-left px-2 py-1.5 border-b border-slate-200 sticky left-0 bg-slate-50 min-w-52">
+                <button type="button" onClick={() => toggleAccSort('name')} className="inline-flex items-center gap-0.5 font-semibold cursor-pointer hover:text-slate-700 select-none">
+                  Account <span className={`text-[9px] ml-0.5 ${accSortKey === 'name' ? 'text-blue-500' : 'text-slate-300'}`}>{accSortKey === 'name' ? (accSortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+                </button>
+              </th>
+              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-52 bg-slate-50 whitespace-nowrap text-slate-400 text-[10px]">type</th>
+              {allPeriods.map((p, i) => {
+                const isLast = i === allPeriods.length - 1
+                return isLast
+                  ? <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 whitespace-nowrap">
+                      <button type="button" onClick={() => toggleAccSort('latest')} className="inline-flex items-center gap-0.5 font-semibold cursor-pointer hover:text-slate-700 select-none flex-row-reverse w-full justify-start">
+                        {headers[i]} <span className={`text-[9px] ml-0.5 ${accSortKey === 'latest' ? 'text-blue-500' : 'text-slate-300'}`}>{accSortKey === 'latest' ? (accSortDir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+                      </button>
+                    </th>
+                  : <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{headers[i]}</th>
+              })}
             </tr>
           </thead>
           <tbody>
@@ -354,13 +371,13 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
               <React.Fragment key={type}>
                 <tr className="bg-slate-100">
                   <td className="px-2 py-1 text-slate-500 uppercase text-xs tracking-wide sticky left-0 bg-slate-100">{type.toUpperCase()}</td>
-                  <td className="px-2 py-1 text-slate-400 sticky left-52 bg-slate-100">group_header</td>
-                  {allPeriods.map(p => <td key={p} className="px-2 py-1 text-slate-300 text-right">None</td>)}
+                  <td className="px-2 py-1 text-slate-400 sticky left-52 bg-slate-100 text-[10px]">group</td>
+                  {allPeriods.map(p => <td key={p} className="px-2 py-1 text-slate-300 text-right">—</td>)}
                 </tr>
-                {accs.map(acc => (
+                {sortAccounts(accs).map(acc => (
                   <tr key={acc} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5 pl-5 sticky left-0 bg-white">{acc}</td>
-                    <td className="px-2 py-1.5 text-slate-400 sticky left-52 bg-white">account</td>
+                    <td className="px-2 py-1.5 text-slate-400 sticky left-52 bg-white text-[10px]">account</td>
                     {allPeriods.map(p => {
                       const v = lookup[acc]?.[p]
                       if (v == null) return <td key={p} className="text-right px-2 py-1.5 text-slate-300">—</td>
@@ -385,7 +402,18 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
     if (!totals[g]) totals[g] = {}
     totals[g][p] = (totals[g][p] ?? 0) + v
   }
-  const headers = allPeriods.map(p => fmtPeriodHeader(p, grouping))
+
+  const periodData = allPeriods.map(p => {
+    const assets = NW_ASSET_GROUPS.reduce((s,g) => s+(totals[g]?.[p]??0),0)
+    const liab   = NW_LIAB_GROUPS.reduce((s,g)  => s+(totals[g]?.[p]??0),0)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row: Record<string, any> = { period: p, total_assets: assets, total_liabilities: liab, net_worth: assets + liab }
+    NW_ASSET_GROUPS.forEach(g => { row[g] = totals[g]?.[p]??0 })
+    NW_LIAB_GROUPS.forEach(g  => { row[g] = totals[g]?.[p]??0 })
+    return row
+  })
+  const { sorted: sortedPeriods, sortKey: nwSK, sortDir: nwSD, toggleSort: nwSort } = useSortTable(periodData, 'period', 'desc')
+
   return (
     <div className="space-y-3">
       <WithCopy>
@@ -393,25 +421,23 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
         <table className="w-full border-collapse">
           <thead>
             <tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-16">Period</th>
-              {NW_ASSET_GROUPS.map(g => <th key={g} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{g}</th>)}
-              {NW_LIAB_GROUPS.map(g => <th key={g} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap text-red-600">{g}</th>)}
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap border-l border-slate-300">Total Assets</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap text-red-600">Total Liabilities</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap text-blue-700">Net Worth</th>
+              <ColHeader label="Period" sortKey="period" currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="left" className="border-b border-slate-200 sticky left-0 bg-slate-50 min-w-16" />
+              {NW_ASSET_GROUPS.map(g => <ColHeader key={g} label={g} sortKey={g} currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap" />)}
+              {NW_LIAB_GROUPS.map(g => <ColHeader key={g} label={g} sortKey={g} currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap text-red-600" />)}
+              <ColHeader label="Total Assets" sortKey="total_assets" currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap border-l border-slate-300" />
+              <ColHeader label="Total Liabilities" sortKey="total_liabilities" currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap text-red-600" />
+              <ColHeader label="Net Worth" sortKey="net_worth" currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap text-blue-700" />
             </tr>
           </thead>
           <tbody>
-            {[...allPeriods].reverse().map((p, i) => {
-              const assets = NW_ASSET_GROUPS.reduce((s,g) => s+(totals[g]?.[p]??0),0)
-              const liab   = NW_LIAB_GROUPS.reduce((s,g)  => s+(totals[g]?.[p]??0),0)
-              const nw = assets + liab
+            {sortedPeriods.map(pr => {
+              const { period: p, total_assets: assets, total_liabilities: liab, net_worth: nw } = pr
               return (
                 <tr key={p} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 font-medium sticky left-0 bg-white">{fmtPeriodHeader([...allPeriods].reverse()[i], grouping)}</td>
-                  {NW_ASSET_GROUPS.map(g => <td key={g} className="text-right px-2 py-1.5 tabular-nums">{fmtEur(totals[g]?.[p]??0)}</td>)}
+                  <td className="px-2 py-1.5 font-medium sticky left-0 bg-white">{fmtPeriodHeader(p, grouping)}</td>
+                  {NW_ASSET_GROUPS.map(g => <td key={g} className="text-right px-2 py-1.5 tabular-nums">{fmtEur(pr[g])}</td>)}
                   {NW_LIAB_GROUPS.map(g => {
-                    const v = totals[g]?.[p]??0
+                    const v = pr[g]
                     return <td key={g} className={`text-right px-2 py-1.5 tabular-nums ${v < 0 ? 'text-red-600' : ''}`}>{fmtEur(v)}</td>
                   })}
                   <td className="text-right px-2 py-1.5 tabular-nums font-medium text-blue-700 border-l border-slate-200">{fmtEur(assets)}</td>
@@ -696,8 +722,9 @@ function InvPositionsSummary({ startDate }: { startDate: string }) {
 
 function SectorTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation'], queryFn: getSectorAllocation })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
+  const { sorted: sectorSorted, sortKey: sectorSK, sortDir: sectorSD, toggleSort: sectorSort } = useSortTable(rows, 'value_eur', 'desc')
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const bySector: Record<string, number> = {}
   for (const r of rows) bySector[String(r.sector)] = (bySector[String(r.sector)] ?? 0) + Number(r.value_eur ?? 0)
   const sectors = Object.entries(bySector).sort((a, b) => b[1] - a[1])
@@ -711,15 +738,15 @@ function SectorTab() {
       <div className="overflow-x-auto text-xs">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Sector</th>
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Industry</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Value (€)</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Weight %</th>
+            <tr className="bg-slate-50 text-xs text-slate-500">
+              <ColHeader label="Sector" sortKey="sector" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Industry" sortKey="industry" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Weight %" sortKey="actual_pct" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {sectorSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5">{String(r.sector)}</td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.industry)}</td>
@@ -737,8 +764,9 @@ function SectorTab() {
 
 function FxExposureTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure'], queryFn: getFxExposure })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
+  const { sorted: fxSorted, sortKey: fxSK, sortDir: fxSD, toggleSort: fxSort } = useSortTable(rows, 'eur_exposure', 'desc')
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
     <div className="space-y-4">
       <Plot
@@ -749,15 +777,15 @@ function FxExposureTab() {
       <div className="overflow-x-auto text-xs">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Currency</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Native Exposure</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">EUR Exposure</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">5% FX Move Impact</th>
+            <tr className="bg-slate-50 text-xs text-slate-500">
+              <ColHeader label="Currency" sortKey="currency" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Native Exposure" sortKey="native_exposure" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="EUR Exposure" sortKey="eur_exposure" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="5% FX Move Impact" sortKey="sensitivity_5pct_eur" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {fxSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 font-mono font-medium">{String(r.currency)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.native_exposure).toLocaleString('el-GR', { maximumFractionDigits: 2 })}</td>
@@ -789,8 +817,9 @@ function AllocationReport() {
 
 function HoldingsSnapshotTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary'], queryFn: getPortfolioSummary })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
+  const { sorted: holdSorted, sortKey: holdSK, sortDir: holdSD, toggleSort: holdSort } = useSortTable(rows, 'value_eur', 'desc')
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const total = rows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
   return (
     <div className="space-y-3">
@@ -798,18 +827,18 @@ function HoldingsSnapshotTab() {
       <WithCopy>
       <div className="overflow-x-auto text-xs">
         <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Quantity</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Price</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ccy</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Value (€)</th>
+          <thead><tr className="bg-slate-50 text-xs text-slate-500">
+            <ColHeader label="Security" sortKey="security" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Ticker" sortKey="ticker" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Account" sortKey="account" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Quantity" sortKey="quantity" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Price" sortKey="last_price" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Ccy" sortKey="currency" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Value (€)" sortKey="value_eur" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Weight %</th>
           </tr></thead>
           <tbody>
-            {rows.map((r, i) => (
+            {holdSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 font-medium">{String(r.security)}</td>
                 <td className="px-2 py-1.5 font-mono text-slate-500 text-xs">{String(r.ticker ?? '—')}</td>
@@ -883,8 +912,8 @@ function PnlReport() {
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
 
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
+  // Derive all data BEFORE any early return so hooks are always called in the same order
   const rows = data as Row[]
   const pk = pnlKey(win)
   const mktKey = win === 'dtd' ? 'pnl_dtd_market_eur' : win === 'ytd' ? 'pnl_ytd_market_eur' : null
@@ -922,6 +951,11 @@ function PnlReport() {
     ? (accountMap.get(selectedAccount) ?? []).filter(r => showClosedPositions || !isClosedPosition(r))
     : null
 
+  const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTable(accounts, 'value', 'desc')
+  const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTable(drillRows ?? [], 'current_value_eur', 'desc')
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
   const checkboxBar = (
     <div className="flex flex-wrap gap-4 items-center py-2 px-1 border-b border-slate-100">
       <ChkBox label="Show P&L %" checked={showPct} onChange={setShowPct} />
@@ -953,18 +987,18 @@ function PnlReport() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your portfolio.">Security</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Current quantity held.">Qty</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Last available market price in the security's native currency.">Price</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains.`}>P&L ({win.toUpperCase()})</Tooltip></th>
-                  {showFxSplit && mktKey && <><th className="px-3 py-2 text-right"><Tooltip text="Part of the P&L attributable to the security's price movement in its local currency.">Market</Tooltip></th><th className="px-3 py-2 text-right"><Tooltip text="Part of the P&L attributable to currency (FX) rate movements when converting to EUR.">FX</Tooltip></th></>}
-                  <th className="px-3 py-2 text-right"><Tooltip text="Unrealized gain/loss: current value minus cost basis for still-open positions.">Unrealized</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Realized gain/loss from already-closed (sold) positions in this security.">Realized</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Dividend Yield on Cost: annual dividends received divided by your cost basis, as a percentage.">YOC %</Tooltip></th>
+                  <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." />
+                  <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
+                  <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
+                  <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current market value of the position in EUR." />
+                  <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey={pk} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains.`} />
+                  {showFxSplit && mktKey && <><ColHeader label="Market" sortKey={mktKey} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to the security's price movement in its local currency." /><ColHeader label="FX" sortKey={fxKey ?? ''} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to currency (FX) rate movements when converting to EUR." /></>}
+                  <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for still-open positions." />
+                  <ColHeader label="Realized" sortKey="realized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Realized gain/loss from already-closed (sold) positions in this security." />
+                  <ColHeader label="YOC %" sortKey="dividend_yoc_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Dividend Yield on Cost: annual dividends received divided by your cost basis, as a percentage." />
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {drillRows.map((r, i) => (
+                  {sortedDrill.map((r, i) => (
                     <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
                       <td className="px-3 py-2 font-medium">{String(r.securities_name)}{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? Number(r.qty_today).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
@@ -987,16 +1021,16 @@ function PnlReport() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left"><Tooltip text="Brokerage or investment account. Click a row to drill into individual security positions.">Account</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Current total market value of all holdings in this account, in EUR.">Value (€)</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`}>P&L ({win.toUpperCase()})</Tooltip></th>
-                {showPct && <th className="px-3 py-2 text-right"><Tooltip text="P&L as a percentage of the account's current market value.">P&L %</Tooltip></th>}
-                {showFxSplit && mktKey && <><th className="px-3 py-2 text-right"><Tooltip text="P&L from price moves in local currency, excluding FX effects.">Market</Tooltip></th><th className="px-3 py-2 text-right"><Tooltip text="P&L from EUR/foreign-currency exchange rate movements.">FX</Tooltip></th></>}
-                <th className="px-3 py-2 text-right"><Tooltip text="Unrealized gain/loss: current value minus cost basis for open positions.">Unrealized</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Realized gain/loss from closed positions in this account.">Realized</Tooltip></th>
+                <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
+                <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
+                <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey="pnl" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`} />
+                {showPct && <th className="px-3 py-2 text-right text-xs text-slate-500 uppercase"><Tooltip text="P&L as a percentage of the account's current market value.">P&L %</Tooltip></th>}
+                {showFxSplit && mktKey && <><ColHeader label="Market" sortKey="market" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from price moves in local currency, excluding FX effects." /><ColHeader label="FX" sortKey="fx" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from EUR/foreign-currency exchange rate movements." /></>}
+                <ColHeader label="Unrealized" sortKey="unrealized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for open positions." />
+                <ColHeader label="Realized" sortKey="realized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Realized gain/loss from closed positions in this account." />
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {accounts.map(a => (
+                {sortedAccounts.map(a => (
                   <tr key={a.name} className={`hover:bg-blue-50 cursor-pointer ${a.closed ? 'opacity-60' : ''}`} onClick={() => setSelectedAccount(a.name)}>
                     <td className="px-3 py-2 font-medium text-blue-700 hover:underline">{a.name}{a.closed && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{fmtEur(a.value)}</td>
@@ -1337,6 +1371,7 @@ function DividendTrackerTab() {
     summary: Row
   }
   const result = data as TrackerResult | undefined
+  const { sorted: divSorted, sortKey: divSK, sortDir: divSD, toggleSort: divSort } = useSortTable(result?.by_security ?? [], 'period_income_eur', 'desc')
 
   return (
     <div className="space-y-4">
@@ -1384,17 +1419,17 @@ function DividendTrackerTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <th className="px-3 py-2 text-left"><Tooltip text="Security name.">Security</Tooltip></th>
-                  <th className="px-3 py-2 text-left"><Tooltip text="Asset type — Stock, ETF, Bond, etc.">Type</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Total dividends and interest received from this security in the selected period.">Income ({result.period_label})</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Your total cost to acquire current holdings (purchase price × quantity).">Cost Basis (€)</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Annualised Yield on Cost: period income scaled to a yearly rate, divided by your cost basis.">Ann. YOC %</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Forward dividend yield based on the most recently declared dividend and the current market price.">Fwd. Yield %</Tooltip></th>
-                  <th className="px-3 py-2 text-right"><Tooltip text="Last known ex-dividend date. You must hold the security before this date to qualify for the dividend.">Ex-Div Date</Tooltip></th>
-                  <th className="px-3 py-2 text-left"><Tooltip text="How often dividends are paid — monthly, quarterly, semi-annually, or annually.">Frequency</Tooltip></th>
+                  <ColHeader label="Security" sortKey="securities_name" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Security name." />
+                  <ColHeader label="Type" sortKey="securities_type" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Asset type — Stock, ETF, Bond, etc." />
+                  <ColHeader label={`Income (${result.period_label})`} sortKey="period_income_eur" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Total dividends and interest received from this security in the selected period." />
+                  <ColHeader label="Cost Basis (€)" sortKey="cost_basis_eur" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Your total cost to acquire current holdings (purchase price × quantity)." />
+                  <ColHeader label="Ann. YOC %" sortKey="yoc_pct" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Annualised Yield on Cost: period income scaled to a yearly rate, divided by your cost basis." />
+                  <ColHeader label="Fwd. Yield %" sortKey="fwd_yield_pct" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Forward dividend yield based on the most recently declared dividend and the current market price." />
+                  <ColHeader label="Ex-Div Date" sortKey="ex_div_date" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Last known ex-dividend date. You must hold the security before this date to qualify for the dividend." />
+                  <ColHeader label="Frequency" sortKey="div_frequency" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="How often dividends are paid — monthly, quarterly, semi-annually, or annually." />
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {result.by_security.map((r, i) => (
+                  {divSorted.map((r, i) => (
                     <tr key={i} className="hover:bg-slate-50">
                       <td className="px-3 py-2 font-medium text-blue-700">{String(r.securities_name)}</td>
                       <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
@@ -1847,6 +1882,7 @@ function SavingsAccountsTab() {
 function BondScheduleTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
   const rows = data as Row[]
+  const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTable(rows, 'days_to_maturity', 'asc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   if (!rows.length) return <p className="text-slate-400 text-sm py-8 text-center">No bond holdings found.</p>
 
@@ -1876,20 +1912,20 @@ function BondScheduleTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-              <th className="px-3 py-2 text-left"><Tooltip text="Bond security name.">Security</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Number of units held.">Qty</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Par (face) value per unit — the amount repaid at maturity per bond.">Face Value</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Total par value of your position (quantity × face value), converted to EUR.">Total Face (EUR)</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Annual coupon rate stated on the bond, as a percentage of face value.">Coupon %</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="How often coupon payments are made — annual, semi-annual, quarterly, or monthly.">Frequency</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Estimated next coupon payment in EUR based on your quantity and coupon rate.">Next Coupon (EUR)</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Total expected coupon income from this bond over a full year.">Annual Coupon (EUR)</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Date when the bond matures and face value is repaid.">Maturity</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Calendar days remaining until maturity. Highlighted amber when under 365 days.">Days Left</Tooltip></th>
-              <th className="px-3 py-2 text-right"><Tooltip text="Currency the bond is denominated in.">Ccy</Tooltip></th>
+              <ColHeader label="Security" sortKey="securities_name" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} tooltip="Bond security name." />
+              <ColHeader label="Qty" sortKey="quantity" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Number of units held." />
+              <ColHeader label="Face Value" sortKey="face_value" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Par (face) value per unit — the amount repaid at maturity per bond." />
+              <ColHeader label="Total Face (EUR)" sortKey="total_face_eur" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Total par value of your position (quantity × face value), converted to EUR." />
+              <ColHeader label="Coupon %" sortKey="coupon_rate" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Annual coupon rate stated on the bond, as a percentage of face value." />
+              <ColHeader label="Frequency" sortKey="coupon_frequency" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="How often coupon payments are made — annual, semi-annual, quarterly, or monthly." />
+              <ColHeader label="Next Coupon (EUR)" sortKey="next_coupon_eur" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Estimated next coupon payment in EUR based on your quantity and coupon rate." />
+              <ColHeader label="Annual Coupon (EUR)" sortKey="annual_coupon_eur" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Total expected coupon income from this bond over a full year." />
+              <ColHeader label="Maturity" sortKey="maturity_date" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Date when the bond matures and face value is repaid." />
+              <ColHeader label="Days Left" sortKey="days_to_maturity" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Calendar days remaining until maturity. Highlighted amber when under 365 days." />
+              <ColHeader label="Ccy" sortKey="currency" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Currency the bond is denominated in." />
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((r, i) => (
+              {bondSorted.map((r, i) => (
                 <tr key={i} className="hover:bg-slate-50">
                   <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
@@ -2469,6 +2505,8 @@ function InvestmentSignalsTab() {
     .sort((a, b) => Number(b.sharpe_ratio) - Number(a.sharpe_ratio))
     .slice(0, 20)
 
+  const { sorted: sortedTopPicks, sortKey: tpSK, sortDir: tpSD, toggleSort: tpSort } = useSortTable(topPicks, 'sharpe_ratio', 'desc')
+
   const sharpeValues = chartRows.map(r => r.sharpe_ratio ?? 0)
   const minSharpe = Math.min(...sharpeValues)
   const maxSharpe = Math.max(...sharpeValues)
@@ -2563,14 +2601,14 @@ function InvestmentSignalsTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left"><Tooltip text="Security name.">Security</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annual price return over the last 12 months.">Return 1Y</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annualised volatility over the last 12 months.">Vol 1Y</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Excess return over risk-free rate divided by volatility. Higher is better.">Sharpe</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Composite momentum score: 50% 1M + 30% 3M + 20% 1Y return.">Quality Score</Tooltip></th>
+                <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
+                <ColHeader label={<Tooltip text="Annual price return over the last 12 months.">Return 1Y</Tooltip>} sortKey="annual_chg_pct" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+                <ColHeader label={<Tooltip text="Annualised volatility over the last 12 months.">Vol 1Y</Tooltip>} sortKey="vol_1y_ann" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+                <ColHeader label={<Tooltip text="Excess return over risk-free rate divided by volatility. Higher is better.">Sharpe</Tooltip>} sortKey="sharpe_ratio" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+                <ColHeader label={<Tooltip text="Composite momentum score: 50% 1M + 30% 3M + 20% 1Y return.">Quality Score</Tooltip>} sortKey="quality_score" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {topPicks.map((r, i) => (
+                {sortedTopPicks.map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 font-medium">{r.securities_name}</td>
                     <td className={`px-3 py-2 text-right tabular-nums ${Number(r.annual_chg_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
@@ -2607,6 +2645,8 @@ function PortfolioActionSignalsTab() {
     if (view === 'open_only')    return Number(r.current_value_eur ?? 0) > 0
     return true
   })
+
+  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTable(filtered, 'final_signal', 'asc')
 
   const signalStyle = (sig: string | null): string => {
     if (!sig) return ''
@@ -2653,57 +2693,25 @@ function PortfolioActionSignalsTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-              <th className="px-3 py-2 text-left sticky left-0 bg-slate-50">
-                <Tooltip text="Security name.">Security</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-left">
-                <Tooltip text="Combined signal: math signal + analyst rating. Conviction signals appear when both agree.">Final Signal</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-left">
-                <Tooltip text="Quantitative signal derived from Sharpe ratio and quality score.">Math Signal</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-left">
-                <Tooltip text="Wall Street analyst consensus rating.">Analyst View</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Unrealized P&L: market value minus FIFO cost basis.">Unreal. P&L</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Unrealized P&L as % of cost basis.">P&L %</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Sharpe ratio: excess return divided by annual volatility.">Sharpe</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).">Quality</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Most recent available market price.">Price</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Highest price in the last 3 years (post-split adjusted).">3Y High</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Current price vs 3-year high as a percentage.">% from High</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Lowest price in the last 3 years (post-split adjusted).">3Y Low</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Current price vs 3-year low as a percentage.">% from Low</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Analyst target price vs current price — expected upside.">Upside %</Tooltip>
-              </th>
-              <th className="px-3 py-2 text-right">
-                <Tooltip text="Analyst consensus target price.">Target</Tooltip>
-              </th>
+              <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="sticky left-0 bg-slate-50 text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Combined signal: math signal + analyst rating. Conviction signals appear when both agree.">Final Signal</Tooltip>} sortKey="final_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Quantitative signal derived from Sharpe ratio and quality score.">Math Signal</Tooltip>} sortKey="recommendation_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Wall Street analyst consensus rating.">Analyst View</Tooltip>} sortKey="wall_street_view" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip>} sortKey="current_value_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Unrealized P&L: market value minus FIFO cost basis.">Unreal. P&L</Tooltip>} sortKey="unrealized_pnl_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Unrealized P&L as % of cost basis.">P&L %</Tooltip>} sortKey="unrealized_pnl_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Sharpe ratio: excess return divided by annual volatility.">Sharpe</Tooltip>} sortKey="sharpe_ratio" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).">Quality</Tooltip>} sortKey="quality_score" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Most recent available market price.">Price</Tooltip>} sortKey="price_today" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Highest price in the last 3 years (post-split adjusted).">3Y High</Tooltip>} sortKey="high_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Current price vs 3-year high as a percentage.">% from High</Tooltip>} sortKey="pct_from_high_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Lowest price in the last 3 years (post-split adjusted).">3Y Low</Tooltip>} sortKey="low_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Current price vs 3-year low as a percentage.">% from Low</Tooltip>} sortKey="pct_from_low_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Analyst target price vs current price — expected upside.">Upside %</Tooltip>} sortKey="upside_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Analyst consensus target price.">Target</Tooltip>} sortKey="target_price" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((r, i) => {
+              {sortedFiltered.map((r, i) => {
                 const pnl = r.unrealized_pnl_eur
                 const cost = r.total_cost_eur
                 const pnlPct = pnl != null && cost != null && Number(cost) > 0

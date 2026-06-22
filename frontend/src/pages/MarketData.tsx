@@ -6,8 +6,8 @@ import type { ColDef } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody } from '@/components/ui'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert } from '@/lib/api'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable } from '@/components/ui'
 import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 
 const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
@@ -41,7 +41,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies']
+const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'Alerts']
 
 const SECURITY_COLS: ColDef[] = [
   { field: 'ticker', headerName: 'Ticker', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
@@ -784,6 +784,309 @@ function DownloadsTab() {
   )
 }
 
+// ── Watchlist Tab ─────────────────────────────────────────────────────────────
+function WatchlistTab() {
+  const qc = useQueryClient()
+  const { data = [], isLoading } = useQuery({ queryKey: ['watchlist'], queryFn: getWatchlist })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  const rows = data as Record<string, unknown>[]
+  const secs = securities as Record<string, unknown>[]
+
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState<Record<string, string>>({ securities_id: '', target_price: '', stop_loss: '', note: '' })
+  const [editId, setEditId] = useState<number | null>(null)
+  const [err, setErr] = useState('')
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'securities_name', 'asc')
+
+  const watchedIds = new Set(rows.map(r => Number(r.securities_id)))
+  const availableSecs = secs.filter(s => !watchedIds.has(Number(s.id)) || Number(s.id) === Number(form.securities_id))
+
+  const upsertMut = useMutation({
+    mutationFn: upsertWatchlistItem,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['watchlist'] }); setShowAdd(false); setEditId(null); setErr('') },
+    onError: (e) => setErr(extractError(e)),
+  })
+  const deleteMut = useMutation({
+    mutationFn: deleteWatchlistItem,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['watchlist'] }),
+  })
+
+  const openAdd = () => { setForm({ securities_id: '', target_price: '', stop_loss: '', note: '' }); setEditId(null); setShowAdd(true) }
+  const openEdit = (row: Record<string, unknown>) => {
+    setForm({
+      securities_id: String(row.securities_id ?? ''),
+      target_price: String(row.target_price ?? ''),
+      stop_loss: String(row.stop_loss ?? ''),
+      note: String(row.note ?? ''),
+    })
+    setEditId(Number(row.watchlist_id))
+    setShowAdd(true)
+  }
+
+  const save = () => {
+    if (!form.securities_id) return setErr('Security is required')
+    upsertMut.mutate({
+      securities_id: Number(form.securities_id),
+      target_price: form.target_price ? Number(form.target_price) : null,
+      stop_loss: form.stop_loss ? Number(form.stop_loss) : null,
+      note: form.note || null,
+    })
+  }
+
+  const fmtPct = (v: unknown) => {
+    if (v == null) return '—'
+    const n = Number(v)
+    return <span className={n >= 0 ? 'text-green-700' : 'text-red-600'}>{n >= 0 ? '+' : ''}{n.toFixed(2)}%</span>
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-slate-500">{rows.length} securities on watchlist</p>
+        <Button size="sm" onClick={openAdd}><Plus size={14} /> Add to Watchlist</Button>
+      </div>
+
+      {showAdd && (
+        <Modal title={editId ? 'Edit Watchlist Item' : 'Add to Watchlist'} onClose={() => { setShowAdd(false); setErr('') }}
+          footer={<><Button variant="secondary" onClick={() => { setShowAdd(false); setErr('') }}>Cancel</Button><Button onClick={save} disabled={upsertMut.isPending}>Save</Button></>}>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <Field label="Security *">
+            <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+              value={form.securities_id} onChange={e => setForm(f => ({ ...f, securities_id: e.target.value }))}>
+              <option value="">— select —</option>
+              {availableSecs.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)} ({String(s.ticker ?? '')})</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Target Price"><Input type="number" step="any" value={form.target_price} onChange={e => setForm(f => ({ ...f, target_price: e.target.value }))} placeholder="optional" /></Field>
+            <Field label="Stop Loss"><Input type="number" step="any" value={form.stop_loss} onChange={e => setForm(f => ({ ...f, stop_loss: e.target.value }))} placeholder="optional" /></Field>
+          </div>
+          <Field label="Note"><Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" /></Field>
+        </Modal>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-200">
+            <ColHeader label="Security" sortKey="securities_name" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Type" sortKey="securities_type" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Curr." sortKey="currency" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Price" sortKey="current_price" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Target" sortKey="target_price" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Stop Loss" sortKey="stop_loss" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="vs Target" sortKey="pct_from_target" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="vs Stop" sortKey="pct_from_stop" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Analyst Upside" sortKey="upside_to_analyst" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Div Yield" sortKey="dividend_yield" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Added" sortKey="added_date" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <th className="px-3 py-2"></th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {sorted.map(row => (
+              <tr key={String(row.watchlist_id)} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium">
+                  {String(row.securities_name)}
+                  {row.already_held && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">held</span>}
+                </td>
+                <td className="px-3 py-2 text-slate-500 text-xs">{String(row.securities_type ?? '—')}</td>
+                <td className="px-3 py-2 text-slate-500 text-xs">{String(row.currency ?? '—')}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{row.current_price != null ? Number(row.current_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.target_price != null ? Number(row.target_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.stop_loss != null ? Number(row.stop_loss).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_target)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_stop)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.upside_to_analyst)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.dividend_yield != null ? `${Number(row.dividend_yield).toFixed(2)}%` : '—'}</td>
+                <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{String(row.added_date ?? '—')}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    <button onClick={() => openEdit(row)} className="p-1 text-slate-400 hover:text-blue-600"><Pencil size={13} /></button>
+                    <button onClick={() => deleteMut.mutate(Number(row.watchlist_id))} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={13} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {sorted.length === 0 && <tr><td colSpan={12} className="px-3 py-8 text-center text-slate-400 text-sm">No securities on watchlist yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ── Alerts Tab ────────────────────────────────────────────────────────────────
+const ALERT_TYPES = ['price_above', 'price_below', 'allocation_drift']
+const ASSET_TYPES_FOR_DRIFT = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Other']
+
+function AlertsTab() {
+  const qc = useQueryClient()
+  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  const rows = data as Record<string, unknown>[]
+  const secs = securities as Record<string, unknown>[]
+
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' })
+  const [editId, setEditId] = useState<number | null>(null)
+  const [err, setErr] = useState('')
+
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'created_at', 'desc')
+
+  const saveMut = useMutation({
+    mutationFn: saveAlert,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alert-definitions'] }); setShowForm(false); setEditId(null); setErr('') },
+    onError: (e) => setErr(extractError(e)),
+  })
+  const toggleMut = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) => toggleAlert(id, is_active),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
+  })
+  const deleteMut = useMutation({
+    mutationFn: deleteAlert,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
+  })
+
+  const openAdd = () => { setForm({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' }); setEditId(null); setShowForm(true) }
+  const openEdit = (row: Record<string, unknown>) => {
+    setForm({
+      alert_type: String(row.alert_type ?? 'price_above'),
+      securities_id: String(row.securities_id ?? ''),
+      asset_type: String(row.asset_type ?? ''),
+      threshold: String(row.threshold ?? ''),
+      note: String(row.note ?? ''),
+    })
+    setEditId(Number(row.alert_id))
+    setShowForm(true)
+  }
+
+  const doSave = () => {
+    if (!form.alert_type) return setErr('Alert type is required')
+    if (!form.threshold) return setErr('Threshold is required')
+    const isPriceAlert = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+    if (isPriceAlert && !form.securities_id) return setErr('Security is required for price alerts')
+    if (form.alert_type === 'allocation_drift' && !form.asset_type) return setErr('Asset type is required for allocation drift alerts')
+    saveMut.mutate({
+      alert_id: editId ?? undefined,
+      alert_type: form.alert_type,
+      securities_id: form.securities_id ? Number(form.securities_id) : null,
+      asset_type: form.asset_type || null,
+      threshold: Number(form.threshold),
+      direction: form.alert_type === 'price_above' ? 'above' : form.alert_type === 'price_below' ? 'below' : 'drift',
+      note: form.note || null,
+    })
+  }
+
+  const alertTypeBadge = (t: unknown) => {
+    const s = String(t ?? '')
+    const color = s === 'price_above' ? 'bg-green-100 text-green-700' : s === 'price_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : '⚖ Alloc Drift'
+    return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{label}</span>
+  }
+
+  const isPriceType = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-slate-500">{rows.length} alert{rows.length !== 1 ? 's' : ''} defined</p>
+        <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Alert</Button>
+      </div>
+
+      {showForm && (
+        <Modal title={editId ? 'Edit Alert' : 'Add Alert'} onClose={() => { setShowForm(false); setErr('') }}
+          footer={<><Button variant="secondary" onClick={() => { setShowForm(false); setErr('') }}>Cancel</Button><Button onClick={doSave} disabled={saveMut.isPending}>Save</Button></>}>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <Field label="Alert Type *">
+            <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+              value={form.alert_type} onChange={e => setForm(f => ({ ...f, alert_type: e.target.value, securities_id: '', asset_type: '' }))}>
+              {ALERT_TYPES.map(t => <option key={t} value={t}>{t === 'price_above' ? '▲ Price Above Threshold' : t === 'price_below' ? '▼ Price Below Threshold' : '⚖ Allocation Drift'}</option>)}
+            </select>
+          </Field>
+          {isPriceType && (
+            <Field label="Security *">
+              <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                value={form.securities_id} onChange={e => setForm(f => ({ ...f, securities_id: e.target.value }))}>
+                <option value="">— select —</option>
+                {secs.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)} ({String(s.ticker ?? '')})</option>)}
+              </select>
+            </Field>
+          )}
+          {form.alert_type === 'allocation_drift' && (
+            <Field label="Asset Type *">
+              <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                value={form.asset_type} onChange={e => setForm(f => ({ ...f, asset_type: e.target.value }))}>
+                <option value="">— select —</option>
+                {ASSET_TYPES_FOR_DRIFT.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+          )}
+          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : 'Price Threshold *'}>
+            <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
+          </Field>
+          <Field label="Note"><Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" /></Field>
+        </Modal>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-200">
+            <th className="px-3 py-2 text-left font-medium">Status</th>
+            <ColHeader label="Type" sortKey="alert_type" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Security" sortKey="securities_name" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Asset Type" sortKey="asset_type" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <ColHeader label="Threshold" sortKey="threshold" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <ColHeader label="Current Price" sortKey="current_price" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" />
+            <th className="px-3 py-2 text-left font-medium">Note</th>
+            <ColHeader label="Created" sortKey="created_at" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+            <th className="px-3 py-2"></th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {sorted.map(row => {
+              const isActive = Boolean(row.is_active)
+              const triggered = row.current_price != null && row.threshold != null && (
+                (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
+                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
+              )
+              return (
+                <tr key={String(row.alert_id)} className={`hover:bg-slate-50 ${!isActive ? 'opacity-50' : ''}`}>
+                  <td className="px-3 py-2">
+                    <button onClick={() => toggleMut.mutate({ id: Number(row.alert_id), is_active: !isActive })}
+                      className={`w-8 h-4 rounded-full transition-colors ${isActive ? 'bg-blue-500' : 'bg-slate-300'} relative`}>
+                      <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${isActive ? 'left-4.5' : 'left-0.5'}`} />
+                    </button>
+                    {triggered && <span className="ml-1.5 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">🔔 triggered</span>}
+                  </td>
+                  <td className="px-3 py-2">{alertTypeBadge(row.alert_type)}</td>
+                  <td className="px-3 py-2 font-medium">{row.securities_name != null ? String(row.securities_name) : '—'}</td>
+                  <td className="px-3 py-2 text-slate-500 text-xs">{row.asset_type != null ? String(row.asset_type) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? Number(row.threshold).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${triggered ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+                    {row.current_price != null ? Number(row.current_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-slate-400 text-xs">{row.note != null ? String(row.note) : ''}</td>
+                  <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{row.created_at != null ? String(row.created_at).slice(0, 16) : '—'}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(row)} className="p-1 text-slate-400 hover:text-blue-600"><Pencil size={13} /></button>
+                      <button onClick={() => deleteMut.mutate(Number(row.alert_id))} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={13} /></button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+            {sorted.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400 text-sm">No alerts defined yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function MarketData() {
   const [tab, setTab] = useState('Currencies')
   const [search, setSearch] = useState('')
@@ -831,6 +1134,8 @@ export default function MarketData() {
                 </div>
               )
             )}
+            {tab === 'Watchlist' && <WatchlistTab />}
+            {tab === 'Alerts' && <AlertsTab />}
           </CardBody>
         </Card>
       </div>

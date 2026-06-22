@@ -91,6 +91,40 @@ def create_template(data: dict):
         conn.close()
 
 
+@router.get("/recent-transactions")
+def get_recent_transactions(months: int = 24):
+    """Recent confirmed transactions for the template picker (default 24 months)."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT t.Transactions_Id AS id, t.Date::text AS date,
+                   a.Accounts_Name AS accounts_name, p.Payees_Name AS payees_name,
+                   t.Description AS description, t.Total_Amount AS total_amount,
+                   t.Accounts_Id AS accounts_id, t.Payees_Id AS payees_id,
+                   t.Accounts_Id_Target AS accounts_id_target
+            FROM Transactions t
+            JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+            LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
+            WHERE t.Is_Draft = FALSE
+              AND t.Date >= CURRENT_DATE - (%(months)s * INTERVAL '1 month')
+            ORDER BY t.Date DESC
+            LIMIT 1000
+        """, conn, params={"months": months})
+    return _df(df)
+
+
+@router.post("/templates/from-transaction/{tx_id}")
+def create_template_from_transaction(tx_id: int):
+    """Seed a new recurring template from an existing confirmed transaction."""
+    from database.crud import create_template_from_transaction as _seed
+    try:
+        tid = _seed(tx_id)
+        return {"id": tid}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.put("/templates/{template_id}")
 def update_template(template_id: int, data: dict):
     conn = get_connection()
@@ -343,16 +377,33 @@ def confirm_draft(tx_id: int):
 
         cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
 
+        # Refresh balance for source (and target if transfer)
+        def _refresh(acc_id):
+            if acc_id:
+                cur.execute("""
+                    UPDATE Accounts
+                       SET Accounts_Balance = COALESCE((
+                           SELECT SUM(Total_Amount)
+                           FROM Transactions
+                           WHERE Accounts_Id = %s AND Is_Draft = FALSE
+                       ), 0)
+                     WHERE Accounts_Id = %s
+                """, (acc_id, acc_id))
+
+        _refresh(src_account)
+
         if target_account and not existing_transfers_id:
             cur.execute("SELECT nextval('transfers_id_seq')")
             shared_tid = cur.fetchone()[0]
-            # Create the mirror inflow leg in the target account
+            mirror_amount = -float(amount or 0)
+            # Create the mirror leg in the target account
             cur.execute("""
                 INSERT INTO Transactions
                     (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
                 VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
-            """, (target_account, date, description, abs(float(amount or 0)), payees_id, src_account, shared_tid))
+            """, (target_account, date, description, mirror_amount, payees_id, src_account, shared_tid))
             cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
+            _refresh(target_account)
 
         conn.commit()
         return {"confirmed": tx_id}

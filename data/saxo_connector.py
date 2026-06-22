@@ -331,7 +331,12 @@ def exchange_code(
         },
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"Saxo token error {resp.status_code}: {detail}")
     return resp.json()
 
 
@@ -351,7 +356,12 @@ def refresh_access_token(
         },
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"Saxo token error {resp.status_code}: {detail}")
     return resp.json()
 
 

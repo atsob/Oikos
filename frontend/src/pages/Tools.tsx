@@ -14,7 +14,7 @@ import {
   getMissingInvCashLinks, fixInvCashLinks,
   getLogs,
 } from '@/lib/api'
-import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner } from '@/components/ui'
+import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { cn } from '@/lib/utils'
 
 // ── Tiny UI helpers ────────────────────────────────────────────────────────────
@@ -48,6 +48,7 @@ function ConfirmBanner({ message, onYes, onNo, yesLabel = 'Yes', noLabel = 'Canc
 type Row = Record<string, unknown>
 
 function DataTable({ rows, hideCols = [] }: { rows: Row[]; hideCols?: string[] }) {
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows ?? [], null)
   if (!rows || rows.length === 0) return <p className="text-sm text-slate-500">No results.</p>
   const cols = Object.keys(rows[0]).filter(c => !hideCols.includes(c))
   return (
@@ -55,11 +56,11 @@ function DataTable({ rows, hideCols = [] }: { rows: Row[]; hideCols?: string[] }
       <table className="w-full text-xs">
         <thead className="bg-slate-50 sticky top-0">
           <tr>
-            {cols.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+            {cols.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="px-3 py-2 text-left text-slate-600" />)}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {sorted.map((row, i) => (
             <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
               {cols.map(c => (
                 <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>
@@ -364,6 +365,8 @@ function PriceQuality() {
     [allRows, selectedSecs],
   )
 
+  const { sorted: sortedRows, sortKey: pqSK, sortDir: pqSD, toggleSort: pqSort } = useSortTable(rows, 'date', 'desc')
+
   const delMut = useMutation({
     mutationFn: deleteHistoricalPrices,
     onSuccess: (d: { deleted: number }) => {
@@ -453,11 +456,11 @@ function PriceQuality() {
                           checked={rows.length > 0 && checked.size === rows.length}
                           onChange={e => setChecked(e.target.checked ? new Set(rows.map((_, i) => i)) : new Set())} />
                       </th>
-                      {display.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+                      {display.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={pqSK} currentDir={pqSD} onSort={pqSort} className="px-3 py-2 text-left text-slate-600" />)}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, i) => (
+                    {sortedRows.map((row) => { const i = rows.indexOf(row); return (
                       <tr key={i} className={cn(checked.has(i) ? 'bg-red-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
                         <td className="px-2 py-1.5">
                           <input type="checkbox" checked={checked.has(i)} onChange={() => toggleCheck(i)} />
@@ -466,7 +469,7 @@ function PriceQuality() {
                           <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>
                         ))}
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
@@ -773,6 +776,8 @@ function InvestmentDataQuality() {
     })))
   }, [runResult, accountIds, actionFilter, anomaliesOnly, excludeZeroPrice, excludeZeroQty])
 
+  const { sorted: idSorted, sortKey: idSK, sortDir: idSD, toggleSort: idSort } = useSortTable(displayed, 'date', 'desc')
+
   const saveMut = useMutation({
     mutationFn: async () => {
       let saved = 0
@@ -870,13 +875,16 @@ function InvestmentDataQuality() {
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 sticky top-0">
                   <tr>
-                    {['date', 'account', 'security', 'action', 'quantity', 'price', 'commission', 'total_acc', 'total_sec', 'fx_rate', '⚠️ anomalies', '💡 recommendations'].map(c => (
+                    {(['date', 'account', 'security', 'action'] as const).map(c => (
+                      <ColHeader key={c} label={c} sortKey={c} currentKey={idSK} currentDir={idSD} onSort={idSort} className="px-3 py-2 text-left text-slate-600" />
+                    ))}
+                    {['quantity', 'price', 'commission', 'total_acc', 'total_sec', 'fx_rate', '⚠️ anomalies', '💡 recommendations'].map(c => (
                       <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {displayed.map((row, i) => {
+                  {idSorted.map((row, i) => {
                     const id = row.investments_id as number
                     const rowEdits = edits[id] ?? {}
                     return (
@@ -938,6 +946,10 @@ function FixMissingTransferMirrors() {
     [allRows, filterAcc],
   )
 
+  const { sorted: fmtSorted, sortKey: fmtSK, sortDir: fmtSD, toggleSort: fmtSort } = useSortTable(rows, 'date', 'asc')
+
+  const COLS = ['transactions_id', 'issue_type', 'date', 'source_account', 'payee', 'description', 'source_amount', 'target_account', 'transfers_id']
+
   const fixMut = useMutation({
     mutationFn: (ids: number[]) => fixTransferMirrors(ids),
     onSuccess: (d: { created: number; errors: string[] }) => {
@@ -950,8 +962,6 @@ function FixMissingTransferMirrors() {
   const selectedIds = rows.filter((_, i) => checked.has(i)).map(r => r.transactions_id as number)
 
   if (isLoading) return <Spinner />
-
-  const COLS = ['transactions_id', 'issue_type', 'date', 'source_account', 'payee', 'description', 'source_amount', 'target_account', 'transfers_id']
 
   return (
     <div className="space-y-6">
@@ -1011,18 +1021,18 @@ function FixMissingTransferMirrors() {
                       <th className="px-2 py-2"><input type="checkbox"
                         checked={rows.length > 0 && checked.size === rows.length}
                         onChange={e => setChecked(e.target.checked ? new Set(rows.map((_, i) => i)) : new Set())} /></th>
-                      {COLS.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+                      {COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={fmtSK} currentDir={fmtSD} onSort={fmtSort} className="px-3 py-2 text-left text-slate-600" />)}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row, i) => (
+                    {fmtSorted.map((row) => { const i = rows.indexOf(row); return (
                       <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
                         <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
                           setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
                         }} /></td>
                         {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
@@ -1068,6 +1078,10 @@ function UnlinkedTransferPairs() {
     [deduped, filterAcc],
   )
 
+  const { sorted: utpSorted, sortKey: utpSK, sortDir: utpSD, toggleSort: utpSort } = useSortTable(rows, 'date', 'asc')
+
+  const UTP_COLS = ['src_tx_id', 'date', 'source_account', 'description', 'source_amount', 'target_account', 'candidate_tx_id', 'candidate_amount', 'candidate_desc', 'transfers_id']
+
   const linkMut = useMutation({
     mutationFn: (pairs: Row[]) => linkTransferPairs(pairs.map(r => ({
       src_tx_id: r.src_tx_id as number, candidate_tx_id: r.candidate_tx_id as number,
@@ -1083,7 +1097,6 @@ function UnlinkedTransferPairs() {
   if (isLoading) return <Spinner />
 
   const selectedRows = rows.filter((_, i) => checked.has(i))
-  const COLS = ['src_tx_id', 'date', 'source_account', 'description', 'source_amount', 'target_account', 'candidate_tx_id', 'candidate_amount', 'candidate_desc', 'transfers_id']
 
   return (
     <Card>
@@ -1141,18 +1154,18 @@ function UnlinkedTransferPairs() {
                     <th className="px-2 py-2"><input type="checkbox"
                       checked={rows.length > 0 && checked.size === rows.length}
                       onChange={e => setChecked(e.target.checked ? new Set(rows.map((_, i) => i)) : new Set())} /></th>
-                    {COLS.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+                    {UTP_COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={utpSK} currentDir={utpSD} onSort={utpSort} className="px-3 py-2 text-left text-slate-600" />)}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {utpSorted.map((row) => { const i = rows.indexOf(row); return (
                     <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
                       <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
                         setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
                       }} /></td>
-                      {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
+                      {UTP_COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -1189,6 +1202,10 @@ function FixTransferSignMismatches() {
     [allRows, filterAcc],
   )
 
+  const { sorted: ftsSorted, sortKey: ftsSK, sortDir: ftsSD, toggleSort: ftsSort } = useSortTable(rows, 'date', 'asc')
+
+  const FTS_COLS = ['mismatch_type', 'date', 'transfers_id', 'tx1_id', 'account1', 'amount1', 'tx2_id', 'account2', 'amount2', 'payee', 'description']
+
   const selectedRows = rows.filter((_, i) => checked.has(i))
 
   const fixMut = useMutation({
@@ -1205,7 +1222,6 @@ function FixTransferSignMismatches() {
   })
 
   if (isLoading) return <Spinner />
-  const COLS = ['mismatch_type', 'date', 'transfers_id', 'tx1_id', 'account1', 'amount1', 'tx2_id', 'account2', 'amount2', 'payee', 'description']
 
   return (
     <Card>
@@ -1239,18 +1255,18 @@ function FixTransferSignMismatches() {
                     <th className="px-2 py-2"><input type="checkbox"
                       checked={rows.length > 0 && checked.size === rows.length}
                       onChange={e => setChecked(e.target.checked ? new Set(rows.map((_, i) => i)) : new Set())} /></th>
-                    {COLS.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+                    {FTS_COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={ftsSK} currentDir={ftsSD} onSort={ftsSort} className="px-3 py-2 text-left text-slate-600" />)}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {ftsSorted.map((row) => { const i = rows.indexOf(row); return (
                     <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
                       <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
                         setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
                       }} /></td>
-                      {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
+                      {FTS_COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -1306,6 +1322,10 @@ function FixMissingInvCashLinks() {
     [allRows, filterAcc],
   )
 
+  const { sorted: fmlSorted, sortKey: fmlSK, sortDir: fmlSD, toggleSort: fmlSort } = useSortTable(rows, 'date', 'asc')
+
+  const FML_COLS = ['investments_id', 'investment_account', 'date', 'action', 'security', 'inv_amount', 'candidate_tx_id', 'cash_account', 'candidate_amount', 'candidate_payee', 'candidate_description']
+
   const linkMut = useMutation({
     mutationFn: (pairs: { investments_id: number; candidate_tx_id: number }[]) => fixInvCashLinks(pairs),
     onSuccess: (d: { linked: number; errors: string[] }) => {
@@ -1322,7 +1342,6 @@ function FixMissingInvCashLinks() {
   }
 
   if (isLoading) return <Spinner />
-  const COLS = ['investments_id', 'investment_account', 'date', 'action', 'security', 'inv_amount', 'candidate_tx_id', 'cash_account', 'candidate_amount', 'candidate_payee', 'candidate_description']
 
   return (
     <Card>
@@ -1380,18 +1399,18 @@ function FixMissingInvCashLinks() {
                     <th className="px-2 py-2"><input type="checkbox"
                       checked={rows.length > 0 && checked.size === rows.length}
                       onChange={e => setChecked(e.target.checked ? new Set(rows.map((_, i) => i)) : new Set())} /></th>
-                    {COLS.map(c => <th key={c} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{c}</th>)}
+                    {FML_COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={fmlSK} currentDir={fmlSD} onSort={fmlSort} className="px-3 py-2 text-left text-slate-600" />)}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {fmlSorted.map((row) => { const i = rows.indexOf(row); return (
                     <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
                       <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
                         setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
                       }} /></td>
-                      {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
+                      {FML_COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner,
+  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable,
 } from '@/components/ui'
 import { Upload, CheckCircle, XCircle, Trash2, Plus, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import {
@@ -374,6 +374,7 @@ function ImportProfilesTab() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Record<string, unknown>>(EMPTY_PROFILE)
   const { data: profiles = [], isLoading } = useQuery({ queryKey: ['import-profiles'], queryFn: getImportProfiles })
+  const { sorted: ipSorted, sortKey: ipSK, sortDir: ipSD, toggleSort: ipSort } = useSortTable(profiles as Record<string, unknown>[], 'profile_name', 'asc')
 
   const saveMut = useMutation({
     mutationFn: (d: Record<string, unknown>) => createImportProfile(d),
@@ -395,15 +396,15 @@ function ImportProfilesTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead><tr className="border-b border-slate-200 text-slate-500">
-                  <th className="py-1 px-2 text-left">Name</th>
-                  <th className="py-1 px-2 text-left">Bank</th>
-                  <th className="py-1 px-2 text-left">Type</th>
-                  <th className="py-1 px-2 text-left">Convention</th>
-                  <th className="py-1 px-2 text-left">Date Format</th>
+                  <ColHeader label="Name" sortKey="profile_name" currentKey={ipSK} currentDir={ipSD} onSort={ipSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Bank" sortKey="bank_name" currentKey={ipSK} currentDir={ipSD} onSort={ipSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Type" sortKey="file_type" currentKey={ipSK} currentDir={ipSD} onSort={ipSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Convention" sortKey="sign_convention" currentKey={ipSK} currentDir={ipSD} onSort={ipSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Date Format" sortKey="date_format" currentKey={ipSK} currentDir={ipSD} onSort={ipSort} className="py-1 px-2 text-slate-500" />
                   <th className="py-1 px-2" />
                 </tr></thead>
                 <tbody>
-                  {(profiles as Record<string, unknown>[]).map(p => (
+                  {ipSorted.map(p => (
                     <tr key={p.profile_id as number} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="py-1 px-2 font-medium">{p.profile_name as string}</td>
                       <td className="py-1 px-2">{p.bank_name as string}</td>
@@ -543,6 +544,7 @@ function PayeeRulesTab() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Record<string, unknown>>(EMPTY_RULE)
   const { data: rules = [] } = useQuery({ queryKey: ['payee-rules'], queryFn: getPayeeRules })
+  const { sorted: prSorted, sortKey: prSK, sortDir: prSD, toggleSort: prSort } = useSortTable(rules as Record<string, unknown>[], 'priority', 'desc')
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
 
@@ -568,15 +570,15 @@ function PayeeRulesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead><tr className="border-b border-slate-200 text-slate-500">
-                <th className="py-1 px-2 text-left">Pattern</th>
-                <th className="py-1 px-2 text-left">Match</th>
-                <th className="py-1 px-2 text-left">Payee</th>
-                <th className="py-1 px-2 text-left">Category</th>
-                <th className="py-1 px-2 text-right">Priority</th>
+                <ColHeader label="Pattern" sortKey="pattern" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
+                <ColHeader label="Match" sortKey="match_type" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
+                <ColHeader label="Payee" sortKey="payee_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
+                <ColHeader label="Category" sortKey="category_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
+                <ColHeader label="Priority" sortKey="priority" currentKey={prSK} currentDir={prSD} onSort={prSort} align="right" className="py-1 px-2 text-slate-500" />
                 <th className="py-1 px-2" />
               </tr></thead>
               <tbody>
-                {(rules as Record<string, unknown>[]).map(r => (
+                {prSorted.map(r => (
                   <tr key={r.rule_id as number} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="py-1 px-2 font-mono">{r.pattern as string}</td>
                     <td className="py-1 px-2">{r.match_type as string}</td>
@@ -655,6 +657,7 @@ function ImportHistoryTab() {
     queryFn: () => getReconciliationHistory(accountId!),
     enabled: !!accountId,
   })
+  const { sorted: ihSorted, sortKey: ihSK, sortDir: ihSD, toggleSort: ihSort } = useSortTable(history as Record<string, unknown>[], 'session_date', 'desc')
 
   return (
     <div className="space-y-4">
@@ -680,16 +683,16 @@ function ImportHistoryTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead><tr className="border-b border-slate-200 text-slate-500">
-                  <th className="py-1 px-2 text-left">Session Date</th>
-                  <th className="py-1 px-2 text-left">Statement Date</th>
-                  <th className="py-1 px-2 text-right">Statement Bal</th>
-                  <th className="py-1 px-2 text-right">App Bal</th>
-                  <th className="py-1 px-2 text-right">Difference</th>
-                  <th className="py-1 px-2 text-right"># Txns</th>
-                  <th className="py-1 px-2 text-left">Notes</th>
+                  <ColHeader label="Session Date" sortKey="session_date" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Statement Date" sortKey="statement_date" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Statement Bal" sortKey="statement_balance" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} align="right" className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="App Bal" sortKey="app_balance" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} align="right" className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Difference" sortKey="difference" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} align="right" className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="# Txns" sortKey="tx_count" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} align="right" className="py-1 px-2 text-slate-500" />
+                  <ColHeader label="Notes" sortKey="notes" currentKey={ihSK} currentDir={ihSD} onSort={ihSort} className="py-1 px-2 text-slate-500" />
                 </tr></thead>
                 <tbody>
-                  {(history as Record<string, unknown>[]).map(h => (
+                  {ihSorted.map(h => (
                     <tr key={h.id as number} className="border-b border-slate-100">
                       <td className="py-1 px-2">{String(h.session_date ?? '').substring(0, 19)}</td>
                       <td className="py-1 px-2">{h.statement_date as string}</td>
@@ -1815,7 +1818,12 @@ function SaxoTab() {
             </div>
           )}
           {(authUrlMut.isError || exchangeMut.isError || refreshMut.isError) && (
-            <ErrorBox msg={String(((authUrlMut.error || exchangeMut.error || refreshMut.error) as {message?: string})?.message)} />
+            <ErrorBox msg={(() => {
+              const err = authUrlMut.error || exchangeMut.error || refreshMut.error
+              if (!err) return ''
+              const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+              return axiosErr.response?.data?.detail || axiosErr.message || 'Unknown error'
+            })()} />
           )}
         </CardBody>
       </Card>

@@ -328,3 +328,82 @@ def delete_fx_rate(currency_id: int, date: str):
         raise HTTPException(500, str(e))
     finally:
         conn.close()
+
+
+# ── Watchlist ─────────────────────────────────────────────────────────────────
+
+@router.get("/watchlist")
+def get_watchlist_endpoint():
+    from database.queries import get_watchlist
+    return _df(get_watchlist())
+
+
+@router.post("/watchlist")
+def upsert_watchlist(data: dict):
+    from database.queries import add_watchlist_item
+    try:
+        add_watchlist_item(
+            securities_id=int(data["securities_id"]),
+            target_price=data.get("target_price"),
+            stop_loss=data.get("stop_loss"),
+            note=data.get("note"),
+        )
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/watchlist/{watchlist_id}")
+def delete_watchlist(watchlist_id: int):
+    from database.queries import remove_watchlist_item
+    try:
+        remove_watchlist_item(watchlist_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+
+@router.get("/alerts")
+def get_alerts_endpoint():
+    from database.queries import get_alerts
+    return _df(get_alerts())
+
+
+@router.post("/alerts")
+def save_alert_endpoint(data: dict):
+    from database.queries import save_alert
+    try:
+        save_alert(
+            alert_type=data["alert_type"],
+            securities_id=data.get("securities_id"),
+            asset_type=data.get("asset_type"),
+            threshold=data.get("threshold"),
+            direction=data.get("direction"),
+            note=data.get("note"),
+            alert_id=data.get("alert_id"),
+        )
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.patch("/alerts/{alert_id}/toggle")
+def toggle_alert_endpoint(alert_id: int, data: dict):
+    from database.queries import toggle_alert
+    try:
+        toggle_alert(alert_id, bool(data.get("is_active", True)))
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/alerts/{alert_id}")
+def delete_alert_endpoint(alert_id: int):
+    from database.queries import delete_alert
+    try:
+        delete_alert(alert_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))

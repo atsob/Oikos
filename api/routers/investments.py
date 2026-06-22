@@ -11,9 +11,37 @@ _VIABLE_CASH_ACTIONS = frozenset({'Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnCap'
 _CASH_OUT_ACTIONS    = frozenset({'Buy', 'MiscExp', 'CashOut'})
 
 
+def _find_or_create_payee(cur, name: str) -> int:
+    """Return the Payees_Id for the given name, creating it if necessary."""
+    cur.execute("SELECT Payees_Id FROM Payees WHERE Payees_Name = %s LIMIT 1", (name,))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+    cur.execute("INSERT INTO Payees (Payees_Name) VALUES (%s) RETURNING Payees_Id", (name,))
+    return cur.fetchone()[0]
+
+
+def _build_inv_description(action: str, security: str | None, ticker: str | None,
+                            quantity, price) -> str:
+    """Build a human-readable description for the linked cash transaction."""
+    label = ticker or security or ''
+    parts = [action]
+    if label:
+        parts.append(label)
+    if quantity is not None:
+        parts.append(f"{quantity:g}x" if isinstance(quantity, float) else f"{quantity}x")
+    if price is not None:
+        try:
+            parts.append(f"@ {float(price):,.4f}".rstrip('0').rstrip('.'))
+        except (TypeError, ValueError):
+            pass
+    return ' '.join(parts)
+
+
 def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account_id: int,
                               date: str, action: str, total_acc_cur: float,
-                              description: str | None, existing_tx_id: int | None):
+                              description: str | None, existing_tx_id: int | None,
+                              payee_id: int | None = None):
     """Create or update the linked cash transaction for an investment entry."""
     if action not in _VIABLE_CASH_ACTIONS or not total_acc_cur:
         return
@@ -22,17 +50,17 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
 
     if existing_tx_id:
         cur.execute(
-            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s WHERE transactions_id=%s",
-            (date, signed, abs(float(total_acc_cur)), existing_tx_id),
+            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, payees_id=%s, description=%s WHERE transactions_id=%s",
+            (date, signed, abs(float(total_acc_cur)), payee_id, description, existing_tx_id),
         )
     else:
         cur.execute("""
             INSERT INTO Transactions
                 (Accounts_Id, Date, Description, Total_Amount, Cleared,
-                 Accounts_Id_Target, Total_Amount_Target, Transfers_Id)
-            VALUES (%s,%s,%s,%s,TRUE,%s,%s,NULL)
+                 Accounts_Id_Target, Total_Amount_Target, Transfers_Id, Payees_Id)
+            VALUES (%s,%s,%s,%s,TRUE,%s,%s,NULL,%s)
             RETURNING Transactions_Id
-        """, (cash_account_id, date, description, signed, inv_account_id, abs(float(total_acc_cur))))
+        """, (cash_account_id, date, description, signed, inv_account_id, abs(float(total_acc_cur)), payee_id))
         tx_id = cur.fetchone()[0]
         cur.execute("UPDATE Investments SET Transactions_Id=%s WHERE Investments_Id=%s", (tx_id, inv_id))
 
@@ -152,11 +180,22 @@ def create_investment(data: dict):
 
         cash_account_id = data.get("cash_account_id")
         if cash_account_id:
+            sec_name, ticker = None, None
+            if data.get("securities_id"):
+                cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (data["securities_id"],))
+                sec_row = cur.fetchone()
+                if sec_row:
+                    sec_name, ticker = sec_row
+            payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
+            cash_desc = _build_inv_description(
+                data.get("action", ""), sec_name, ticker,
+                data.get("quantity"), data.get("price_per_share"),
+            )
             _upsert_cash_transaction(
                 cur, inv_id, int(cash_account_id), int(data["accounts_id"]),
                 data.get("date"), data.get("action"),
                 data.get("total_amount_acccur") or 0,
-                data.get("description"), None,
+                cash_desc, None, payee_id,
             )
 
         conn.commit()
@@ -204,11 +243,22 @@ def update_investment(inv_id: int, data: dict):
 
         cash_account_id = data.get("cash_account_id")
         if cash_account_id:
+            sec_name, ticker = None, None
+            if data.get("securities_id"):
+                cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (data["securities_id"],))
+                sec_row = cur.fetchone()
+                if sec_row:
+                    sec_name, ticker = sec_row
+            payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
+            cash_desc = _build_inv_description(
+                data.get("action", ""), sec_name, ticker,
+                data.get("quantity"), data.get("price_per_share"),
+            )
             _upsert_cash_transaction(
                 cur, inv_id, int(cash_account_id), int(data["accounts_id"]),
                 data.get("date"), data.get("action"),
                 data.get("total_amount_acccur") or 0,
-                data.get("description"), existing_tx_id,
+                cash_desc, existing_tx_id, payee_id,
             )
 
         conn.commit()

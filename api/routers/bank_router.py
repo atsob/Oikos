@@ -315,6 +315,17 @@ def apply_import(data: dict):
                 WHERE Transactions_Id IN ({placeholders})
             """, [session_id] + reconcile_ids)
 
+        # Refresh balance for the account after all inserts/reconciles
+        cur.execute("""
+            UPDATE Accounts
+               SET Accounts_Balance = COALESCE((
+                   SELECT SUM(Total_Amount)
+                   FROM Transactions
+                   WHERE Accounts_Id = %s AND Is_Draft = FALSE
+               ), 0)
+             WHERE Accounts_Id = %s
+        """, (account_id, account_id))
+
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -579,8 +590,10 @@ def saxo_exchange_code(data: dict):
             save_app_setting("saxo_refresh_token", tok.get("refresh_token", ""))
             save_app_setting("saxo_token_expiry",  str(expiry))
         return {"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", ""), "expires_at": expiry}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, detail=str(e))
 
 
 @router.post("/saxo-refresh-token")
@@ -597,8 +610,10 @@ def saxo_refresh(data: dict):
         save_app_setting("saxo_refresh_token", tok.get("refresh_token", data["refresh_token"]))
         save_app_setting("saxo_token_expiry", str(expiry))
         return {"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", data["refresh_token"]), "expires_at": expiry}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, detail=str(e))
 
 
 @router.post("/saxo-fetch-accounts")

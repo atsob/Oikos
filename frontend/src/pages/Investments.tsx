@@ -9,7 +9,7 @@ import {
   getSplits, upsertSplits, createTransfer, getPayees, getCategories, getPayeeTopCategories,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, SearchableSelect } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Plus, X, Save, RefreshCw } from 'lucide-react'
 
@@ -595,6 +595,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const { sorted: sortedHoldings, sortKey: hSK, sortDir: hSD, toggleSort: hSort } = useSortTable(holdings, 'value_eur', 'desc')
 
   const getEdit = (row: Record<string, unknown>): HoldingEdit =>
     edits[Number(row.id)] ?? { quantity: String(row.quantity ?? ''), staking: Boolean(row.staking) }
@@ -652,24 +653,24 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="border-b-2 border-slate-200 text-xs text-slate-500 text-left">
-              <th className="py-2 pr-3 font-medium">Account</th>
-              <th className="py-2 pr-3 font-medium">Ticker</th>
-              <th className="py-2 pr-3 font-medium">Security</th>
-              <th className="py-2 pr-3 font-medium">Type</th>
-              <th className="py-2 pr-3 font-medium w-36">Quantity ✎</th>
+            <tr className="border-b-2 border-slate-200 text-xs text-slate-500">
+              <ColHeader label="Account" sortKey="account" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
+              <ColHeader label="Ticker" sortKey="ticker" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
+              <ColHeader label="Security" sortKey="security" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
+              <ColHeader label="Type" sortKey="security_type" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
+              <th className="py-2 pr-3 font-medium w-36 text-left">Quantity ✎</th>
               <th className="py-2 pr-3 font-medium text-center">Staking ✎</th>
-              <th className="py-2 pr-3 font-medium text-right">Simple Avg</th>
-              <th className="py-2 pr-3 font-medium text-right">FIFO Avg</th>
-              <th className="py-2 pr-3 font-medium text-right">Last Price</th>
-              <th className="py-2 pr-3 font-medium">Curr</th>
-              <th className="py-2 pr-3 font-medium text-right">Value (EUR)</th>
+              <ColHeader label="Simple Avg" sortKey="simple_avg_price" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
+              <ColHeader label="FIFO Avg" sortKey="fifo_avg_price" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
+              <ColHeader label="Last Price" sortKey="last_price" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
+              <ColHeader label="Curr" sortKey="currency" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
+              <ColHeader label="Value (EUR)" sortKey="value_eur" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
               <th className="py-2 pr-3 font-medium text-right">Gain/Loss</th>
-              <th className="py-2 font-medium">Price Date</th>
+              <ColHeader label="Price Date" sortKey="price_date" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2" />
             </tr>
           </thead>
           <tbody>
-            {holdings.map(row => {
+            {sortedHoldings.map(row => {
               const id = Number(row.id)
               const edit = getEdit(row)
               const changed = Boolean(edits[id])

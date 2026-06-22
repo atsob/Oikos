@@ -1666,6 +1666,22 @@ def generate_draft_transactions() -> int:
                 FROM Recurring_Template_Splits WHERE Templates_Id = %s
             """, (tx_id, tid))
 
+            # For auto-confirmed transfer templates, create the mirror leg immediately
+            if auto_confirm and target_acc:
+                cur.execute("SELECT nextval('transfers_id_seq')")
+                shared_tid = cur.fetchone()[0]
+                mirror_amount = -float(amount or 0)
+                cur.execute("""
+                    INSERT INTO Transactions
+                        (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
+                         Is_Draft, Cleared, Reconciled, Accounts_Id_Target, Transfers_Id)
+                    VALUES (%s,%s,%s,%s,%s,FALSE,FALSE,FALSE,%s,%s)
+                """, (target_acc, next_due, payee_id, desc, mirror_amount, acc_id, shared_tid))
+                cur.execute(
+                    "UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s",
+                    (shared_tid, tx_id)
+                )
+
             adv = _DELTAS.get(periodicity, _DELTAS['Monthly'])
             cur.execute(
                 "UPDATE Recurring_Templates SET Next_Due_Date = %s WHERE Templates_Id = %s",

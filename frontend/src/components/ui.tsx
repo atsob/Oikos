@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 export function Card({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -214,5 +215,108 @@ export function StatCard({ label, value, sub, color, subs }: {
       {subs?.map((s, i) => <p key={i} className={cn('text-xs mt-0.5', s.color ?? 'text-slate-400')}>{s.text}</p>)}
       {!subs && sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
     </div>
+  )
+}
+
+// ── Tooltip ────────────────────────────────────────────────────────────────────
+// Portal-based so it isn't clipped by table overflow or sticky headers.
+export function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 cursor-help"
+      onMouseEnter={e => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+        setPos({ x: r.left + r.width / 2, y: r.top })
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      {children}
+      <span className="ml-0.5 text-slate-400 text-[10px] leading-none">ⓘ</span>
+      {pos && createPortal(
+        <div
+          style={{ position: 'fixed', left: pos.x, top: pos.y - 8, transform: 'translate(-50%, -100%)', zIndex: 9999 }}
+          className="w-56 rounded bg-slate-800 px-2.5 py-1.5 text-xs text-white shadow-lg whitespace-normal text-center pointer-events-none"
+        >
+          {text}
+        </div>,
+        document.body
+      )}
+    </span>
+  )
+}
+
+// ── useSortTable ───────────────────────────────────────────────────────────────
+export function useSortTable<T>(
+  data: T[],
+  defaultKey: string | null = null,
+  defaultDir: 'asc' | 'desc' = 'asc'
+) {
+  const [sortKey, setSortKey] = useState<string | null>(defaultKey)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultDir)
+
+  const toggleSort = useCallback((key: string) => {
+    setSortKey(key)
+    setSortDir(d => sortKey === key ? (d === 'asc' ? 'desc' : 'asc') : 'asc')
+  }, [sortKey])
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return data
+    return [...data].sort((a, b) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const av = (a as any)[sortKey], bv = (b as any)[sortKey]
+      if (av == null && bv == null) return 0
+      if (av == null) return 1
+      if (bv == null) return -1
+      if (typeof av === 'number' && typeof bv === 'number')
+        return sortDir === 'asc' ? av - bv : bv - av
+      return sortDir === 'asc'
+        ? String(av).localeCompare(String(bv))
+        : String(bv).localeCompare(String(av))
+    })
+  }, [data, sortKey, sortDir])
+
+  return { sorted, sortKey, sortDir, toggleSort }
+}
+
+// ── ColHeader ─────────────────────────────────────────────────────────────────
+interface ColHeaderProps {
+  label: React.ReactNode
+  sortKey: string
+  currentKey: string | null
+  currentDir: 'asc' | 'desc'
+  onSort: (k: string) => void
+  align?: 'left' | 'right' | 'center'
+  tooltip?: string
+  className?: string
+}
+
+export function ColHeader({ label, sortKey, currentKey, currentDir, onSort, align = 'left', tooltip, className }: ColHeaderProps) {
+  const active = currentKey === sortKey
+  const content = (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={cn(
+        'inline-flex items-center gap-0.5 cursor-pointer hover:text-slate-700 select-none whitespace-nowrap',
+        align === 'right' && 'flex-row-reverse w-full justify-start'
+      )}
+    >
+      {label}
+      <span className={cn('text-[9px] ml-0.5', active ? 'text-blue-500' : 'text-slate-300')}>
+        {active ? (currentDir === 'asc' ? '▲' : '▼') : '⇅'}
+      </span>
+    </button>
+  )
+  return (
+    <th className={cn(
+      'px-3 py-2 font-semibold',
+      align === 'left' && 'text-left',
+      align === 'right' && 'text-right',
+      align === 'center' && 'text-center',
+      className
+    )}>
+      {tooltip ? <Tooltip text={tooltip}>{content}</Tooltip> : content}
+    </th>
   )
 }

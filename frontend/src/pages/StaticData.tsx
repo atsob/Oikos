@@ -11,7 +11,7 @@ import {
   upsertBudget, deleteBudget,
   getPayeeTransactions, getCategoryTransactions,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable } from '@/components/ui'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
 const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Budgets']
@@ -920,6 +920,8 @@ function BudgetsTab({ search }: { search: string }) {
     return { ...c, budget_id: b ? b.id : null, budget_amount: b ? b.budget_amount : '' }
   }).filter(r => r.type === 'Expense' || r.budget_amount)
 
+  const { sorted: budgetSorted, sortKey: budgetSK, sortDir: budgetSD, toggleSort: budgetSort } = useSortTable(rows, null)
+
   const handleAmountChange = (catId: number, amount: string, budgetId: number | null) => {
     setPending(prev => new Map(prev).set(String(catId), { categories_id: catId, year, budget_amount: amount, id: budgetId ?? undefined }))
   }
@@ -952,14 +954,14 @@ function BudgetsTab({ search }: { search: string }) {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 sticky top-0">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600 text-xs">Category</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-600 text-xs w-32">Type</th>
-              <th className="px-3 py-2 text-right font-semibold text-slate-600 text-xs w-36">Budget Amount (€)</th>
+              <ColHeader label="Category" sortKey="full_path" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} className="px-3 py-2 text-left text-slate-600 text-xs" />
+              <ColHeader label="Type" sortKey="type" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} className="px-3 py-2 text-left text-slate-600 text-xs w-32" />
+              <ColHeader label="Budget Amount (€)" sortKey="budget_amount" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} align="right" className="px-3 py-2 text-slate-600 text-xs w-36" />
               <th className="w-8"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map(r => {
+            {budgetSorted.map(r => {
               const pendingVal = pending.get(String(r.id))
               const displayVal = pendingVal !== undefined ? String(pendingVal.budget_amount ?? '') : (r.budget_amount != null && r.budget_amount !== '' ? String(r.budget_amount) : '')
               const isDirty = pendingVal !== undefined
