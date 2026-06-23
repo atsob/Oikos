@@ -918,7 +918,7 @@ def render_backup_restore():
         docker run --rm --network host -v $(pwd)/backups:/backups \\
         postgres:16 pg_dump -h 192.168.4.20 -U admin -F c -f /backups/backup.dump Finance
         """)
-        st.markdown("""
+        st.markdown(r"""
         Setting up Scheduled Backups:
         ```cron
         On Linux (cron):

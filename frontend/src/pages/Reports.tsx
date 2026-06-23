@@ -6,7 +6,8 @@ const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyRea
 import {
   getIncomeExpense, getSavingsRate, getTopCategories, getPortfolioSummary, getAllocationReport,
   getIncomeExpenseDetail, getDividends, getCapitalGains,
-  getBudgetVsActual, getCashFlowForecast, getPnl, getCategoryBreakdown,
+  getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
+  getCashFlowForecast, getPnl, getCategoryBreakdown,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
   getSpendingByPayee, getSpendingTrends, getSavingsRateDetail,
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
@@ -3452,60 +3453,269 @@ function CashFlowSection() {
 // 7. BUDGET & SPENDING
 // ════════════════════════════════════════════════════════════════════════════
 function BudgetReport() {
-  const [year, setYear] = useState(new Date().getFullYear())
-  const [month, setMonth] = useState<string>('')
+  const qc = useQueryClient()
+  const now = new Date()
+  const [year, setYear] = useState(now.getFullYear())
+  const [refYears, setRefYears] = useState(2)
+  const [budgetEdits, setBudgetEdits] = useState<Record<number, string>>({})
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [drillCat, setDrillCat] = useState<string | null>(null)
+
+  const isCurrentYear = year === now.getFullYear()
+  const ytdLabel = isCurrentYear ? 'YTD Actual' : 'Actual'
+  const priorLabel = `${year - 1} Actual`
+  const avgCol = `Avg/Year (${refYears}y)`
+
   const { data = [], isLoading } = useQuery({
-    queryKey: ['budget-vs-actual', year, month],
-    queryFn: () => getBudgetVsActual(year, month ? Number(month) : undefined),
+    queryKey: ['budget-vs-actual', year, refYears],
+    queryFn: () => getBudgetVsActual(year, refYears),
   })
+  const { data: incomeData } = useQuery({
+    queryKey: ['annual-income', year],
+    queryFn: () => getAnnualIncome(year),
+  })
+  const { data: txData = [], isLoading: txLoading } = useQuery({
+    queryKey: ['ytd-expense-tx', year],
+    queryFn: () => getYtdExpenseTransactions(year),
+    staleTime: 120_000,
+  })
+
+  const rows = data as Row[]
+  const txRows = txData as Row[]
+
+  // Summary KPIs
+  const totalAvg    = rows.reduce((s, r) => s + Number(r.avg_annual_hist ?? 0), 0)
+  const totalPrior  = rows.reduce((s, r) => s + Number(r.prior_year_amount ?? 0), 0)
+  const totalBudget = rows.reduce((s, r) => s + Number(r.budget_amount ?? 0), 0)
+  const totalActual = rows.reduce((s, r) => s + Number(r.actual_amount ?? 0), 0)
+  const variance    = totalBudget - totalActual
+  const totalIncome = Number((incomeData as { total_income_eur?: number } | undefined)?.total_income_eur ?? 0)
+
+  // Budget rows with editable amounts
+  const budgetedRows = rows.filter(r => Number(r.budget_amount) > 0)
+  const pctOfYear = isCurrentYear ? now.getTime() / new Date(year + 1, 0, 1).getTime() : 1
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const promises = Object.entries(budgetEdits).map(([catId, val]) =>
+        saveBudget({ year, categories_id: Number(catId), budget_amount: parseFloat(val) || 0 })
+      )
+      await Promise.all(promises)
+    },
+    onSuccess: () => {
+      setSaveMsg('✅ Budgets saved!')
+      setBudgetEdits({})
+      qc.invalidateQueries({ queryKey: ['budget-vs-actual'] })
+      setTimeout(() => setSaveMsg(null), 3000)
+    },
+    onError: () => setSaveMsg('❌ Save failed'),
+  })
+
+  // Drill-down categories
+  const catTotals: Record<string, number> = {}
+  for (const r of txRows) {
+    const cat = String(r.category)
+    catTotals[cat] = (catTotals[cat] ?? 0) + Number(r.amount_eur ?? 0)
+  }
+  const allCats = Object.keys(catTotals).sort()
+  const drillRows = drillCat ? txRows.filter(r => String(r.category) === drillCat) : []
+
+  // Bar chart for budgeted categories
+  const chartRows = rows.filter(r => Number(r.budget_amount) > 0)
+  const catNames = chartRows.map(r => String(r.categories_name))
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const d = data as Row[]
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
-        <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={month} onChange={e => setMonth(e.target.value)}>
-          <option value="">All months</option>
-          {[...Array(12)].map((_, i) => <option key={i+1} value={String(i+1)}>{new Date(2000, i).toLocaleString('default', { month: 'long' })}</option>)}
-        </select>
+    <div className="space-y-6">
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-6">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-slate-600">Year</label>
+          <Input type="number" className="w-24" value={year}
+            onChange={e => { setYear(Number(e.target.value)); setDrillCat(null) }} />
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-slate-600">Reference years (hist avg): {refYears}</label>
+          <input type="range" min={1} max={5} value={refYears}
+            onChange={e => setRefYears(Number(e.target.value))} className="w-28" />
+        </div>
       </div>
-      <WithCopy>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-3 py-2 text-left">Category</th>
-            <th className="px-3 py-2 text-right">Budget</th>
-            <th className="px-3 py-2 text-right">Actual</th>
-            <th className="px-3 py-2 text-right">Variance</th>
-            <th className="px-3 py-2 text-right">% Used</th>
-          </tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {d.map((r, i) => {
-              const budg = Number(r.budget ?? 0); const act = Number(r.actual ?? 0)
-              const pct = budg > 0 ? act / budg * 100 : null
-              return (
-                <tr key={i} className="hover:bg-slate-50">
-                  <td className="px-3 py-2 text-slate-700">{String(r.category)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtEur(budg)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmtEur(act)}</td>
-                  <td className={`px-3 py-2 text-right tabular-nums font-medium ${Number(r.variance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(Number(r.variance))}</td>
-                  <td className="px-3 py-2 text-right">
-                    {pct != null ? (
-                      <div className="flex items-center gap-2 justify-end">
-                        <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${pct > 100 ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+
+      {/* Summary KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: avgCol,         value: fmtEur(totalAvg),    color: 'text-slate-700' },
+          { label: priorLabel,     value: fmtEur(totalPrior),  color: 'text-slate-700' },
+          { label: 'Annual Budget',value: fmtEur(totalBudget), color: 'text-blue-700'  },
+          { label: ytdLabel,       value: fmtEur(totalActual), color: 'text-slate-700' },
+          { label: 'Variance',     value: fmtEur(variance),    color: variance >= 0 ? 'text-green-700' : 'text-red-600' },
+          { label: isCurrentYear ? 'YTD Income' : 'Annual Income', value: fmtEur(totalIncome), color: 'text-green-700' },
+        ].map(m => (
+          <div key={m.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+            <div className="text-xs text-slate-500 mb-0.5">{m.label}</div>
+            <div className={`text-sm font-bold tabular-nums ${m.color}`}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Editable budget table */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-slate-700">Set Annual Budgets</h3>
+          {Object.keys(budgetEdits).length > 0 && (
+            <Button size="sm" onClick={() => { setSaveMsg(null); saveMut.mutate() }} disabled={saveMut.isPending}>
+              {saveMut.isPending ? <Spinner size={12} /> : null} 💾 Save All Budgets
+            </Button>
+          )}
+        </div>
+        {saveMsg && <div className="text-sm mb-2 text-green-700">{saveMsg}</div>}
+        <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <th className="px-3 py-2 text-left">Category</th>
+              <th className="px-3 py-2 text-right">{avgCol}</th>
+              <th className="px-3 py-2 text-right">{priorLabel}</th>
+              <th className="px-3 py-2 text-right">Budget (€) ✏️</th>
+              <th className="px-3 py-2 text-right">{ytdLabel}</th>
+              <th className="px-3 py-2 text-right">Variance</th>
+              <th className="px-3 py-2 text-right">% Used</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r, i) => {
+                const catId = Number(r.categories_id)
+                const budg = catId in budgetEdits ? parseFloat(budgetEdits[catId]) || 0 : Number(r.budget_amount ?? 0)
+                const act  = Number(r.actual_amount ?? 0)
+                const varE = budg - act
+                const pct  = budg > 0 ? act / budg * 100 : null
+                return (
+                  <tr key={i} className={`hover:bg-slate-50 ${r.over_budget ? 'bg-red-50/30' : ''}`}>
+                    <td className="px-3 py-1.5 text-slate-700 text-xs">{String(r.categories_name)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-slate-400 text-xs">{fmtEur(Number(r.avg_annual_hist ?? 0))}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-slate-400 text-xs">{fmtEur(Number(r.prior_year_amount ?? 0))}</td>
+                    <td className="px-2 py-1">
+                      <input
+                        type="number" min={0} step={100}
+                        value={catId in budgetEdits ? budgetEdits[catId] : String(Number(r.budget_amount ?? 0))}
+                        onChange={e => setBudgetEdits(prev => ({ ...prev, [catId]: e.target.value }))}
+                        className="w-28 text-right text-xs border border-slate-300 rounded px-2 py-1 focus:border-blue-400 focus:outline-none font-medium"
+                      />
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-xs">{fmtEur(act)}</td>
+                    <td className={`px-3 py-1.5 text-right tabular-nums text-xs font-medium ${varE >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(varE)}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      {pct != null ? (
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <div className="w-14 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${pct > 100 ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-green-500'}`}
+                              style={{ width: `${Math.min(pct, 100)}%` }} />
+                          </div>
+                          <span className="text-xs tabular-nums text-slate-500">{pct.toFixed(0)}%</span>
                         </div>
-                        <span className="text-xs tabular-nums text-slate-500">{pct.toFixed(0)}%</span>
-                      </div>
-                    ) : '—'}
-                  </td>
-                </tr>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Bar chart — budgeted categories only */}
+      {chartRows.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">Budget vs Actual — {year}</h3>
+          <Plot
+            data={[
+              { x: catNames, y: chartRows.map(r => Number(r.avg_annual_hist ?? 0)), name: `Avg (${refYears}y)`, type: 'bar', marker: { color: '#94a3b8' } },
+              { x: catNames, y: chartRows.map(r => Number(r.prior_year_amount ?? 0)), name: `${year - 1} Actual`, type: 'bar', marker: { color: '#f59e0b' } },
+              { x: catNames, y: chartRows.map(r => Number(r.budget_amount ?? 0)), name: 'Budget', type: 'bar', marker: { color: '#3b82f6' } },
+              { x: catNames, y: chartRows.map(r => Number(r.actual_amount ?? 0)), name: ytdLabel, type: 'bar', marker: { color: '#ef4444' } },
+            ]}
+            layout={{ barmode: 'group', height: 340, margin: { t: 10, r: 10, b: 100, l: 70 },
+              xaxis: { tickangle: -35 }, yaxis: { tickformat: ',.0f', tickprefix: '€' },
+              legend: { orientation: 'h', y: -0.45 }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+            config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+        </div>
+      )}
+
+      {/* Progress bars */}
+      {budgetedRows.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-3">Progress per Category</h3>
+          <div className="space-y-3">
+            {budgetedRows.map((r, i) => {
+              const catId = Number(r.categories_id)
+              const budget = catId in budgetEdits ? (parseFloat(budgetEdits[catId]) || 0) : Number(r.budget_amount ?? 0)
+              const actual = Number(r.actual_amount ?? 0)
+              const pct    = budget > 0 ? Math.min(actual / budget, 1) : 0
+              const over   = Boolean(r.over_budget)
+              const expected = isCurrentYear ? budget * pctOfYear : null
+              return (
+                <div key={i}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className={`font-medium ${over ? 'text-red-600' : 'text-slate-700'}`}>
+                      {over ? '🔴' : '🟢'} {String(r.categories_name)}
+                    </span>
+                    <span className="tabular-nums text-slate-500">
+                      {fmtEur(actual)} / {fmtEur(budget)}
+                      {expected != null && <span className="text-slate-400 ml-1">(expected {fmtEur(expected)})</span>}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${over ? 'bg-red-500' : pct > 0.8 ? 'bg-amber-400' : 'bg-green-500'}`}
+                      style={{ width: `${pct * 100}%` }} />
+                  </div>
+                </div>
               )
             })}
-          </tbody>
-        </table>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction drill-down */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-2">{year} Transactions by Category</h3>
+        {txLoading ? <Spinner /> : (
+          <>
+            <select value={drillCat ?? ''} onChange={e => setDrillCat(e.target.value || null)}
+              className="border border-slate-300 rounded-md px-3 py-1.5 text-sm w-full max-w-md mb-3">
+              <option value="">Select category…</option>
+              {allCats.map(cat => (
+                <option key={cat} value={cat}>{cat} — {fmtEur(catTotals[cat])}</option>
+              ))}
+            </select>
+            {drillCat && drillRows.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 mb-2">{drillRows.length} transaction(s) · total {fmtEur(catTotals[drillCat] ?? 0)}</p>
+                <WithCopy>
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-72">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-slate-50 sticky top-0">
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Payee</th>
+                      <th className="px-3 py-2 text-right font-medium text-slate-600">Amount (€)</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600">Notes</th>
+                    </tr></thead>
+                    <tbody>
+                      {drillRows.map((r, i) => (
+                        <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                          <td className="px-3 py-1.5 text-slate-500">{String(r.date)}</td>
+                          <td className="px-3 py-1.5 text-slate-700">{String(r.payee ?? '')}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.amount_eur ?? 0))}</td>
+                          <td className="px-3 py-1.5 text-slate-500 max-w-xs truncate">{String(r.notes ?? '')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                </WithCopy>
+              </div>
+            )}
+          </>
+        )}
       </div>
-      </WithCopy>
     </div>
   )
 }

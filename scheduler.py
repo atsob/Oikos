@@ -97,6 +97,26 @@ def _is_market_open(now: datetime) -> bool:
     return True
 
 
+# ── Job status persistence ────────────────────────────────────────────────────
+
+def _record_job(job_id: str, status: str, message: str = ""):
+    """Write last_run / last_status back to Scheduler_Jobs so the UI stays accurate."""
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Scheduler_Jobs (job_id, name, last_run, last_status, last_message)
+                VALUES (%s, %s, NOW(), %s, %s)
+                ON CONFLICT (job_id) DO UPDATE
+                    SET last_run = NOW(), last_status = EXCLUDED.last_status,
+                        last_message = EXCLUDED.last_message
+            """, (job_id, job_id, status, message[:500]))
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        logging.warning(f"Could not record job status for '{job_id}': {exc}")
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def _weekly_summary_job():
@@ -104,35 +124,47 @@ def _weekly_summary_job():
     try:
         run_weekly_summary()
         logging.info("Weekly summary completed.")
+        _record_job("weekly_summary", "success", "Completed OK")
     except Exception as e:
         logging.error(f"Weekly summary failed: {e}", exc_info=True)
+        _record_job("weekly_summary", "error", str(e))
 
 
 def _market_data_job():
     logging.info("Running market data refresh…")
+    errors = []
     try:
         download_historical_prices_from_yahoo(tsperiod="1d")
         logging.info("Security prices refreshed.")
     except Exception as e:
         logging.error(f"Price refresh failed: {e}", exc_info=True)
+        errors.append(str(e))
 
     try:
         download_historical_prices_from_tradingview(tsperiod="1d")
         logging.info("TradingView prices refreshed.")
     except Exception as e:
         logging.error(f"TradingView price refresh failed: {e}", exc_info=True)
+        errors.append(str(e))
 
     try:
         download_bond_prices_from_solidus()
         logging.info("Bond prices refreshed.")
     except Exception as e:
         logging.error(f"Bond price refresh failed: {e}", exc_info=True)
+        errors.append(str(e))
 
     try:
         download_historical_fx(tsperiod="3d")   # 3 d to catch weekend gaps on Monday
         logging.info("FX rates refreshed.")
     except Exception as e:
         logging.error(f"FX refresh failed: {e}", exc_info=True)
+        errors.append(str(e))
+
+    if errors:
+        _record_job("market_data", "error", "; ".join(errors))
+    else:
+        _record_job("market_data", "success", "Completed OK")
 
 
 def _securities_info_job():
@@ -148,8 +180,10 @@ def _securities_info_job():
         download_securities_info_from_yahoo()
         download_securities_info_from_tradingview()
         logging.info("Securities info refreshed.")
+        _record_job("securities_info", "success", "Completed OK")
     except Exception as e:
         logging.error(f"Securities info refresh failed: {e}", exc_info=True)
+        _record_job("securities_info", "error", str(e))
 
 
 def _dividend_history_job():
@@ -162,8 +196,10 @@ def _dividend_history_job():
     try:
         download_dividend_history()
         logging.info("Dividend history refresh complete.")
+        _record_job("dividend_history", "success", "Completed OK")
     except Exception as e:
         logging.error(f"Dividend history refresh failed: {e}", exc_info=True)
+        _record_job("dividend_history", "error", str(e))
 
 
 def _backup_job():
@@ -178,15 +214,17 @@ def _backup_job():
             )
         else:
             logging.error(f"Backup failed: {result['message']}")
+            _record_job("daily_backup", "error", result['message'])
             return
     except Exception as e:
         logging.error(f"Backup job failed: {e}", exc_info=True)
+        _record_job("daily_backup", "error", str(e))
         return
 
     # Purge backups older than the retention period
+    purged = 0
     try:
         cutoff = datetime.now() - timedelta(days=BACKUP_RETENTION_DAYS)
-        purged = 0
         for backup in bm.get_backup_history():
             if backup['modified'] < cutoff:
                 del_result = bm.delete_backup(backup['filename'])
@@ -204,6 +242,9 @@ def _backup_job():
     except Exception as e:
         logging.error(f"Backup retention purge failed: {e}", exc_info=True)
 
+    _record_job("daily_backup", "success",
+                f"{result['filename']} ({result['size_mb']:.1f} MB); {purged} old backup(s) purged")
+
 
 def _recurring_drafts_job():
     """Generate draft transactions for all active templates due today or earlier."""
@@ -211,12 +252,15 @@ def _recurring_drafts_job():
     try:
         n = generate_draft_transactions()
         logging.info(f"Recurring drafts: {n} transaction(s) created.")
+        _record_job("recurring_drafts", "success", f"{n} transaction(s) created")
     except Exception as e:
         logging.error(f"Recurring drafts generation failed: {e}", exc_info=True)
+        _record_job("recurring_drafts", "error", str(e))
 
 
 def _morning_maintenance_job():
     """VACUUM ANALYZE the database, then refresh all embeddings."""
+    errors = []
     # --- VACUUM ANALYZE ---
     logging.info("Running VACUUM ANALYZE…")
     try:
@@ -228,6 +272,7 @@ def _morning_maintenance_job():
         logging.info("VACUUM ANALYZE completed.")
     except Exception as e:
         logging.error(f"VACUUM ANALYZE failed: {e}", exc_info=True)
+        errors.append(str(e))
 
     # --- Embedding update ---
     logging.info("Updating transaction embeddings…")
@@ -236,6 +281,12 @@ def _morning_maintenance_job():
         logging.info("Embedding update completed.")
     except Exception as e:
         logging.error(f"Embedding update failed: {e}", exc_info=True)
+        errors.append(str(e))
+
+    if errors:
+        _record_job("morning_maintenance", "error", "; ".join(errors))
+    else:
+        _record_job("morning_maintenance", "success", "VACUUM ANALYZE + embeddings OK")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────

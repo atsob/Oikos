@@ -6,7 +6,7 @@ import math
 import os
 import threading
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import pandas as pd
@@ -230,14 +230,146 @@ def vacuum():
         conn.close()
 
 
-@router.post("/backup")
-def backup():
+@router.get("/backup/db-info")
+def backup_db_info():
+    """Return DB connection details and per-table sizes for the Backup UI."""
     try:
-        from database.backup import run_backup
-        result = run_backup()
-        return {"message": result or "Backup completed"}
-    except ImportError:
-        raise HTTPException(503, "Backup module not available")
+        from database.backup import DatabaseBackup
+        bm = DatabaseBackup()
+        df = bm.get_table_sizes()
+        tables = df[['table_name', 'size', 'size_bytes']].to_dict(orient='records')
+        total_mb = round(df['size_bytes'].sum() / (1024 * 1024), 2)
+        return {
+            "db_name": bm.db_config['dbname'],
+            "db_user": bm.db_config['user'],
+            "db_host": bm.db_config['host'],
+            "db_port": bm.db_config['port'],
+            "total_mb": total_mb,
+            "tables": tables,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/backup")
+def backup(custom_name: str = "", exclude_blobs: bool = False):
+    try:
+        from database.backup import DatabaseBackup
+        bm = DatabaseBackup()
+        result = bm.create_backup(
+            backup_name=custom_name or None,
+            include_blobs=not exclude_blobs,
+        )
+        if result.get("success"):
+            return {
+                "success": True,
+                "filename": result["filename"],
+                "size_mb": round(result["size_mb"], 2),
+                "message": result.get("message", ""),
+            }
+        raise HTTPException(500, result.get("message", "Backup failed"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/backup/list")
+def list_backups():
+    try:
+        from database.backup import DatabaseBackup
+        backups = DatabaseBackup().get_backup_history()
+        return [
+            {
+                "filename": b["filename"],
+                "size_mb": round(b["size_mb"], 2),
+                "modified": b["modified"].isoformat(),
+            }
+            for b in backups
+        ]
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/backup/download/{filename}")
+def download_backup(filename: str):
+    from fastapi.responses import FileResponse
+    import re
+    if not re.match(r'^[\w.\- ]+\.dump$', filename):
+        raise HTTPException(400, "Invalid filename")
+    try:
+        from database.backup import DatabaseBackup
+        bm = DatabaseBackup()
+        import os
+        path = os.path.join(bm.backup_dir, filename)
+        if not os.path.isfile(path):
+            raise HTTPException(404, "Backup not found")
+        return FileResponse(path, media_type="application/octet-stream", filename=filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/backup/{filename}")
+def delete_backup(filename: str):
+    import re
+    if not re.match(r'^[\w.\- ]+\.dump$', filename):
+        raise HTTPException(400, "Invalid filename")
+    try:
+        from database.backup import DatabaseBackup
+        result = DatabaseBackup().delete_backup(filename)
+        if result.get("success"):
+            return {"message": result["message"]}
+        raise HTTPException(400, result.get("message", "Delete failed"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/backup/restore/{filename}")
+def restore_backup(filename: str):
+    import re
+    if not re.match(r'^[\w.\- ]+\.dump$', filename):
+        raise HTTPException(400, "Invalid filename")
+    try:
+        from database.backup import DatabaseBackup
+        import os
+        bm = DatabaseBackup()
+        path = os.path.join(bm.backup_dir, filename)
+        if not os.path.isfile(path):
+            raise HTTPException(404, "Backup not found")
+        result = bm.restore_backup(path)
+        if result.get("success"):
+            return {"message": result["message"]}
+        raise HTTPException(500, result.get("message", "Restore failed"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/backup/restore-upload")
+async def restore_backup_upload(file: UploadFile):
+    import tempfile, os
+    if not file.filename or not file.filename.endswith(".dump"):
+        raise HTTPException(400, "File must be a .dump file")
+    try:
+        from database.backup import DatabaseBackup
+        data = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        try:
+            result = DatabaseBackup().restore_backup(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+        if result.get("success"):
+            return {"message": result["message"]}
+        raise HTTPException(500, result.get("message", "Restore failed"))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 

@@ -1123,48 +1123,180 @@ def get_capital_gains(year: int = Query(None)):
 
 
 @router.get("/budget-vs-actual")
-def get_budget_vs_actual(year: int = Query(2024), month: Optional[int] = Query(None)):
-    """Budget vs actual spending by category."""
-    month_clause = "AND EXTRACT(MONTH FROM t.Date) = %(month)s" if month else ""
-    query = f"""
-    WITH RECURSIVE CategoryHierarchy AS (
-        SELECT Categories_Id, Categories_Name::TEXT AS Full_Path,
-               Categories_Type::TEXT AS Categories_Type, Categories_Id_Parent
+def get_budget_vs_actual(year: int = Query(2024), ref_years: int = Query(2)):
+    """Budget vs actual — matches Streamlit get_budget_vs_actual with FX conversion."""
+    query = """
+    WITH RECURSIVE cat_path AS (
+        SELECT Categories_Id,
+               Categories_Name::TEXT AS full_path,
+               Categories_Type::TEXT AS Categories_Type,
+               Categories_Id_Parent
         FROM Categories WHERE Categories_Id_Parent IS NULL
         UNION ALL
-        SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name,
-               c.Categories_Type::TEXT, c.Categories_Id_Parent
-        FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+        SELECT c.Categories_Id,
+               cp.full_path || ' : ' || c.Categories_Name,
+               c.Categories_Type::TEXT,
+               c.Categories_Id_Parent
+        FROM Categories c
+        JOIN cat_path cp ON c.Categories_Id_Parent = cp.Categories_Id
     ),
-    actuals AS (
+    fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+    ),
+    hist_annual AS (
         SELECT s.Categories_Id,
-               SUM(ABS(s.Amount)) AS actual
+               EXTRACT(year FROM t.Date)::int AS yr,
+               ABS(SUM(s.Amount *
+                   CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+                        ELSE COALESCE(fx.FX_Rate, 1) END)) AS annual_spend
         FROM Splits s
         JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
-        JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
-        WHERE EXTRACT(YEAR FROM t.Date) = %(year)s
-          {month_clause}
-          AND a.Accounts_Type IN ('Cash','Checking','Savings','Credit Card','Loan','Other')
+        JOIN Categories c   ON c.Categories_Id   = s.Categories_Id
+        JOIN Accounts a     ON a.Accounts_Id      = t.Accounts_Id
+        JOIN Currencies cur ON cur.Currencies_Id  = a.Currencies_Id
+        LEFT JOIN fx        ON fx.Currencies_Id_1 = a.Currencies_Id
+        WHERE t.Transfers_Id IS NULL
+          AND c.Categories_Type NOT IN ('Income','Transfer','Trading','Investment','Interest','Dividend')
+          AND EXTRACT(year FROM t.Date) >= EXTRACT(year FROM CURRENT_DATE) - %(ref_years)s
+          AND EXTRACT(year FROM t.Date) <  EXTRACT(year FROM CURRENT_DATE)
+        GROUP BY s.Categories_Id, EXTRACT(year FROM t.Date)
+    ),
+    hist AS (
+        SELECT Categories_Id, ROUND(AVG(annual_spend)::numeric, 2) AS avg_annual
+        FROM hist_annual GROUP BY Categories_Id
+    ),
+    actual_year AS (
+        SELECT s.Categories_Id,
+               ROUND(ABS(SUM(s.Amount *
+                   CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+                        ELSE COALESCE(fx.FX_Rate, 1) END))::numeric, 2) AS actual_amount
+        FROM Splits s
+        JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+        JOIN Categories c   ON c.Categories_Id   = s.Categories_Id
+        JOIN Accounts a     ON a.Accounts_Id      = t.Accounts_Id
+        JOIN Currencies cur ON cur.Currencies_Id  = a.Currencies_Id
+        LEFT JOIN fx        ON fx.Currencies_Id_1 = a.Currencies_Id
+        WHERE t.Transfers_Id IS NULL
+          AND c.Categories_Type NOT IN ('Income','Transfer','Trading','Investment','Interest','Dividend')
+          AND EXTRACT(year FROM t.Date) = %(year)s
         GROUP BY s.Categories_Id
+    ),
+    prior_year AS (
+        SELECT s.Categories_Id,
+               ROUND(ABS(SUM(s.Amount *
+                   CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+                        ELSE COALESCE(fx.FX_Rate, 1) END))::numeric, 2) AS prior_amount
+        FROM Splits s
+        JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+        JOIN Categories c   ON c.Categories_Id   = s.Categories_Id
+        JOIN Accounts a     ON a.Accounts_Id      = t.Accounts_Id
+        JOIN Currencies cur ON cur.Currencies_Id  = a.Currencies_Id
+        LEFT JOIN fx        ON fx.Currencies_Id_1 = a.Currencies_Id
+        WHERE t.Transfers_Id IS NULL
+          AND c.Categories_Type NOT IN ('Income','Transfer','Trading','Investment','Interest','Dividend')
+          AND EXTRACT(year FROM t.Date) = %(year)s - 1
+        GROUP BY s.Categories_Id
+    ),
+    budgets AS (
+        SELECT Categories_Id, Budget_Amount
+        FROM Annual_Budgets WHERE Year = %(year)s
     )
     SELECT
-        ch.Full_Path AS category,
-        ch.Categories_Type AS type,
-        COALESCE(b.Budget_Amount, 0) AS budget,
-        COALESCE(act.actual, 0) AS actual,
-        COALESCE(b.Budget_Amount, 0) - COALESCE(act.actual, 0) AS variance
-    FROM CategoryHierarchy ch
-    LEFT JOIN Annual_Budgets b ON b.Categories_Id = ch.Categories_Id AND b.Year = %(year)s
-    LEFT JOIN actuals act ON act.Categories_Id = ch.Categories_Id
-    WHERE ch.Categories_Type = 'Expense'
-      AND (b.Budget_Amount IS NOT NULL OR act.actual IS NOT NULL)
-    ORDER BY ABS(COALESCE(act.actual, 0)) DESC
+        c.Categories_Id                                          AS categories_id,
+        c.full_path                                             AS categories_name,
+        COALESCE(h.avg_annual, 0)                              AS avg_annual_hist,
+        COALESCE(py.prior_amount, 0)                           AS prior_year_amount,
+        COALESCE(b.Budget_Amount, 0)                           AS budget_amount,
+        COALESCE(ay.actual_amount, 0)                          AS actual_amount,
+        COALESCE(b.Budget_Amount, 0) - COALESCE(ay.actual_amount, 0) AS variance_eur,
+        CASE WHEN COALESCE(b.Budget_Amount, 0) > 0
+             THEN ROUND((COALESCE(ay.actual_amount, 0) / b.Budget_Amount * 100)::numeric, 1)
+             ELSE NULL END                                      AS variance_pct,
+        (COALESCE(ay.actual_amount, 0) > COALESCE(b.Budget_Amount, 0)) AS over_budget
+    FROM cat_path c
+    LEFT JOIN hist         h  ON h.Categories_Id  = c.Categories_Id
+    LEFT JOIN prior_year   py ON py.Categories_Id = c.Categories_Id
+    LEFT JOIN actual_year  ay ON ay.Categories_Id = c.Categories_Id
+    LEFT JOIN budgets       b  ON b.Categories_Id  = c.Categories_Id
+    WHERE (h.Categories_Id IS NOT NULL OR ay.Categories_Id IS NOT NULL
+           OR py.Categories_Id IS NOT NULL OR b.Categories_Id IS NOT NULL)
+      AND c.Categories_Type NOT IN ('Income','Transfer','Trading','Investment','Interest','Dividend')
+    ORDER BY c.full_path
     """
-    params: dict = {"year": year}
-    if month:
-        params["month"] = month
+    # Ensure the table exists before querying
+    from database.queries import ensure_budgets_table
+    ensure_budgets_table()
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params=params)
+        df = pd.read_sql(query, conn, params={"year": year, "ref_years": ref_years})
+    return _df_to_list(df)
+
+
+@router.get("/annual-income")
+def get_annual_income(year: int = Query(2024)):
+    """Total income (Income + Dividend + Interest) for the year, FX-converted to EUR."""
+    query = """
+    WITH fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+    )
+    SELECT COALESCE(SUM(
+        s.Amount *
+        CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+             ELSE COALESCE(fx.FX_Rate, 1) END
+    ), 0) AS total_income_eur
+    FROM Splits s
+    JOIN Transactions t  ON t.Transactions_Id = s.Transactions_Id
+    JOIN Categories   c  ON c.Categories_Id   = s.Categories_Id
+    JOIN Accounts     a  ON a.Accounts_Id      = t.Accounts_Id
+    JOIN Currencies   cur ON cur.Currencies_Id = a.Currencies_Id
+    LEFT JOIN fx          ON fx.Currencies_Id_1 = a.Currencies_Id
+    WHERE t.Transfers_Id IS NULL
+      AND c.Categories_Type IN ('Income','Dividend','Interest')
+      AND EXTRACT(year FROM t.Date) = %(year)s
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params={"year": year})
+    return {"total_income_eur": float(df["total_income_eur"].iloc[0])}
+
+
+@router.get("/ytd-expense-transactions")
+def get_ytd_expense_transactions(year: int = Query(2024)):
+    """All expense transactions for the year with full category path, for drill-down."""
+    query = """
+    WITH RECURSIVE cat_path AS (
+        SELECT Categories_Id, Categories_Name::TEXT AS full_path, Categories_Type::TEXT, Categories_Id_Parent
+        FROM Categories WHERE Categories_Id_Parent IS NULL
+        UNION ALL
+        SELECT c.Categories_Id, cp.full_path || ' : ' || c.Categories_Name, c.Categories_Type::TEXT, c.Categories_Id_Parent
+        FROM Categories c JOIN cat_path cp ON c.Categories_Id_Parent = cp.Categories_Id
+    ),
+    fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+    )
+    SELECT
+        t.Date::date::text          AS date,
+        COALESCE(p.Payees_Name, '') AS payee,
+        cp.full_path                AS category,
+        ROUND((ABS(s.Amount) *
+               CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+                    ELSE COALESCE(fx.FX_Rate, 1) END)::numeric, 2) AS amount_eur,
+        COALESCE(t.Description, '') AS notes
+    FROM Splits s
+    JOIN Transactions t  ON t.Transactions_Id  = s.Transactions_Id
+    JOIN cat_path cp     ON cp.Categories_Id   = s.Categories_Id
+    JOIN Accounts a      ON a.Accounts_Id       = t.Accounts_Id
+    JOIN Currencies cur  ON cur.Currencies_Id   = a.Currencies_Id
+    LEFT JOIN fx         ON fx.Currencies_Id_1  = a.Currencies_Id
+    LEFT JOIN Payees p   ON p.Payees_Id         = t.Payees_Id
+    WHERE t.Transfers_Id IS NULL
+      AND cp.Categories_Type NOT IN ('Income','Transfer','Trading','Investment','Interest','Dividend')
+      AND EXTRACT(year FROM t.Date) = %(year)s
+    ORDER BY t.Date DESC, ABS(s.Amount) DESC
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params={"year": year})
     return _df_to_list(df)
 
 
@@ -1573,35 +1705,42 @@ def get_spending_trends(months: int = Query(12)):
 @router.get("/savings-rate-detail")
 def get_savings_rate_detail(months: int = Query(24)):
     query = """
-    WITH RECURSIVE CategoryHierarchy AS (
-        SELECT Categories_Id, Categories_Name::TEXT AS Full_Path,
-               Categories_Type::TEXT AS Categories_Type, Categories_Id_Parent
-        FROM Categories WHERE Categories_Id_Parent IS NULL
-        UNION ALL
-        SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name,
-               c.Categories_Type::TEXT, c.Categories_Id_Parent
-        FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+    WITH fx AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
     ),
-    monthly AS (
+    splits_cat AS (
         SELECT
-            date_trunc('month', t.Date)::date AS month,
-            SUM(CASE WHEN cat.Categories_Type='Income' THEN COALESCE(s.Amount,t.Total_Amount) ELSE 0 END) AS income,
-            SUM(CASE WHEN cat.Categories_Type='Expense' THEN ABS(COALESCE(s.Amount,t.Total_Amount)) ELSE 0 END) AS expense
-        FROM Transactions t
-        LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
-        LEFT JOIN CategoryHierarchy cat ON s.Categories_Id=cat.Categories_Id
-        JOIN Accounts a ON t.Accounts_Id=a.Accounts_Id
-        WHERE a.Accounts_Type IN ('Cash','Checking','Savings','Credit Card','Loan','Other')
-          AND t.accounts_id_target IS NULL
-          AND t.Date >= (CURRENT_DATE - (%(months)s || ' months')::interval)
-        GROUP BY 1
+            DATE_TRUNC('month', t.Date)::date AS month,
+            c.Categories_Type,
+            s.Amount *
+                CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1
+                     ELSE COALESCE(fx.FX_Rate, 1) END AS amount_eur
+        FROM Splits s
+        JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+        JOIN Categories c   ON c.Categories_Id   = s.Categories_Id
+        JOIN Accounts a     ON a.Accounts_Id      = t.Accounts_Id
+        JOIN Currencies cur ON cur.Currencies_Id  = a.Currencies_Id
+        LEFT JOIN fx        ON fx.Currencies_Id_1 = a.Currencies_Id
+        WHERE t.Transfers_Id IS NULL
+          AND c.Categories_Type NOT IN ('Transfer','Trading','Investment')
+          AND t.Date < DATE_TRUNC('month', CURRENT_DATE)
+          AND t.Date >= DATE_TRUNC('month', CURRENT_DATE) - (%(months)s || ' months')::INTERVAL
     )
-    SELECT month,
-           ROUND(income::numeric,2) AS income_eur,
-           ROUND(expense::numeric,2) AS expenses_eur,
-           ROUND((income - expense)::numeric,2) AS savings_eur,
-           CASE WHEN income > 0 THEN ROUND(((income - expense) / income * 100)::numeric, 1) ELSE 0 END AS savings_rate_pct
-    FROM monthly ORDER BY month ASC
+    SELECT
+        month,
+        ROUND(SUM(CASE WHEN Categories_Type IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END)::numeric, 2) AS income_eur,
+        ROUND(ABS(SUM(CASE WHEN Categories_Type NOT IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END))::numeric, 2) AS expenses_eur,
+        ROUND((SUM(CASE WHEN Categories_Type IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END)
+             - ABS(SUM(CASE WHEN Categories_Type NOT IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END)))::numeric, 2) AS savings_eur,
+        CASE WHEN SUM(CASE WHEN Categories_Type IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END) > 0
+             THEN ROUND(((SUM(CASE WHEN Categories_Type IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END)
+                        - ABS(SUM(CASE WHEN Categories_Type NOT IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END)))
+                       / SUM(CASE WHEN Categories_Type IN ('Income','Dividend','Interest') THEN amount_eur ELSE 0 END) * 100)::numeric, 1)
+             ELSE 0 END AS savings_rate_pct
+    FROM splits_cat
+    GROUP BY month
+    ORDER BY month ASC
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"months": months})

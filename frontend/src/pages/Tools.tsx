@@ -7,6 +7,7 @@ import {
   getMissingTxPrices, insertMissingPrices,
   getDummyPrices, normalizeInvestments, refreshHoldings,
   getSchedulerJobs, updateSchedulerJob, triggerSchedulerJob,
+  getBackupDbInfo, listBackups, downloadBackupUrl, deleteBackup, restoreBackup, restoreBackupUpload,
   getInvestmentConsistency, updateInvestmentRow,
   getMissingTransferMirrors, fixTransferMirrors,
   getUnlinkedTransferPairs, linkTransferPairs,
@@ -327,20 +328,281 @@ function DataExport() {
 }
 
 // ── Backup & Restore ───────────────────────────────────────────────────────────
+type BackupEntry = { filename: string; size_mb: number; modified: string }
+type DbInfo = { db_name: string; db_user: string; db_host: string; db_port: string; total_mb: number; tables: { table_name: string; size: string; size_bytes: number }[] }
+
 function BackupRestore() {
-  const backupMut = useMutation({ mutationFn: runBackup })
+  const qc = useQueryClient()
+  const [subtab, setSubtab] = useState<'create' | 'restore'>('create')
+  const [customName, setCustomName] = useState('')
+  const [excludeBlobs, setExcludeBlobs] = useState(false)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [confirmUploadRestore, setConfirmUploadRestore] = useState(false)
+
+  const { data: dbInfo } = useQuery<DbInfo>({
+    queryKey: ['backup-db-info'], queryFn: getBackupDbInfo, staleTime: 300_000,
+  })
+  const { data: backups = [], isLoading: listLoading, refetch } = useQuery<BackupEntry[]>({
+    queryKey: ['backup-list'], queryFn: listBackups, staleTime: 30_000,
+  })
+
+  const createMut = useMutation({
+    mutationFn: () => runBackup({ custom_name: customName || undefined, exclude_blobs: excludeBlobs }),
+    onSuccess: (d: { filename: string; size_mb: number }) => {
+      setMsg({ type: 'success', text: `✅ Backup created: ${d.filename} (${d.size_mb.toFixed(1)} MB)` })
+      setCustomName('')
+      qc.invalidateQueries({ queryKey: ['backup-list'] })
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      setMsg({ type: 'error', text: e.response?.data?.detail ?? 'Backup failed' }),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (filename: string) => deleteBackup(filename),
+    onSuccess: () => { setMsg({ type: 'success', text: 'Backup deleted.' }); setConfirmDelete(null); refetch() },
+    onError: () => { setMsg({ type: 'error', text: 'Delete failed.' }); setConfirmDelete(null) },
+  })
+
+  const restoreMut = useMutation({
+    mutationFn: (filename: string) => restoreBackup(filename),
+    onSuccess: (d: { message: string }) => { setMsg({ type: 'success', text: `✅ ${d.message}` }); setConfirmRestore(null) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      setMsg({ type: 'error', text: e.response?.data?.detail ?? 'Restore failed' }); setConfirmRestore(null)
+    },
+  })
+
+  const uploadRestoreMut = useMutation({
+    mutationFn: (file: File) => restoreBackupUpload(file),
+    onSuccess: (d: { message: string }) => {
+      setMsg({ type: 'success', text: `✅ ${d.message}` }); setUploadFile(null); setConfirmUploadRestore(false)
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      setMsg({ type: 'error', text: e.response?.data?.detail ?? 'Restore failed' }); setConfirmUploadRestore(false)
+    },
+  })
+
+  const tabCls = (t: typeof subtab) => cn(
+    'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
+    subtab === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-600 hover:text-slate-800',
+  )
+
   return (
-    <Card>
-      <CardHeader><CardTitle>💾 Backup &amp; Restore</CardTitle></CardHeader>
-      <CardBody className="space-y-3">
-        <p className="text-xs text-slate-500">Creates a pg_dump backup of the database.</p>
-        <Button onClick={() => backupMut.mutate()} disabled={backupMut.isPending}>
-          {backupMut.isPending ? <Spinner size={14} /> : null} 💾 Create Backup
-        </Button>
-        {backupMut.isSuccess && <Alert type="success">✅ Backup completed.</Alert>}
-        {backupMut.isError && <Alert type="error">Backup failed.</Alert>}
-      </CardBody>
-    </Card>
+    <div className="space-y-4">
+      {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+      <div className="flex gap-1 border-b border-slate-200">
+        <button className={tabCls('create')} onClick={() => setSubtab('create')}>📤 Create Backup</button>
+        <button className={tabCls('restore')} onClick={() => setSubtab('restore')}>📥 Restore</button>
+      </div>
+
+      {/* ── Create tab ── */}
+      {subtab === 'create' && (
+        <div className="space-y-4">
+          {/* DB connection info */}
+          {dbInfo && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Database', value: dbInfo.db_name },
+                { label: 'User', value: dbInfo.db_user },
+                { label: 'Host', value: dbInfo.db_host },
+                { label: 'Port', value: dbInfo.db_port },
+              ].map(m => (
+                <div key={m.label} className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+                  <div className="text-xs text-slate-500 mb-0.5">{m.label}</div>
+                  <div className="text-sm font-semibold text-slate-800 font-mono">{m.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Table sizes collapsible */}
+          {dbInfo && (
+            <details className="border border-slate-200 rounded-lg">
+              <summary className="px-4 py-2.5 text-sm font-medium cursor-pointer select-none flex items-center gap-2">
+                📊 Current Database Size
+                <span className="ml-auto text-xs font-normal text-slate-500">Total: {dbInfo.total_mb.toFixed(2)} MB</span>
+              </summary>
+              <div className="px-4 pb-3 pt-1 space-y-1">
+                <Alert type="info">Total Database Size: {dbInfo.total_mb.toFixed(2)} MB</Alert>
+                <div className="overflow-auto border border-slate-100 rounded-lg max-h-64">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Table</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Size</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dbInfo.tables.map((t, i) => (
+                        <tr key={t.table_name} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                          <td className="px-3 py-1.5 text-slate-700 font-mono">{t.table_name}</td>
+                          <td className="px-3 py-1.5 text-slate-600">{t.size}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+          )}
+
+          <Card>
+            <CardHeader><CardTitle>📤 Create Backup</CardTitle></CardHeader>
+            <CardBody className="space-y-4">
+              <p className="text-xs text-slate-500">Creates a pg_dump (.dump) backup of the full database in the container's backup directory.</p>
+              <div className="flex flex-wrap gap-4 items-end">
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Custom name (optional)</label>
+                  <input value={customName} onChange={e => setCustomName(e.target.value)}
+                    placeholder="e.g. before_migration"
+                    className="border border-slate-300 rounded px-2 py-1.5 text-sm w-56 focus:outline-none focus:border-blue-400" />
+                </div>
+                <label className="flex items-center gap-2 text-sm pb-1">
+                  <input type="checkbox" checked={excludeBlobs} onChange={e => setExcludeBlobs(e.target.checked)} />
+                  Exclude price history (smaller file)
+                </label>
+              </div>
+              <Button onClick={() => { setMsg(null); createMut.mutate() }} disabled={createMut.isPending}>
+                {createMut.isPending ? <Spinner size={14} /> : null} 💾 Create Backup
+              </Button>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>📂 Existing Backups</CardTitle>
+                <Button size="sm" variant="secondary" onClick={() => refetch()}>↻ Refresh</Button>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              {listLoading ? <Spinner /> : backups.length === 0 ? (
+                <p className="text-sm text-slate-500">No backups found. Create your first backup above.</p>
+              ) : (
+                <>
+                  {confirmDelete && (
+                    <ConfirmBanner
+                      message={`Delete "${confirmDelete}"? This cannot be undone.`}
+                      onYes={() => deleteMut.mutate(confirmDelete)} onNo={() => setConfirmDelete(null)}
+                      yesLabel="🗑 Delete" isPending={deleteMut.isPending} />
+                  )}
+                  <div className="overflow-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          {['Filename', 'Size (MB)', 'Created', ''].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {backups.map((b, i) => (
+                          <tr key={b.filename} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-3 py-2 font-mono text-xs text-slate-700">{b.filename}</td>
+                            <td className="px-3 py-2 text-slate-600">{b.size_mb.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{b.modified.slice(0, 16).replace('T', ' ')}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-2">
+                                <a href={downloadBackupUrl(b.filename)}
+                                  className="text-xs text-blue-600 hover:text-blue-800 underline whitespace-nowrap">
+                                  ⬇ Download
+                                </a>
+                                <button onClick={() => setConfirmDelete(b.filename)}
+                                  className="text-xs text-red-500 hover:text-red-700 underline whitespace-nowrap">
+                                  🗑 Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Restore tab ── */}
+      {subtab === 'restore' && (
+        <div className="space-y-4">
+          <Alert type="warning">⚠️ Restoring will overwrite the current database. This action cannot be undone.</Alert>
+
+          <Card>
+            <CardHeader><CardTitle>📥 Restore from Existing Backup</CardTitle></CardHeader>
+            <CardBody className="space-y-3">
+              {listLoading ? <Spinner /> : backups.length === 0 ? (
+                <p className="text-sm text-slate-500">No backups available.</p>
+              ) : (
+                <>
+                  {confirmRestore && (
+                    <ConfirmBanner
+                      message={`Restore "${confirmRestore}"? The current database will be overwritten. This cannot be undone.`}
+                      onYes={() => restoreMut.mutate(confirmRestore)} onNo={() => setConfirmRestore(null)}
+                      yesLabel="🔄 Yes, restore" isPending={restoreMut.isPending} />
+                  )}
+                  <div className="overflow-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          {['Filename', 'Size (MB)', 'Created', ''].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-medium text-slate-600 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {backups.map((b, i) => (
+                          <tr key={b.filename} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-3 py-2 font-mono text-xs text-slate-700">{b.filename}</td>
+                            <td className="px-3 py-2 text-slate-600">{b.size_mb.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{b.modified.slice(0, 16).replace('T', ' ')}</td>
+                            <td className="px-3 py-2">
+                              <button onClick={() => { setMsg(null); setConfirmRestore(b.filename) }}
+                                className="text-xs text-amber-600 hover:text-amber-800 underline whitespace-nowrap"
+                                disabled={restoreMut.isPending}>
+                                🔄 Restore
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>📤 Restore from Uploaded File</CardTitle></CardHeader>
+            <CardBody className="space-y-3">
+              <p className="text-xs text-slate-500">Upload a .dump file from your machine to restore it.</p>
+              <input type="file" accept=".dump"
+                onChange={e => { setUploadFile(e.target.files?.[0] ?? null); setConfirmUploadRestore(false) }}
+                className="text-sm" />
+              {uploadFile && (
+                <>
+                  <p className="text-xs text-slate-600">Selected: <span className="font-mono">{uploadFile.name}</span> ({(uploadFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={confirmUploadRestore} onChange={e => setConfirmUploadRestore(e.target.checked)} />
+                    I understand this will overwrite the current database
+                  </label>
+                  <Button variant="secondary" disabled={!confirmUploadRestore || uploadRestoreMut.isPending}
+                    onClick={() => { setMsg(null); uploadRestoreMut.mutate(uploadFile) }}>
+                    {uploadRestoreMut.isPending ? <Spinner size={14} /> : null} 🔄 Restore from Uploaded File
+                  </Button>
+                </>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1702,6 +1964,7 @@ export default function Tools() {
   const [category, setCategory] = useState('💾 Database')
   const [tool, setTool] = useState<Record<string, string>>({
     '💾 Database': '💾 Backup & Restore',
+    '⚙️ System': '📅 Scheduled Tasks',
     '📊 Market Data & Prices': '📥 Fill Missing Prices',
     '📋 Logs': '📋 Log Viewer',
   })

@@ -114,8 +114,14 @@ export const getPnl = (startDate = '1900-01-01', endDate?: string) =>
 export const getIncomeExpenseDetail = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/income-expense-detail', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
 
-export const getBudgetVsActual = (year: number, month?: number) =>
-  api.get('/reports/budget-vs-actual', { params: { year, ...(month ? { month } : {}) } }).then(r => r.data)
+export const getBudgetVsActual = (year: number, refYears = 2) =>
+  api.get('/reports/budget-vs-actual', { params: { year, ref_years: refYears } }).then(r => r.data)
+export const getAnnualIncome = (year: number) =>
+  api.get('/reports/annual-income', { params: { year } }).then(r => r.data)
+export const getYtdExpenseTransactions = (year: number) =>
+  api.get('/reports/ytd-expense-transactions', { params: { year } }).then(r => r.data)
+export const saveBudget = (data: { year: number; categories_id: number; budget_amount: number; id?: number }) =>
+  api.post('/reports/budgets', data).then(r => r.data)
 
 export const getCashFlowForecast = (monthsAhead = 6) =>
   api.get('/reports/cash-flow-forecast', { params: { months_ahead: monthsAhead } }).then(r => r.data)
@@ -425,7 +431,17 @@ export const coinbaseImport = (data: object) => api.post('/bank/coinbase-import'
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
 export const runVacuum = () => api.post('/tools/vacuum').then(r => r.data)
-export const runBackup = () => api.post('/tools/backup').then(r => r.data)
+export const getBackupDbInfo = () => api.get('/tools/backup/db-info').then(r => r.data)
+export const runBackup = (params?: { custom_name?: string; exclude_blobs?: boolean }) =>
+  api.post('/tools/backup', null, { params }).then(r => r.data)
+export const listBackups = () => api.get('/tools/backup/list').then(r => r.data)
+export const downloadBackupUrl = (filename: string) => `/api/tools/backup/download/${encodeURIComponent(filename)}`
+export const deleteBackup = (filename: string) => api.delete(`/tools/backup/${encodeURIComponent(filename)}`).then(r => r.data)
+export const restoreBackup = (filename: string) => api.post(`/tools/backup/restore/${encodeURIComponent(filename)}`).then(r => r.data)
+export const restoreBackupUpload = (file: File) => {
+  const form = new FormData(); form.append('file', file)
+  return api.post('/tools/backup/restore-upload', form).then(r => r.data)
+}
 export const getSchedulerStatus = () => api.get('/tools/scheduler-status').then(r => r.data)
 export const runSql = (sql: string) => api.post('/tools/run-sql', { sql }).then(r => r.data)
 export const getDbHealth = () => api.get('/tools/db-health').then(r => r.data)
