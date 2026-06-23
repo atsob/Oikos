@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,12 +17,23 @@ import {
   getDividendsTracker, getAccounts,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull,
+  getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
+  getCustomReportFilterData, runCustomReport, runCustomReportDrillDown, runCustomReportInvestmentDrillDown,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtPct } from '@/lib/utils'
 import { Trash2, Plus, Check, X } from 'lucide-react'
 
 type Row = Record<string, unknown>
+
+function SecLink({ id, children }: { id: unknown; children: React.ReactNode }) {
+  const navigate = useNavigate()
+  if (!id) return <>{children}</>
+  return (
+    <button onClick={() => navigate(`/securities/${id}`)}
+      className="text-blue-600 hover:underline text-left">{children}</button>
+  )
+}
 
 function usePersist<T>(key: string, defaultVal: T) {
   const [val, setVal] = useState<T>(() => {
@@ -42,6 +54,7 @@ const REPORT_TABS = [
   { key: 'budget',          label: '🎯 Budget & Spending' },
   { key: 'tax',             label: '🧾 Investment Tax' },
   { key: 'planning',        label: '🏖️ Financial Planning' },
+  { key: 'custom',          label: '📋 Custom Reports' },
 ]
 
 // ── SubTabs ───────────────────────────────────────────────────────────────────
@@ -841,8 +854,8 @@ function HoldingsSnapshotTab() {
           <tbody>
             {holdSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 font-medium">{String(r.security)}</td>
-                <td className="px-2 py-1.5 font-mono text-slate-500 text-xs">{String(r.ticker ?? '—')}</td>
+                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
+                <td className="px-2 py-1.5 font-mono text-slate-500 text-xs"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.last_price ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
@@ -1001,7 +1014,7 @@ function PnlReport() {
                 <tbody className="divide-y divide-slate-100">
                   {sortedDrill.map((r, i) => (
                     <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
-                      <td className="px-3 py-2 font-medium">{String(r.securities_name)}{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
+                      <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? Number(r.qty_today).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? `${Number(r.price_today).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${r.currency ?? ''}` : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
@@ -1432,7 +1445,7 @@ function DividendTrackerTab() {
                 <tbody className="divide-y divide-slate-100">
                   {divSorted.map((r, i) => (
                     <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-blue-700">{String(r.securities_name)}</td>
+                      <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                       <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
                       <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(Number(r.period_income_eur ?? 0))}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
@@ -1484,7 +1497,7 @@ function DividendTrackerTab() {
                         {result.detail.map((r, i) => (
                           <tr key={i} className="hover:bg-slate-50">
                             <td className="px-3 py-2 text-slate-500">{String(r.month).slice(0, 10)}</td>
-                            <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
+                            <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                             <td className="px-3 py-2 text-blue-700">{String(r.accounts_name)}</td>
                             <td className="px-3 py-2 text-slate-500">{String(r.action)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.income_eur ?? 0))}</td>
@@ -1928,7 +1941,7 @@ function BondScheduleTab() {
             <tbody className="divide-y divide-slate-100">
               {bondSorted.map((r, i) => (
                 <tr key={i} className="hover:bg-slate-50">
-                  <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
+                  <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{Number(r.face_value ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.total_face_eur ?? 0))}</td>
@@ -2309,6 +2322,13 @@ function InvPerformanceSection() {
   const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
   const TABS = ['P&L', 'Performance', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR']
+  const qc = useQueryClient()
+  useEffect(() => {
+    qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
+    qc.prefetchQuery({ queryKey: ['price-changes'], queryFn: getPriceChanges })
+    qc.prefetchQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
+    qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null], queryFn: () => getDividendsTracker('YTD') })
+  }, [])
   const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR'].includes(tab)
   return (
     <div>
@@ -2365,8 +2385,8 @@ function PriceChangesTab() {
         <tbody>
           {rows.map((r, i) => (
             <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-              <td className="px-2 py-1.5 font-medium">{String(r.securities_name)}</td>
-              <td className="px-2 py-1.5 font-mono text-slate-500">{String(r.ticker ?? '—')}</td>
+              <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+              <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
               <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur ?? 0))}</td>
               <PctCell val={r.dtd_pct != null ? Number(r.dtd_pct) : null} />
               <PctCell val={r.wtd_pct != null ? Number(r.wtd_pct) : null} />
@@ -2611,7 +2631,7 @@ function InvestmentSignalsTab() {
               <tbody className="divide-y divide-slate-100">
                 {sortedTopPicks.map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium">{r.securities_name}</td>
+                    <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                     <td className={`px-3 py-2 text-right tabular-nums ${Number(r.annual_chg_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {r.annual_chg_pct != null ? `${Number(r.annual_chg_pct) >= 0 ? '+' : ''}${Number(r.annual_chg_pct).toFixed(2)}%` : '—'}
                     </td>
@@ -2719,7 +2739,7 @@ function PortfolioActionSignalsTab() {
                   ? Number(pnl) / Number(cost) * 100 : null
                 return (
                   <tr key={i} className={`hover:bg-slate-50 ${Number(r.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}`}>
-                    <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap sticky left-0 bg-white">{r.securities_name}</td>
+                    <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap sticky left-0 bg-white"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                     <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.final_signal)}`}>{r.final_signal ?? '—'}</td>
                     <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.recommendation_signal)}`}>{r.recommendation_signal ?? '—'}</td>
                     <td className="px-3 py-2">{analystBadge(r.wall_street_view)}</td>
@@ -3874,8 +3894,8 @@ function CapitalGainsReport() {
                 return (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                    <td className="px-3 py-2 font-medium">{String(r.security)}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-500">{String(r.ticker ?? '—')}</td>
+                    <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                     <td className="px-3 py-2 text-slate-600">{String(r.account)}</td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.action ?? '—')}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
@@ -3923,8 +3943,8 @@ function TaxLossHarvestingTab() {
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 font-medium">{String(r.securities_name)}</td>
-                  <td className="px-2 py-1.5 font-mono text-slate-500">{String(r.ticker ?? '—')}</td>
+                  <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                  <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toFixed(4)}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_price ?? 0))}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis ?? 0))}</td>
@@ -3980,7 +4000,7 @@ function DividendIncomeTaxTab() {
             {rows.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                <td className="px-2 py-1.5 font-medium">{String(r.securities_name)}</td>
+                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.account_name)}</td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.action)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-green-700 font-medium">{fmtEur(Number(r.amount_eur ?? 0))}</td>
@@ -4249,20 +4269,782 @@ function PlanningSection() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CUSTOM REPORTS
+// ════════════════════════════════════════════════════════════════════════════
+
+type CRConfig = {
+  date_range_type?: string
+  date_from?: string
+  date_to?: string
+  date_from_is_today?: boolean
+  date_to_is_today?: boolean
+  column_grouping?: string
+  acct_mode?: 'all' | 'selected'
+  account_ids?: number[]
+  cat_mode?: 'all' | 'selected'
+  category_ids?: number[]
+  payee_mode?: 'all' | 'selected'
+  payee_names?: string[]
+  sec_mode?: 'all' | 'selected'
+  security_ids?: number[]
+  include_transfers?: boolean
+  use_account_currency?: boolean
+}
+
+type CRPreset = { preset_id: number; preset_name: string; config: CRConfig }
+type CRFilterData = {
+  accounts: { accounts_id: number; accounts_name: string }[]
+  categories: { categories_id: number; full_path: string; categories_type: string }[]
+  payees: { payees_id: number; payees_name: string }[]
+  securities: { securities_id: number; securities_name: string }[]
+}
+
+const DR_OPTIONS = ['Year to Date', 'Last Year', 'Last 12 Months', 'Last 24 Months', 'All Time', 'Custom']
+
+function drDates(type: string): { dateFrom: string; dateTo: string } {
+  const now = new Date()
+  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  const y = now.getFullYear()
+  if (type === 'Year to Date') return { dateFrom: `${y}-01-01`, dateTo: fmt(now) }
+  if (type === 'Last Year')    return { dateFrom: `${y - 1}-01-01`, dateTo: `${y - 1}-12-31` }
+  if (type === 'Last 12 Months') { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return { dateFrom: fmt(d), dateTo: fmt(now) } }
+  if (type === 'Last 24 Months') { const d = new Date(now); d.setFullYear(d.getFullYear() - 2); return { dateFrom: fmt(d), dateTo: fmt(now) } }
+  if (type === 'All Time') return { dateFrom: '2000-01-01', dateTo: fmt(now) }
+  return { dateFrom: `${y}-01-01`, dateTo: fmt(now) }
+}
+
+function FilterSection({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="border border-slate-200 rounded-lg">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-3 bg-slate-50 hover:bg-slate-100 text-sm font-medium text-slate-700 text-left rounded-lg">
+        <span className="text-slate-400 text-xs">{open ? '▼' : '▶'}</span>
+        {title}
+      </button>
+      {open && <div className="px-4 py-3 border-t border-slate-100">{children}</div>}
+    </div>
+  )
+}
+
+function MultiSelect({ label, options, selected, onChange, placeholder }: {
+  label: string; options: string[]; selected: string[]
+  onChange: (v: string[]) => void; placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  const filtered = search.trim()
+    ? options.filter(o => o.toLowerCase().includes(search.toLowerCase()))
+    : options
+
+  const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter(x => x !== v) : [...selected, v])
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => { setOpen(o => !o); setSearch('') }}
+        className="w-full text-left border border-slate-200 rounded px-3 py-2 text-sm bg-white hover:border-slate-400 flex items-center justify-between"
+      >
+        <span className="truncate text-slate-600">
+          {selected.length === 0 ? (placeholder ?? `All ${label}`) : `${selected.length} selected`}
+        </span>
+        <span className="text-slate-400 ml-2">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded shadow-lg flex flex-col" style={{ maxHeight: 280 }}>
+          {/* Search box */}
+          <div className="p-2 border-b border-slate-100 flex-shrink-0">
+            <input
+              autoFocus
+              type="text"
+              placeholder={`Search ${label}…`}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-400"
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+          {/* Select all / none row */}
+          <div className="flex items-center gap-3 px-3 py-1.5 border-b border-slate-100 flex-shrink-0">
+            <button type="button" className="text-xs text-blue-600 hover:underline"
+              onClick={() => onChange(options)}>All</button>
+            <button type="button" className="text-xs text-slate-500 hover:underline"
+              onClick={() => onChange([])}>None</button>
+            {search && filtered.length > 0 && (
+              <button type="button" className="text-xs text-slate-500 hover:underline ml-auto"
+                onClick={() => onChange([...new Set([...selected, ...filtered])])}>
+                + select {filtered.length} shown
+              </button>
+            )}
+          </div>
+          {/* Options list */}
+          <div className="overflow-y-auto flex-1">
+            {filtered.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No matches</div>}
+            {filtered.map(o => (
+              <label key={o} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm">
+                <input type="checkbox" className="accent-blue-600 flex-shrink-0" checked={selected.includes(o)} onChange={() => toggle(o)} />
+                <span className="truncate" title={o}>{o}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CustomReportsSection() {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Filter data
+  const { data: filterData } = useQuery<CRFilterData>({
+    queryKey: ['cr-filter-data'], queryFn: getCustomReportFilterData, staleTime: 300_000,
+  })
+  const { data: presets = [], refetch: refetchPresets } = useQuery<CRPreset[]>({
+    queryKey: ['cr-presets'], queryFn: getCustomReportPresets,
+  })
+
+  // Preset selection
+  const [selPreset, setSelPreset] = useState<string>('(New Report)')
+  const [presetName, setPresetName] = useState('')
+
+  // Config state
+  const [drType, setDrType] = useState('Last 12 Months')
+  const [customFrom, setCustomFrom] = useState(today)
+  const [customTo, setCustomTo] = useState(today)
+  const [fromIsToday, setFromIsToday] = useState(false)
+  const [toIsToday, setToIsToday] = useState(false)
+  const [grouping, setGrouping] = useState('month')
+  const [acctMode, setAcctMode] = useState<'all' | 'selected'>('all')
+  const [acctIds, setAcctIds] = useState<number[]>([])
+  const [catMode, setCatMode] = useState<'all' | 'selected'>('all')
+  const [catIds, setCatIds] = useState<number[]>([])
+  const [payeeMode, setPayeeMode] = useState<'all' | 'selected'>('all')
+  const [payeeNames, setPayeeNames] = useState<string[]>([])
+  const [secMode, setSecMode] = useState<'all' | 'selected'>('all')
+  const [secIds, setSecIds] = useState<number[]>([])
+  const [includeTransfers, setIncludeTransfers] = useState(false)
+  const [useAcctCcy, setUseAcctCcy] = useState(false)
+
+  // Result state
+  const [result, setResult] = useState<Row[] | null>(null)
+  const [resultParams, setResultParams] = useState<Record<string, unknown>>({})
+  const [running, setRunning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  // Drill-down state
+  const [ddCategory, setDdCategory] = useState('— All —')
+  const [ddPeriod, setDdPeriod] = useState('— All Periods —')
+  const [ddResult, setDdResult] = useState<Row[] | null>(null)
+  const [ddRunning, setDdRunning] = useState(false)
+
+  const accounts   = filterData?.accounts ?? []
+  const categories = filterData?.categories ?? []
+  const payees     = filterData?.payees ?? []
+  const securities = filterData?.securities ?? []
+
+  function loadPreset(name: string) {
+    setSelPreset(name)
+    setPresetName(name === '(New Report)' ? '' : name)
+    setDeleteConfirm(false)
+    if (name === '(New Report)') return
+    const p = presets.find(p => p.preset_name === name)
+    if (!p) return
+    const c = p.config
+    setDrType(c.date_range_type ?? 'Last 12 Months')
+    setCustomFrom(c.date_from ?? today)
+    setCustomTo(c.date_to ?? today)
+    setGrouping(c.column_grouping ?? 'month')
+    const loadedAcctIds = c.account_ids ?? []
+    const loadedCatIds  = c.category_ids ?? []
+    const loadedPayees  = c.payee_names ?? []
+    const loadedSecIds  = c.security_ids ?? []
+    setAcctMode(c.acct_mode ?? (loadedAcctIds.length > 0 ? 'selected' : 'all'))
+    setAcctIds(loadedAcctIds)
+    setCatMode(c.cat_mode ?? (loadedCatIds.length > 0 ? 'selected' : 'all'))
+    setCatIds(loadedCatIds)
+    setPayeeMode(c.payee_mode ?? (loadedPayees.length > 0 ? 'selected' : 'all'))
+    setPayeeNames(loadedPayees)
+    setSecMode(c.sec_mode ?? (loadedSecIds.length > 0 ? 'selected' : 'all'))
+    setSecIds(loadedSecIds)
+    setFromIsToday(c.date_from_is_today ?? false)
+    setToIsToday(c.date_to_is_today ?? false)
+    setIncludeTransfers(c.include_transfers ?? false)
+    setUseAcctCcy(c.use_account_currency ?? false)
+    setResult(null); setDdResult(null)
+  }
+
+  const { dateFrom, dateTo } = drType === 'Custom'
+    ? { dateFrom: fromIsToday ? today : customFrom, dateTo: toIsToday ? today : customTo }
+    : drDates(drType)
+
+  async function handleSave() {
+    const name = presetName.trim()
+    if (!name || name === '(New Report)') return
+    setSaving(true)
+    try {
+      await saveCustomReportPreset(name, {
+        date_range_type: drType, date_from: customFrom, date_to: customTo,
+        date_from_is_today: fromIsToday, date_to_is_today: toIsToday,
+        column_grouping: grouping,
+        acct_mode: acctMode, account_ids: acctIds,
+        cat_mode: catMode, category_ids: catIds,
+        payee_mode: payeeMode, payee_names: payeeNames,
+        sec_mode: secMode, security_ids: secIds,
+        include_transfers: includeTransfers, use_account_currency: useAcctCcy,
+      })
+      await refetchPresets()
+      setSelPreset(name)
+    } finally { setSaving(false) }
+  }
+
+  async function handleDelete() {
+    const p = presets.find(p => p.preset_name === selPreset)
+    if (!p) return
+    await deleteCustomReportPreset(p.preset_id)
+    await refetchPresets()
+    loadPreset('(New Report)')
+  }
+
+  const investmentMode = catMode === 'selected' && catIds.length === 0
+
+  async function handleRun() {
+    setRunning(true); setResult(null); setDdResult(null)
+    try {
+      const effAcctIds  = acctMode  === 'selected' ? (acctIds.length  ? acctIds   : null) : null
+      const effCatIds   = catMode   === 'selected' ? (catIds.length   ? catIds    : null) : null
+      const effPayees   = payeeMode === 'selected' ? (payeeNames.length ? payeeNames : null) : null
+      const effSecIds   = secMode   === 'selected' ? (secIds.length   ? secIds    : null) : null
+      const rows = await runCustomReport({
+        date_from: dateFrom, date_to: dateTo, grouping,
+        account_ids: effAcctIds, category_ids: effCatIds,
+        payee_names: effPayees, security_ids: effSecIds,
+        include_transfers: includeTransfers,
+        use_account_currency: useAcctCcy,
+        investment_mode: investmentMode,
+      })
+      setResult(rows)
+      setResultParams({
+        date_from: dateFrom, date_to: dateTo, grouping,
+        account_ids: effAcctIds, category_ids: effCatIds,
+        payee_names: effPayees, security_ids: effSecIds,
+        include_transfers: includeTransfers,
+        use_account_currency: useAcctCcy,
+        investment_mode: investmentMode,
+      })
+      setDdCategory('— All —'); setDdPeriod('— All Periods —')
+    } finally { setRunning(false) }
+  }
+
+  // Derived pivot data
+  const periods = useMemo(() => {
+    if (!result) return []
+    const seen = new Map<string, string>()
+    result.forEach(r => seen.set(String(r.period_order ?? r.period), String(r.period)))
+    return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(e => e[1])
+  }, [result])
+
+  const categories_in_result = useMemo(() => {
+    if (!result) return []
+    return [...new Set(result.map(r => String(r.category)))].sort()
+  }, [result])
+
+  const pivot = useMemo(() => {
+    if (!result || periods.length === 0) return {}
+    const map: Record<string, Record<string, number>> = {}
+    result.forEach(r => {
+      const cat = String(r.category)
+      const per = String(r.period)
+      if (!map[cat]) map[cat] = {}
+      map[cat][per] = (map[cat][per] ?? 0) + Number(r.amount_eur ?? 0)
+    })
+    return map
+  }, [result, periods])
+
+  const periodTotals = useMemo(() => {
+    const t: Record<string, number> = {}
+    periods.forEach(p => { t[p] = categories_in_result.reduce((s, c) => s + (pivot[c]?.[p] ?? 0), 0) })
+    return t
+  }, [pivot, periods, categories_in_result])
+
+  const grandTotal = useMemo(() => Object.values(periodTotals).reduce((s, v) => s + v, 0), [periodTotals])
+
+  function periodDates(period: string): { from: string; to: string } {
+    const grp = String(resultParams.grouping ?? 'month')
+    if (grp === 'year') {
+      return { from: `${period}-01-01`, to: `${period}-12-31` }
+    } else if (grp === 'quarter') {
+      const [yr, q] = period.split(' Q')
+      const qNum = parseInt(q)
+      const mStart = (qNum - 1) * 3 + 1
+      const mEnd = mStart + 2
+      const lastDay = new Date(parseInt(yr), mEnd, 0).getDate()
+      return { from: `${yr}-${String(mStart).padStart(2, '0')}-01`, to: `${yr}-${String(mEnd).padStart(2, '0')}-${lastDay}` }
+    } else {
+      const lastDay = new Date(parseInt(period.slice(0, 4)), parseInt(period.slice(5, 7)), 0).getDate()
+      return { from: `${period}-01`, to: `${period}-${lastDay}` }
+    }
+  }
+
+  async function handleDrillDown() {
+    setDdRunning(true); setDdResult(null)
+    try {
+      const ddDates = ddPeriod === '— All Periods —'
+        ? { date_from: resultParams.date_from, date_to: resultParams.date_to }
+        : periodDates(ddPeriod)
+      const base = {
+        date_from: ddDates.date_from ?? ddDates.from,
+        date_to: ddDates.date_to ?? ddDates.to,
+        account_ids: resultParams.account_ids,
+        use_account_currency: resultParams.use_account_currency,
+      }
+      if (resultParams.investment_mode) {
+        const rows = await runCustomReportInvestmentDrillDown({
+          ...base, security_name: ddCategory === '— All —' ? null : ddCategory,
+        })
+        setDdResult(rows)
+      } else {
+        const rows = await runCustomReportDrillDown({
+          ...base,
+          category_path: ddCategory === '— All —' ? null : ddCategory,
+          category_ids: resultParams.category_ids,
+          payee_names: resultParams.payee_names,
+          security_ids: resultParams.security_ids,
+          include_transfers: resultParams.include_transfers,
+        })
+        setDdResult(rows)
+      }
+    } finally { setDdRunning(false) }
+  }
+
+  const grpLabel = grouping === 'year' ? 'Year' : grouping === 'quarter' ? 'Quarter' : 'Month'
+  const catLabel = investmentMode ? 'Securities' : 'Categories'
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-800">Custom Reports</h2>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Build a spending report for any date range, accounts, categories, and payees. Save configurations as named presets.
+        </p>
+      </div>
+
+      {/* Preset bar */}
+      <div className="flex gap-2 items-end flex-wrap">
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-xs text-slate-500 mb-1">Preset</label>
+          <select className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white"
+            value={selPreset} onChange={e => loadPreset(e.target.value)}>
+            <option>(New Report)</option>
+            {[...presets].sort((a, b) => a.preset_name.localeCompare(b.preset_name)).map(p => (
+              <option key={p.preset_id}>{p.preset_name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-xs text-slate-500 mb-1">Name</label>
+          <Input placeholder="Preset name to save as…" value={presetName}
+            onChange={e => setPresetName(e.target.value)} className="text-sm" />
+        </div>
+        <Button onClick={handleSave} disabled={saving || !presetName.trim()} className="self-end">
+          {saving ? 'Saving…' : '💾 Save'}
+        </Button>
+        {selPreset !== '(New Report)' && !deleteConfirm && (
+          <Button variant="destructive" onClick={() => setDeleteConfirm(true)} className="self-end">
+            🗑️ Delete
+          </Button>
+        )}
+        {deleteConfirm && (
+          <div className="flex items-center gap-2 self-end">
+            <span className="text-sm text-red-600">Delete "{selPreset}"?</span>
+            <Button variant="destructive" onClick={() => { handleDelete(); setDeleteConfirm(false) }}>Yes</Button>
+            <Button variant="secondary" onClick={() => setDeleteConfirm(false)}>Cancel</Button>
+          </div>
+        )}
+      </div>
+
+      {/* Date range + grouping */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Date Range</label>
+          <select className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white"
+            value={drType} onChange={e => setDrType(e.target.value)}>
+            {DR_OPTIONS.map(o => <option key={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Column Grouping</label>
+          <select className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white"
+            value={grouping} onChange={e => setGrouping(e.target.value)}>
+            <option value="year">Year</option>
+            <option value="quarter">Quarter</option>
+            <option value="month">Month</option>
+          </select>
+        </div>
+        {drType === 'Custom' && (
+          <>
+            <div>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 mb-1 cursor-pointer">
+                <input type="checkbox" className="accent-blue-600" checked={fromIsToday}
+                  onChange={e => setFromIsToday(e.target.checked)} />
+                Use today
+                <Tooltip text="When saved, this preset will always use today's date as the From date.">
+                  <span className="text-slate-400 cursor-default">ⓘ</span>
+                </Tooltip>
+              </label>
+              <div>
+                <div className="block text-xs text-slate-500 mb-1">From</div>
+                <Input type="date" value={fromIsToday ? today : customFrom}
+                  disabled={fromIsToday}
+                  onChange={e => setCustomFrom(e.target.value)} className="text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="flex items-center gap-1.5 text-xs text-slate-500 mb-1 cursor-pointer">
+                <input type="checkbox" className="accent-blue-600" checked={toIsToday}
+                  onChange={e => setToIsToday(e.target.checked)} />
+                Use today
+                <Tooltip text="When saved, this preset will always use today's date as the To date.">
+                  <span className="text-slate-400 cursor-default">ⓘ</span>
+                </Tooltip>
+              </label>
+              <div>
+                <div className="block text-xs text-slate-500 mb-1">To</div>
+                <Input type="date" value={toIsToday ? today : customTo}
+                  disabled={toIsToday}
+                  onChange={e => setCustomTo(e.target.value)} className="text-sm" />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="space-y-3">
+        {/* Accounts */}
+        <FilterSection title="🏦 Accounts">
+          <div className="text-xs text-slate-500 mb-2">Accounts to include</div>
+          <div className="flex gap-4 mb-3">
+            {(['all', 'selected'] as const).map(m => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" className="accent-blue-600" checked={acctMode === m}
+                  onChange={() => { setAcctMode(m); if (m === 'all') setAcctIds([]) }} />
+                {m === 'all' ? 'All Accounts' : 'Selected Accounts'}
+              </label>
+            ))}
+          </div>
+          {acctMode === 'selected' && (
+            <MultiSelect label="Accounts"
+              options={accounts.map(a => a.accounts_name)}
+              selected={accounts.filter(a => acctIds.includes(a.accounts_id)).map(a => a.accounts_name)}
+              onChange={names => setAcctIds(names.map(n => accounts.find(a => a.accounts_name === n)!.accounts_id))}
+            />
+          )}
+        </FilterSection>
+
+        {/* Categories */}
+        <FilterSection title="🏷️ Categories">
+          <div className="text-xs text-slate-500 mb-2">Categories to include</div>
+          <div className="flex gap-4 mb-3">
+            {(['all', 'selected'] as const).map(m => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" className="accent-blue-600" checked={catMode === m}
+                  onChange={() => { setCatMode(m); if (m === 'all') setCatIds([]) }} />
+                {m === 'all' ? 'All Expense Categories' : 'Selected Categories'}
+              </label>
+            ))}
+          </div>
+          {catMode === 'selected' && (
+            <>
+              <p className="text-xs text-slate-400 mb-1">Selecting a parent category includes all its sub-categories.</p>
+              <MultiSelect label="Categories"
+                options={categories.map(c => c.full_path)}
+                selected={categories.filter(c => catIds.includes(c.categories_id)).map(c => c.full_path)}
+                onChange={paths => setCatIds(paths.map(p => categories.find(c => c.full_path === p)!.categories_id))}
+              />
+            </>
+          )}
+        </FilterSection>
+
+        {/* Payees */}
+        <FilterSection title="👤 Payees">
+          <div className="text-xs text-slate-500 mb-2">Payees to include</div>
+          <div className="flex gap-4 mb-3">
+            {(['all', 'selected'] as const).map(m => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" className="accent-blue-600" checked={payeeMode === m}
+                  onChange={() => { setPayeeMode(m); if (m === 'all') setPayeeNames([]) }} />
+                {m === 'all' ? 'All Payees' : 'Selected Payees'}
+              </label>
+            ))}
+          </div>
+          {payeeMode === 'selected' && (
+            <MultiSelect label="Payees"
+              options={payees.map(p => p.payees_name)}
+              selected={payeeNames}
+              onChange={setPayeeNames}
+            />
+          )}
+        </FilterSection>
+
+        {/* Securities */}
+        <FilterSection title="📈 Securities">
+          <p className="text-xs text-slate-400 mb-2">
+            Filter to transactions linked to specific securities (e.g. dividend income, interest, or fees). Leave empty to include all.
+            Select "Selected Categories" with no categories chosen to switch to investment cashflow mode.
+          </p>
+          <div className="text-xs text-slate-500 mb-2">Securities to include</div>
+          <div className="flex gap-4 mb-3">
+            {(['all', 'selected'] as const).map(m => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" className="accent-blue-600" checked={secMode === m}
+                  onChange={() => { setSecMode(m); if (m === 'all') setSecIds([]) }} />
+                {m === 'all' ? 'All Securities' : 'Selected Securities'}
+              </label>
+            ))}
+          </div>
+          {secMode === 'selected' && (
+            <MultiSelect label="Securities"
+              options={securities.map(s => s.securities_name)}
+              selected={securities.filter(s => secIds.includes(s.securities_id)).map(s => s.securities_name)}
+              onChange={names => setSecIds(names.map(n => securities.find(s => s.securities_name === n)!.securities_id))}
+            />
+          )}
+        </FilterSection>
+      </div>
+
+      {/* Additional options */}
+      <div className="flex gap-6">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" className="accent-blue-600" checked={includeTransfers}
+            onChange={e => setIncludeTransfers(e.target.checked)} />
+          Include transfer transactions
+        </label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" className="accent-blue-600" checked={useAcctCcy}
+            onChange={e => setUseAcctCcy(e.target.checked)} />
+          Use account native currency (no EUR conversion)
+        </label>
+      </div>
+
+      {investmentMode && (
+        <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-3 py-2">
+          Investment mode: "Selected Categories" chosen with no categories picked — report will show investment cashflows grouped by security.
+          {secMode === 'selected' && secIds.length > 0 && ` Filtered to ${secIds.length} selected securit${secIds.length === 1 ? 'y' : 'ies'}.`}
+        </div>
+      )}
+
+      {/* Run button */}
+      <div>
+        <Button onClick={handleRun} disabled={running} className="px-6">
+          {running ? <><Spinner size="sm" /> Running…</> : '▶ Run Report'}
+        </Button>
+      </div>
+
+      {/* Results */}
+      {result !== null && (
+        result.length === 0
+          ? <div className="text-sm text-slate-400 py-4">No data found for the selected filters and date range.</div>
+          : (
+            <div className="space-y-6">
+              {/* KPIs */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="border border-slate-200 rounded-lg p-4">
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">Grand Total</div>
+                  <div className={`text-2xl font-bold mt-1 ${grandTotal >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmtEur(grandTotal)}</div>
+                </div>
+                <div className="border border-slate-200 rounded-lg p-4">
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">Periods</div>
+                  <div className="text-2xl font-bold mt-1 text-slate-800">{periods.length}</div>
+                </div>
+                <div className="border border-slate-200 rounded-lg p-4">
+                  <div className="text-xs text-slate-500 uppercase tracking-wide">{catLabel}</div>
+                  <div className="text-2xl font-bold mt-1 text-slate-800">{categories_in_result.length}</div>
+                </div>
+              </div>
+
+              {/* Bar chart */}
+              <Plot
+                data={[{
+                  type: 'bar', x: periods, y: periods.map(p => periodTotals[p] ?? 0),
+                  text: periods.map(p => fmtEur(periodTotals[p] ?? 0)),
+                  textposition: 'outside',
+                  marker: { color: periods.map(p => (periodTotals[p] ?? 0) >= 0 ? '#3b82f6' : '#ef4444') },
+                }]}
+                layout={{
+                  title: { text: `Total ${investmentMode ? 'Cashflow' : 'Spending'} by ${grpLabel}`, font: { size: 14 } },
+                  margin: { l: 60, r: 20, t: 40, b: 60 }, height: 280,
+                  paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+                  yaxis: { tickformat: ',.0f', tickprefix: '€' },
+                }}
+                config={{ displayModeBar: false }}
+                style={{ width: '100%' }}
+              />
+
+              {/* Pivot table */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700 mb-2">{investmentMode ? 'Cashflow by Security' : 'Spending by Category'}</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b-2 border-slate-200">
+                        <th className="text-left px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium sticky left-0 bg-white">{catLabel}</th>
+                        {periods.map(p => <th key={p} className="text-right px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium whitespace-nowrap">{p}</th>)}
+                        <th className="text-right px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium">TOTAL</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {categories_in_result.map(cat => {
+                        const rowTotal = periods.reduce((s, p) => s + (pivot[cat]?.[p] ?? 0), 0)
+                        return (
+                          <tr key={cat} className="hover:bg-slate-50">
+                            <td className="px-3 py-1.5 text-slate-700 sticky left-0 bg-white max-w-[300px] truncate" title={cat}>{cat}</td>
+                            {periods.map(p => {
+                              const v = pivot[cat]?.[p] ?? 0
+                              return <td key={p} className={`px-3 py-1.5 text-right tabular-nums ${v < 0 ? 'text-red-600' : ''}`}>{v !== 0 ? fmtEur(v) : '—'}</td>
+                            })}
+                            <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${rowTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(rowTotal)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 font-semibold bg-slate-50">
+                        <td className="px-3 py-2 sticky left-0 bg-slate-50">TOTAL</td>
+                        {periods.map(p => <td key={p} className={`px-3 py-2 text-right tabular-nums ${(periodTotals[p] ?? 0) < 0 ? 'text-red-600' : ''}`}>{fmtEur(periodTotals[p] ?? 0)}</td>)}
+                        <td className={`px-3 py-2 text-right tabular-nums ${grandTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(grandTotal)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Drill-down */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700 mb-3">🔍 {investmentMode ? 'Investment' : 'Transaction'} Drill-Down</h3>
+                <div className="flex gap-3 items-end flex-wrap">
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="block text-xs text-slate-500 mb-1">{investmentMode ? 'Security' : 'Category'}</label>
+                    <select className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white"
+                      value={ddCategory} onChange={e => setDdCategory(e.target.value)}>
+                      <option>— All —</option>
+                      {categories_in_result.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs text-slate-500 mb-1">Period</label>
+                    <select className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white"
+                      value={ddPeriod} onChange={e => setDdPeriod(e.target.value)}>
+                      <option>— All Periods —</option>
+                      {periods.map(p => <option key={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <Button onClick={handleDrillDown} disabled={ddRunning} className="self-end">
+                    {ddRunning ? <><Spinner size="sm" /> Loading…</> : 'Load'}
+                  </Button>
+                </div>
+
+                {ddResult !== null && (
+                  ddResult.length === 0
+                    ? <div className="text-sm text-slate-400 mt-3">No entries found.</div>
+                    : (
+                      <div className="mt-3 overflow-x-auto">
+                        <div className="text-xs text-slate-500 mb-1">
+                          {ddResult.length} {investmentMode ? 'entr' : 'transaction'}
+                          {ddResult.length === 1 ? (investmentMode ? 'y' : '') : (investmentMode ? 'ies' : 's')}
+                          {' · '}net total {fmtEur(ddResult.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0))}
+                        </div>
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200">
+                              <th className="text-left px-2 py-1.5 text-xs text-slate-500">Date</th>
+                              {investmentMode
+                                ? <>
+                                    <th className="text-left px-2 py-1.5 text-xs text-slate-500">Security</th>
+                                    <th className="text-left px-2 py-1.5 text-xs text-slate-500">Action</th>
+                                    <th className="text-right px-2 py-1.5 text-xs text-slate-500">Qty</th>
+                                    <th className="text-right px-2 py-1.5 text-xs text-slate-500">Price</th>
+                                    <th className="text-right px-2 py-1.5 text-xs text-slate-500">Amount</th>
+                                  </>
+                                : <>
+                                    <th className="text-left px-2 py-1.5 text-xs text-slate-500">Payee</th>
+                                    <th className="text-left px-2 py-1.5 text-xs text-slate-500">Category</th>
+                                    <th className="text-left px-2 py-1.5 text-xs text-slate-500">Notes</th>
+                                  </>
+                              }
+                              <th className="text-right px-2 py-1.5 text-xs text-slate-500">Amount (€)</th>
+                              <th className="text-left px-2 py-1.5 text-xs text-slate-500">Account</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {ddResult.map((r, i) => (
+                              <tr key={i} className="hover:bg-slate-50">
+                                <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{String(r.date ?? '').slice(0, 10)}</td>
+                                {investmentMode
+                                  ? <>
+                                      <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{String(r.security ?? '')}</td>
+                                      <td className="px-2 py-1.5 text-slate-500">{String(r.action ?? '')}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.quantity != null ? Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.price != null ? Number(r.price).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.amount != null ? fmtEur(Number(r.amount)) : '—'}</td>
+                                    </>
+                                  : <>
+                                      <td className="px-2 py-1.5 max-w-[160px] truncate">{String(r.payee ?? '')}</td>
+                                      <td className="px-2 py-1.5 text-slate-500 max-w-[200px] truncate text-xs">{String(r.category ?? '')}</td>
+                                      <td className="px-2 py-1.5 text-slate-400 text-xs max-w-[200px] truncate">{String(r.notes ?? '')}</td>
+                                    </>
+                                }
+                                <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                                  {fmtEur(Number(r.amount_eur ?? 0))}
+                                </td>
+                                <td className="px-2 py-1.5 text-slate-500 text-xs">{String(r.account ?? '')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                )}
+              </div>
+            </div>
+          )
+      )}
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // MAIN
 // ════════════════════════════════════════════════════════════════════════════
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState('net-worth')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') ?? 'net-worth')
   const [startDate, setStartDate] = useState('2020-01-01')
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
   const current = REPORT_TABS.find(t => t.key === activeTab)
+
+  const switchTab = (key: string) => { setActiveTab(key); setSearchParams({ tab: key }, { replace: true }) }
 
   return (
     <div className="flex h-full">
       <nav className="w-48 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col py-4">
         <p className="px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reports</p>
         {REPORT_TABS.map(t => (
-          <button key={t.key} onClick={() => setActiveTab(t.key)}
+          <button key={t.key} onClick={() => switchTab(t.key)}
             className={`text-left px-4 py-2 text-sm transition-colors ${activeTab === t.key ? 'bg-blue-50 text-blue-700 font-semibold border-r-2 border-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}>
             {t.label}
           </button>
@@ -4272,7 +5054,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>
@@ -4293,6 +5075,7 @@ export default function Reports() {
               {activeTab === 'budget' && <BudgetSection />}
               {activeTab === 'tax' && <TaxSection />}
               {activeTab === 'planning' && <PlanningSection />}
+              {activeTab === 'custom' && <CustomReportsSection />}
             </CardBody>
           </Card>
         </div>

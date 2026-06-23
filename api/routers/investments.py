@@ -92,6 +92,7 @@ def get_investments(
             i.investments_id AS id,
             i.date::text AS date,
             i.action AS action,
+            s.securities_id AS securities_id,
             s.ticker AS ticker,
             s.securities_name AS security,
             i.quantity AS quantity,

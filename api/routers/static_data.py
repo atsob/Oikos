@@ -59,6 +59,7 @@ def get_categories(search: Optional[str] = Query(None)):
             )
             SELECT ch.Categories_Id AS id, ch.Full_Path AS full_path,
                    ch.Categories_Type AS type, ch.Level AS level,
+                   ch.Categories_Id_Parent AS parent_id,
                    COALESCE(sc.cnt, 0) AS transactions_count
             FROM CategoryHierarchy ch
             LEFT JOIN SplitCounts sc ON sc.Categories_Id = ch.Categories_Id
@@ -251,8 +252,8 @@ def upsert_category(data: dict):
         cid = data.get('id')
         if cid:
             cur.execute(
-                "UPDATE Categories SET Categories_Name=%s, Categories_Type=%s WHERE Categories_Id=%s",
-                (data.get('name'), data.get('type'), cid))
+                "UPDATE Categories SET Categories_Name=%s, Categories_Type=%s, Categories_Id_Parent=%s WHERE Categories_Id=%s",
+                (data.get('name'), data.get('type'), data.get('parent_id') or None, cid))
         else:
             cur.execute(
                 "INSERT INTO Categories (Categories_Name, Categories_Id_Parent, Categories_Type) VALUES (%s, %s, %s) RETURNING Categories_Id",

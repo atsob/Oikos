@@ -150,6 +150,7 @@ def get_portfolio_summary():
     SELECT
         a.Accounts_Name AS account,
         a.Accounts_Type AS account_type,
+        s.Securities_Id AS securities_id,
         s.Securities_Name AS security,
         s.Ticker AS ticker,
         h.Quantity AS quantity,
@@ -643,6 +644,7 @@ def get_pnl(
             GROUP BY a.Accounts_Id
         )
         SELECT
+            pf.Securities_Id AS securities_id,
             pf.Accounts_Name, pf.Securities_Name,
             pf.qty_today,
             pf.price_today,
@@ -906,6 +908,7 @@ def get_dividends_tracker(
         SELECT
             i.Date AS date,
             i.month,
+            i.Securities_Id AS securities_id,
             i.Securities_Name AS securities_name,
             i.Securities_Type AS securities_type,
             i.Accounts_Name AS accounts_name,
@@ -999,6 +1002,7 @@ def get_dividends_tracker(
     rows = []
     for (sec_name, sec_type), g in df_sorted.groupby(["securities_name", "securities_type"]):
         rows.append({
+            "securities_id": g["securities_id"].iloc[0],
             "securities_name": sec_name,
             "securities_type": sec_type,
             "period_income_eur": g["income_eur"].sum(),
@@ -1052,7 +1056,7 @@ def get_dividends_tracker(
         "avg_yoc_pct": round(avg_yoc, 4) if avg_yoc is not None else None,
     }
 
-    disp_cols = ["securities_name", "securities_type", "period_income_eur", "cost_basis_eur",
+    disp_cols = ["securities_id", "securities_name", "securities_type", "period_income_eur", "cost_basis_eur",
                  "yoc_pct", "fwd_yield_pct", "ex_div_date", "div_frequency"]
     detail_cols = ["month", "securities_name", "accounts_name", "action", "income_eur"]
 
@@ -1094,6 +1098,7 @@ def get_capital_gains(year: int = Query(None)):
     )
     SELECT
         i.Date::text AS date,
+        s.Securities_Id AS securities_id,
         s.Securities_Name AS security,
         s.Ticker AS ticker,
         a.Accounts_Name AS account,
@@ -2074,7 +2079,7 @@ def get_tax_loss_harvesting():
     query = """
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     latest_price AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
-    SELECT s.Securities_Name, s.Securities_Type::text, s.Ticker,
+    SELECT s.Securities_Id AS securities_id, s.Securities_Name, s.Securities_Type::text, s.Ticker,
            SUM(h.Quantity) AS quantity,
            lp.Close AS current_price,
            AVG(h.Fifo_Avg_Price) AS cost_basis,
@@ -2103,7 +2108,7 @@ def get_dividend_income_tax(year: int = Query(None)):
     if year is None:
         year = _date.today().year
     query = """
-    SELECT i.Date::text AS date, s.Securities_Name, a.Accounts_Name AS account_name,
+    SELECT i.Date::text AS date, s.Securities_Id AS securities_id, s.Securities_Name, a.Accounts_Name AS account_name,
            i.Action,
            FALSE AS is_tax_exempt,
            CASE WHEN cur.Currencies_ShortName='EUR' THEN i.Total_Amount_AccCur
@@ -2137,7 +2142,7 @@ def get_price_changes():
            (date_trunc('quarter', CURRENT_DATE) - INTERVAL '1 day')::date AS qtd,
            (date_trunc('year', CURRENT_DATE) - INTERVAL '1 day')::date AS ytd
     )
-    SELECT s.Securities_Name, s.Ticker, s.Securities_Type::text,
+    SELECT s.Securities_Id AS securities_id, s.Securities_Name, s.Ticker, s.Securities_Type::text,
            l.price_today,
            ROUND(((l.price_today - p_dtd.Close)/NULLIF(p_dtd.Close,0)*100)::numeric,2) AS dtd_pct,
            ROUND(((l.price_today - p_wtd.Close)/NULLIF(p_wtd.Close,0)*100)::numeric,2) AS wtd_pct,
@@ -2435,7 +2440,7 @@ def get_bond_schedule():
         FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
     ),
     bond_holdings AS (
-        SELECT h.Securities_Id, s.Securities_Name, h.Quantity,
+        SELECT h.Securities_Id AS securities_id, s.Securities_Name, h.Quantity,
                s.Maturity_Date, s.Coupon_Rate, s.Face_Value, s.Coupon_Frequency,
                s.Currencies_Id, c.Currencies_ShortName AS currency
         FROM Holdings h
@@ -2864,4 +2869,159 @@ def get_income_expense_full(
         df["date"] = df["date"].astype(str).str[:10]
     if "month_date" in df.columns:
         df["month_date"] = df["month_date"].astype(str).str[:10]
+    return _df_to_list(df)
+
+
+# ── Custom Reports ─────────────────────────────────────────────────────────────
+
+def _fetch_presets_fresh() -> list:
+    """Query Custom_Report_Presets directly — bypasses @st.cache_data on get_custom_report_presets."""
+    import json
+    from database.queries import _ensure_custom_reports_table
+    conn = get_connection()
+    try:
+        _ensure_custom_reports_table(conn)
+        df = pd.read_sql(
+            "SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Config AS config "
+            "FROM Custom_Report_Presets ORDER BY Preset_Name",
+            conn,
+        )
+    finally:
+        conn.close()
+    rows = []
+    for _, r in df.iterrows():
+        cfg = r["config"]
+        if isinstance(cfg, str):
+            cfg = json.loads(cfg)
+        rows.append({"preset_id": int(r["preset_id"]), "preset_name": r["preset_name"], "config": cfg or {}})
+    return rows
+
+
+@router.get("/custom-report-presets")
+def list_custom_report_presets():
+    return _fetch_presets_fresh()
+
+
+@router.post("/custom-report-presets")
+def save_custom_report_preset(body: dict):
+    import json
+    from database.queries import _ensure_custom_reports_table
+    name = body.get("preset_name", "").strip()
+    if not name:
+        raise HTTPException(400, "preset_name is required")
+    config = body.get("config", {})
+    conn = get_connection()
+    try:
+        _ensure_custom_reports_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Custom_Report_Presets (Preset_Name, Config, Updated_At)
+                VALUES (%s, %s::jsonb, NOW())
+                ON CONFLICT (Preset_Name) DO UPDATE
+                    SET Config = EXCLUDED.Config, Updated_At = NOW()
+            """, (name, json.dumps(config)))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@router.delete("/custom-report-presets/{preset_id}")
+def remove_custom_report_preset(preset_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM Custom_Report_Presets WHERE Preset_Id = %s", (preset_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@router.get("/custom-report-filter-data")
+def get_custom_report_filter_data():
+    """Return all accounts, expense categories, payees and securities for the Custom Report filters."""
+    from database.queries import get_all_payees, get_all_securities_for_filter, get_expense_categories
+    from database.connection import get_connection as _gc
+    conn = _gc()
+    try:
+        import pandas as _pd
+        accounts_df = _pd.read_sql("""
+            SELECT a.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name
+            FROM Accounts a
+            WHERE a.Is_Active = TRUE
+            ORDER BY a.Accounts_Name
+        """, conn)
+    finally:
+        conn.close()
+    payees_df = get_all_payees()
+    cats_df   = get_expense_categories()
+    secs_df   = get_all_securities_for_filter()
+    return {
+        "accounts":   _df_to_list(accounts_df),
+        "categories": _df_to_list(cats_df),
+        "payees":     _df_to_list(payees_df),
+        "securities": _df_to_list(secs_df),
+    }
+
+
+@router.post("/custom-report/run")
+def run_custom_report(body: dict):
+    from database.queries import get_custom_report_data, get_custom_report_investment_data
+    date_from        = body["date_from"]
+    date_to          = body["date_to"]
+    grouping         = body.get("grouping", "month")
+    account_ids      = body.get("account_ids") or None
+    category_ids     = body.get("category_ids") or None
+    payee_names      = body.get("payee_names") or None
+    security_ids     = body.get("security_ids") or None
+    include_transfers = body.get("include_transfers", False)
+    use_account_currency = body.get("use_account_currency", False)
+    investment_mode  = body.get("investment_mode", False)
+
+    if investment_mode:
+        df = get_custom_report_investment_data(
+            date_from, date_to, grouping,
+            security_ids=security_ids or [],
+            account_ids=account_ids,
+            use_account_currency=use_account_currency,
+        )
+    else:
+        df = get_custom_report_data(
+            date_from, date_to, grouping,
+            account_ids=account_ids,
+            category_ids=category_ids,
+            payee_names=payee_names,
+            security_ids=security_ids,
+            include_transfers=include_transfers,
+            use_account_currency=use_account_currency,
+        )
+    return _df_to_list(df)
+
+
+@router.post("/custom-report/drill-down")
+def custom_report_drill_down(body: dict):
+    from database.queries import get_custom_report_drill_down
+    df = get_custom_report_drill_down(
+        body["date_from"], body["date_to"],
+        category_path=body.get("category_path"),
+        account_ids=body.get("account_ids") or None,
+        category_ids=body.get("category_ids") or None,
+        payee_names=body.get("payee_names") or None,
+        security_ids=body.get("security_ids") or None,
+        include_transfers=body.get("include_transfers", False),
+        use_account_currency=body.get("use_account_currency", False),
+    )
+    return _df_to_list(df)
+
+
+@router.post("/custom-report/investment-drill-down")
+def custom_report_investment_drill_down(body: dict):
+    from database.queries import get_custom_report_investment_drill_down
+    df = get_custom_report_investment_drill_down(
+        body["date_from"], body["date_to"],
+        security_name=body.get("security_name"),
+        account_ids=body.get("account_ids") or None,
+        use_account_currency=body.get("use_account_currency", False),
+    )
     return _df_to_list(df)

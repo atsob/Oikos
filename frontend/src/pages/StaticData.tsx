@@ -1,20 +1,19 @@
 import React, { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
-import type { ColDef, GridReadyEvent, GridApi, CellValueChangedEvent } from 'ag-grid-community'
+import type { ColDef, GridReadyEvent, GridApi, CellValueChangedEvent, RowClickedEvent } from 'ag-grid-community'
 import {
   api,
-  getPayees, getCategories, getInstitutions, getAccountsMaster, getBudgets,
+  getPayees, getCategories, getInstitutions, getAccountsMaster,
   upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories,
   getSecuritiesMaster, upsertSecurity,
   getCurrenciesMaster, upsertCurrency,
-  upsertBudget, deleteBudget,
   getPayeeTransactions, getCategoryTransactions,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable } from '@/components/ui'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
-const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Budgets']
+const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts']
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
@@ -39,7 +38,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
         <div className="px-5 py-4 space-y-3">{children}</div>
-        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">{footer}</div>
+        <div className="flex items-center gap-2 px-5 py-3 border-t border-slate-200">{footer}</div>
       </div>
     </div>
   )
@@ -134,11 +133,12 @@ function PayeesTab({ search }: { search: string }) {
           <ArrowRightLeft size={13} /> Merge Payees
         </Button>
         {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} payees</span>
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} payees · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           columnDefs={[
             { field: 'id', headerName: 'ID', width: 70 },
             { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
@@ -156,13 +156,14 @@ function PayeesTab({ search }: { search: string }) {
             },
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50}
         />
       </div>
 
       {editRow && (
         <Modal title={editRow.id ? 'Edit Payee' : 'New Payee'} onClose={() => setEditRow(null)}
           footer={<>
+            {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !editName.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
           </>}>
@@ -273,7 +274,7 @@ function CategoriesTab({ search }: { search: string }) {
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
     const namePart = String(row.full_path ?? '').split(' : ').pop() ?? ''
-    setForm({ name: namePart, parent_id: '', type: String(row.type ?? 'Expense') })
+    setForm({ name: namePart, parent_id: row.parent_id != null ? String(row.parent_id) : '', type: String(row.type ?? 'Expense') })
     setError(null)
   }
 
@@ -330,11 +331,12 @@ function CategoriesTab({ search }: { search: string }) {
           <ArrowRightLeft size={13} /> Merge Categories
         </Button>
         {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} categories</span>
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} categories · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           columnDefs={[
             { field: 'id', headerName: 'ID', width: 70 },
             { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
@@ -352,29 +354,30 @@ function CategoriesTab({ search }: { search: string }) {
             },
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50}
         />
       </div>
 
       {editRow !== null && (
         <Modal title={editRow.id ? 'Edit Category' : 'New Category'} onClose={() => setEditRow(null)}
           footer={<>
+            {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
           </>}>
           <Field label="Name *">
             <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Category name" />
           </Field>
-          {!editRow.id && (
-            <Field label="Parent category">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}>
-                <option value="">— top level —</option>
-                {catList.map(c => (
+          <Field label="Parent category">
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.parent_id} onChange={e => setForm(f => ({ ...f, parent_id: e.target.value }))}>
+              <option value="">— top level —</option>
+              {(catList as Record<string, unknown>[])
+                .filter(c => !editRow.id || c.id !== editRow.id)
+                .map(c => (
                   <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)}</option>
                 ))}
-              </select>
-            </Field>
-          )}
+            </select>
+          </Field>
           <Field label="Type *">
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
               {CATEGORY_TYPES.map(t => <option key={t}>{t}</option>)}
@@ -523,11 +526,12 @@ function AccountsTab({ search }: { search: string }) {
       <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
         {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} accounts · click pencil to edit</span>
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} accounts · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           columnDefs={[
             { field: 'id', headerName: 'ID', width: 70 },
             { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
@@ -549,13 +553,14 @@ function AccountsTab({ search }: { search: string }) {
             },
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50}
         />
       </div>
 
       {editRow !== null && (
         <Modal title={form.id ? 'Edit Account' : 'New Account'} onClose={() => setEditRow(null)}
           footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDeactivate(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !String(form.name ?? '').trim() || !form.currencies_id}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save'}
@@ -748,11 +753,12 @@ function InstitutionsTab({ search }: { search: string }) {
       <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
         {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} institutions</span>
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} institutions · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           columnDefs={[
             { field: 'id', headerName: 'ID', width: 70 },
             { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
@@ -774,13 +780,14 @@ function InstitutionsTab({ search }: { search: string }) {
             },
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50}
         />
       </div>
 
       {editRow !== null && (
         <Modal title={form.id ? 'Edit Institution' : 'New Institution'} onClose={() => setEditRow(null)}
           footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
           </>}>
@@ -890,7 +897,6 @@ function GridTab({ tabName, search }: { tabName: string; search: string }) {
           rowData={filtered}
           columnDefs={cfg.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50}
           rowSelection="multiple"
           onGridReady={onGridReady}
           onCellValueChanged={onCellValueChanged}
@@ -901,95 +907,211 @@ function GridTab({ tabName, search }: { tabName: string; search: string }) {
   )
 }
 
-// ── Budgets Tab ───────────────────────────────────────────────────────────────
-function BudgetsTab({ search }: { search: string }) {
+
+// ── Currencies Tab ────────────────────────────────────────────────────────────
+function CurrenciesTab({ search }: { search: string }) {
   const qc = useQueryClient()
-  const [year, setYear] = useState(new Date().getFullYear())
-  const [pending, setPending] = useState<Map<string, Record<string, unknown>>>(new Map())
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
-  const { data: budgets = [], isLoading } = useQuery({ queryKey: ['budgets', year], queryFn: () => getBudgets(year) })
-  const deleteMut = useMutation({ mutationFn: (id: number) => deleteBudget(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['budgets'] }) })
+  const { data = [], isLoading } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
+  const filtered = search
+    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : data as Record<string, unknown>[]
 
-  const catList = (categories as Record<string, unknown>[]).filter(c => !search || String(c.full_path ?? '').toLowerCase().includes(search.toLowerCase()))
-  const budgetMap = new Map((budgets as Record<string, unknown>[]).map(b => [Number(b.categories_id), b]))
-  const rows = catList.map(c => {
-    const b = budgetMap.get(Number(c.id))
-    return { ...c, budget_id: b ? b.id : null, budget_amount: b ? b.budget_amount : '' }
-  }).filter(r => r.type === 'Expense' || r.budget_amount)
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  const { sorted: budgetSorted, sortKey: budgetSK, sortDir: budgetSD, toggleSort: budgetSort } = useSortTable(rows, null)
-
-  const handleAmountChange = (catId: number, amount: string, budgetId: number | null) => {
-    setPending(prev => new Map(prev).set(String(catId), { categories_id: catId, year, budget_amount: amount, id: budgetId ?? undefined }))
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
+    setError(null)
   }
+  const openNew = () => { setEditRow({}); setForm({ code: '', name: '', symbol: '' }); setError(null) }
 
-  const saveAll = async () => {
+  const handleSave = async () => {
     setSaving(true); setError(null)
     try {
-      for (const row of pending.values()) {
-        if (!row.budget_amount) { if (row.id) await deleteBudget(Number(row.id)) }
-        else await upsertBudget(row)
-      }
-      setPending(new Map())
-      qc.invalidateQueries({ queryKey: ['budgets'] })
+      await upsertCurrency({ id: editRow?.id ?? undefined, ...form })
+      qc.invalidateQueries({ queryKey: ['currencies-master'] })
+      setEditRow(null)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
     finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this currency?')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('currencies', id)
+      qc.invalidateQueries({ queryKey: ['currencies-master'] })
+    } catch (e) { setDeleteError(extractError(e)) }
   }
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
     <div>
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50">
-        <label className="text-sm font-medium text-slate-600">Year</label>
-        <Input type="number" className="w-24" value={year} onChange={e => { setYear(Number(e.target.value)); setPending(new Map()) }} />
-        {pending.size > 0 && <Button size="sm" onClick={saveAll} disabled={saving}><Save size={13} /> {saving ? 'Saving…' : `Save (${pending.size} changed)`}</Button>}
-        {error && <span className="text-xs text-red-600">{error}</span>}
-        <span className="ml-auto text-xs text-slate-400">Edit budget amounts · blank = no budget</span>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} currencies · double-click to edit</span>
       </div>
-      <div className="overflow-auto" style={{ maxHeight: '560px' }}>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 sticky top-0">
-            <tr>
-              <ColHeader label="Category" sortKey="full_path" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} className="px-3 py-2 text-left text-slate-600 text-xs" />
-              <ColHeader label="Type" sortKey="type" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} className="px-3 py-2 text-left text-slate-600 text-xs w-32" />
-              <ColHeader label="Budget Amount (€)" sortKey="budget_amount" currentKey={budgetSK} currentDir={budgetSD} onSort={budgetSort} align="right" className="px-3 py-2 text-slate-600 text-xs w-36" />
-              <th className="w-8"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {budgetSorted.map(r => {
-              const pendingVal = pending.get(String(r.id))
-              const displayVal = pendingVal !== undefined ? String(pendingVal.budget_amount ?? '') : (r.budget_amount != null && r.budget_amount !== '' ? String(r.budget_amount) : '')
-              const isDirty = pendingVal !== undefined
-              return (
-                <tr key={String(r.id)} className={isDirty ? 'bg-blue-50' : 'hover:bg-slate-50'}>
-                  <td className="px-3 py-1.5 text-slate-700" style={{ paddingLeft: `${(Number(r.level ?? 0)) * 16 + 12}px` }}>
-                    {String(r.full_path ?? '').split(' : ').pop()}
-                  </td>
-                  <td className="px-3 py-1.5 text-slate-500 text-xs">{String(r.type ?? '')}</td>
-                  <td className="px-3 py-1 text-right">
-                    <input type="number" step="0.01"
-                      className="w-28 text-right rounded border border-slate-300 px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      value={displayVal} placeholder="—"
-                      onChange={e => handleAmountChange(Number(r.id), e.target.value, r.budget_id as number | null)}
-                    />
-                  </td>
-                  <td className="px-2 py-1 text-center">
-                    {r.budget_id != null && (
-                      <button onClick={() => { deleteMut.mutate(Number(r.budget_id)); setPending(prev => { const m = new Map(prev); m.delete(String(r.id)); return m }) }}
-                        className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'code', headerName: 'Code', width: 90 },
+            { field: 'name', headerName: 'Name', flex: 2, minWidth: 160 },
+            { field: 'symbol', headerName: 'Symbol', width: 80 },
+            { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+            { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+        />
       </div>
+      {editRow !== null && (
+        <Modal title={form.id ? 'Edit Currency' : 'New Currency'} onClose={() => setEditRow(null)}
+          footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !form.code?.trim() || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <Field label="Code *"><Input value={form.code ?? ''} onChange={e => set('code', e.target.value)} placeholder="EUR" /></Field>
+          <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} placeholder="Euro" /></Field>
+          <Field label="Symbol"><Input value={form.symbol ?? ''} onChange={e => set('symbol', e.target.value)} placeholder="€" /></Field>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Securities Tab ────────────────────────────────────────────────────────────
+function SecuritiesTab({ search }: { search: string }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const { data = [], isLoading } = useQuery({ queryKey: ['securities-master'], queryFn: () => getSecuritiesMaster() })
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
+
+  const filtered = search
+    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : data as Record<string, unknown>[]
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
+    setError(null)
+  }
+  const openNew = () => { setEditRow({}); setForm({ ticker: '', name: '', type: 'Stock', instrument_type: '' }); setError(null) }
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      await upsertSecurity({ id: editRow?.id ?? undefined, ...form })
+      qc.invalidateQueries({ queryKey: ['securities-master'] })
+      setEditRow(null)
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this security? This cannot be undone.')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('securities', id)
+      qc.invalidateQueries({ queryKey: ['securities-master'] })
+    } catch (e) { setDeleteError(extractError(e)) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
+        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+        <span className="ml-auto text-xs text-slate-400">{filtered.length} securities · double-click to edit</span>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          columnDefs={[
+            { field: 'id', headerName: 'ID', width: 70 },
+            { field: 'ticker', headerName: 'Ticker', width: 100, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
+            { field: 'name', headerName: 'Name', flex: 2, minWidth: 180 },
+            { field: 'type', headerName: 'Type', width: 130 },
+            { field: 'instrument_type', headerName: 'Instrument', width: 120 },
+            { field: 'currency', headerName: 'Currency', width: 90 },
+            { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 4 }) : '—' },
+            { field: 'price_date', headerName: 'Price Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+            { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn' },
+            {
+              headerName: '', width: 80, sortable: false, filter: false,
+              cellRenderer: (p: { data: Record<string, unknown> }) => (
+                <div className="flex gap-1 items-center h-full">
+                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              ),
+            },
+          ]}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+        />
+      </div>
+      {editRow !== null && (
+        <Modal title={form.id ? 'Edit Security' : 'New Security'} onClose={() => setEditRow(null)}
+          footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !form.ticker?.trim() || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Ticker *"><Input value={form.ticker ?? ''} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" /></Field>
+            <Field label="Type *">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type ?? 'Stock'} onChange={e => set('type', e.target.value)}>
+                {SECURITY_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </Field>
+            <div className="col-span-2">
+              <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} placeholder="Apple Inc." /></Field>
+            </div>
+            <Field label="Instrument Type"><Input value={form.instrument_type ?? ''} onChange={e => set('instrument_type', e.target.value)} placeholder="Common Stock" /></Field>
+            <Field label="Currency">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.currencies_id ?? ''} onChange={e => set('currencies_id', e.target.value)}>
+                <option value="">— select —</option>
+                {(currencies as Record<string, unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} – {String(c.name)}</option>)}
+              </select>
+            </Field>
+            <Field label="ISIN"><Input value={form.isin ?? ''} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" /></Field>
+            <Field label="Exchange"><Input value={form.exchange ?? ''} onChange={e => set('exchange', e.target.value)} placeholder="NASDAQ" /></Field>
+          </div>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
     </div>
   )
 }
@@ -1023,7 +1145,6 @@ export default function StaticData() {
           {tab === 'Categories'   && <CategoriesTab search={search} />}
           {tab === 'Institutions' && <InstitutionsTab search={search} />}
           {tab === 'Accounts'     && <AccountsTab search={search} />}
-          {tab === 'Budgets'      && <BudgetsTab search={search} />}
         </Card>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef } from 'ag-grid-community'
@@ -51,14 +52,19 @@ const updateInvestment = (id: number, data: Record<string, unknown>) =>
 
 // HOLDING_COLS removed — Holdings tab now uses an inline editable table
 
-const INV_COLS: ColDef[] = [
+const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 100, sort: 'desc', valueFormatter: p => fmtDate(p.value) },
   { field: 'action', headerName: 'Action', width: 100, cellStyle: p => ({
     color: ['Buy'].includes(p.value) ? '#1d4ed8' : ['Sell'].includes(p.value) ? '#dc2626' : ['Dividend','Reinvest','IntInc'].includes(p.value) ? '#15803d' : '#475569',
     fontWeight: 600,
   }) },
   { field: 'ticker', headerName: 'Ticker', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-  { field: 'security', headerName: 'Security', flex: 2, minWidth: 160 },
+  { field: 'security', headerName: 'Security', flex: 2, minWidth: 160,
+    cellRenderer: (p: { value: string; data: Record<string, unknown> }) =>
+      p.data.securities_id
+        ? <button onClick={() => navigate(`/securities/${p.data.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+        : <span>{p.value}</span>
+  },
   { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { maximumFractionDigits: 8 }) : '—' },
   { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
@@ -678,8 +684,16 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
               return (
                 <tr key={id} className={`border-b border-slate-100 ${changed ? 'bg-yellow-50' : 'hover:bg-slate-50'}`}>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.account)}</td>
-                  <td className="py-1.5 pr-3 font-mono font-bold text-slate-800">{String(row.ticker)}</td>
-                  <td className="py-1.5 pr-3 text-slate-700 max-w-[180px] truncate">{String(row.security)}</td>
+                  <td className="py-1.5 pr-3 font-mono font-bold text-slate-800">
+                    {row.securities_id
+                      ? <button onClick={() => navigate(`/securities/${row.securities_id}`)} className="text-blue-600 hover:underline font-mono font-bold">{String(row.ticker)}</button>
+                      : String(row.ticker)}
+                  </td>
+                  <td className="py-1.5 pr-3 text-slate-700 max-w-[180px] truncate">
+                    {row.securities_id
+                      ? <button onClick={() => navigate(`/securities/${row.securities_id}`)} className="text-blue-600 hover:underline text-left truncate">{String(row.security)}</button>
+                      : String(row.security)}
+                  </td>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.security_type ?? '')}</td>
                   <td className="py-1 pr-3">
                     <input type="number" step="any"
@@ -720,6 +734,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [tab, setTab] = useState<'holdings' | 'transactions' | 'cash'>('holdings')
   const [accountId, setAccountId] = useState<number | null>(null)
@@ -1158,7 +1173,7 @@ export default function Investments() {
                 <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
                   <AgGridReact
                     rowData={invData?.investments ?? []}
-                    columnDefs={INV_COLS}
+                    columnDefs={makeInvCols(navigate)}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
                     onGridReady={e => e.api.autoSizeAllColumns()}

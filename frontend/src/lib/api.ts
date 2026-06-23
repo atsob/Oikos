@@ -599,3 +599,20 @@ export const getMonteCarlo = (params: {
     lookback_days: params.lookbackDays, account_ids: params.accountIds?.join(',') || undefined,
     initial_value: params.initialValue, override_return_pct: params.overrideReturnPct, override_vol_pct: params.overrideVolPct,
   } }).then(r => r.data)
+
+
+// ── Custom Reports ────────────────────────────────────────────────────────────
+export const getCustomReportPresets = () =>
+  api.get('/reports/custom-report-presets').then(r => r.data)
+export const saveCustomReportPreset = (preset_name: string, config: Record<string, unknown>) =>
+  api.post('/reports/custom-report-presets', { preset_name, config }).then(r => r.data)
+export const deleteCustomReportPreset = (preset_id: number) =>
+  api.delete(`/reports/custom-report-presets/${preset_id}`).then(r => r.data)
+export const getCustomReportFilterData = () =>
+  api.get('/reports/custom-report-filter-data').then(r => r.data)
+export const runCustomReport = (params: Record<string, unknown>) =>
+  api.post('/reports/custom-report/run', params).then(r => r.data)
+export const runCustomReportDrillDown = (params: Record<string, unknown>) =>
+  api.post('/reports/custom-report/drill-down', params).then(r => r.data)
+export const runCustomReportInvestmentDrillDown = (params: Record<string, unknown>) =>
+  api.post('/reports/custom-report/investment-drill-down', params).then(r => r.data)

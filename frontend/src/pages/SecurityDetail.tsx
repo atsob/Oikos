@@ -812,8 +812,8 @@ export default function SecurityDetail() {
       <PageHeader
         title=""
         actions={
-          <Button size="sm" variant="secondary" onClick={() => navigate('/market-data')}>
-            <ArrowLeft size={13} /> Back to Market Data
+          <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+            <ArrowLeft size={13} /> Back
           </Button>
         }
       />

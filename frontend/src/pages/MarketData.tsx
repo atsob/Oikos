@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
-import type { ColDef } from 'ag-grid-community'
+import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
@@ -186,12 +186,14 @@ function SecuritiesTab({ search }: { search: string }) {
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact rowData={securities} columnDefs={colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          pagination paginationPageSize={50} />
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
       </div>
 
       {editRow !== null && (
         <Modal title={form.id ? `Edit Security — ${form.ticker}` : 'New Security'} wide onClose={() => setEditRow(null)}
           footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.ticker?.trim()}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save'}
@@ -337,12 +339,15 @@ function CurrenciesTab({ search }: { search: string }) {
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
         <AgGridReact rowData={filtered} columnDefs={colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }} />
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
       </div>
 
       {editRow !== null && (
         <Modal title={form.id ? 'Edit Currency' : 'New Currency'} onClose={() => setEditRow(null)}
           footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.code?.trim() || !form.name?.trim()}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save'}
@@ -1088,7 +1093,9 @@ function AlertsTab() {
 }
 
 export default function MarketData() {
-  const [tab, setTab] = useState('Currencies')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialTab = searchParams.get('tab') ?? 'Currencies'
+  const [tab, setTab] = useState(initialTab)
   const [search, setSearch] = useState('')
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
@@ -1105,7 +1112,7 @@ export default function MarketData() {
         <div className="flex items-center justify-between">
           <div className="flex gap-1 border-b border-slate-200 flex-1">
             {TABS.map(t => (
-              <button key={t} onClick={() => { setTab(t); setSearch('') }}
+              <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
                 className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                 {t}
               </button>
