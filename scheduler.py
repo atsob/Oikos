@@ -13,15 +13,14 @@ Jobs
 
 import warnings
 warnings.filterwarnings("ignore", message="No runtime found", category=UserWarning)
+warnings.filterwarnings("ignore", message="No runtime found", module="streamlit")
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", category=UserWarning)
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 import logging
+import re
 import time
-import warnings
 from datetime import date, datetime, timedelta
-
-warnings.filterwarnings("ignore", message="No runtime found", module="streamlit")
-warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 from ai.weekly_summary import run as run_weekly_summary
 from ai.monthly_summary import run as run_monthly_summary
@@ -53,28 +52,32 @@ logging.basicConfig(
     ],
 )
 
-# ── Market-data refresh config ────────────────────────────────────────────────
-MARKET_REFRESH_INTERVAL_MINUTES = 5   # how often to refresh prices & FX (24 × 7)
-
-# ── Daily backup config ───────────────────────────────────────────────────────
-BACKUP_HOUR            = 6    # local hour at which the daily backup runs (06:00 AM)
-BACKUP_RETENTION_DAYS  = 30   # delete backups older than this many days
-
-# ── Morning maintenance config ────────────────────────────────────────────────
-# Runs 15 minutes after backup (backup completes well within 5 minutes).
-MAINTENANCE_HOUR   = BACKUP_HOUR  # same hour as backup (06:xx)
-MAINTENANCE_MINUTE = 15           # 06:15 AM
+# ── Fallback defaults (used when DB row is missing or unparseable) ────────────
+MARKET_REFRESH_INTERVAL_MINUTES = 5   # Every 5 min, 24×7
+BACKUP_HOUR            = 6    # Daily at 06:00
+BACKUP_RETENTION_DAYS  = 30
+MAINTENANCE_HOUR       = 6    # Daily at 06:15
+MAINTENANCE_MINUTE     = 15
+WEEKLY_SUMMARY_WEEKDAY = 0    # Monday at 07:00
+WEEKLY_SUMMARY_HOUR    = 7
+WEEKLY_SUMMARY_MINUTE  = 0
+MONTHLY_SUMMARY_DAY    = 1    # 1st of month at 07:00
+MONTHLY_SUMMARY_HOUR   = 7
+MONTHLY_SUMMARY_MINUTE = 0
+DIVIDEND_HISTORY_WEEKDAY = 6  # Sunday at 06:30
+DIVIDEND_HISTORY_HOUR    = 6
+DIVIDEND_HISTORY_MINUTE  = 30
 
 # Tick interval — the scheduler wakes up this often to check all jobs.
-# Keep it at 60 s so Monday-07:00 is never missed by more than a minute.
 TICK_SECONDS = 60
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _current_week_start() -> date:
+    """Return Monday of the just-finished week — matches what weekly_summary.run() stores."""
     today = date.today()
-    return today - timedelta(days=today.weekday())
+    return today - timedelta(days=today.weekday() + 7)
 
 
 def _summary_exists_for_current_week() -> bool:
@@ -117,7 +120,77 @@ def _record_job(job_id: str, status: str, message: str = ""):
         logging.warning(f"Could not record job status for '{job_id}': {exc}")
 
 
+_DAYS = {'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+         'friday': 4, 'saturday': 5, 'sunday': 6}
+
+_schedule_cache: dict[str, str] = {}
+_schedule_cache_ts: datetime = datetime.min
+
+
+def _get_all_schedules() -> dict[str, str]:
+    """Read all job schedules from DB, cached for one tick interval."""
+    global _schedule_cache, _schedule_cache_ts
+    if (datetime.now() - _schedule_cache_ts).total_seconds() < TICK_SECONDS:
+        return _schedule_cache
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT job_id, schedule FROM Scheduler_Jobs")
+            _schedule_cache = {r[0]: str(r[1] or '') for r in cur.fetchall()}
+        conn.close()
+        _schedule_cache_ts = datetime.now()
+    except Exception as exc:
+        logging.warning(f"Could not read schedules from DB: {exc}")
+    return _schedule_cache
+
+
+def _parse_interval(s: str, default: int) -> int:
+    """'Every N min…' → N, else default."""
+    m = re.search(r'every\s+(\d+)\s*min', s, re.IGNORECASE)
+    return int(m.group(1)) if m else default
+
+
+def _parse_daily(s: str, dh: int, dm: int) -> tuple[int, int]:
+    """'… at HH:MM' → (hour, minute), else (dh, dm)."""
+    m = re.search(r'\bat\s+(\d{1,2}):(\d{2})', s, re.IGNORECASE)
+    return (int(m.group(1)), int(m.group(2))) if m else (dh, dm)
+
+
+def _parse_weekly(s: str, dwd: int, dh: int, dm: int) -> tuple[int, int, int]:
+    """'Monday at HH:MM' → (weekday, hour, minute), else defaults."""
+    m = re.search(
+        r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+(\d{1,2}):(\d{2})',
+        s, re.IGNORECASE)
+    if m:
+        return (_DAYS[m.group(1).lower()], int(m.group(2)), int(m.group(3)))
+    return (dwd, dh, dm)
+
+
+def _parse_monthly(s: str, dd: int, dh: int, dm: int) -> tuple[int, int, int]:
+    """'Nth of month at HH:MM' → (day, hour, minute), else defaults."""
+    m = re.search(r'(\d+)(?:st|nd|rd|th)?\s+of\s+month\s+at\s+(\d{1,2}):(\d{2})', s, re.IGNORECASE)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return (dd, dh, dm)
+
+
+def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
+    """True if now is within `window` minutes of HH:MM on the same day."""
+    return now.hour == hour and minute <= now.minute < minute + window
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
+
+def _monthly_summary_job():
+    logging.info("Running monthly summary job…")
+    try:
+        run_monthly_summary()
+        logging.info("Monthly summary completed.")
+        _record_job("monthly_summary", "success", "Completed OK")
+    except Exception as e:
+        logging.error(f"Monthly summary failed: {e}", exc_info=True)
+        _record_job("monthly_summary", "error", str(e))
+
 
 def _weekly_summary_job():
     logging.info("Running weekly summary job…")
@@ -294,6 +367,11 @@ def _morning_maintenance_job():
 if __name__ == "__main__":
     logging.info("Scheduler starting.")
 
+    # Read schedules once at startup so startup-skip logic uses configured values
+    _sc = _get_all_schedules()
+    _ws_wd, _ws_h, _ws_m   = _parse_weekly(_sc.get('weekly_summary', ''),   WEEKLY_SUMMARY_WEEKDAY,  WEEKLY_SUMMARY_HOUR,  WEEKLY_SUMMARY_MINUTE)
+    _mnt_h, _mnt_m          = _parse_daily (_sc.get('morning_maintenance',''), MAINTENANCE_HOUR, MAINTENANCE_MINUTE)
+
     # Run weekly summary immediately if this week's entry is missing
     if not _summary_exists_for_current_week():
         logging.info("No summary for current week — running now.")
@@ -301,70 +379,62 @@ if __name__ == "__main__":
     else:
         logging.info("Current week's summary already exists — skipping startup run.")
 
-    # Run market data once at startup if the market is currently open
+    # Run market data once at startup
     _last_market_refresh: datetime = datetime.min
     now = datetime.now()
     if _is_market_open(now):
         logging.info("Market is open — running initial market data refresh.")
         _market_data_job()
         _last_market_refresh = now
-    else:
-        logging.info(
-            f"Market closed at startup (weekday={now.weekday()}, hour={now.hour}) — "
-            "skipping initial market data refresh."
-        )
 
-    _last_weekly_summary_date: date = date.today() if datetime.now().weekday() == 0 and datetime.now().hour >= 7 else date.min
+    # Skip weekly summary if already past the scheduled window today
+    _last_weekly_summary_date: date = (
+        date.today() if now.weekday() == _ws_wd and now.hour >= _ws_h else date.min
+    )
 
-    # Daily backup: skip today's run if a backup file for today already exists
-    # (prevents duplicate backups when the container is restarted mid-day)
+    # Daily backup: skip if a backup already exists for today
     _last_backup_date: date = date.min
     try:
-        _today_backups = [
-            b for b in DatabaseBackup().get_backup_history()
-            if b['modified'].date() == date.today()
-        ]
+        _today_backups = [b for b in DatabaseBackup().get_backup_history()
+                          if b['modified'].date() == date.today()]
         if _today_backups:
             _last_backup_date = date.today()
-            logging.info(
-                f"Today's backup already exists ({_today_backups[0]['filename']}) — skipping."
-            )
+            logging.info(f"Today's backup already exists ({_today_backups[0]['filename']}) — skipping.")
     except Exception:
-        pass  # if check fails, let the normal schedule handle it
+        pass
 
     # Recurring drafts: run once at startup
     logging.info("Running initial recurring drafts generation.")
     _recurring_drafts_job()
     _last_recurring_drafts_date: date = date.today()
 
-    # Securities info: run once at startup every day
-    _last_securities_info_date: date = date.min
+    # Securities info: run once at startup
     logging.info("Running initial securities info refresh.")
     _securities_info_job()
-    _last_securities_info_date = date.today()
+    _last_securities_info_date: date = date.today()
 
-    # Dividend history: weekly (Sunday); skip if already ran this week
+    # Dividend history: weekly — skip if already ran this week
     _last_dividend_history_week: date = date.min
 
-    # Morning maintenance (VACUUM ANALYZE + embeddings): skip if already ran today
+    # Monthly summary: skip if already ran this month
+    _last_monthly_summary_month: int = -1
+
+    # Morning maintenance: skip if already past the scheduled window today
     _last_maintenance_date: date = date.min
     _now_startup = datetime.now()
-    if (
-        _now_startup.hour > MAINTENANCE_HOUR
-        or (_now_startup.hour == MAINTENANCE_HOUR and _now_startup.minute >= MAINTENANCE_MINUTE)
-    ):
-        # Assume maintenance already ran if we're starting up after its scheduled window
+    if _now_startup.hour > _mnt_h or (_now_startup.hour == _mnt_h and _now_startup.minute >= _mnt_m):
         _last_maintenance_date = date.today()
         logging.info("Past maintenance window at startup — skipping initial run.")
 
-    # Tick loop — wakes every TICK_SECONDS and evaluates each job
+    # ── Tick loop ─────────────────────────────────────────────────────────────
     while True:
         time.sleep(TICK_SECONDS)
         now = datetime.now()
+        sc = _get_all_schedules()
 
-        # ── Market data: every N minutes during market hours ──────────────────
+        # ── Market data: every N minutes ──────────────────────────────────────
         minutes_since_refresh = (now - _last_market_refresh).total_seconds() / 60
-        if _is_market_open(now) and minutes_since_refresh >= MARKET_REFRESH_INTERVAL_MINUTES:
+        if _is_market_open(now) and minutes_since_refresh >= _parse_interval(sc.get('market_data', ''), MARKET_REFRESH_INTERVAL_MINUTES):
             _market_data_job()
             _last_market_refresh = now
 
@@ -373,46 +443,38 @@ if __name__ == "__main__":
             _recurring_drafts_job()
             _last_recurring_drafts_date = date.today()
 
-        # ── Securities info: once per calendar day (including weekends) ─────────
+        # ── Securities info: once per calendar day ────────────────────────────
         if _last_securities_info_date != date.today():
             _securities_info_job()
             _last_securities_info_date = date.today()
 
-        # ── Daily backup at BACKUP_HOUR (fire once per calendar day) ─────────
-        if (
-            now.hour == BACKUP_HOUR
-            and now.minute < 5          # within the first 5 minutes of the hour
-            and _last_backup_date != date.today()
-        ):
+        # ── Daily backup ──────────────────────────────────────────────────────
+        bkp_h, bkp_m = _parse_daily(sc.get('daily_backup', ''), BACKUP_HOUR, 0)
+        if _in_window(now, bkp_h, bkp_m) and _last_backup_date != date.today():
             _backup_job()
             _last_backup_date = date.today()
 
-        # ── Weekly summary: Monday at 07:00 (fire once per Monday) ───────────
-        if (
-            now.weekday() == 0          # Monday
-            and now.hour == 7
-            and now.minute < 5          # within the first 5 minutes of 07:00
-            and _last_weekly_summary_date != date.today()
-        ):
-            _weekly_summary_job()
-            _last_weekly_summary_date = date.today()
-
-        # ── Morning maintenance: VACUUM ANALYZE + embeddings at 06:15 ───────────
-        if (
-            now.hour == MAINTENANCE_HOUR
-            and MAINTENANCE_MINUTE <= now.minute < MAINTENANCE_MINUTE + 5
-            and _last_maintenance_date != date.today()
-        ):
+        # ── Morning maintenance ───────────────────────────────────────────────
+        mnt_h, mnt_m = _parse_daily(sc.get('morning_maintenance', ''), MAINTENANCE_HOUR, MAINTENANCE_MINUTE)
+        if _in_window(now, mnt_h, mnt_m) and _last_maintenance_date != date.today():
             _morning_maintenance_job()
             _last_maintenance_date = date.today()
 
-        # ── Dividend history: Sunday at 06:30 (once per week) ────────────────
+        # ── Weekly summary ────────────────────────────────────────────────────
+        ws_wd, ws_h, ws_m = _parse_weekly(sc.get('weekly_summary', ''), WEEKLY_SUMMARY_WEEKDAY, WEEKLY_SUMMARY_HOUR, WEEKLY_SUMMARY_MINUTE)
+        if now.weekday() == ws_wd and _in_window(now, ws_h, ws_m) and _last_weekly_summary_date != date.today():
+            _weekly_summary_job()
+            _last_weekly_summary_date = date.today()
+
+        # ── Monthly summary ───────────────────────────────────────────────────
+        ms_d, ms_h, ms_m = _parse_monthly(sc.get('monthly_summary', ''), MONTHLY_SUMMARY_DAY, MONTHLY_SUMMARY_HOUR, MONTHLY_SUMMARY_MINUTE)
+        if now.day == ms_d and _in_window(now, ms_h, ms_m) and _last_monthly_summary_month != now.month:
+            _monthly_summary_job()
+            _last_monthly_summary_month = now.month
+
+        # ── Dividend history: weekly ──────────────────────────────────────────
         _this_week_start = _current_week_start()
-        if (
-            now.weekday() == 6          # Sunday
-            and now.hour == 6
-            and 30 <= now.minute < 35
-            and _last_dividend_history_week != _this_week_start
-        ):
+        dh_wd, dh_h, dh_m = _parse_weekly(sc.get('dividend_history', ''), DIVIDEND_HISTORY_WEEKDAY, DIVIDEND_HISTORY_HOUR, DIVIDEND_HISTORY_MINUTE)
+        if now.weekday() == dh_wd and _in_window(now, dh_h, dh_m) and _last_dividend_history_week != _this_week_start:
             _dividend_history_job()
             _last_dividend_history_week = _this_week_start

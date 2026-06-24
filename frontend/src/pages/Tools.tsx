@@ -1688,21 +1688,24 @@ function LogViewer() {
   const [lines, setLines] = useState(500)
   const [levelFilter, setLevelFilter] = useState<string[]>(['ERROR', 'WARNING'])
   const [search, setSearch] = useState('')
+  const [fileFilter, setFileFilter] = useState<'all' | 'app' | 'scheduler'>('all')
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['logs', lines, levelFilter.join(','), search],
-    queryFn: () => getLogs(lines, levelFilter.length ? levelFilter.join(',') : undefined, search || undefined),
+    queryKey: ['logs', lines, levelFilter.join(','), search, fileFilter],
+    queryFn: () => getLogs(lines, levelFilter.length ? levelFilter.join(',') : undefined, search || undefined, fileFilter),
     staleTime: 10_000,
   })
 
   const LEVELS = ['ERROR', 'WARNING', 'INFO', 'DEBUG']
+  const sourcesFound: Record<string, string> = (data as any)?.sources_found ?? {}
+  const noFilesFound = Object.keys(sourcesFound).length === 0
 
   function downloadLog() {
     if (!data?.text) return
     const blob = new Blob([data.text], { type: 'text/plain' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'app.log'
+    a.download = fileFilter === 'all' ? 'combined.log' : `${fileFilter}.log`
     a.click()
   }
 
@@ -1710,9 +1713,28 @@ function LogViewer() {
     <Card>
       <CardHeader><CardTitle>📋 Log Viewer</CardTitle></CardHeader>
       <CardBody className="space-y-4">
-        <p className="text-xs text-slate-500">Shows application logs from log files in the app directory.</p>
+        <p className="text-xs text-slate-500">Shows application and scheduler logs from the app data directory.</p>
 
         <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium">File:</label>
+            <div className="flex gap-1">
+              {(['all', 'app', 'scheduler'] as const).map(f => {
+                const found = f === 'all' ? Object.keys(sourcesFound).length > 0 : !!sourcesFound[f]
+                return (
+                  <button key={f}
+                    className={cn('px-2.5 py-0.5 rounded text-xs border transition-colors relative',
+                      fileFilter === f ? 'bg-blue-100 border-blue-400 text-blue-800' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50',
+                      !found && 'opacity-40')}
+                    onClick={() => setFileFilter(f)}
+                    title={found ? undefined : 'Log file not found'}>
+                    {{ all: 'Both', app: 'App', scheduler: 'Scheduler' }[f]}
+                    {!found && <span className="ml-0.5 text-red-400">✗</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium">Last N lines:</label>
             <input type="number" min={50} max={50000} step={100} value={lines}
@@ -1743,13 +1765,18 @@ function LogViewer() {
 
         {isLoading ? <Spinner /> : (
           <>
-            {data?.source && data.source !== 'none' && (
-              <p className="text-xs text-slate-500">Source: {data.source} · {data.lines} line(s)</p>
+            {noFilesFound && (
+              <Alert type="warning">
+                No log files found. Make sure <code>APP_DATA_DIR</code> is set correctly and the scheduler container has written at least one log entry.
+              </Alert>
             )}
-            {data?.source === 'none' && (
-              <Alert type="warning">No log file found. Make sure app.log or scheduler.log exists in the app directory.</Alert>
+            {!noFilesFound && (
+              <p className="text-xs text-slate-500">
+                Available: {Object.entries(sourcesFound).map(([k, v]) => <span key={k} title={v} className="mr-2"><strong>{k}</strong></span>)}
+                · {(data as any)?.lines ?? 0} line(s) shown
+              </p>
             )}
-            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-96 whitespace-pre-wrap">
+            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-[calc(100vh-380px)] whitespace-pre-wrap">
               {data?.text || '(no lines match the current filters)'}
             </pre>
             {data?.text && (
@@ -1763,7 +1790,142 @@ function LogViewer() {
 }
 
 // ── Scheduled Tasks ───────────────────────────────────────────────────────────
+
+type SchedType = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once-per-day'
 interface JobForm { name: string; description: string; schedule: string; enabled: boolean }
+
+const WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+
+function ordinal(n: number) {
+  const s = ['th','st','nd','rd'], v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
+}
+
+function detectType(schedule: string): SchedType {
+  if (/every\s+\d+\s*min/i.test(schedule))  return 'interval'
+  if (/(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+\d/i.test(schedule)) return 'weekly'
+  if (/\d+(?:st|nd|rd|th)?\s+of\s+month\s+at\s+\d/i.test(schedule)) return 'monthly'
+  if (/\bat\s+\d{1,2}:\d{2}/i.test(schedule)) return 'daily'
+  return 'once-per-day'
+}
+
+function buildSchedule(type: SchedType, interval: number, weekday: number, monthDay: number, hour: number, minute: number): string {
+  const t = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`
+  if (type === 'interval')    return `Every ${interval} min, 24×7`
+  if (type === 'daily')       return `Daily at ${t}`
+  if (type === 'weekly')      return `${WEEKDAYS[weekday]} at ${t}`
+  if (type === 'monthly')     return `${ordinal(monthDay)} of month at ${t}`
+  return 'Once per calendar day'
+}
+
+function parseSchedule(schedule: string) {
+  const mInterval = schedule.match(/every\s+(\d+)\s*min/i)
+  const mTime     = schedule.match(/at\s+(\d{1,2}):(\d{2})/i)
+  const mWeekday  = schedule.match(/(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i)
+  const mMonthDay = schedule.match(/(\d+)(?:st|nd|rd|th)?\s+of\s+month/i)
+  return {
+    interval: mInterval ? parseInt(mInterval[1]) : 5,
+    hour:     mTime     ? parseInt(mTime[1])     : 6,
+    minute:   mTime     ? parseInt(mTime[2])     : 0,
+    weekday:  mWeekday  ? WEEKDAYS.map(d => d.toLowerCase()).indexOf(mWeekday[1].toLowerCase()) : 0,
+    monthDay: mMonthDay ? parseInt(mMonthDay[1]) : 1,
+  }
+}
+
+function ScheduleEditor({ schedule, onChange }: { schedule: string; onChange: (s: string) => void }) {
+  const [type, setType]     = useState<SchedType>(() => detectType(schedule))
+  const parsed              = parseSchedule(schedule)
+  const [interval, setInterval] = useState(parsed.interval)
+  const [weekday,  setWeekday]  = useState(parsed.weekday)
+  const [monthDay, setMonthDay] = useState(parsed.monthDay)
+  const [hour,     setHour]     = useState(parsed.hour)
+  const [minute,   setMinute]   = useState(parsed.minute)
+
+  const inp = 'border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-400'
+
+  function emit(overrides: Partial<{ type: SchedType; interval: number; weekday: number; monthDay: number; hour: number; minute: number }>) {
+    const t  = overrides.type     ?? type
+    const iv = overrides.interval ?? interval
+    const wd = overrides.weekday  ?? weekday
+    const md = overrides.monthDay ?? monthDay
+    const h  = overrides.hour     ?? hour
+    const m  = overrides.minute   ?? minute
+    onChange(buildSchedule(t, iv, wd, md, h, m))
+  }
+
+  function changeType(t: SchedType) { setType(t); emit({ type: t }) }
+  function changeInterval(v: number) { setInterval(v); emit({ interval: v }) }
+  function changeWeekday(v: number)  { setWeekday(v);  emit({ weekday: v }) }
+  function changeMonthDay(v: number) { setMonthDay(v); emit({ monthDay: v }) }
+  function changeHour(v: number)     { setHour(v);     emit({ hour: v }) }
+  function changeMinute(v: number)   { setMinute(v);   emit({ minute: v }) }
+
+  const numInp = `${inp} w-20 text-center`
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1 flex-wrap">
+        {(['interval','daily','weekly','monthly','once-per-day'] as SchedType[]).map(t => (
+          <button key={t} type="button"
+            className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${type === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400'}`}
+            onClick={() => changeType(t)}>
+            {{ interval: 'Interval', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', 'once-per-day': 'Once per day' }[t]}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap pt-1">
+        {type === 'interval' && <>
+          <span className="text-xs text-slate-500">Every</span>
+          <input type="number" min={1} max={120} className={numInp} value={interval}
+            onChange={e => changeInterval(Math.max(1, parseInt(e.target.value) || 1))} />
+          <span className="text-xs text-slate-500">minutes, 24×7</span>
+        </>}
+
+        {type === 'daily' && <>
+          <span className="text-xs text-slate-500">at</span>
+          <input type="number" min={0} max={23} className={numInp} value={hour}
+            onChange={e => changeHour(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
+          <span className="text-slate-400 font-bold">:</span>
+          <input type="number" min={0} max={59} className={numInp} value={minute}
+            onChange={e => changeMinute(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))} />
+        </>}
+
+        {type === 'weekly' && <>
+          <select className={`${inp} w-36`} value={weekday} onChange={e => changeWeekday(parseInt(e.target.value))}>
+            {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </select>
+          <span className="text-xs text-slate-500">at</span>
+          <input type="number" min={0} max={23} className={numInp} value={hour}
+            onChange={e => changeHour(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
+          <span className="text-slate-400 font-bold">:</span>
+          <input type="number" min={0} max={59} className={numInp} value={minute}
+            onChange={e => changeMinute(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))} />
+        </>}
+
+        {type === 'monthly' && <>
+          <span className="text-xs text-slate-500">Day</span>
+          <input type="number" min={1} max={28} className={numInp} value={monthDay}
+            onChange={e => changeMonthDay(Math.min(28, Math.max(1, parseInt(e.target.value) || 1)))} />
+          <span className="text-xs text-slate-500">of month at</span>
+          <input type="number" min={0} max={23} className={numInp} value={hour}
+            onChange={e => changeHour(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
+          <span className="text-slate-400 font-bold">:</span>
+          <input type="number" min={0} max={59} className={numInp} value={minute}
+            onChange={e => changeMinute(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))} />
+        </>}
+
+        {type === 'once-per-day' && (
+          <span className="text-xs text-slate-500 italic">Triggered once at scheduler startup each calendar day — no time configuration.</span>
+        )}
+
+        {type !== 'once-per-day' && (
+          <code className="ml-1 text-xs bg-slate-200 px-1.5 py-0.5 rounded text-slate-600">{schedule}</code>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ScheduledTasks() {
   const qc = useQueryClient()
@@ -1832,20 +1994,21 @@ function ScheduledTasks() {
         {editing !== null && (
           <div className="border border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50">
             <h3 className="text-sm font-semibold text-slate-700">Edit: {form.name}</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
+            <div className="space-y-3">
+              <div>
                 <label className="block text-xs text-slate-500 mb-1">Name</label>
                 <input className={inp} value={form.name} onChange={e => f('name', e.target.value)} />
               </div>
-              <div className="col-span-2">
+              <div>
                 <label className="block text-xs text-slate-500 mb-1">Description</label>
                 <input className={inp} value={form.description} onChange={e => f('description', e.target.value)} />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 mb-1">Schedule (label)</label>
-                <input className={inp} placeholder="e.g. Daily at 06:00" value={form.schedule} onChange={e => f('schedule', e.target.value)} />
+                <label className="block text-xs text-slate-500 mb-1">Schedule</label>
+                <ScheduleEditor schedule={form.schedule} onChange={v => f('schedule', v)} />
               </div>
-              <div className="flex items-end">
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-xs text-blue-600">✓ Changes take effect at the next scheduler tick (within 60 s) — no restart needed.</p>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={form.enabled} onChange={e => f('enabled', e.target.checked)} />
                   Enabled

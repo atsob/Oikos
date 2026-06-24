@@ -86,7 +86,7 @@ function GroupingPicker({ value, onChange }: { value: string; onChange: (v: stri
 }
 
 
-function KpiCard({ label, value, color = '', subtitle, tooltip }: { label: string; value: string; color?: string; subtitle?: string; tooltip?: string }) {
+function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip }: { label: string; value: string; color?: string; subtitle?: string; subtitleNode?: React.ReactNode; tooltip?: string }) {
   return (
     <div className="bg-slate-50 rounded-lg p-3">
       <p className="text-xs text-slate-500 mb-1">
@@ -94,6 +94,7 @@ function KpiCard({ label, value, color = '', subtitle, tooltip }: { label: strin
       </p>
       <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
       {subtitle && <p className="text-xs text-slate-400 mt-0.5 truncate">{subtitle}</p>}
+      {subtitleNode && <div className="text-xs mt-0.5">{subtitleNode}</div>}
     </div>
   )
 }
@@ -140,9 +141,9 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true }: {
   }
   return (
     <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-40">{groupBy}</th>
               {periods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{p.slice(0, 7)}</th>)}
@@ -206,9 +207,9 @@ function HierarchicalPivotTable({ data, catTypeFilter, periods }: {
   if (rows.length === 0) return <p className="text-sm text-slate-400 py-4">No data</p>
   return (
     <WithCopy>
-    <div className="overflow-x-auto text-xs">
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
       <table className="w-full border-collapse">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-slate-50">
           <tr className="bg-slate-50">
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-56">Category</th>
             {periods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{p.slice(0, 7)}</th>)}
@@ -358,9 +359,9 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
         layout={{ barmode: 'relative' as const, height: 340, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.3 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' as const }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 sticky left-0 bg-slate-50 min-w-52">
                 <button type="button" onClick={() => toggleAccSort('name')} className="inline-flex items-center gap-0.5 font-semibold cursor-pointer hover:text-slate-700 select-none">
@@ -431,9 +432,9 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
   return (
     <div className="space-y-3">
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <ColHeader label="Period" sortKey="period" currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="left" className="border-b border-slate-200 sticky left-0 bg-slate-50 min-w-16" />
               {NW_ASSET_GROUPS.map(g => <ColHeader key={g} label={g} sortKey={g} currentKey={nwSK} currentDir={nwSD} onSort={nwSort} align="right" className="border-b border-slate-200 whitespace-nowrap" />)}
@@ -749,9 +750,9 @@ function SectorTab() {
         layout={{ height: Math.max(300, sectors.length * 28), margin: { t: 10, r: 100, b: 40, l: 200 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
               <ColHeader label="Sector" sortKey="sector" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Industry" sortKey="industry" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
@@ -788,9 +789,9 @@ function FxExposureTab() {
         layout={{ height: Math.max(240, rows.length * 40), margin: { t: 10, r: 100, b: 40, l: 60 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
               <ColHeader label="Currency" sortKey="currency" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Native Exposure" sortKey="native_exposure" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
@@ -839,9 +840,9 @@ function HoldingsSnapshotTab() {
     <div className="space-y-3">
       <KpiCard label="Total Portfolio Value" value={fmtEur(total)} color="text-blue-700" />
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50 text-xs text-slate-500">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500">
             <ColHeader label="Security" sortKey="security" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
             <ColHeader label="Ticker" sortKey="ticker" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
             <ColHeader label="Account" sortKey="account" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
@@ -960,6 +961,8 @@ function PnlReport() {
   const totalPnl   = accounts.reduce((s, a) => s + a.pnl, 0)
   const totalUnreal = accounts.reduce((s, a) => s + a.unrealized, 0)
   const totalReal  = accounts.reduce((s, a) => s + a.realized, 0)
+  const totalMkt   = mktKey ? accounts.reduce((s, a) => s + (a.market ?? 0), 0) : null
+  const totalFx    = fxKey  ? accounts.reduce((s, a) => s + (a.fx    ?? 0), 0) : null
 
   const drillRows = selectedAccount
     ? (accountMap.get(selectedAccount) ?? []).filter(r => showClosedPositions || !isClosedPosition(r))
@@ -983,7 +986,13 @@ function PnlReport() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
-        <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`} />
+        <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`}
+          subtitleNode={showFxSplit && totalMkt != null && totalFx != null ? (
+            <span className="flex gap-2 tabular-nums">
+              <span>Mkt: <span className={totalMkt >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalMkt)}</span></span>
+              <span>FX: <span className={totalFx >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalFx)}</span></span>
+            </span>
+          ) : undefined} />
         <KpiCard label="Unrealized P&L" value={fmtEur(totalUnreal)} color={totalUnreal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Open position gain/loss: current market value minus the cost basis of all currently held securities." />
         <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed." />
       </div>
@@ -994,13 +1003,33 @@ function PnlReport() {
         ))}
       </div>
       {checkboxBar}
-      {drillRows ? (
+      {drillRows ? (() => {
+        const drillValue    = drillRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
+        const drillPnl      = drillRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
+        const drillUnreal   = drillRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
+        const drillReal     = drillRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
+        const drillMkt      = mktKey ? drillRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null
+        const drillFx       = fxKey  ? drillRows.reduce((s, r) => s + Number(r[fxKey]  ?? 0), 0) : null
+        return (
         <div className="space-y-3">
-          <button onClick={() => setSelectedAccount(null)} className="text-blue-600 hover:underline text-sm">← All Accounts</button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSelectedAccount(null)} className="text-blue-600 hover:underline text-sm">← All Accounts</button>
+            <span className="text-slate-400 text-sm">/</span>
+            <span className="text-sm font-semibold text-slate-700">{selectedAccount}</span>
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+            <span className="text-slate-500 font-medium">Totals:</span>
+            <span className="tabular-nums">Value: <strong>{fmtEur(drillValue)}</strong></span>
+            <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong></span>
+            {drillMkt != null && <span className={`tabular-nums ${drillMkt >= 0 ? 'text-green-700' : 'text-red-600'}`}>Mkt: <strong>{fmtEur(drillMkt)}</strong></span>}
+            {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
+            <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong></span>
+            <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong></span>
+          </div>
           <WithCopy>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
               <table className="w-full text-sm">
-                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." />
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
@@ -1030,11 +1059,13 @@ function PnlReport() {
             </div>
           </WithCopy>
         </div>
-      ) : (
-        <WithCopy>
-          <div className="overflow-x-auto">
+        )
+      })() : (
+        <div className="space-y-3">
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
                 <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
                 <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey="pnl" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`} />
@@ -1058,7 +1089,8 @@ function PnlReport() {
               </tbody>
             </table>
           </div>
-        </WithCopy>
+          </WithCopy>
+        </div>
       )}
     </div>
   )
@@ -1179,9 +1211,9 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
               {cfOpen && (
                 <div className="p-3">
                   <WithCopy>
-                    <div className="overflow-x-auto max-h-96">
+                    <div className="overflow-x-auto overflow-y-auto max-h-96">
                       <table className="w-full text-sm">
-                        <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                           <th className="px-3 py-2 text-left">Date</th>
                           <th className="px-3 py-2 text-left">Action</th>
                           <th className="px-3 py-2 text-left">Account</th>
@@ -1430,9 +1462,9 @@ function DividendTrackerTab() {
           </div>
 
           <WithCopy>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
               <table className="w-full text-sm">
-                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <ColHeader label="Security" sortKey="securities_name" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Security name." />
                   <ColHeader label="Type" sortKey="securities_type" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Asset type — Stock, ETF, Bond, etc." />
                   <ColHeader label={`Income (${result.period_label})`} sortKey="period_income_eur" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Total dividends and interest received from this security in the selected period." />
@@ -1484,9 +1516,9 @@ function DividendTrackerTab() {
             {detailOpen && (
               <div className="p-3">
                 <WithCopy>
-                  <div className="overflow-x-auto max-h-96">
+                  <div className="overflow-x-auto overflow-y-auto max-h-96">
                     <table className="w-full text-sm">
-                      <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                      <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                         <th className="px-3 py-2 text-left">Month</th>
                         <th className="px-3 py-2 text-left">Security</th>
                         <th className="px-3 py-2 text-left">Account</th>
@@ -1670,9 +1702,9 @@ function PerformanceTab() {
         <div>
           <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-green-700">📈 Top {topN} Gainers</div>
           <WithCopy>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-96">
               <table className="w-full text-sm">
-                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                   {viewPct ? <>
                     <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
@@ -1691,9 +1723,9 @@ function PerformanceTab() {
         <div>
           <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-red-600">📉 Top {topN} Losers</div>
           <WithCopy>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-auto max-h-96">
               <table className="w-full text-sm">
-                <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                   {viewPct ? <>
                     <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
@@ -1739,9 +1771,9 @@ function PerformanceTab() {
         {rankedOpen && (
           <div className="p-3">
             <WithCopy>
-              <div className="overflow-x-auto max-h-96">
+              <div className="overflow-x-auto overflow-y-auto max-h-96">
                 <table className="w-full text-sm">
-                  <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                     <th className="px-3 py-2 text-left w-12"><Tooltip text="Performance rank for the selected period — 1 = best performer.">Rank</Tooltip></th>
                     <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                     {viewPct ? <>
@@ -1811,9 +1843,9 @@ function SavingsAccountsTab() {
       <div>
         <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail</h4>
         <WithCopy>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
                 <th className="px-3 py-2 text-left"><Tooltip text="Account type (e.g. Savings, Fixed Deposit).">Type</Tooltip></th>
                 <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
@@ -1853,9 +1885,9 @@ function SavingsAccountsTab() {
       <div>
         <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail for Last Interest Period</h4>
         <WithCopy>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
                 <th className="px-3 py-2 text-left"><Tooltip text="Account type.">Type</Tooltip></th>
                 <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
@@ -1923,9 +1955,9 @@ function BondScheduleTab() {
         config={{ displayModeBar: false }} style={{ width: '100%' }}
       />
       <WithCopy>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
           <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <ColHeader label="Security" sortKey="securities_name" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} tooltip="Bond security name." />
               <ColHeader label="Qty" sortKey="quantity" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Number of units held." />
               <ColHeader label="Face Value" sortKey="face_value" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} align="right" tooltip="Par (face) value per unit — the amount repaid at maturity per bond." />
@@ -2073,9 +2105,9 @@ function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div>
         : !result || !result.tickers.length ? <p className="text-slate-400 text-sm py-8 text-center">No price data available.</p>
         : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="text-xs border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-white">
                 <tr>
                   <th className="px-2 py-1 text-left text-slate-500 font-normal min-w-32"></th>
                   {result.tickers.map(t => (
@@ -2368,9 +2400,9 @@ function PriceChangesTab() {
   )
   return (
     <WithCopy>
-    <div className="overflow-x-auto text-xs">
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
       <table className="w-full border-collapse">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-slate-50">
           <tr className="bg-slate-50">
             {col('securities_name', 'Security', 'left')}
             {col('ticker', 'Ticker', 'left')}
@@ -2619,9 +2651,9 @@ function InvestmentSignalsTab() {
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-2">🏆 Top Efficiency Picks (High Sharpe Ratio)</p>
         <WithCopy>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
                 <ColHeader label={<Tooltip text="Annual price return over the last 12 months.">Return 1Y</Tooltip>} sortKey="annual_chg_pct" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
                 <ColHeader label={<Tooltip text="Annualised volatility over the last 12 months.">Vol 1Y</Tooltip>} sortKey="vol_1y_ann" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
@@ -2711,9 +2743,9 @@ function PortfolioActionSignalsTab() {
       </div>
 
       <WithCopy>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
           <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="sticky left-0 bg-slate-50 text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Combined signal: math signal + analyst rating. Conviction signals appear when both agree.">Final Signal</Tooltip>} sortKey="final_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Quantitative signal derived from Sharpe ratio and quality score.">Math Signal</Tooltip>} sortKey="recommendation_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
@@ -3145,9 +3177,9 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
         <div>
           <p className="text-sm font-semibold text-slate-700 mb-2">{reportType} — {periodType} Breakdown</p>
           <WithCopy>
-          <div className="overflow-x-auto text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
             <table className="w-full border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Type</th>
@@ -3231,9 +3263,9 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <div>
             <p className="text-xs font-semibold text-slate-600 mb-1">Category Detail</p>
             <WithCopy>
-            <div className="overflow-x-auto text-xs">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
               <table className="w-full border-collapse">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="bg-slate-50">
                     <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
                     <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Type</th>
@@ -3272,9 +3304,9 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
               const drillRows = drillCat === 'All Categories' ? rows : rows.filter(r => r.category_full_path === drillCat)
               return (
                 <WithCopy>
-                <div className="overflow-x-auto text-xs">
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                   <table className="w-full border-collapse">
-                    <thead><tr className="bg-slate-50">
+                    <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Payee</th>
@@ -3342,9 +3374,9 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <div>
             <p className="text-xs font-semibold text-slate-600 mb-1">Payee Summary</p>
             <WithCopy>
-            <div className="overflow-x-auto text-xs">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
               <table className="w-full border-collapse">
-                <thead><tr className="bg-slate-50">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Payee</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total (€)</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold"># Txs</th>
@@ -3386,9 +3418,9 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                     </div>
                   )}
                   <WithCopy>
-                  <div className="overflow-x-auto text-xs">
+                  <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                     <table className="w-full border-collapse">
-                      <thead><tr className="bg-slate-50">
+                      <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
@@ -3440,9 +3472,9 @@ function CashFlowSection() {
         ))}
       </div>
       <WithCopy>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
         <table className="w-full text-sm">
-          <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
             <th className="px-3 py-2 text-left">Template</th>
             <th className="px-3 py-2 text-left">Account</th>
             <th className="px-3 py-2 text-left">Payee</th>
@@ -3590,9 +3622,9 @@ function BudgetReport() {
           )}
         </div>
         {saveMsg && <div className="text-sm mb-2 text-green-700">{saveMsg}</div>}
-        <div className="overflow-x-auto border border-slate-200 rounded-lg">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] border border-slate-200 rounded-lg">
           <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <th className="px-3 py-2 text-left">Category</th>
               <th className="px-3 py-2 text-right">{avgCol}</th>
               <th className="px-3 py-2 text-right">{priorLabel}</th>
@@ -3801,9 +3833,9 @@ function SavingsRateTab() {
         layout={{ barmode: 'group', height: 380, margin: { t: 10, r: 60, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, yaxis2: { overlaying: 'y', side: 'right', ticksuffix: '%', showgrid: false }, legend: { orientation: 'h', y: -0.2 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Month</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Income</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Expenses</th>
@@ -3877,9 +3909,9 @@ function CapitalGainsReport() {
         <p className="text-sm text-slate-500 py-4">No sell transactions found for {year}. Try a different year.</p>
       ) : (
         <WithCopy>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
           <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Security</th>
               <th className="px-3 py-2 text-left">Ticker</th><th className="px-3 py-2 text-left">Account</th>
               <th className="px-3 py-2 text-left">Action</th>
@@ -3927,9 +3959,9 @@ function TaxLossHarvestingTab() {
         <p className="text-slate-500 text-sm py-4">No positions with unrealized losses.</p>
       ) : (
         <WithCopy>
-        <div className="overflow-x-auto text-xs">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
           <table className="w-full border-collapse">
-            <thead><tr className="bg-slate-50">
+            <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
               <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
               <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Qty</th>
@@ -3986,9 +4018,9 @@ function DividendIncomeTaxTab() {
         <KpiCard label="Tax-Exempt" value={fmtEur(exempt)} color="text-blue-600" />
       </div>
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
@@ -4224,9 +4256,9 @@ function LoanAmortizationTab() {
         <KpiCard label="Total Paid" value={fmtEur(totalPaid)} />
       </div>
       <WithCopy>
-      <div className="overflow-x-auto text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
-          <thead><tr className="bg-slate-50">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Month</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Payment</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Principal</th>
@@ -4897,9 +4929,9 @@ function CustomReportsSection() {
               {/* Pivot table */}
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-2">{investmentMode ? 'Cashflow by Security' : 'Spending by Category'}</h3>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
                   <table className="w-full text-sm border-collapse">
-                    <thead>
+                    <thead className="sticky top-0 z-10 bg-white">
                       <tr className="border-b-2 border-slate-200">
                         <th className="text-left px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium sticky left-0 bg-white">{catLabel}</th>
                         {periods.map(p => <th key={p} className="text-right px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium whitespace-nowrap">{p}</th>)}
@@ -4961,14 +4993,14 @@ function CustomReportsSection() {
                   ddResult.length === 0
                     ? <div className="text-sm text-slate-400 mt-3">No entries found.</div>
                     : (
-                      <div className="mt-3 overflow-x-auto">
+                      <div className="mt-3 overflow-x-auto overflow-y-auto max-h-96">
                         <div className="text-xs text-slate-500 mb-1">
                           {ddResult.length} {investmentMode ? 'entr' : 'transaction'}
                           {ddResult.length === 1 ? (investmentMode ? 'y' : '') : (investmentMode ? 'ies' : 's')}
                           {' · '}net total {fmtEur(ddResult.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0))}
                         </div>
                         <table className="w-full text-sm border-collapse">
-                          <thead>
+                          <thead className="sticky top-0 z-10 bg-white">
                             <tr className="border-b border-slate-200">
                               <th className="text-left px-2 py-1.5 text-xs text-slate-500">Date</th>
                               {investmentMode

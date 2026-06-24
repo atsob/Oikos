@@ -443,7 +443,17 @@ function FxPricesTab() {
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 block mb-1">Period</label>
-          <PeriodSelector value={period} onChange={setPeriod} />
+          <div className="flex items-center gap-3">
+            <PeriodSelector value={period} onChange={setPeriod} />
+            {(() => {
+              const h = history as Record<string,unknown>[]
+              if (h.length < 2) return null
+              const first = Number(h[0].rate), last = Number(h[h.length - 1].rate)
+              if (!first) return null
+              const pct = ((last - first) / first) * 100
+              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+            })()}
+          </div>
         </div>
       </div>
 
@@ -568,7 +578,17 @@ function SecuritiesPricesTab() {
         </div>
         <div>
           <label className="text-xs font-medium text-slate-500 block mb-1">Period</label>
-          <PeriodSelector value={period} onChange={setPeriod} />
+          <div className="flex items-center gap-3">
+            <PeriodSelector value={period} onChange={setPeriod} />
+            {(() => {
+              const h = history as Record<string,unknown>[]
+              if (h.length < 2) return null
+              const first = Number(h[0].close), last = Number(h[h.length - 1].close)
+              if (!first) return null
+              const pct = ((last - first) / first) * 100
+              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+            })()}
+          </div>
         </div>
       </div>
 

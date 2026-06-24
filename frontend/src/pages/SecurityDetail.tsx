@@ -91,10 +91,23 @@ function PricesTab({ secId }: { secId: number }) {
   const isPending = addMut.isPending || delMut.isPending
   const rows = [...(history as Record<string, unknown>[])].reverse()
 
+  const pctChange = (() => {
+    const h = history as Record<string, unknown>[]
+    if (h.length < 2) return null
+    const first = Number(h[0].close), last = Number(h[h.length - 1].close)
+    if (!first) return null
+    return ((last - first) / first) * 100
+  })()
+
   return (
     <div className="p-4 space-y-4">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <PeriodSelector value={period} onChange={setPeriod} />
+        {pctChange != null && !isLoading && (
+          <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(2)}%
+          </span>
+        )}
       </div>
 
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (

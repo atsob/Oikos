@@ -982,38 +982,58 @@ def fix_investment_cash_links(req: FixInvCashLinksRequest):
 # ── Log Viewer ─────────────────────────────────────────────────────────────────
 
 @router.get("/logs")
-def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str] = None):
-    import os, glob as _glob
+def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str] = None, file: str = "all"):
+    import os
     level_filters = [l.strip() for l in level.split(",") if l.strip()] if level else []
 
     app_data_dir = os.getenv("APP_DATA_DIR", ".")
-    candidates = [
-        os.path.join(app_data_dir, "app.log"),
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "app.log"),
-        "app.log",
-        "scheduler.log",
-    ]
-    log_text = ""
-    source = "none"
-    for path in candidates:
-        path = os.path.abspath(path)
-        if os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8", errors="replace") as fh:
-                    all_lines = fh.readlines()
-                tail = all_lines[-lines:]
-                if level_filters:
-                    tail = [l for l in tail if any(lvl in l for lvl in level_filters)]
-                if search:
-                    needle = search.lower()
-                    tail = [l for l in tail if needle in l.lower()]
-                log_text = "".join(tail)
-                source = path
-                break
-            except Exception:
-                continue
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-    return {"text": log_text, "source": source, "lines": len(log_text.splitlines())}
+    def _find(name: str) -> Optional[str]:
+        for p in [
+            os.path.join(app_data_dir, name),
+            os.path.join(repo_root, name),
+            name,
+        ]:
+            if os.path.exists(os.path.abspath(p)):
+                return os.path.abspath(p)
+        return None
+
+    def _read(path: str) -> list[str]:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return fh.readlines()
+        except Exception:
+            return []
+
+    app_path  = _find("app.log")
+    sched_path = _find("scheduler.log")
+
+    sources_found = {k: v for k, v in {"app": app_path, "scheduler": sched_path}.items() if v}
+
+    if file == "app":
+        raw = _read(app_path) if app_path else []
+        used = [app_path] if app_path else []
+    elif file == "scheduler":
+        raw = _read(sched_path) if sched_path else []
+        used = [sched_path] if sched_path else []
+    else:  # "all" — merge both, preserve order (they share the same timestamp format)
+        raw = sorted(_read(app_path or "") + _read(sched_path or ""))
+        used = [p for p in [app_path, sched_path] if p]
+
+    tail = raw[-lines:]
+    if level_filters:
+        tail = [l for l in tail if any(lvl in l for lvl in level_filters)]
+    if search:
+        needle = search.lower()
+        tail = [l for l in tail if needle in l.lower()]
+
+    return {
+        "text": "".join(tail),
+        "sources_found": sources_found,
+        "sources_used": used,
+        "lines": len(tail),
+    }
 
 
 # ── Scheduler Jobs ─────────────────────────────────────────────────────────────
