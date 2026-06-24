@@ -4,6 +4,8 @@ from typing import Optional
 import math
 import pandas as pd
 from database.connection import get_db, get_connection
+from api.routers.investments import _upsert_cash_transaction, _build_inv_description
+from api.routers.register import _refresh_balance
 
 router = APIRouter()
 
@@ -336,7 +338,26 @@ def execute_corporate_action(sec_id: int, data: dict):
         ))
         ca_id = cur.fetchone()[0]
 
-        # 3. Insert investment transactions
+        # 3. Look up linked cash accounts for all investment accounts in one query
+        acct_ids = [a for a, _ in holdings]
+        linked_map: dict[int, int] = {}
+        if acct_ids:
+            placeholders = ", ".join(["%s"] * len(acct_ids))
+            cur.execute(
+                f"SELECT Accounts_Id, Accounts_Id_Linked FROM Accounts WHERE Accounts_Id IN ({placeholders})",
+                acct_ids,
+            )
+            for row in cur.fetchall():
+                if row[1]:
+                    linked_map[row[0]] = row[1]
+
+        # 4. Look up security name/ticker once for cash description
+        cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (sec_id,))
+        sec_row = cur.fetchone()
+        sec_name = sec_row[0] if sec_row else None
+        ticker = sec_row[1] if sec_row else None
+
+        # 5. Insert investment transactions (and linked cash transactions where applicable)
         for accounts_id, qty in holdings:
             if event_group == "split":
                 ratio_new = float(data.get("ratio_new") or 1)
@@ -372,7 +393,19 @@ def execute_corporate_action(sec_id: int, data: dict):
                      price_per_share, commission, total_amount_acccur, total_amount_seccur,
                      fx_rate, description)
                 VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, 1.0, %s)
+                RETURNING Investments_Id
             """, (accounts_id, sec_id, date, inv_action, inv_qty, price, total, total, description))
+            inv_id = cur.fetchone()[0]
+
+            # Create linked cash transaction if the investment account has a linked cash account
+            cash_account_id = linked_map.get(accounts_id)
+            if cash_account_id and total:
+                cash_desc = _build_inv_description(inv_action, sec_name, ticker, inv_qty, price)
+                _upsert_cash_transaction(
+                    cur, inv_id, cash_account_id, accounts_id,
+                    date, inv_action, total, cash_desc, None,
+                )
+                _refresh_balance(cur, cash_account_id)
 
         conn.commit()
         return {"ok": True, "corporate_action_id": ca_id, "transactions_inserted": len(holdings)}

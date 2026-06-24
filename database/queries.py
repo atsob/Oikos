@@ -5616,12 +5616,187 @@ def delete_alert(alert_id: int):
         conn.close()
 
 
+def _ensure_signal_notifications_table():
+    """Create Signal_Notifications table if it does not exist."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Signal_Notifications (
+                    Securities_Id     INTEGER PRIMARY KEY
+                                      REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+                    Last_Known_Signal TEXT,
+                    Previous_Signal   TEXT,
+                    Changed_At        TIMESTAMP DEFAULT NOW(),
+                    Acknowledged      BOOLEAN DEFAULT TRUE
+                )
+            """)
+            # Add Previous_Signal column if upgrading from earlier schema
+            cur.execute("""
+                ALTER TABLE Signal_Notifications
+                ADD COLUMN IF NOT EXISTS Previous_Signal TEXT
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def refresh_signal_notifications():
+    """Compare current final_signal values against stored ones; record any changes.
+
+    Called by the scheduler after market data refresh — NOT on every dashboard load.
+    New securities are seeded silently (Acknowledged=TRUE) so they don't flood the
+    dashboard on first run.
+    """
+    _ensure_signal_notifications_table()
+    current = _compute_current_signals()
+    if current.empty:
+        return
+
+    conn = get_connection()
+    try:
+        stored = pd.read_sql(
+            "SELECT Securities_Id AS securities_id, Last_Known_Signal AS last_known_signal "
+            "FROM Signal_Notifications",
+            conn,
+        )
+        stored_map = (
+            stored.set_index('securities_id')['last_known_signal'].to_dict()
+            if not stored.empty else {}
+        )
+
+        with conn.cursor() as cur:
+            for _, row in current.iterrows():
+                sid    = int(row['securities_id'])
+                signal = row['final_signal'] or row['recommendation_signal']
+                if not signal:
+                    continue
+                prev = stored_map.get(sid)
+                if prev is None:
+                    # First time — seed silently, no notification
+                    cur.execute(
+                        "INSERT INTO Signal_Notifications "
+                        "(Securities_Id, Last_Known_Signal, Previous_Signal, Acknowledged) "
+                        "VALUES (%s, %s, NULL, TRUE) ON CONFLICT (Securities_Id) DO NOTHING",
+                        (sid, signal),
+                    )
+                elif prev != signal:
+                    # Signal changed — record and mark unacknowledged
+                    cur.execute(
+                        "UPDATE Signal_Notifications "
+                        "SET Previous_Signal=%s, Last_Known_Signal=%s, "
+                        "    Changed_At=NOW(), Acknowledged=FALSE "
+                        "WHERE Securities_Id=%s",
+                        (prev, signal, sid),
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def acknowledge_signal_notification(securities_id: int):
+    """Mark a signal change as acknowledged (user has seen it)."""
+    _ensure_signal_notifications_table()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Signal_Notifications SET Acknowledged=TRUE WHERE Securities_Id=%s",
+                (securities_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _compute_current_signals() -> pd.DataFrame:
+    """Run the final_signal CTE for all held securities. Returns (securities_id, securities_name, final_signal)."""
+    conn = get_connection()
+    try:
+        df = pd.read_sql("""
+            WITH base_data AS (
+                SELECT Securities_Id, Date, Close,
+                       (Close / NULLIF(LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date), 0) - 1) AS daily_ret
+                FROM Historical_Prices
+                WHERE Date >= CURRENT_DATE - INTERVAL '62 months'
+            ),
+            ranked_prices AS (
+                SELECT Securities_Id, Date, Close AS price_today,
+                       LAG(Close,   1) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1d,
+                       LAG(Close,   5) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1w,
+                       LAG(Close,  21) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1m,
+                       LAG(Close,  63) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_3m,
+                       LAG(Close, 126) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_6m,
+                       LAG(Close, 252) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1y,
+                       ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rn
+                FROM Historical_Prices
+                WHERE Date >= CURRENT_DATE - INTERVAL '62 months'
+            ),
+            latest_prices AS (
+                SELECT * FROM ranked_prices WHERE rn = 1
+            ),
+            vol_data AS (
+                SELECT Securities_Id,
+                       STDDEV(daily_ret) * SQRT(252) AS annual_vol
+                FROM base_data
+                WHERE Date >= CURRENT_DATE - INTERVAL '12 months'
+                GROUP BY Securities_Id
+            ),
+            sharpe AS (
+                SELECT lp.Securities_Id,
+                       CASE WHEN v.annual_vol > 0
+                            THEN ((lp.price_today / NULLIF(lp.price_1y, 0)) - 1) / v.annual_vol
+                            ELSE NULL END AS sharpe_1y
+                FROM latest_prices lp
+                LEFT JOIN vol_data v ON v.Securities_Id = lp.Securities_Id
+            ),
+            recommendation AS (
+                SELECT sh.Securities_Id,
+                       s.Securities_Name,
+                       s.Analyst_Rating AS wall_street_view,
+                       sh.sharpe_1y,
+                       CASE
+                         WHEN sh.sharpe_1y >  0.5 THEN '🟢 BUY'
+                         WHEN sh.sharpe_1y < -0.5 THEN '🔴 SELL'
+                         WHEN sh.sharpe_1y IS NULL THEN '👀 WATCH'
+                         ELSE '⚪ NEUTRAL'
+                       END AS recommendation_signal
+                FROM sharpe sh
+                JOIN Securities s ON s.Securities_Id = sh.Securities_Id
+                WHERE s.Securities_Id IN (
+                    SELECT DISTINCT i.Securities_Id FROM Investments i
+                    JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
+                )
+            )
+            SELECT Securities_Id AS securities_id,
+                   Securities_Name AS securities_name,
+                   wall_street_view,
+                   recommendation_signal,
+                   CASE
+                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('buy','strong_buy') THEN '💎 CONVICTION BUY'
+                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'strong_buy'          THEN '💎 STRONG CONVICTION'
+                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'hold'               THEN '🚀 MOMENTUM BUY'
+                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IS NULL                THEN '⚙️ ALGO BUY'
+                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ CONVICTION SELL'
+                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view = 'hold'               THEN '📉 MOMENTUM SELL'
+                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IS NULL                THEN '⚙️ ALGO SELL'
+                     ELSE recommendation_signal
+                   END AS final_signal
+            FROM recommendation
+            ORDER BY Securities_Name
+        """, conn)
+        return df
+    finally:
+        conn.close()
+
+
 def check_triggered_alerts() -> list:
     """Return list of triggered alert dicts ({level, message}).
     Never raises — returns [] on any error.
     """
     try:
         _ensure_alerts_table()
+        _ensure_signal_notifications_table()
         conn = get_connection()
         alerts_df = pd.read_sql(
             "SELECT * FROM Alerts WHERE Is_Active = TRUE", conn)
@@ -5698,6 +5873,32 @@ def check_triggered_alerts() -> list:
                                         f"**{delta:.1f}%** off target "
                                         f"(threshold: {thr:.1f}%).{suffix}"),
                         })
+
+        # ── final signal change notifications (pre-computed by scheduler) ───────
+        try:
+            conn2 = get_connection()
+            pending = pd.read_sql("""
+                SELECT sn.Securities_Id AS securities_id,
+                       s.Securities_Name AS securities_name,
+                       sn.Last_Known_Signal AS current_signal,
+                       sn.Previous_Signal AS previous_signal,
+                       sn.Changed_At AS changed_at
+                FROM Signal_Notifications sn
+                JOIN Securities s ON s.Securities_Id = sn.Securities_Id
+                WHERE sn.Acknowledged = FALSE
+                ORDER BY sn.Changed_At DESC
+            """, conn2)
+            conn2.close()
+            for _, row in pending.iterrows():
+                results.append({
+                    'level': 'info',
+                    'message': (f"📊 **Signal Change** — {row['securities_name']}: "
+                                f"{row['previous_signal'] or '—'} → **{row['current_signal']}**"),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'signal_change',
+                })
+        except Exception:
+            pass
 
         return results
     except Exception:

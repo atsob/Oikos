@@ -4,7 +4,7 @@ import PlotlyReact from 'react-plotly.js'
 import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getDraftTransactions, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
-  generateMonthlySummary, generateWeeklySummary, getAlerts,
+  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner } from '@/components/ui'
@@ -77,10 +77,15 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
 }
 
 function SecuritiesAlertsPanel() {
+  const qc = useQueryClient()
   const { data: alerts = [] } = useQuery({
     queryKey: ['triggered-alerts'],
     queryFn: getAlerts,
     staleTime: 5 * 60 * 1000,
+  })
+  const ackMut = useMutation({
+    mutationFn: (sid: number) => acknowledgeSignal(sid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
   const [open, setOpen] = React.useState(false)
   if (!(alerts as unknown[]).length) return null
@@ -108,10 +113,19 @@ function SecuritiesAlertsPanel() {
         <CardBody className="pt-0 space-y-2">
           {(alerts as Record<string, unknown>[]).map((a, i) => {
             const level = String(a.level ?? 'info')
+            const isSignal = a.type === 'signal_change' && a.securities_id != null
             return (
               <div key={i} className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)}`}>
                 {levelIcon(level)}
-                <p className="text-sm text-slate-700">{String(a.message ?? '')}</p>
+                <p className="text-sm text-slate-700 flex-1">{String(a.message ?? '')}</p>
+                {isSignal && (
+                  <button
+                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                    onClick={() => ackMut.mutate(Number(a.securities_id))}
+                    title="Dismiss this notification">
+                    Dismiss
+                  </button>
+                )}
               </div>
             )
           })}

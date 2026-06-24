@@ -1055,6 +1055,7 @@ _SEED_JOBS = [
     ("securities_info",    "Securities Info",        "Downloads securities metadata (sector, industry, analyst targets, dividends) from Yahoo Finance and TradingView.", "Once per calendar day",          True),
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
+    ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and records any changes for dashboard notifications.",               "Every 30 min, 24×7",             True),
 ]
 
 
@@ -1075,7 +1076,10 @@ def _ensure_scheduler_table(cur):
         cur.execute("""
             INSERT INTO Scheduler_Jobs (job_id, name, description, schedule, enabled)
             VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (job_id) DO NOTHING
+            ON CONFLICT (job_id) DO UPDATE
+                SET name        = EXCLUDED.name,
+                    description = EXCLUDED.description
+                -- schedule and enabled are NOT overwritten so user edits are preserved
         """, (job_id, name, desc, schedule, enabled))
 
 
@@ -1130,6 +1134,9 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "recurring_drafts":
             from database.crud import generate_draft_transactions
             generate_draft_transactions()
+        elif job_id == "signal_notifications":
+            from database.queries import refresh_signal_notifications
+            refresh_signal_notifications()
         else:
             raise ValueError(f"No runnable function for custom job '{job_id}'")
         # Record success

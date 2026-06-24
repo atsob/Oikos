@@ -213,10 +213,21 @@ def get_accounts(include_future: bool = Query(False)):
 
 @router.get("/alerts")
 def get_alerts():
-    """Triggered user-defined alerts (price, allocation drift, etc.)."""
+    """Triggered user-defined alerts (price, allocation drift, signal changes, etc.)."""
     try:
         from database.queries import check_triggered_alerts
         return check_triggered_alerts()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/alerts/acknowledge-signal/{securities_id}")
+def acknowledge_signal(securities_id: int):
+    """Dismiss a signal-change notification for a security."""
+    try:
+        from database.queries import acknowledge_signal_notification
+        acknowledge_signal_notification(securities_id)
+        return {"ok": True}
     except Exception as e:
         raise HTTPException(500, str(e))
 

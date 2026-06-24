@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import math
 import pandas as pd
 from database.connection import get_db
+from api.routers.register import _refresh_balance
 
 router = APIRouter()
 
@@ -198,6 +199,7 @@ def create_investment(data: dict):
                 data.get("total_amount_acccur") or 0,
                 cash_desc, None, payee_id,
             )
+            _refresh_balance(cur, int(cash_account_id))
 
         conn.commit()
         return {"id": inv_id}
@@ -261,6 +263,7 @@ def update_investment(inv_id: int, data: dict):
                 data.get("total_amount_acccur") or 0,
                 cash_desc, existing_tx_id, payee_id,
             )
+            _refresh_balance(cur, int(cash_account_id))
 
         conn.commit()
         return {"id": inv_id}
@@ -280,9 +283,28 @@ def delete_investment(inv_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM Investments WHERE Investments_Id = %s", (inv_id,))
-        if cur.rowcount == 0:
+        # Fetch the linked cash transaction before deleting
+        cur.execute(
+            "SELECT Transactions_Id FROM Investments WHERE Investments_Id = %s", (inv_id,)
+        )
+        row = cur.fetchone()
+        if not row:
             raise HTTPException(404, "Not found")
+        linked_tx_id = row[0]
+
+        cur.execute("DELETE FROM Investments WHERE Investments_Id = %s", (inv_id,))
+
+        # Remove the linked cash transaction and refresh its account balance
+        if linked_tx_id:
+            cur.execute(
+                "SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (linked_tx_id,)
+            )
+            tx_row = cur.fetchone()
+            cash_account_id = tx_row[0] if tx_row else None
+            cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (linked_tx_id,))
+            if cash_account_id:
+                _refresh_balance(cur, cash_account_id)
+
         conn.commit()
         return {"deleted": inv_id}
     except HTTPException:

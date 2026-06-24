@@ -848,6 +848,8 @@ def get_smart_date_range(time_input="1mo"):
 
 def _period_to_n_bars(tsperiod: str) -> int:
     s = str(tsperiod).lower().strip()
+    if s in ("max", "all"):
+        return 13000  # ~50 years; capped at 1970+ to avoid Windows timestamp overflow
     s = re.sub(r"^(\d+)m$", r"\1mo", s)
     match = re.match(r"^(\d+)(d|w|mo|y)$", s)
     if not match:
@@ -1266,26 +1268,44 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
 
     def _fetch(sec_id, sec_name, tv_symbol, tv_exchange):
         """Fetch OHLCV history for one security; returns (sec_id, sec_name, symbol, rows, error)."""
-        try:
+        def _try_fetch(bars: int):
             df = _get_tv().get_hist(
                 symbol=tv_symbol,
                 exchange=tv_exchange,
                 interval=Interval.in_daily,
-                n_bars=n_bars,
+                n_bars=bars,
             )
             if df is None or df.empty:
-                return sec_id, sec_name, tv_symbol, [], None
+                return []
             rows = []
             for date, row in df.iterrows():
+                try:
+                    date_str = pd.Timestamp(date).strftime("%Y-%m-%d")
+                except (OSError, ValueError, OverflowError):
+                    continue  # skip pre-1970 timestamps that overflow on Windows
                 rows.append((
                     int(sec_id),
-                    pd.Timestamp(date).strftime("%Y-%m-%d"),
+                    date_str,
                     float(row["close"]),
                     None if pd.isna(row["high"])   else float(row["high"]),
                     None if pd.isna(row["low"])    else float(row["low"]),
                     0    if pd.isna(row["volume"]) else int(row["volume"]),
                 ))
-            return sec_id, sec_name, tv_symbol, rows, None
+            return rows
+
+        try:
+            return sec_id, sec_name, tv_symbol, _try_fetch(n_bars), None
+        except (OSError, ValueError, OverflowError) as exc:
+            # Windows: datetime.fromtimestamp() fails on pre-1970 timestamps.
+            # Retry with ~30 years of data which safely stays post-1970.
+            reduced = min(n_bars, 7800)
+            logging.warning(f"Timestamp overflow for {tv_symbol} at {n_bars} bars "
+                            f"(likely pre-1970 data) — retrying with {reduced} bars")
+            try:
+                return sec_id, sec_name, tv_symbol, _try_fetch(reduced), None
+            except Exception as exc2:
+                import traceback
+                return sec_id, sec_name, tv_symbol, [], f"{exc2}\n{traceback.format_exc()}"
         except Exception as exc:
             import traceback
             return sec_id, sec_name, tv_symbol, [], f"{exc}\n{traceback.format_exc()}"

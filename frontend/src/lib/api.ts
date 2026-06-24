@@ -29,6 +29,8 @@ export const getInsights = () =>
 
 export const getAlerts = () =>
   api.get('/dashboard/alerts').then(r => r.data)
+export const acknowledgeSignal = (securitiesId: number) =>
+  api.post(`/dashboard/alerts/acknowledge-signal/${securitiesId}`).then(r => r.data)
 
 export const getUpcomingBills = (days = 14) =>
   api.get('/dashboard/upcoming-bills', { params: { days } }).then(r => r.data)

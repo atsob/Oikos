@@ -37,6 +37,7 @@ from ai.update_vector import update_all_embeddings
 from database.backup import DatabaseBackup
 from database.connection import get_connection
 from database.crud import generate_draft_transactions
+from database.queries import refresh_signal_notifications
 
 import os as _os
 _log_dir  = _os.getenv("APP_DATA_DIR", ".")
@@ -67,6 +68,7 @@ MONTHLY_SUMMARY_MINUTE = 0
 DIVIDEND_HISTORY_WEEKDAY = 6  # Sunday at 06:30
 DIVIDEND_HISTORY_HOUR    = 6
 DIVIDEND_HISTORY_MINUTE  = 30
+SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
 
 # Tick interval — the scheduler wakes up this often to check all jobs.
 TICK_SECONDS = 60
@@ -331,6 +333,18 @@ def _recurring_drafts_job():
         _record_job("recurring_drafts", "error", str(e))
 
 
+def _signal_notifications_job():
+    """Compute final signals for all held securities and record any changes."""
+    logging.info("Running signal notifications refresh…")
+    try:
+        refresh_signal_notifications()
+        logging.info("Signal notifications refreshed.")
+        _record_job("signal_notifications", "success", "Completed OK")
+    except Exception as e:
+        logging.error(f"Signal notification refresh failed: {e}", exc_info=True)
+        _record_job("signal_notifications", "error", str(e))
+
+
 def _morning_maintenance_job():
     """VACUUM ANALYZE the database, then refresh all embeddings."""
     errors = []
@@ -419,6 +433,9 @@ if __name__ == "__main__":
     # Monthly summary: skip if already ran this month
     _last_monthly_summary_month: int = -1
 
+    # Signal notifications: first run deferred to tick loop
+    _last_signal_refresh: datetime = datetime.min
+
     # Morning maintenance: skip if already past the scheduled window today
     _last_maintenance_date: date = date.min
     _now_startup = datetime.now()
@@ -478,3 +495,9 @@ if __name__ == "__main__":
         if now.weekday() == dh_wd and _in_window(now, dh_h, dh_m) and _last_dividend_history_week != _this_week_start:
             _dividend_history_job()
             _last_dividend_history_week = _this_week_start
+
+        # ── Signal notifications: every N minutes ─────────────────────────────
+        minutes_since_signal = (now - _last_signal_refresh).total_seconds() / 60
+        if minutes_since_signal >= _parse_interval(sc.get('signal_notifications', ''), SIGNAL_REFRESH_INTERVAL_MINUTES):
+            _signal_notifications_job()
+            _last_signal_refresh = now
