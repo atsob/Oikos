@@ -48,7 +48,7 @@ function ClearedCell({ data }: { data: Record<string, unknown> }) {
 const COL_DEFS: ColDef[] = [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
-  { field: 'description', headerName: 'Description', flex: 2, minWidth: 180 },
+  { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
   { field: 'target_account', headerName: 'Transfer To', width: 130 },
   { field: 'memo', headerName: 'Memo', width: 140 },
@@ -828,8 +828,8 @@ export default function Register() {
                 columnDefs={COL_DEFS}
                 onGridReady={onGridReady}
                 onRowClicked={onRowClicked}
-                onFirstDataRendered={e => e.api.autoSizeAllColumns()}
-                onRowDataUpdated={e => e.api.autoSizeAllColumns()}
+                onFirstDataRendered={e => e.api.sizeColumnsToFit()}
+                onRowDataUpdated={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true, filter: true }}
                 rowSelection="single"
                 suppressCellFocus={false}

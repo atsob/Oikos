@@ -57,6 +57,10 @@ _dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
 if os.path.isdir(_dist):
     app.mount('/assets', StaticFiles(directory=os.path.join(_dist, 'assets')), name='assets')
 
+    @app.get('/favicon.svg', include_in_schema=False)
+    def favicon():
+        return FileResponse(os.path.join(_dist, 'favicon.svg'), media_type='image/svg+xml')
+
     @app.get('/{full_path:path}', include_in_schema=False)
     def spa_fallback(full_path: str):
         return FileResponse(os.path.join(_dist, 'index.html'))

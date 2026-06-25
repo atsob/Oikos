@@ -419,7 +419,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
 }
 
 // ── Corporate Actions Tab ─────────────────────────────────────────────────────
-type EventGroup = 'split' | 'default_delisting' | 'dividend'
+type EventGroup = 'split' | 'default_delisting' | 'dividend' | 'return_of_capital'
 
 const TODAY = new Date().toISOString().slice(0, 10)
 
@@ -472,6 +472,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       return `${secName} ${rn}-for-${ro} ${isForward ? 'Stock Split' : 'Reverse Split'}`
     }
     if (eventGroup === 'default_delisting') return `${secName} — ${ddType}`
+    if (eventGroup === 'return_of_capital') return `${secName} Return of Capital — ${Number(grossPerShare).toFixed(10)} per share`
     const g = Number(grossPerShare).toFixed(10)
     const tax = Number(taxRate)
     const net = (Number(grossPerShare) * (1 - tax / 100)).toFixed(10)
@@ -488,8 +489,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     ratio_old: eventGroup === 'split' ? ratioOld : null,
     // default/delisting
     action_type: eventGroup === 'default_delisting' ? ddType : null,
-    // dividend
-    gross_per_share: eventGroup === 'dividend' ? grossPerShare : null,
+    // dividend / return of capital
+    gross_per_share: (eventGroup === 'dividend' || eventGroup === 'return_of_capital') ? grossPerShare : null,
     tax_rate: eventGroup === 'dividend' ? taxRate : null,
   })
 
@@ -526,6 +527,13 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       { field: 'qty_before', headerName: 'Qty Before', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
       { field: 'delta', headerName: 'Delta', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
       { field: 'qty_after', headerName: 'Qty After', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+    ]
+    if (eventGroup === 'return_of_capital') return [
+      { field: 'account', headerName: 'Account', flex: 2 },
+      { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'amount_per_share', headerName: 'Amount/Share', width: 130, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'total', headerName: 'Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+      { field: 'currency', headerName: 'Ccy', width: 70 },
     ]
     return [
       { field: 'account', headerName: 'Account', flex: 2 },
@@ -622,7 +630,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         <div>
           <p className="text-xs font-medium text-slate-500 mb-2">Event type</p>
           <div className="flex gap-6">
-            {([['split', 'Stock Split / Reverse Split'], ['default_delisting', 'Default / Delisting'], ['dividend', 'Dividend']] as [EventGroup, string][]).map(([v, label]) => (
+            {([['split', 'Stock Split / Reverse Split'], ['default_delisting', 'Default / Delisting'], ['dividend', 'Dividend'], ['return_of_capital', 'Return of Capital']] as [EventGroup, string][]).map(([v, label]) => (
               <label key={v} className="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="event-group" value={v} checked={eventGroup === v}
                   onChange={() => { setEventGroup(v); setPreview(null); setExecuteMsg(null); setSelectedAccounts([]) }}
@@ -680,6 +688,12 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
             Enter the gross amount per share and the applicable withholding tax rate; the net amount is computed automatically.
           </p>
         )}
+        {eventGroup === 'return_of_capital' && (
+          <p className="text-xs text-slate-500">
+            Records a return of capital by inserting a <strong>RtrnCap</strong> entry per account based on current holdings.
+            No shares are created or destroyed — only a cash inflow per share held is recorded.
+          </p>
+        )}
 
         {/* Type-specific fields */}
         {eventGroup === 'split' && (
@@ -717,6 +731,17 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
           </div>
         )}
 
+        {eventGroup === 'return_of_capital' && (
+          <div className="flex-1 max-w-xs">
+            <label className="text-xs text-slate-500 block mb-1">Amount per share</label>
+            <div className="flex items-center border border-slate-300 rounded-md">
+              <input type="number" step="any" className="flex-1 px-3 py-2 text-sm rounded-l-md outline-none" value={grossPerShare} onChange={e => { setGrossPerShare(e.target.value); setPreview(null) }} />
+              <button className="px-3 py-2 text-slate-500 hover:bg-slate-100" onClick={() => setGrossPerShare(v => String(Math.max(0, Number(v) - 0.01).toFixed(10)))}>−</button>
+              <button className="px-3 py-2 text-slate-500 hover:bg-slate-100" onClick={() => setGrossPerShare(v => String((Number(v) + 0.01).toFixed(10)))}>+</button>
+            </div>
+          </div>
+        )}
+
         {eventGroup === 'dividend' && (
           <div className="space-y-3">
             <div className="flex gap-6">
@@ -748,7 +773,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 
         {/* Effective/Payment date */}
         <div>
-          <label className="text-xs text-slate-500 block mb-1">{eventGroup === 'dividend' ? 'Payment date' : 'Effective date'}</label>
+          <label className="text-xs text-slate-500 block mb-1">{(eventGroup === 'dividend' || eventGroup === 'return_of_capital') ? 'Payment date' : 'Effective date'}</label>
           <Input type="date" className="w-36" value={date} onChange={e => { setDate(e.target.value); setPreview(null) }} />
         </div>
 

@@ -4,10 +4,25 @@ from typing import Optional
 import math
 import pandas as pd
 from database.connection import get_db, get_connection
-from api.routers.investments import _upsert_cash_transaction, _build_inv_description
+from api.routers.investments import _upsert_cash_transaction, _build_inv_description, _find_or_create_payee
 from api.routers.register import _refresh_balance
 
 router = APIRouter()
+
+
+def _ensure_corporate_action_enum():
+    """Add enum values that may not exist in older DB installs."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            DO $$ BEGIN
+                ALTER TYPE corporate_action_type ADD VALUE IF NOT EXISTS 'Return of Capital';
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+        """)
+        conn.commit()
+
+_ensure_corporate_action_enum()
 
 
 def _df(df: pd.DataFrame) -> list:
@@ -220,7 +235,7 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None):
 @router.post("/{sec_id}/corporate-actions/preview")
 def preview_corporate_action(sec_id: int, data: dict):
     """Preview investment transactions that a corporate action would generate."""
-    event_group = data.get("event_group")  # 'split' | 'default_delisting' | 'dividend'
+    event_group = data.get("event_group")  # 'split' | 'default_delisting' | 'dividend' | 'return_of_capital'
     account_names = data.get("account_names") or None
 
     with get_db() as conn:
@@ -280,6 +295,21 @@ def preview_corporate_action(sec_id: int, data: dict):
                     "net_total": net,
                 })
 
+    elif event_group == "return_of_capital":
+        amount_per_share = float(data.get("gross_per_share") or 0)
+        for _, r in df.iterrows():
+            qty = float(r["qty_held"])
+            if qty > 0:
+                total = round(qty * amount_per_share, 6)
+                rows.append({
+                    "account": r["account"],
+                    "currency": r.get("currency"),
+                    "action": "RtrnCap",
+                    "qty_held": qty,
+                    "amount_per_share": amount_per_share,
+                    "total": total,
+                })
+
     return rows
 
 
@@ -296,6 +326,7 @@ def execute_corporate_action(sec_id: int, data: dict):
         "split": "Split" if float(data.get("ratio_new") or 1) >= float(data.get("ratio_old") or 1) else "Reverse Split",
         "default_delisting": data.get("action_type") or "Default",
         "dividend": "Dividend",
+        "return_of_capital": "Return of Capital",
     }
     db_action_type = action_type_map.get(event_group, event_group)
 
@@ -351,11 +382,12 @@ def execute_corporate_action(sec_id: int, data: dict):
                 if row[1]:
                     linked_map[row[0]] = row[1]
 
-        # 4. Look up security name/ticker once for cash description
+        # 4. Look up security name/ticker once for cash description; resolve/create payee
         cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (sec_id,))
         sec_row = cur.fetchone()
         sec_name = sec_row[0] if sec_row else None
         ticker = sec_row[1] if sec_row else None
+        payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
 
         # 5. Insert investment transactions (and linked cash transactions where applicable)
         for accounts_id, qty in holdings:
@@ -384,6 +416,15 @@ def execute_corporate_action(sec_id: int, data: dict):
                 price = net_per_share
                 total = round(qty * net_per_share, 6)
 
+            elif event_group == "return_of_capital":
+                if qty <= 0:
+                    continue
+                amount_per_share = float(data.get("gross_per_share") or 0)
+                inv_action = "RtrnCap"
+                inv_qty = qty
+                price = amount_per_share
+                total = round(qty * amount_per_share, 6)
+
             else:
                 continue
 
@@ -403,7 +444,7 @@ def execute_corporate_action(sec_id: int, data: dict):
                 cash_desc = _build_inv_description(inv_action, sec_name, ticker, inv_qty, price)
                 _upsert_cash_transaction(
                     cur, inv_id, cash_account_id, accounts_id,
-                    date, inv_action, total, cash_desc, None,
+                    date, inv_action, total, cash_desc, None, payee_id,
                 )
                 _refresh_balance(cur, cash_account_id)
 

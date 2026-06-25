@@ -5710,15 +5710,21 @@ def acknowledge_signal_notification(securities_id: int):
 
 
 def _compute_current_signals() -> pd.DataFrame:
-    """Run the final_signal CTE for all held securities. Returns (securities_id, securities_name, final_signal)."""
+    """Compute final_signal for ALL securities using the same logic as get_portfolio_signals.
+
+    Returns DataFrame with (securities_id, securities_name, final_signal).
+    Holdings value/cost columns are omitted — only the signal matters here.
+    The SELL/REDUCE condition treats every security as if it has an open position
+    (consistent with notifications covering the full universe, not just held names).
+    """
     conn = get_connection()
     try:
         df = pd.read_sql("""
             WITH base_data AS (
                 SELECT Securities_Id, Date, Close,
-                       (Close / NULLIF(LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date), 0) - 1) AS daily_ret
+                       (Close / LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date) - 1) AS daily_ret
                 FROM Historical_Prices
-                WHERE Date >= CURRENT_DATE - INTERVAL '62 months'
+                WHERE Date >= (CURRENT_DATE - INTERVAL '62 months')
             ),
             ranked_prices AS (
                 SELECT Securities_Id, Date, Close AS price_today,
@@ -5728,61 +5734,103 @@ def _compute_current_signals() -> pd.DataFrame:
                        LAG(Close,  63) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_3m,
                        LAG(Close, 126) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_6m,
                        LAG(Close, 252) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1y,
-                       ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rn
-                FROM Historical_Prices
-                WHERE Date >= CURRENT_DATE - INTERVAL '62 months'
-            ),
-            latest_prices AS (
-                SELECT * FROM ranked_prices WHERE rn = 1
-            ),
-            vol_data AS (
-                SELECT Securities_Id,
-                       STDDEV(daily_ret) * SQRT(252) AS annual_vol
+                       LAG(Close, 756) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_3y,
+                       ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rev_rank
                 FROM base_data
-                WHERE Date >= CURRENT_DATE - INTERVAL '12 months'
-                GROUP BY Securities_Id
             ),
-            sharpe AS (
-                SELECT lp.Securities_Id,
-                       CASE WHEN v.annual_vol > 0
-                            THEN ((lp.price_today / NULLIF(lp.price_1y, 0)) - 1) / v.annual_vol
-                            ELSE NULL END AS sharpe_1y
-                FROM latest_prices lp
-                LEFT JOIN vol_data v ON v.Securities_Id = lp.Securities_Id
+            ytd_prices AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close AS price_ytd_start
+                FROM Historical_Prices
+                WHERE Date < date_trunc('year', CURRENT_DATE)
+                ORDER BY Securities_Id, Date DESC
             ),
-            recommendation AS (
-                SELECT sh.Securities_Id,
-                       s.Securities_Name,
-                       s.Analyst_Rating AS wall_street_view,
-                       sh.sharpe_1y,
-                       CASE
-                         WHEN sh.sharpe_1y >  0.5 THEN '🟢 BUY'
-                         WHEN sh.sharpe_1y < -0.5 THEN '🔴 SELL'
-                         WHEN sh.sharpe_1y IS NULL THEN '👀 WATCH'
-                         ELSE '⚪ NEUTRAL'
-                       END AS recommendation_signal
-                FROM sharpe sh
-                JOIN Securities s ON s.Securities_Id = sh.Securities_Id
-                WHERE s.Securities_Id IN (
-                    SELECT DISTINCT i.Securities_Id FROM Investments i
-                    JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-                )
+            latest_only AS (
+                SELECT rp.*, yp.price_ytd_start
+                FROM ranked_prices rp
+                LEFT JOIN ytd_prices yp ON rp.Securities_Id = yp.Securities_Id
+                WHERE rp.rev_rank = 1
+            ),
+            performance_data AS (
+                SELECT
+                    lo.Securities_Id, sec.Securities_Name, lo.price_today,
+                    ROUND(((lo.price_today / NULLIF(lo.price_1d,  0)) - 1) * 100, 2) AS daily_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_1w,  0)) - 1) * 100, 2) AS weekly_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_1m,  0)) - 1) * 100, 2) AS monthly_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_3m,  0)) - 1) * 100, 2) AS quarterly_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_6m,  0)) - 1) * 100, 2) AS semiannual_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_1y,  0)) - 1) * 100, 2) AS annual_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_3y,  0)) - 1) * 100, 2) AS triannual_chg_pct,
+                    ROUND(((lo.price_today / NULLIF(lo.price_ytd_start, 0)) - 1) * 100, 2) AS ytd_chg_pct,
+                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
+                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
+                         AND bd.Date > (lo.Date - INTERVAL '1 month'))  AS vol_1m_ann,
+                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
+                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
+                         AND bd.Date > (lo.Date - INTERVAL '3 months')) AS vol_3m_ann,
+                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
+                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
+                         AND bd.Date > (lo.Date - INTERVAL '12 months')) AS vol_1y_ann,
+                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
+                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
+                         AND bd.Date >= date_trunc('year', CURRENT_DATE)) AS vol_ytd_ann
+                FROM latest_only lo
+                JOIN Securities sec ON lo.Securities_Id = sec.Securities_Id
+                WHERE sec.Is_Active
+                  AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
+            ),
+            rfr AS (
+                SELECT COALESCE(annual_chg_pct, 2.36) AS value
+                FROM performance_data
+                WHERE Securities_Name LIKE 'Hellenic T-Bill 52W%%'
+                LIMIT 1
+            ),
+            investment_signals AS (
+                SELECT *,
+                    ROUND(((monthly_chg_pct * 0.5) + (quarterly_chg_pct * 0.3) + (annual_chg_pct * 0.2))::numeric, 2) AS quality_score,
+                    ROUND(((annual_chg_pct - (SELECT value FROM rfr)) / NULLIF(vol_1y_ann, 0))::numeric, 2) AS sharpe_ratio
+                FROM performance_data
+                WHERE vol_1y_ann > 0
+            ),
+            recommendations AS (
+                SELECT
+                    sig.Securities_Id,
+                    sig.Securities_Name,
+                    sig.price_today,
+                    sec.Analyst_Rating       AS wall_street_view,
+                    sec.Analyst_Target_Price AS analyst_target_price,
+                    ROUND((((sec.Analyst_Target_Price / NULLIF(sig.price_today, 0)) - 1) * 100)::numeric, 2) AS upside_pct,
+                    -- Treat every security as if held so SELL/REDUCE fires on bad math
+                    CASE
+                        WHEN sharpe_ratio < 0 OR quality_score < -5 THEN '🔴 SELL / REDUCE'
+                        WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
+                        WHEN sharpe_ratio > 0.7 OR quality_score > 8  THEN '🟢 BUY'
+                        WHEN sharpe_ratio > 0.3 OR quality_score > 0  THEN '🟡 HOLD'
+                        ELSE '⚪ NEUTRAL'
+                    END AS recommendation_signal
+                FROM investment_signals sig
+                JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
             )
-            SELECT Securities_Id AS securities_id,
-                   Securities_Name AS securities_name,
-                   wall_street_view,
-                   recommendation_signal,
-                   CASE
-                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('buy','strong_buy') THEN '💎 CONVICTION BUY'
-                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'strong_buy'          THEN '💎 STRONG CONVICTION'
-                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'hold'               THEN '🚀 MOMENTUM BUY'
-                     WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IS NULL                THEN '⚙️ ALGO BUY'
-                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ CONVICTION SELL'
-                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view = 'hold'               THEN '📉 MOMENTUM SELL'
-                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IS NULL                THEN '⚙️ ALGO SELL'
-                     ELSE recommendation_signal
-                   END AS final_signal
-            FROM recommendation
+            SELECT
+                Securities_Id   AS securities_id,
+                Securities_Name AS securities_name,
+                CASE
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('buy','strong_buy') AND upside_pct > 20 THEN '🔥 HIGH CONVICTION BUY'
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'strong_buy'          THEN '💎 STRONG CONVICTION'
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'buy'                 THEN '💎 CONVICTION BUY'
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'hold'                THEN '🚀 MOMENTUM BUY'
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('sell','underperform') THEN '🔍 CONTRARIAN BUY'
+                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IS NULL                 THEN '⚙️ ALGO BUY'
+                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ CONVICTION SELL'
+                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view = 'hold'                THEN '📉 MOMENTUM SELL'
+                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('buy','strong_buy') THEN '🔍 CONTRARIAN SELL'
+                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IS NULL                 THEN '⚙️ ALGO SELL'
+                    WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ ANALYST CAUTION'
+                    WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('buy','strong_buy') THEN '📈 ANALYST UPGRADE'
+                    WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('sell','underperform') THEN '🔻 ANALYST UNDERPERFORM'
+                    WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('buy','strong_buy') THEN '📊 ANALYST BUY'
+                    ELSE recommendation_signal
+                END AS final_signal
+            FROM recommendations
             ORDER BY Securities_Name
         """, conn)
         return df

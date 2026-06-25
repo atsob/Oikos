@@ -507,7 +507,8 @@ CREATE TYPE corporate_action_type AS ENUM (
     'Delisting',
     'Other',
     'Default',    -- company default / bankruptcy write-off
-    'Dividend'
+    'Dividend',
+    'Return of Capital'
 );
 
 CREATE TABLE IF NOT EXISTS Corporate_Actions (
@@ -753,6 +754,86 @@ CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
     Created_At  TIMESTAMP DEFAULT NOW(),
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
+
+
+-- =============================================================================
+-- IMPORT SUPPORT TABLES
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS import_ignored_records (
+    source     TEXT        NOT NULL,
+    desc_key   TEXT        NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (source, desc_key)
+);
+
+CREATE TABLE IF NOT EXISTS import_security_mappings (
+    source          TEXT    NOT NULL,
+    source_symbol   TEXT    NOT NULL,
+    securities_id   INTEGER NOT NULL,
+    PRIMARY KEY (source, source_symbol)
+);
+
+-- =============================================================================
+-- WATCHLIST & ALERTS
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS Watchlist (
+    Watchlist_Id  SERIAL PRIMARY KEY,
+    Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Target_Price  NUMERIC(20,8),
+    Stop_Loss     NUMERIC(20,8),
+    Note          TEXT,
+    Added_Date    DATE DEFAULT CURRENT_DATE,
+    UNIQUE(Securities_Id)
+);
+
+CREATE TABLE IF NOT EXISTS Alerts (
+    Alert_Id      SERIAL PRIMARY KEY,
+    Alert_Type    TEXT NOT NULL,
+    Securities_Id INTEGER REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Asset_Type    TEXT,
+    Threshold     NUMERIC(20,8),
+    Direction     TEXT,
+    Is_Active     BOOLEAN DEFAULT TRUE,
+    Note          TEXT,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS Signal_Notifications (
+    Securities_Id     INTEGER PRIMARY KEY
+                      REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Last_Known_Signal TEXT,
+    Previous_Signal   TEXT,
+    Changed_At        TIMESTAMP DEFAULT NOW(),
+    Acknowledged      BOOLEAN DEFAULT TRUE
+);
+
+
+-- =============================================================================
+-- SCHEDULER
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS Scheduler_Jobs (
+    job_id       VARCHAR(80)  PRIMARY KEY,
+    name         VARCHAR(200) NOT NULL,
+    description  TEXT,
+    schedule     VARCHAR(200),
+    enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    last_run     TIMESTAMPTZ,
+    last_status  VARCHAR(20),
+    last_message TEXT
+);
+
+
+-- =============================================================================
+-- ENUM MIGRATIONS  (safe to re-run; ADD VALUE IF NOT EXISTS is idempotent)
+-- =============================================================================
+
+DO $$ BEGIN
+    ALTER TYPE corporate_action_type ADD VALUE IF NOT EXISTS 'Return of Capital';
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 
 -- =============================================================================

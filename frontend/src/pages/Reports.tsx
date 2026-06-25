@@ -1007,6 +1007,8 @@ function PnlReport() {
         const drillValue    = drillRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
         const drillPnl      = drillRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
         const drillUnreal   = drillRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
+        const drillCost     = drillValue - drillUnreal
+        const drillUnrealPct = drillCost !== 0 ? (drillUnreal / drillCost) * 100 : null
         const drillReal     = drillRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
         const drillMkt      = mktKey ? drillRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null
         const drillFx       = fxKey  ? drillRows.reduce((s, r) => s + Number(r[fxKey]  ?? 0), 0) : null
@@ -1023,7 +1025,7 @@ function PnlReport() {
             <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong></span>
             {drillMkt != null && <span className={`tabular-nums ${drillMkt >= 0 ? 'text-green-700' : 'text-red-600'}`}>Mkt: <strong>{fmtEur(drillMkt)}</strong></span>}
             {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
-            <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong></span>
+            <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
             <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong></span>
           </div>
           <WithCopy>
@@ -1049,7 +1051,17 @@ function PnlReport() {
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
                       <PnlCell val={Number(r[pk] ?? 0)} pct={showPct && pctKey(win) ? Number(r[pctKey(win)!] ?? 0) : null} />
                       {showFxSplit && mktKey && <><PnlCell val={Number(r[mktKey] ?? 0)} /><PnlCell val={fxKey ? Number(r[fxKey] ?? 0) : 0} /></>}
-                      <PnlCell val={Number(r.unrealized_pnl_eur ?? 0)} />
+                      {(() => {
+                        const unreal = Number(r.unrealized_pnl_eur ?? 0)
+                        const cost = Number(r.current_value_eur ?? 0) - unreal
+                        const pct = cost !== 0 ? (unreal / cost) * 100 : null
+                        return (
+                          <td className={`px-3 py-2 text-right tabular-nums ${unreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {fmtEur(unreal)}
+                            {pct != null && <span className="ml-1 text-xs opacity-70">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>}
+                          </td>
+                        )
+                      })()}
                       <PnlCell val={Number(r.realized_pnl_eur ?? 0)} />
                       <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.dividend_yoc_pct != null ? `${Number(r.dividend_yoc_pct).toFixed(2)}%` : '—'}</td>
                     </tr>
@@ -1082,7 +1094,10 @@ function PnlReport() {
                     <PnlCell val={a.pnl} />
                     {showPct && <td className={`px-3 py-2 text-right tabular-nums text-xs ${a.value !== 0 ? (a.pnl >= 0 ? 'text-green-700' : 'text-red-600') : 'text-slate-400'}`}>{a.value !== 0 ? `${(a.pnl / a.value * 100).toFixed(2)}%` : '—'}</td>}
                     {showFxSplit && mktKey && <><PnlCell val={a.market ?? 0} /><PnlCell val={a.fx ?? 0} /></>}
-                    <PnlCell val={a.unrealized} />
+                    <td className={`px-3 py-2 text-right tabular-nums ${a.unrealized >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {fmtEur(a.unrealized)}
+                      {(() => { const cost = a.value - a.unrealized; return cost !== 0 ? <span className="ml-1 text-xs opacity-70">({a.unrealized >= 0 ? '+' : ''}{(a.unrealized / cost * 100).toFixed(2)}%)</span> : null })()}
+                    </td>
                     <PnlCell val={a.realized} />
                   </tr>
                 ))}
