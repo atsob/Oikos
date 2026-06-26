@@ -42,6 +42,14 @@ app.include_router(securities.router,          prefix="/api/securities",   tags=
 app.include_router(bank_router.router,         prefix="/api/bank",         tags=["bank"])
 
 
+@app.middleware("http")
+async def no_cache_api(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
@@ -55,12 +63,22 @@ from fastapi.responses import FileResponse
 
 _dist = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
 if os.path.isdir(_dist):
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request as StarletteRequest
+    from starlette.responses import Response as StarletteResponse
+
     app.mount('/assets', StaticFiles(directory=os.path.join(_dist, 'assets')), name='assets')
 
     @app.get('/favicon.svg', include_in_schema=False)
     def favicon():
         return FileResponse(os.path.join(_dist, 'favicon.svg'), media_type='image/svg+xml')
 
-    @app.get('/{full_path:path}', include_in_schema=False)
-    def spa_fallback(full_path: str):
-        return FileResponse(os.path.join(_dist, 'index.html'))
+    class SPAMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: StarletteRequest, call_next):
+            response = await call_next(request)
+            path = request.url.path
+            if response.status_code == 404 and not path.startswith('/api/') and path != '/api':
+                return FileResponse(os.path.join(_dist, 'index.html'))
+            return response
+
+    app.add_middleware(SPAMiddleware)

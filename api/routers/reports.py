@@ -1070,57 +1070,274 @@ def get_dividends_tracker(
     }
 
 
+def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
+    """All buy/sell investment transactions with EUR amounts for FIFO/LIFO lot matching."""
+    query = """
+        WITH txn_with_eur AS (
+            SELECT
+                i.Investments_Id,
+                i.Securities_Id,
+                i.Accounts_Id,
+                i.Date,
+                i.Action,
+                i.Instrument_Type,
+                ABS(COALESCE(i.Quantity, 0)) AS quantity,
+                i.Price_Per_Share,
+                CASE
+                    WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
+                        THEN ABS(t_cash.Total_Amount)
+                    WHEN c.Currencies_ShortName != 'EUR'
+                        THEN ABS(i.Total_Amount_AccCur) * COALESCE(
+                            (SELECT fx.FX_Rate FROM Historical_FX fx
+                             WHERE fx.Currencies_Id_1 = c.Currencies_Id
+                               AND fx.Date <= i.Date
+                             ORDER BY fx.Date DESC LIMIT 1), 1.0)
+                    ELSE ABS(i.Total_Amount_AccCur)
+                END AS amount_eur
+            FROM Investments i
+            JOIN Securities s   ON s.Securities_Id = i.Securities_Id
+            JOIN Currencies c   ON c.Currencies_Id = s.Currencies_Id
+            LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
+            WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut','Expire','CashIn','CashOut')
+              AND i.Total_Amount_AccCur IS NOT NULL
+        )
+        SELECT
+            te.*,
+            s.Securities_Name                  AS securities_name,
+            a.Accounts_Name                    AS account_name,
+            COALESCE(s.Is_Tax_Exempt, FALSE)   AS is_tax_exempt,
+            s.Securities_Type                  AS securities_type
+        FROM txn_with_eur te
+        JOIN Securities s ON s.Securities_Id = te.Securities_Id
+        JOIN Accounts   a ON a.Accounts_Id   = te.Accounts_Id
+        ORDER BY te.Securities_Id, te.Accounts_Id, te.Date, te.Investments_Id
+    """
+    df = pd.read_sql(query, conn)
+    if not df.empty:
+        df['date'] = pd.to_datetime(df['date'])
+    return df
+
+
+def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO') -> pd.DataFrame:
+    """FIFO or LIFO lot matching — port of Streamlit _compute_lot_gains."""
+    from collections import deque
+    BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn', 'CashIn'}
+    SELL_ACTIONS = {'Sell', 'Expire', 'ShrOut', 'CashOut'}
+    is_lifo = (method == 'LIFO')
+    results = []
+
+    for (sec_id, acc_id), grp in df_all.groupby(['securities_id', 'accounts_id'], sort=False):
+        lot_q: deque = deque()
+        for _, row in grp.sort_values(['date', 'investments_id']).iterrows():
+            action = row['action']
+            qty    = float(row['quantity'])   if pd.notna(row['quantity'])   else 0.0
+            amount = float(row['amount_eur']) if pd.notna(row['amount_eur']) else 0.0
+
+            if action in BUY_ACTIONS and qty > 1e-9:
+                lot_q.append({'date': row['date'], 'qty': qty, 'cost_ps': amount / qty})
+            elif action in SELL_ACTIONS and qty > 1e-9:
+                sell_date = row['date']
+                qty_left  = qty
+                cost_basis = 0.0
+                first_buy_date = None
+                while qty_left > 1e-9 and lot_q:
+                    lot = lot_q[-1] if is_lifo else lot_q[0]
+                    if first_buy_date is None:
+                        first_buy_date = lot['date']
+                    consumed = min(lot['qty'], qty_left)
+                    cost_basis += consumed * lot['cost_ps']
+                    lot['qty']  -= consumed
+                    qty_left    -= consumed
+                    if lot['qty'] < 1e-9:
+                        if is_lifo:
+                            lot_q.pop()
+                        else:
+                            lot_q.popleft()
+                if sell_date.year == tax_year:
+                    days_held = (sell_date - first_buy_date).days if first_buy_date else 0
+                    results.append({
+                        'securities_id':   sec_id,
+                        'security':        row['securities_name'],
+                        'ticker':          None,
+                        'account':         row['account_name'],
+                        'date':            sell_date.date().isoformat(),
+                        'action':          action,
+                        'quantity':        qty,
+                        'sell_price':      row.get('price_per_share'),
+                        'avg_cost':        cost_basis / qty if qty > 1e-9 else None,
+                        'proceeds_eur':    amount,
+                        'cost_eur':        cost_basis,
+                        'gain_loss_eur':   amount - cost_basis,
+                        'holding_type':    'Long-term' if days_held >= 365 else 'Short-term',
+                        'is_tax_exempt':   bool(row.get('is_tax_exempt', False)),
+                        'instrument_type': row.get('instrument_type'),
+                        'securities_type': row.get('securities_type'),
+                    })
+
+    cols = ['securities_id','security','ticker','account','date','action','quantity',
+            'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
+            'holding_type','is_tax_exempt','instrument_type','securities_type']
+    return pd.DataFrame(results, columns=cols) if results else pd.DataFrame(columns=cols)
+
+
 @router.get("/capital-gains")
-def get_capital_gains(year: int = Query(None)):
-    """Realized capital gains for the year from investment sell transactions."""
+def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
+    """Realized capital gains for a tax year.
+
+    method: WAC (Weighted Average Cost), FIFO, or LIFO.
+    - WAC: per-sell WAC using only buys in the current open position (resets after full close).
+    - FIFO/LIFO: lot-based matching from first or last purchased lots.
+    - Excludes ShrOut (non-taxable corporate action shares-out).
+    """
     from datetime import date as _date
     if year is None:
-        # Default to the most recent year that has sell transactions
         with get_db() as conn:
             yr_df = pd.read_sql(
-                "SELECT EXTRACT(YEAR FROM Date)::int AS yr FROM Investments WHERE Action IN ('Sell','ShrOut','Expire') ORDER BY Date DESC LIMIT 1",
+                "SELECT EXTRACT(YEAR FROM Date)::int AS yr FROM Investments WHERE Action IN ('Sell','Expire') ORDER BY Date DESC LIMIT 1",
                 conn
             )
         year = int(yr_df.iloc[0]["yr"]) if not yr_df.empty else _date.today().year
 
+    if method.upper() in ('FIFO', 'LIFO'):
+        with get_db() as conn:
+            df_all = _get_all_inv_txns_for_gains(conn)
+        df = _compute_lot_gains(df_all, year, method=method.upper())
+        return _df_to_list(df)
+
     query = """
-    WITH fx AS (
-        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
-    ),
-    buys AS (
-        SELECT i.Securities_Id, i.Accounts_Id,
-               SUM(ABS(i.Total_Amount_AccCur)) / NULLIF(SUM(ABS(i.Quantity)), 0) AS wac_native
+    WITH
+    txn_with_eur AS (
+        SELECT
+            i.Investments_Id,
+            i.Securities_Id,
+            i.Accounts_Id,
+            i.Date,
+            i.Action,
+            i.Quantity,
+            i.Total_Amount_AccCur,
+            i.Price_Per_Share,
+            i.Transactions_Id,
+            CASE
+                WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
+                THEN ABS(t_cash.Total_Amount)
+                WHEN c.Currencies_ShortName != 'EUR'
+                THEN ABS(i.Total_Amount_AccCur) * COALESCE(
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = c.Currencies_Id AND fx.Date <= i.Date
+                     ORDER BY fx.Date DESC LIMIT 1),
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = c.Currencies_Id
+                     ORDER BY fx.Date ASC LIMIT 1),
+                    1.0)
+                ELSE ABS(i.Total_Amount_AccCur)
+            END AS amount_eur
         FROM Investments i
-        WHERE i.Action IN ('Buy','ShrIn','Reinvest','Vest','CashIn')
-          AND i.Quantity > 0
-        GROUP BY i.Securities_Id, i.Accounts_Id
+        JOIN Securities   s      ON s.Securities_Id = i.Securities_Id
+        JOIN Currencies   c      ON c.Currencies_Id = s.Currencies_Id
+        LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
+    ),
+    txn_running_pos AS (
+        SELECT
+            tf.*,
+            SUM(
+                CASE
+                    WHEN tf.Action IN ('Buy','ShrIn','Reinvest','Vest','Grant','Exercise','CashIn')
+                         THEN  ABS(tf.Quantity)
+                    WHEN tf.Action IN ('Sell','ShrOut','Expire')
+                         THEN -ABS(tf.Quantity)
+                    ELSE 0
+                END
+            ) OVER (
+                PARTITION BY tf.Securities_Id, tf.Accounts_Id
+                ORDER BY tf.Date, tf.Investments_Id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS running_qty
+        FROM txn_with_eur tf
+    ),
+    last_full_close AS (
+        SELECT
+            s.Investments_Id AS sell_id,
+            MAX(b.Date)      AS last_close_date
+        FROM txn_running_pos s
+        JOIN txn_running_pos b
+            ON  b.Securities_Id = s.Securities_Id
+            AND b.Accounts_Id   = s.Accounts_Id
+            AND b.Date          < s.Date
+            AND b.running_qty   = 0
+        WHERE s.Action IN ('Sell','Expire')
+          AND EXTRACT(year FROM s.Date) = %(year)s
+        GROUP BY s.Investments_Id
+    ),
+    buy_basis_per_sell AS (
+        SELECT
+            sell.Investments_Id                                    AS sell_id,
+            SUM(buy.amount_eur) / NULLIF(SUM(ABS(buy.Quantity)),0) AS wac_per_share_eur
+        FROM txn_running_pos sell
+        LEFT JOIN last_full_close lfc ON lfc.sell_id = sell.Investments_Id
+        JOIN txn_running_pos buy
+            ON  buy.Securities_Id = sell.Securities_Id
+            AND buy.Accounts_Id   = sell.Accounts_Id
+            AND buy.Date         <= sell.Date
+            AND buy.Date          > COALESCE(lfc.last_close_date, '1900-01-01'::date)
+            AND buy.Action        IN ('Buy','Reinvest','ShrIn','CashIn')
+            AND buy.Quantity       > 0
+        WHERE sell.Action IN ('Sell','Expire')
+          AND EXTRACT(year FROM sell.Date) = %(year)s
+        GROUP BY sell.Investments_Id
+    ),
+    last_buy_per_sell AS (
+        SELECT
+            sell.Investments_Id AS sell_id,
+            MAX(buy.Date)       AS last_buy_date
+        FROM txn_running_pos sell
+        LEFT JOIN last_full_close lfc ON lfc.sell_id = sell.Investments_Id
+        JOIN txn_running_pos buy
+            ON  buy.Securities_Id = sell.Securities_Id
+            AND buy.Accounts_Id   = sell.Accounts_Id
+            AND buy.Date         <= sell.Date
+            AND buy.Date          > COALESCE(lfc.last_close_date, '1900-01-01'::date)
+            AND buy.Action        IN ('Buy','Reinvest','ShrIn','CashIn')
+        WHERE sell.Action IN ('Sell','Expire')
+          AND EXTRACT(year FROM sell.Date) = %(year)s
+        GROUP BY sell.Investments_Id
     )
     SELECT
-        i.Date::text AS date,
-        s.Securities_Id AS securities_id,
-        s.Securities_Name AS security,
-        s.Ticker AS ticker,
-        a.Accounts_Name AS account,
-        i.Action AS action,
-        ABS(i.Quantity) AS quantity,
-        i.Price_Per_Share AS sell_price,
-        COALESCE(b.wac_native, h.simple_avg_price, 0) AS avg_cost,
-        ABS(i.Quantity) * (i.Price_Per_Share - COALESCE(b.wac_native, h.simple_avg_price, 0))
-            * COALESCE(fx.FX_Rate, 1) AS gain_loss_eur,
-        ABS(i.Quantity) * i.Price_Per_Share * COALESCE(fx.FX_Rate, 1) AS proceeds_eur,
-        ABS(i.Quantity) * COALESCE(b.wac_native, h.simple_avg_price, 0) * COALESCE(fx.FX_Rate, 1) AS cost_eur,
-        c.Currencies_ShortName AS currency
+        s.Securities_Id                                                        AS securities_id,
+        s.Securities_Name                                                      AS security,
+        s.Ticker                                                               AS ticker,
+        a.Accounts_Name                                                        AS account,
+        i.Date::text                                                           AS date,
+        i.Action                                                               AS action,
+        ABS(i.Quantity)                                                        AS quantity,
+        i.Price_Per_Share                                                      AS sell_price,
+        COALESCE(bb.wac_per_share_eur,
+                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
+                                                                               AS avg_cost,
+        itf.amount_eur                                                         AS proceeds_eur,
+        ABS(i.Quantity) * COALESCE(bb.wac_per_share_eur,
+                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
+                                                                               AS cost_eur,
+        itf.amount_eur
+          - ABS(i.Quantity) * COALESCE(bb.wac_per_share_eur,
+                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
+                                                                               AS gain_loss_eur,
+        CASE
+            WHEN lb.last_buy_date IS NULL OR (i.Date - lb.last_buy_date) < 365
+            THEN 'Short-term'
+            ELSE 'Long-term'
+        END                                                                    AS holding_type,
+        COALESCE(s.Is_Tax_Exempt, FALSE)                                       AS is_tax_exempt,
+        i.Instrument_Type                                                      AS instrument_type,
+        s.Securities_Type::text                                                AS securities_type
     FROM Investments i
-    JOIN Securities s ON i.Securities_Id = s.Securities_Id
-    JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
-    JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-    LEFT JOIN Holdings h ON h.Securities_Id = i.Securities_Id AND h.Accounts_Id = i.Accounts_Id
-    LEFT JOIN buys b ON b.Securities_Id = i.Securities_Id AND b.Accounts_Id = i.Accounts_Id
-    LEFT JOIN fx ON fx.Currencies_Id_1 = c.Currencies_Id
-    WHERE i.Action IN ('Sell','ShrOut','Expire')
-      AND EXTRACT(YEAR FROM i.Date) = %(year)s
-    ORDER BY i.Date DESC
+    JOIN txn_with_eur        itf ON itf.Investments_Id = i.Investments_Id
+    JOIN Securities          s   ON s.Securities_Id    = i.Securities_Id
+    JOIN Accounts            a   ON a.Accounts_Id      = i.Accounts_Id
+    LEFT JOIN buy_basis_per_sell bb ON bb.sell_id = i.Investments_Id
+    LEFT JOIN last_buy_per_sell  lb ON lb.sell_id = i.Investments_Id
+    WHERE i.Action IN ('Sell','Expire')
+      AND EXTRACT(year FROM i.Date) = %(year)s
+    ORDER BY i.Date
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"year": year})
@@ -2104,25 +2321,90 @@ def get_tax_loss_harvesting():
 # ── Dividend Income for Tax ───────────────────────────────────────────────────
 @router.get("/dividend-income-tax")
 def get_dividend_income_tax(year: int = Query(None)):
+    """Investment income (dividends, reinvested, interest, RtrnCap) for a tax year.
+    Mirrors Streamlit get_investment_income_report: uses linked EUR cash tx when available,
+    falls back to historical FX at the transaction date; respects is_tax_exempt flag.
+    """
     from datetime import date as _date
     if year is None:
         year = _date.today().year
     query = """
-    SELECT i.Date::text AS date, s.Securities_Id AS securities_id, s.Securities_Name, a.Accounts_Name AS account_name,
-           i.Action,
-           FALSE AS is_tax_exempt,
-           CASE WHEN cur.Currencies_ShortName='EUR' THEN i.Total_Amount_AccCur
-                ELSE i.Total_Amount_AccCur * COALESCE(
-                    (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=s.Currencies_Id AND Date<=i.Date ORDER BY Date DESC LIMIT 1),1)
-           END AS amount_eur
+    SELECT
+        i.Date::text                    AS date,
+        s.Securities_Id                 AS securities_id,
+        s.Securities_Name               AS securities_name,
+        a.Accounts_Name                 AS account_name,
+        i.Action                        AS action,
+        COALESCE(s.Is_Tax_Exempt, FALSE) AS is_tax_exempt,
+        CASE
+            WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
+                THEN t_cash.Total_Amount
+            WHEN c.Currencies_ShortName != 'EUR'
+                THEN i.Total_Amount_AccCur * COALESCE(
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = c.Currencies_Id AND fx.Date <= i.Date
+                     ORDER BY fx.Date DESC LIMIT 1),
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = c.Currencies_Id
+                     ORDER BY fx.Date ASC LIMIT 1),
+                    1.0)
+            ELSE i.Total_Amount_AccCur
+        END AS amount_eur
     FROM Investments i
-    JOIN Securities s ON s.Securities_Id=i.Securities_Id
-    JOIN Accounts a ON a.Accounts_Id=i.Accounts_Id
-    JOIN Currencies cur ON cur.Currencies_Id=a.Currencies_Id
+    JOIN Securities   s      ON s.Securities_Id      = i.Securities_Id
+    JOIN Accounts     a      ON a.Accounts_Id        = i.Accounts_Id
+    JOIN Currencies   c      ON c.Currencies_Id      = s.Currencies_Id
+    LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
     WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
-      AND EXTRACT(YEAR FROM i.Date)=%(year)s
+      AND EXTRACT(YEAR FROM i.Date) = %(year)s
       AND i.Total_Amount_AccCur <> 0
     ORDER BY i.Date DESC, s.Securities_Name
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params={"year": year})
+    return _df_to_list(df)
+
+
+@router.get("/bank-interest-tax")
+def get_bank_interest_tax(year: int = Query(None)):
+    """Bank & Savings interest from non-investment accounts for a tax year.
+    Mirrors Streamlit get_bank_interest_report.
+    """
+    from datetime import date as _date
+    if year is None:
+        year = _date.today().year
+    query = """
+    SELECT
+        t.Date::text                    AS date,
+        a.Accounts_Name                 AS account_name,
+        a.Accounts_Type                 AS account_type,
+        COALESCE(p.Payees_Name, '—')    AS payee,
+        c.Categories_Name               AS category,
+        cur.Currencies_ShortName        AS currency,
+        s.Amount * CASE
+            WHEN cur.Currencies_ShortName = 'EUR' THEN 1.0
+            ELSE COALESCE(
+                (SELECT hfx.FX_Rate FROM Historical_FX hfx
+                 WHERE hfx.Currencies_Id_1 = cur.Currencies_Id AND hfx.Date <= t.Date
+                 ORDER BY hfx.Date DESC LIMIT 1),
+                1.0)
+        END AS amount_eur
+    FROM Splits s
+    JOIN Transactions t   ON t.Transactions_Id = s.Transactions_Id
+    JOIN Categories   c   ON c.Categories_Id   = s.Categories_Id
+    JOIN Accounts     a   ON a.Accounts_Id     = t.Accounts_Id
+    JOIN Currencies   cur ON cur.Currencies_Id = a.Currencies_Id
+    LEFT JOIN Payees  p   ON p.Payees_Id       = t.Payees_Id
+    WHERE t.Transfers_Id IS NULL
+      AND (
+          c.Categories_Type = 'Interest'
+          OR (c.Categories_Type IN ('Income','Dividend')
+              AND LOWER(c.Categories_Name) LIKE '%%interest%%')
+      )
+      AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin')
+      AND EXTRACT(YEAR FROM t.Date) = %(year)s
+      AND s.Amount > 0
+    ORDER BY t.Date DESC, a.Accounts_Name
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"year": year})

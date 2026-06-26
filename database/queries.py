@@ -5938,10 +5938,20 @@ def check_triggered_alerts() -> list:
             """, conn2)
             conn2.close()
             for _, row in pending.iterrows():
+                changed_at = row.get('changed_at')
+                if changed_at is not None:
+                    try:
+                        ts = pd.Timestamp(changed_at)
+                        when = f"{ts.day} {ts.strftime('%b %Y %H:%M')}"
+                    except Exception:
+                        when = str(changed_at)[:16]
+                else:
+                    when = None
+                suffix = f" _(as of {when})_" if when else ''
                 results.append({
                     'level': 'info',
                     'message': (f"📊 **Signal Change** — {row['securities_name']}: "
-                                f"{row['previous_signal'] or '—'} → **{row['current_signal']}**"),
+                                f"{row['previous_signal'] or '—'} → **{row['current_signal']}**{suffix}"),
                     'securities_id': int(row['securities_id']),
                     'type': 'signal_change',
                 })

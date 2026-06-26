@@ -68,10 +68,17 @@ def get_security_holdings(sec_id: int):
                        WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
                        WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
                        ELSE 0 END), 0) AS qty_held,
-                   COALESCE(SUM(CASE
-                       WHEN i.action = 'Buy' THEN i.total_amount_acccur
-                       WHEN i.action IN ('Sell','ShrOut') THEN -i.total_amount_acccur
-                       ELSE 0 END), 0) AS cost_basis
+                   CASE
+                       WHEN SUM(CASE WHEN i.action = 'Buy' THEN i.quantity ELSE 0 END) = 0 THEN 0
+                       ELSE
+                           SUM(CASE WHEN i.action = 'Buy' THEN i.total_amount_acccur ELSE 0 END) /
+                           NULLIF(SUM(CASE WHEN i.action = 'Buy' THEN i.quantity ELSE 0 END), 0) *
+                           SUM(CASE
+                               WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
+                               WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
+                               ELSE 0
+                           END)
+                   END AS cost_basis
             FROM investments i
             JOIN accounts a ON a.accounts_id = i.accounts_id
             WHERE i.securities_id = %(sid)s

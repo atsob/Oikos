@@ -98,8 +98,8 @@ export const getCategoryBreakdown = (startDate: string, endDate: string) =>
 export const getBudgets = (year: number, month?: number) =>
   api.get('/reports/budgets', { params: { year, ...(month ? { month } : {}) } }).then(r => r.data)
 
-export const getCapitalGains = (year: number) =>
-  api.get('/reports/capital-gains', { params: { year } }).then(r => r.data)
+export const getCapitalGains = (year: number, method: string = 'WAC') =>
+  api.get('/reports/capital-gains', { params: { year, method } }).then(r => r.data)
 
 export const getDividends = (startDate: string, endDate: string) =>
   api.get('/reports/dividends', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
@@ -540,6 +540,8 @@ export const getTaxLossHarvesting = () =>
 
 export const getDividendIncomeTax = (year: number) =>
   api.get('/reports/dividend-income-tax', { params: { year } }).then(r => r.data)
+export const getBankInterestTax = (year: number) =>
+  api.get('/reports/bank-interest-tax', { params: { year } }).then(r => r.data)
 
 export const getPriceChanges = () =>
   api.get('/reports/price-changes').then(r => r.data)

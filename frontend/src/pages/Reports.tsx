@@ -11,7 +11,7 @@ import {
   getCashFlowForecast, getPnl, getCategoryBreakdown,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
   getSpendingByPayee, getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getDividendsTracker, getAccounts,
@@ -19,6 +19,7 @@ import {
   getIncomeExpenseFull,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
   getCustomReportFilterData, runCustomReport, runCustomReportDrillDown, runCustomReportInvestmentDrillDown,
+  api,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtPct } from '@/lib/utils'
@@ -47,8 +48,8 @@ function usePersist<T>(key: string, defaultVal: T) {
 const REPORT_TABS = [
   { key: 'net-worth',       label: '📊 Net Worth' },
   { key: 'inv-positions',   label: '📈 Inv. Positions' },
-  { key: 'inv-performance', label: '💹 Performance' },
-  { key: 'securities',      label: '🔍 Securities' },
+  { key: 'inv-performance', label: '💹 Inv. Performance' },
+  { key: 'securities',      label: '🔍 Securities Analysis' },
   { key: 'income-expense',  label: '💰 Income & Expense' },
   { key: 'cashflow',        label: '🔄 Cash Flow' },
   { key: 'budget',          label: '🎯 Budget & Spending' },
@@ -2170,7 +2171,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
   const { data: accounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
   const { data: presets = [], refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets'], queryFn: getPortfolioPresets })
 
-  const invAccounts = (accounts as Row[]).filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)))
+  const invAccounts = (accounts as Row[]).filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)) && a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false')
   const presetList = presets as { preset_id: number; preset_name: string; account_ids: number[] }[]
   const presetMap = useMemo(() => {
     const m: Record<string, number[]> = {}
@@ -3890,73 +3891,334 @@ function BudgetSection() {
 // ════════════════════════════════════════════════════════════════════════════
 // 8. INVESTMENT TAX
 // ════════════════════════════════════════════════════════════════════════════
+function CgTable({ rows }: { rows: Row[] }) {
+  return (
+    <WithCopy>
+    <div className="overflow-x-auto overflow-y-auto max-h-96">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+          <th className="px-2 py-1.5 text-left">Date</th>
+          <th className="px-2 py-1.5 text-left">Security</th>
+          <th className="px-2 py-1.5 text-left">Ticker</th>
+          <th className="px-2 py-1.5 text-left">Account</th>
+          <th className="px-2 py-1.5 text-right">Qty</th>
+          <th className="px-2 py-1.5 text-right">Sell Price</th>
+          <th className="px-2 py-1.5 text-right">WAC Cost (€)</th>
+          <th className="px-2 py-1.5 text-right">Proceeds (€)</th>
+          <th className="px-2 py-1.5 text-right">Cost Basis (€)</th>
+          <th className="px-2 py-1.5 text-right">Gain / Loss (€)</th>
+          <th className="px-2 py-1.5 text-left">Holding</th>
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((r, i) => {
+            const gl = Number(r.gain_loss_eur ?? 0)
+            return (
+              <tr key={i} className="hover:bg-slate-50">
+                <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
+                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
+                <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
+                <td className="px-2 py-1.5 text-slate-600">{String(r.account)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.sell_price ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.avg_cost ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.proceeds_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_eur ?? 0))}</td>
+                <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{gl >= 0 ? '+' : ''}{fmtEur(gl)}</td>
+                <td className="px-2 py-1.5">
+                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.holding_type === 'Long-term' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                    {String(r.holding_type ?? '—')}
+                  </span>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+    </WithCopy>
+  )
+}
+
+function CgMetric({ label, value, color, help }: { label: string; value: string; color?: string; help?: string }) {
+  return (
+    <div className="bg-slate-50 rounded-lg px-4 py-3 flex-1 min-w-[140px]" title={help}>
+      <div className="text-xs text-slate-500 mb-1">{label}</div>
+      <div className={`text-lg font-bold tabular-nums ${color ?? ''}`}>{value}</div>
+    </div>
+  )
+}
+
 function CapitalGainsReport() {
   const [year, setYear] = useState(new Date().getFullYear())
-  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year], queryFn: () => getCapitalGains(year) })
+  const [taxRate, setTaxRate] = useState(15)
+  const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('WAC')
+  const [showExempt, setShowExempt] = useState(false)
+  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const d = data as Row[]
-  const totalGain = d.reduce((s, r) => s + Number(r.gain_loss_eur ?? r.gain_loss ?? 0), 0)
-  const totalProceeds = d.reduce((s, r) => s + Number(r.proceeds_eur ?? 0), 0)
-  const totalCost = d.reduce((s, r) => s + Number(r.cost_eur ?? 0), 0)
+
+  const classify = (r: Row): 1 | 2 | 3 => {
+    const instr = String(r.instrument_type ?? '').trim().toLowerCase()
+    const stype = String(r.securities_type ?? '').trim().toLowerCase()
+    if (instr.startsWith('cfdon') || instr === 'cfd') return 2
+    if (instr === 'fxspot') return 3
+    if (stype === 'cfd') return 2
+    if (stype === 'fx spot') return 3
+    return 1
+  }
+  const isExempt = (r: Row) => r.is_tax_exempt === true || r.is_tax_exempt === 'true' || r.is_tax_exempt === 1
+
+  const dExempt  = d.filter(r =>  isExempt(r) && classify(r) === 1)
+  const dTaxable = d.filter(r => !isExempt(r) || classify(r) !== 1)
+  const dCat1    = dTaxable.filter(r => classify(r) === 1)
+  const dCat2    = dTaxable.filter(r => classify(r) === 2)
+  const dCat3    = dTaxable.filter(r => classify(r) === 3)
+  const dDeriv   = dTaxable.filter(r => classify(r) !== 1)
+
+  const sum = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+  const netCat1  = sum(dCat1)
+  const netDeriv = sum(dDeriv)
+  const taxEst   = Math.max(netDeriv, 0) * (taxRate / 100)
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <label className="text-sm font-medium text-slate-600">Tax Year</label>
-        <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
-        <div className={`rounded-lg px-3 py-2 ${totalGain >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-          <span className="text-xs text-slate-500">Total Gain / Loss: </span>
-          <span className={`font-bold tabular-nums ${totalGain >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(totalGain)}</span>
+    <div className="space-y-6">
+      <p className="text-xs text-slate-500">
+        Lists all sell transactions for the selected tax year, showing the realised gain or loss per position.{' '}
+        <strong>Short-term</strong> gains (held ≤ 1 year) are typically taxed at a higher rate than <strong>Long-term</strong> gains (held &gt; 1 year).{' '}
+        WAC (Weighted Average Cost) uses the average cost of all open lots.
+      </p>
+
+      {/* Controls */}
+      <div className="flex flex-wrap items-end gap-4">
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Tax Year</label>
+          <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
         </div>
-        {totalProceeds > 0 && (
-          <>
-            <div className="rounded-lg px-3 py-2 bg-slate-50">
-              <span className="text-xs text-slate-500">Proceeds: </span>
-              <span className="font-semibold tabular-nums">{fmtEur(totalProceeds)}</span>
-            </div>
-            <div className="rounded-lg px-3 py-2 bg-slate-50">
-              <span className="text-xs text-slate-500">Cost: </span>
-              <span className="font-semibold tabular-nums">{fmtEur(totalCost)}</span>
-            </div>
-          </>
-        )}
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Cost Basis Method</label>
+          <div className="flex gap-3 items-center h-9">
+            {([['WAC', 'WAC (Weighted Avg)'], ['FIFO', 'FIFO (First-In First-Out)'], ['LIFO', 'LIFO (Last-In First-Out)']] as const).map(([m, label]) => (
+              <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" name="cg-method" value={m} checked={method === m} onChange={() => setMethod(m)} className="accent-blue-600" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Derivatives Tax Rate (%)</label>
+          <div className="flex items-center gap-1">
+            <Input type="number" className="w-20" min={0} max={100} step={0.5} value={taxRate} onChange={e => setTaxRate(Number(e.target.value))} />
+          </div>
+        </div>
       </div>
+
       {d.length === 0 ? (
         <p className="text-sm text-slate-500 py-4">No sell transactions found for {year}. Try a different year.</p>
       ) : (
-        <WithCopy>
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-              <th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Security</th>
-              <th className="px-3 py-2 text-left">Ticker</th><th className="px-3 py-2 text-left">Account</th>
-              <th className="px-3 py-2 text-left">Action</th>
-              <th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">Sell Price</th>
-              <th className="px-3 py-2 text-right">WAC Cost</th>
-              <th className="px-3 py-2 text-right">Proceeds (€)</th>
-              <th className="px-3 py-2 text-right">Gain / Loss (€)</th>
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {d.map((r, i) => {
-                const gl = Number(r.gain_loss_eur ?? r.gain_loss ?? 0)
-                return (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                    <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-                    <td className="px-3 py-2 text-slate-600">{String(r.account)}</td>
-                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.action ?? '—')}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.sell_price ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.avg_cost ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.proceeds_eur ?? 0))}</td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(gl)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        </WithCopy>
+        <>
+          {/* Exempt banner */}
+          {dExempt.length > 0 && (
+            <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2">
+              <span className="text-green-700 text-sm font-medium">
+                ✅ <strong>{dExempt.length} tax-exempt sale(s) excluded</strong>{' '}
+                (€ {sum(dExempt) >= 0 ? '+' : ''}{sum(dExempt).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net G/L) — shown in expander below.
+              </span>
+            </div>
+          )}
+
+          {/* Headline metrics */}
+          <div className="flex flex-wrap gap-3">
+            <CgMetric
+              label="🟢 Cat 1 Net G/L — Real Shares"
+              value={`€ ${netCat1 >= 0 ? '+' : ''}${netCat1.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              color={netCat1 >= 0 ? 'text-green-700' : 'text-red-600'}
+              help="Direct equity / UCITS positions — 0% CGT in Greece."
+            />
+            <CgMetric
+              label="🔴 Cat 2+3 Net G/L — Derivatives"
+              value={`€ ${netDeriv >= 0 ? '+' : ''}${netDeriv.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              color={netDeriv >= 0 ? 'text-green-700' : 'text-red-600'}
+              help="CFDs and precious-metal FX spots — taxed at the rate shown."
+            />
+            <CgMetric
+              label={`Est. Derivatives Tax @ ${taxRate}%`}
+              value={`€ ${taxEst.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              color="text-slate-700"
+              help="Only on net positive derivative gains. Category 1 is always 0%."
+            />
+          </div>
+
+          <hr className="border-slate-200" />
+
+          {/* Category 1 */}
+          <div className="space-y-3">
+            <h3 className="text-base font-semibold text-green-700">🟢 Category 1 — Real Shares &amp; UCITS Funds (0% CGT)</h3>
+            <p className="text-xs text-slate-500">
+              Direct investments in equities, ETFs, UCITS funds and bonds. Capital gains are <strong>0% tax-free</strong> in Greece for individual investors holding &lt; 0.5% of the company (Art. 42, L.4172/2013).
+              Net profits must still be declared in <strong>E1 Table 4E, Codes 867–868</strong> to clear <em>τεκμήρια</em> (living-standard presumptions).
+            </p>
+            {dCat1.length === 0 ? (
+              <p className="text-sm text-slate-400">No Category 1 sell transactions found for {year}.</p>
+            ) : (() => {
+              const g1  = dCat1.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const l1  = dCat1.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const st1 = dCat1.filter(r => r.holding_type === 'Short-term').reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const lt1 = dCat1.filter(r => r.holding_type === 'Long-term').reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              return (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { label: 'Total Gains',  val: g1,       color: 'text-green-700' },
+                      { label: 'Total Losses', val: l1,       color: 'text-red-600' },
+                      { label: 'Net G/L',      val: netCat1,  color: netCat1 >= 0 ? 'text-green-700' : 'text-red-600' },
+                      { label: 'Short-term',   val: st1,      color: st1 >= 0 ? 'text-green-700' : 'text-red-600' },
+                      { label: 'Long-term',    val: lt1,      color: lt1 >= 0 ? 'text-green-700' : 'text-red-600' },
+                      { label: 'Tax',          val: 0,        color: 'text-slate-500' },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[110px]">
+                        <div className="text-xs text-slate-500">{label}</div>
+                        <div className={`font-semibold tabular-nums text-sm ${color}`}>{label === 'Tax' ? '€ 0.00' : fmt2(val)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <CgTable rows={dCat1} />
+                </>
+              )
+            })()}
+          </div>
+
+          <hr className="border-slate-200" />
+
+          {/* Category 2 */}
+          <div className="space-y-3">
+            <h3 className="text-base font-semibold text-red-600">🔴 Category 2 — CFDs &amp; Financial Derivatives ({taxRate}% Tax)</h3>
+            <p className="text-xs text-slate-500">
+              Contracts for Difference on any underlying — stocks, ETFs, indices, commodities. Even if the underlying is a UCITS ETF, trading it <strong>as a CFD</strong> removes the 0% exemption.
+              Net gains taxed at <strong>{taxRate}%</strong>. E1 reporting: <strong>net profit → Codes 865–866</strong> · <strong>net loss → Codes 869–870</strong> (carry-forward up to 5 years).
+            </p>
+            {dCat2.length === 0 ? (
+              <p className="text-sm text-slate-400">No Category 2 (CFD) sell transactions found for {year}.</p>
+            ) : (() => {
+              const g2 = dCat2.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const l2 = dCat2.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const n2 = sum(dCat2)
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              return (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {[{ label: 'Total Gains', val: g2, color: 'text-green-700' }, { label: 'Total Losses', val: l2, color: 'text-red-600' }, { label: 'Net G/L', val: n2, color: n2 >= 0 ? 'text-green-700' : 'text-red-600' }].map(({ label, val, color }) => (
+                      <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[110px]">
+                        <div className="text-xs text-slate-500">{label}</div>
+                        <div className={`font-semibold tabular-nums text-sm ${color}`}>{fmt2(val)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <CgTable rows={dCat2} />
+                </>
+              )
+            })()}
+          </div>
+
+          <hr className="border-slate-200" />
+
+          {/* Category 3 */}
+          <div className="space-y-3">
+            <h3 className="text-base font-semibold text-amber-600">⚠️ Category 3 — FX Precious Metal Spots ({taxRate}% Tax)</h3>
+            <p className="text-xs text-slate-500">
+              Transactions recorded with <strong>Instrument Type = FxSpot</strong> — precious-metal spot contracts (e.g. Silver, Gold) traded on Saxo or similar platforms.
+              Treated as financial commodity derivatives under Greek law — same <strong>{taxRate}%</strong> rate and same E1 codes as Category 2.
+            </p>
+            {dCat3.length === 0 ? (
+              <p className="text-sm text-slate-400">No Category 3 (FX precious metal) sell transactions found for {year}.</p>
+            ) : (() => {
+              const g3 = dCat3.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const l3 = dCat3.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+              const n3 = sum(dCat3)
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              return (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {[{ label: 'Total Gains', val: g3, color: 'text-green-700' }, { label: 'Total Losses', val: l3, color: 'text-red-600' }, { label: 'Net G/L', val: n3, color: n3 >= 0 ? 'text-green-700' : 'text-red-600' }].map(({ label, val, color }) => (
+                      <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[110px]">
+                        <div className="text-xs text-slate-500">{label}</div>
+                        <div className={`font-semibold tabular-nums text-sm ${color}`}>{fmt2(val)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <CgTable rows={dCat3} />
+                </>
+              )
+            })()}
+          </div>
+
+          {/* Combined Derivatives Summary */}
+          {dDeriv.length > 0 && (
+            <>
+              <hr className="border-slate-200" />
+              <div className="space-y-3">
+                <h3 className="text-base font-semibold text-slate-700">📊 Combined Derivatives Summary (Categories 2 + 3)</h3>
+                <p className="text-xs text-slate-500">Categories 2 and 3 are <strong>netted together</strong> on the Greek tax return (they share the same E1 form codes).</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'CFDs Net G/L (Cat 2)',            val: sum(dCat2), color: sum(dCat2) >= 0 ? 'text-green-700' : 'text-red-600' },
+                    { label: 'Precious Metals Net G/L (Cat 3)', val: sum(dCat3), color: sum(dCat3) >= 0 ? 'text-green-700' : 'text-red-600' },
+                    { label: 'Combined Net G/L',                val: netDeriv,  color: netDeriv >= 0 ? 'text-green-700' : 'text-red-600' },
+                    { label: `Est. Tax @ ${taxRate}%`,          val: taxEst,    color: 'text-slate-700' },
+                  ].map(({ label, val, color }) => (
+                    <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[160px]">
+                      <div className="text-xs text-slate-500">{label}</div>
+                      <div className={`font-semibold tabular-nums text-sm ${color}`}>
+                        € {val >= 0 && label !== `Est. Tax @ ${taxRate}%` ? '+' : ''}{val.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className={`rounded-lg px-4 py-3 text-sm ${netDeriv >= 0 ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+                  {netDeriv >= 0
+                    ? <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {netDeriv.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> net profit in <strong>Table 4E, Codes 865–866</strong>.</>
+                    : <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {Math.abs(netDeriv).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> net loss in <strong>Table 4E, Codes 869–870</strong> — carry-forward for up to 5 years.</>
+                  }
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Tax-exempt expander */}
+          {dExempt.length > 0 && (
+            <>
+              <hr className="border-slate-200" />
+              <div>
+                <button
+                  className="flex items-center gap-2 text-sm font-medium text-green-700 hover:text-green-800"
+                  onClick={() => setShowExempt(v => !v)}
+                >
+                  <span>{showExempt ? '▾' : '▸'}</span>
+                  🟢 Tax-Exempt Sales — {dExempt.length} transaction(s), € {sum(dExempt) >= 0 ? '+' : ''}{sum(dExempt).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net G/L (excluded from all totals)
+                </button>
+                {showExempt && (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs text-slate-500">
+                      These securities are marked <strong>Tax Exempt</strong> in the Securities master data (e.g. Hellenic T-Bills purchased at primary market). Shown here for reference only — not included in any category above.
+                    </p>
+                    <CgTable rows={dExempt} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Reference note */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-800">
+            ℹ️ <strong>Greek CGT Quick Reference (L.4172/2013, Art. 42):</strong>{' '}
+            <strong>Cat 1</strong> — Direct purchase (Instrument Type blank or non-derivative): <strong>0% CGT</strong>; declare profits in E1 Codes <strong>867–868</strong>.{' '}
+            <strong>Cat 2</strong> — Instrument Type <strong>CfdOn*</strong> or <strong>CFD</strong>: <strong>15%</strong>.{' '}
+            <strong>Cat 3</strong> — Instrument Type <strong>FxSpot</strong>: <strong>15%</strong>, same codes as Cat 2.{' '}
+            Categories 2 &amp; 3 are netted: profits → E1 Codes <strong>865–866</strong> · losses → E1 Codes <strong>869–870</strong> (carry-forward ≤ 5 years).{' '}
+            All figures are indicative — consult a certified Greek tax advisor.
+          </div>
+        </>
       )}
     </div>
   )
@@ -4010,54 +4272,152 @@ function TaxLossHarvestingTab() {
   )
 }
 
+function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: boolean }) {
+  return (
+    <WithCopy>
+    <div className="overflow-x-auto overflow-y-auto max-h-80 text-xs">
+      <table className="w-full border-collapse">
+        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+          <th className="text-left px-2 py-1.5 border-b border-slate-200">Date</th>
+          {showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>}
+          <th className="text-left px-2 py-1.5 border-b border-slate-200">Account</th>
+          {!showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Bank / Payee</th>}
+          {!showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Category</th>}
+          <th className="text-left px-2 py-1.5 border-b border-slate-200">Type</th>
+          <th className="text-right px-2 py-1.5 border-b border-slate-200">Amount (€)</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+              <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
+              {showSecLink && <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name ?? r.security ?? '')}</SecLink></td>}
+              <td className="px-2 py-1.5 text-slate-500">{String(r.account_name ?? '')}</td>
+              {!showSecLink && <td className="px-2 py-1.5 text-slate-500">{String(r.payee ?? '—')}</td>}
+              {!showSecLink && <td className="px-2 py-1.5 text-slate-500">{String(r.category ?? '')}</td>}
+              <td className="px-2 py-1.5 text-slate-500">{String(r.action ?? r.currency ?? '')}</td>
+              <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(r.amount_eur ?? 0))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    </WithCopy>
+  )
+}
+
 function DividendIncomeTaxTab() {
   const [year, setYear] = useState(new Date().getFullYear())
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['dividend-income-tax', year],
-    queryFn: () => getDividendIncomeTax(year),
-  })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const rows = data as Row[]
-  const total = rows.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
-  const taxable = rows.filter(r => !r.is_tax_exempt).reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
-  const exempt = rows.filter(r => r.is_tax_exempt).reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
+  const [showRoc, setShowRoc] = useState(false)
+  const qc = useQueryClient()
+  useEffect(() => { qc.removeQueries({ queryKey: ['bank-interest-tax'] }) }, [])
+  const invQ = useQuery({ queryKey: ['dividend-income-tax', year], queryFn: () => getDividendIncomeTax(year) })
+  const bankQ = useQuery({ queryKey: ['bank-interest-tax', year], queryFn: () => api.get('/reports/bank-interest-tax', { params: { year } }).then(r => { console.log('[bank]', year, r.status, r.headers['content-type'], (r.request as XMLHttpRequest)?.responseURL); return r.data }), staleTime: 0, gcTime: 0 })
+  if (invQ.isLoading || bankQ.isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  const invRows  = Array.isArray(invQ.data)  ? invQ.data  as Row[] : []
+  const bankRows = Array.isArray(bankQ.data) ? bankQ.data as Row[] : []
+  const INCOME_ACTIONS = new Set(['Dividend', 'Reinvest', 'IntInc'])
+  const isExempt = (r: Row) => r.is_tax_exempt === true || r.is_tax_exempt === 'true' || r.is_tax_exempt === 1
+
+  const invTaxable = invRows.filter(r => INCOME_ACTIONS.has(String(r.action)) && !isExempt(r))
+  const invExempt  = invRows.filter(r => INCOME_ACTIONS.has(String(r.action)) &&  isExempt(r))
+  const invRoc     = invRows.filter(r => r.action === 'RtrnCap')
+
+  const sum = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
+  const totalDiv    = sum(invTaxable.filter(r => r.action === 'Dividend' || r.action === 'Reinvest'))
+  const totalIntInv = sum(invTaxable.filter(r => r.action === 'IntInc'))
+  const totalExempt = sum(invExempt)
+  const totalRoc    = sum(invRoc)
+  const totalBank   = sum(bankRows)
+  const grandTotal  = totalDiv + totalIntInv + totalBank
+
+  const fmt2 = (n: number) => `€ ${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      <p className="text-xs text-slate-500">
+        Taxable income for the selected tax year across two sources:{' '}
+        <strong>Investment income</strong> (dividends, reinvested dividends, and interest from your securities) and{' '}
+        <strong>Bank &amp; Savings interest</strong> (interest credited to Checking, Savings, and Cash accounts).{' '}
+        <strong>Return of Capital (RtrnCap)</strong> events are listed for reference only — they are not taxable income
+        but reduce cost basis and affect capital gains on eventual sale. All amounts are converted to EUR.
+      </p>
+
       <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-slate-600">Tax Year</label>
+        <label className="text-xs text-slate-500">Tax Year</label>
         <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total Income" value={fmtEur(total)} color="text-green-700" />
-        <KpiCard label="Taxable" value={fmtEur(taxable)} color="text-amber-600" />
-        <KpiCard label="Tax-Exempt" value={fmtEur(exempt)} color="text-blue-600" />
+
+      {/* Headline metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Dividends (incl. Reinvested)', val: totalDiv },
+          { label: 'Investment Interest',          val: totalIntInv },
+          { label: 'Bank / Savings Interest',      val: totalBank },
+          { label: 'Taxable Total',                val: grandTotal },
+        ].map(({ label, val }) => (
+          <div key={label} className="bg-slate-50 rounded-lg px-4 py-3">
+            <div className="text-xs text-slate-500 mb-1">{label}</div>
+            <div className="text-xl font-bold tabular-nums text-slate-800">{fmt2(val)}</div>
+          </div>
+        ))}
       </div>
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Action</th>
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount (€)</th>
-            <th className="text-center px-2 py-1.5 border-b border-slate-200 font-semibold">Tax Exempt</th>
-          </tr></thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.account_name)}</td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.action)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-green-700 font-medium">{fmtEur(Number(r.amount_eur ?? 0))}</td>
-                <td className="px-2 py-1.5 text-center">{r.is_tax_exempt ? <span className="text-blue-600">✓</span> : <span className="text-slate-400">—</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* Tax-exempt banner */}
+      {totalExempt !== 0 && (
+        <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800">
+          ✅ <strong>Tax-Exempt Investment Income: {fmt2(totalExempt)}</strong> — Income from securities marked{' '}
+          <strong>Tax Exempt</strong> (e.g. Hellenic T-Bills at primary market) is excluded from the Taxable Total above.
+          It is shown in a separate section below.
+        </div>
+      )}
+
+      {/* RtrnCap banner */}
+      {totalRoc !== 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+          ℹ️ <strong>Return of Capital (RtrnCap): {fmt2(totalRoc)}</strong> — This is a return of your own invested capital,{' '}
+          <strong>not taxable income</strong>. It is shown below for reference only. Each RtrnCap event reduces the cost
+          basis of the holding; the tax impact appears as a higher capital gain when you eventually sell.
+        </div>
+      )}
+
+      {/* Taxable Investment Income */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-slate-700">📈 Taxable Investment Income (Securities)</h3>
+        {invTaxable.length === 0
+          ? <p className="text-xs text-slate-400">No taxable dividend or interest income from securities found for {year}.</p>
+          : <IncomeTable rows={invTaxable} />}
       </div>
-      </WithCopy>
+
+      {/* Tax-Exempt Investment Income */}
+      {invExempt.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-green-700">🟢 Tax-Exempt Investment Income (reference only — not included in taxable total)</h3>
+          <IncomeTable rows={invExempt} />
+        </div>
+      )}
+
+      {/* Return of Capital expander */}
+      {invRoc.length > 0 && (
+        <div>
+          <button className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800" onClick={() => setShowRoc(v => !v)}>
+            <span>{showRoc ? '▾' : '▸'}</span>
+            🔄 Return of Capital events — {fmt2(totalRoc)} (not taxable income)
+          </button>
+          {showRoc && (
+            <div className="mt-2">
+              <IncomeTable rows={invRoc} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bank & Savings Interest */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-slate-700">🏦 Bank &amp; Savings Interest</h3>
+        {bankRows.length === 0
+          ? <p className="text-xs text-slate-400">No bank or savings interest found for {year}.</p>
+          : <IncomeTable rows={bankRows} showSecLink={false} />}
+      </div>
     </div>
   )
 }
