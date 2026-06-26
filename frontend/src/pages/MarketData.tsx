@@ -6,7 +6,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable } from '@/components/ui'
 import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 
@@ -535,6 +535,22 @@ function SecuritiesPricesTab() {
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importConflict, setImportConflict] = useState<'skip' | 'overwrite'>('skip')
+  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const importMut = useMutation({
+    mutationFn: () => importPricesFromFile(importFile!, secId!, importConflict),
+    onSuccess: (d) => {
+      setImportMsg({ ok: true, text: `Imported ${d.inserted} row(s) — ${d.skipped} skipped (${d.total_rows} total in file).` })
+      qc.invalidateQueries({ queryKey: ['price-history'] })
+    },
+    onError: (e: { response?: { data?: { detail?: unknown } } }) => {
+      const d = e.response?.data?.detail
+      const text = Array.isArray(d) ? (d as { msg?: string }[]).map(x => x.msg ?? String(x)).join('; ') : (typeof d === 'string' ? d : 'Import failed')
+      setImportMsg({ ok: false, text })
+    },
+  })
 
   const { data: securities = [] } = useQuery({ queryKey: ['securities', ''], queryFn: () => getSecurities() })
   const { data: history = [], isLoading } = useQuery({
@@ -628,6 +644,45 @@ function SecuritiesPricesTab() {
           </div>
         </div>
       )}
+
+      <div className="border-t border-slate-200 pt-4">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Import from File</p>
+        <p className="text-xs text-slate-500 mb-3">
+          Upload a tab-separated <code className="bg-slate-100 px-1 rounded">.txt</code> / <code className="bg-slate-100 px-1 rounded">.csv</code> / <code className="bg-slate-100 px-1 rounded">.tsv</code> file.
+          The importer finds the <code className="bg-slate-100 px-1 rounded">Date</code> header row automatically. Select a security above first.
+        </p>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">File</label>
+            <label className="cursor-pointer flex items-center gap-2">
+              <span className="px-3 py-1.5 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 transition-colors">⬆ Choose file</span>
+              <span className="text-xs text-slate-500">{importFile ? importFile.name : 'TXT, CSV, TSV'}</span>
+              <input type="file" accept=".txt,.csv,.tsv" className="hidden"
+                onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportMsg(null) }} />
+            </label>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">If date exists</label>
+            <div className="flex gap-3">
+              {(['skip', 'overwrite'] as const).map(v => (
+                <label key={v} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input type="radio" name="importConflict" value={v} checked={importConflict === v} onChange={() => setImportConflict(v)} />
+                  {v === 'skip' ? 'Skip' : 'Overwrite'}
+                </label>
+              ))}
+            </div>
+          </div>
+          <Button variant="primary" disabled={!importFile || !secId || importMut.isPending}
+            onClick={() => { setImportMsg(null); importMut.mutate() }}>
+            {importMut.isPending ? <><Spinner size={12} /> Importing…</> : '📂 Import'}
+          </Button>
+          {importMsg && (
+            <span className={`text-xs px-3 py-1.5 rounded ${importMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {importMsg.text}
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="border-t border-slate-200 pt-4">
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Manual Entry</p>

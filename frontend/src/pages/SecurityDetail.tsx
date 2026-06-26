@@ -199,6 +199,15 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
     navigator.clipboard.writeText(header + '\n' + rows)
   }, [holdings.holdings])
 
+  const copyTransactions = useCallback(() => {
+    const header = 'Account\tDate\tAction\tQuantity\tPrice/Share\tCommission\tTotal (Sec. Cur.)\tTotal (Acc. Cur.)\tCurrency\tDescription'
+    const rows = transactions.map((r: Record<string, unknown>) =>
+      [r.account, r.date, r.action, fmt(r.quantity), fmt(r.price_per_share), fmt(r.commission, 2),
+       fmt(r.total_sec_cur, 2), fmt(r.total_acc_cur, 2), r.currency, r.description ?? ''].join('\t')
+    ).join('\n')
+    navigator.clipboard.writeText(header + '\n' + rows)
+  }, [transactions])
+
   if (txLoading || holdingsLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -245,7 +254,10 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
 
       {/* All Transactions */}
       <div>
-        <p className="text-sm font-semibold text-slate-700 mb-2">All Transactions ({transactions.length})</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-semibold text-slate-700">All Transactions ({transactions.length})</p>
+          <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
+        </div>
         <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
           <AgGridReact
             rowData={transactions}

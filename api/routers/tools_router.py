@@ -6,7 +6,7 @@ import math
 import os
 import threading
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import pandas as pd
@@ -477,6 +477,92 @@ def normalize_investments(req: NormalizeRequest):
     from database.crud import normalize_investment_prices
     updated = normalize_investment_prices(req.ids)
     return {"updated": updated}
+
+
+# ── Import Prices from File ────────────────────────────────────────────────────
+
+@router.post("/import-prices-from-file")
+async def import_prices_from_file(
+    file: UploadFile,
+    securities_id: int = Form(...),
+    on_conflict: str = Form("skip"),
+):
+    content = await file.read()
+    text = content.decode("utf-8-sig", errors="replace")
+
+    # Auto-detect separator
+    sep = "\t" if "\t" in text.split("\n")[0] else ","
+
+    # Find header row containing 'Date' (skip leading metadata lines)
+    lines = text.splitlines()
+    header_idx = None
+    for i, line in enumerate(lines):
+        cols = [c.strip().lower() for c in line.split(sep)]
+        if "date" in cols:
+            header_idx = i
+            break
+    if header_idx is None:
+        raise HTTPException(400, "No header row with 'Date' column found in file")
+
+    data_text = "\n".join(lines[header_idx:])
+    df = pd.read_csv(io.StringIO(data_text), sep=sep, dtype=str)
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    if "date" not in df.columns:
+        raise HTTPException(400, "Column 'Date' not found after parsing")
+
+    # Accept 'close', 'price', or second numeric column as the price
+    price_col = next((c for c in ["close", "price", "adj close", "adj. close"] if c in df.columns), None)
+    if price_col is None:
+        # Fall back to first non-date numeric column
+        for c in df.columns:
+            if c != "date":
+                try:
+                    pd.to_numeric(df[c].dropna(), errors="raise")
+                    price_col = c
+                    break
+                except Exception:
+                    continue
+    if price_col is None:
+        raise HTTPException(400, "No price column found (expected 'Close' or 'Price')")
+
+    df = df[["date", price_col]].copy()
+    df.columns = ["date", "close"]
+    df["date"] = pd.to_datetime(df["date"], dayfirst=False, errors="coerce")
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["date", "close"])
+
+    if df.empty:
+        raise HTTPException(400, "No valid date/price rows found after parsing")
+
+    rows = [{"date": r["date"].date(), "close": float(r["close"])} for _, r in df.iterrows()]
+
+    inserted = 0
+    skipped = 0
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for row in rows:
+                if on_conflict == "overwrite":
+                    cur.execute(
+                        """INSERT INTO Historical_Prices (Securities_Id, Date, Close, Source, Downloaded_At)
+                           VALUES (%s, %s, %s, 'manual', NOW())
+                           ON CONFLICT (Securities_Id, Date) DO UPDATE
+                           SET Close = EXCLUDED.Close, Source = EXCLUDED.Source, Downloaded_At = EXCLUDED.Downloaded_At""",
+                        (securities_id, row["date"], row["close"]),
+                    )
+                    inserted += 1
+                else:
+                    cur.execute(
+                        """INSERT INTO Historical_Prices (Securities_Id, Date, Close, Source, Downloaded_At)
+                           VALUES (%s, %s, %s, 'manual', NOW())
+                           ON CONFLICT (Securities_Id, Date) DO NOTHING""",
+                        (securities_id, row["date"], row["close"]),
+                    )
+                    inserted += cur.rowcount if cur.rowcount > 0 else 0
+                    skipped += 1 - (cur.rowcount if cur.rowcount > 0 else 0)
+        conn.commit()
+
+    return {"inserted": inserted, "skipped": skipped, "total_rows": len(rows)}
 
 
 @router.post("/refresh-holdings")

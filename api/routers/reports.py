@@ -833,9 +833,9 @@ def get_pnl(
             COALESCE(cf.gross_invested_all_time_eur, 0) as gross_invested_all_time_eur,
             COALESCE(adf.direct_cashin_eur, 0) AS direct_cashin_eur,
             COALESCE(alf.linked_cashin_eur, 0) AS linked_cashin_eur,
-            h.Quantity * pf.price_today * COALESCE(pf.fx_today, 1) - h.Quantity * COALESCE(h.Fifo_Avg_Cost_EUR, h.Fifo_Avg_Price * COALESCE(pf.fx_today, 1)) AS unrealized_pnl_eur,
+            COALESCE(h.Quantity, 0) * pf.price_today * COALESCE(pf.fx_today, 1) - COALESCE(h.Quantity, 0) * COALESCE(h.Fifo_Avg_Cost_EUR, h.Fifo_Avg_Price * COALESCE(pf.fx_today, 1), 0) AS unrealized_pnl_eur,
             COALESCE((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)), 0) - COALESCE(cf.net_invested_all_time_eur, 0)
-            - (h.Quantity * pf.price_today * COALESCE(pf.fx_today, 1) - h.Quantity * COALESCE(h.Fifo_Avg_Cost_EUR, h.Fifo_Avg_Price * COALESCE(pf.fx_today, 1))) AS realized_pnl_eur,
+            - COALESCE(COALESCE(h.Quantity, 0) * pf.price_today * COALESCE(pf.fx_today, 1) - COALESCE(h.Quantity, 0) * COALESCE(h.Fifo_Avg_Cost_EUR, h.Fifo_Avg_Price * COALESCE(pf.fx_today, 1), 0), 0) AS realized_pnl_eur,
             ROUND(dy.annual_income / NULLIF(h.Quantity * h.Fifo_Avg_Price, 0) * 100, 8) AS dividend_yoc_pct
         FROM prices_fx pf
         LEFT JOIN cash_flows cf ON pf.Accounts_Id = cf.Accounts_Id AND pf.Securities_Id = cf.Securities_Id
@@ -1937,6 +1937,70 @@ def get_investment_positions_history(start_date: str = Query("2020-01-01")):
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"start_date": start_date})
+    return _df_to_list(df)
+
+
+@router.get("/holdings-snapshot")
+def get_holdings_snapshot(as_of: str = Query(None)):
+    """Per-security holdings snapshot at a given date (default: today)."""
+    as_of_date = as_of or "CURRENT_DATE"
+    # Use parameter binding for user-supplied dates; fall back to CURRENT_DATE literal
+    params: dict = {}
+    if as_of:
+        date_expr = "%(as_of)s::date"
+        params["as_of"] = as_of
+    else:
+        date_expr = "CURRENT_DATE"
+    query = f"""
+    WITH inv_universe AS (
+        SELECT DISTINCT Securities_Id, Accounts_Id
+        FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')
+    ),
+    qty_at AS (
+        SELECT iu.Securities_Id, iu.Accounts_Id,
+            GREATEST(COALESCE((
+                SELECT SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                               WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
+                FROM Investments
+                WHERE Securities_Id = iu.Securities_Id
+                  AND Accounts_Id   = iu.Accounts_Id
+                  AND Date <= {date_expr}
+            ), 0), 0) AS qty
+        FROM inv_universe iu
+    ),
+    prices_at AS (
+        SELECT DISTINCT ON (Securities_Id) Securities_Id, Close, Date AS price_date
+        FROM Historical_Prices
+        WHERE Date <= {date_expr}
+        ORDER BY Securities_Id, Date DESC
+    ),
+    fx_at AS (
+        SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+        FROM Historical_FX
+        WHERE Date <= {date_expr}
+        ORDER BY Currencies_Id_1, Date DESC
+    )
+    SELECT
+        a.Accounts_Name                                            AS account,
+        s.Securities_Name                                          AS security,
+        s.Ticker                                                   AS ticker,
+        s.Securities_Type                                          AS type,
+        c.Currencies_ShortName                                     AS currency,
+        q.qty                                                      AS quantity,
+        COALESCE(p.Close, 0)                                       AS price,
+        p.price_date::text                                         AS price_date,
+        ROUND((q.qty * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1))::numeric, 2) AS value_eur
+    FROM qty_at q
+    JOIN Accounts   a  ON a.Accounts_Id   = q.Accounts_Id
+    JOIN Securities s  ON s.Securities_Id = q.Securities_Id
+    JOIN Currencies c  ON c.Currencies_Id = s.Currencies_Id
+    LEFT JOIN prices_at p  ON p.Securities_Id  = q.Securities_Id
+    LEFT JOIN fx_at     fx ON fx.Currencies_Id_1 = s.Currencies_Id
+    WHERE q.qty > 0
+    ORDER BY a.Accounts_Name, value_eur DESC
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params=params if params else None)
     return _df_to_list(df)
 
 

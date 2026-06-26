@@ -7,6 +7,7 @@ const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyRea
 import {
   getIncomeExpense, getSavingsRate, getTopCategories, getPortfolioSummary, getAllocationReport,
   getAllocationTargets, saveAllocationTargets, getAllocationDelta, getRebalancingPlan,
+  getHoldingsSnapshot,
   getIncomeExpenseDetail, getDividends, getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
   getCashFlowForecast, getPnl, getCategoryBreakdown,
@@ -167,6 +168,19 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true }: {
                 </tr>
               )
             })}
+            {/* Column totals row */}
+            <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold text-xs">
+              <td className="px-2 py-1.5 sticky left-0 bg-slate-50 text-slate-600">Total</td>
+              {periods.map(p => {
+                const colTotal = categories.reduce((s, cat) => s + (lookup[cat]?.[p] ?? 0), 0)
+                return <td key={p} className="text-right px-2 py-1.5 tabular-nums">{fmtEur(colTotal)}</td>
+              })}
+              {showTotal && (
+                <td className="text-right px-2 py-1.5 tabular-nums">
+                  {fmtEur(categories.reduce((s, cat) => s + periods.reduce((ss, p) => ss + (lookup[cat]?.[p] ?? 0), 0), 0))}
+                </td>
+              )}
+            </tr>
           </tbody>
         </table>
       </div>
@@ -705,15 +719,28 @@ function InvPositionsGraph({ startDate }: { startDate: string }) {
     if (!lookup[a]) lookup[a] = {}
     lookup[a][d] = Number(r.value_eur ?? 0)
   }
+  // Forward-fill each account only between its first and last data points.
+  // Before the first point → null (account not yet open).
+  // After the last point  → null (account closed / no holdings).
+  // Gaps in between       → carry the last known value (sparse snapshots).
+  function forwardFill(a: string): (number | null)[] {
+    const lastIdx = dates.reduce((max, d, i) => (lookup[a]?.[d] != null ? i : max), -1)
+    let last: number | null = null
+    return dates.map((d, i) => {
+      if (lookup[a]?.[d] != null) last = lookup[a][d]
+      return i <= lastIdx ? last : null
+    })
+  }
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4']
+  const filled = Object.fromEntries(accounts.map(a => [a, forwardFill(a)]))
   const traces = accounts.map((a, i) => ({
-    x: dates, y: dates.map(d => lookup[a]?.[d] ?? null),
+    x: dates, y: filled[a],
     name: a, type: 'scatter' as const, mode: 'lines' as const,
     line: { color: colors[i % colors.length], width: 1.5 },
-    connectgaps: true,
+    connectgaps: false,
   }))
-  const totalByDate = dates.map(d => accounts.reduce((s, a) => s + (lookup[a]?.[d] ?? 0), 0))
-  traces.push({ x: dates, y: totalByDate, name: 'Total', type: 'scatter', mode: 'lines', line: { color: '#1e3a8a', width: 2.5, dash: 'dot' } as unknown as typeof traces[0]['line'], connectgaps: true })
+  const totalByDate = dates.map((_, i) => accounts.reduce((s, a) => s + (filled[a][i] ?? 0), 0))
+  traces.push({ x: dates, y: totalByDate, name: 'Total', type: 'scatter', mode: 'lines', line: { color: '#1e3a8a', width: 2.5, dash: 'dot' } as unknown as typeof traces[0]['line'], connectgaps: false })
   const latestTotal = totalByDate[totalByDate.length - 1] ?? 0
   return (
     <div className="space-y-4">
@@ -732,9 +759,7 @@ function InvPositionsSummary({ startDate }: { startDate: string }) {
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
-  const dates = [...new Set(rows.map(r => String(r.date)))].sort()
-  const recent = dates.slice(-6)
-  return <PivotTable data={rows.filter(r => recent.includes(String(r.date)))} groupBy="accounts_name" colKey="date" valKey="value_eur" />
+  return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} />
 }
 
 function SectorTab() {
@@ -1128,14 +1153,113 @@ function HoldingsSnapshotTab() {
   )
 }
 
-function InvPositionsSection({ startDate }: { startDate: string }) {
-  const [tab, setTab] = useState('Graph')
+function DetailAnalysisTab({ asOf }: { asOf: string }) {
+  // Fetch available month-end dates within the reporting period
+  const { data: histData = [] } = useQuery({
+    queryKey: ['inv-positions-history', asOf],
+    queryFn: () => getInvestmentPositionsHistory(asOf),
+  })
+  const availableDates = [...new Set((histData as Row[]).map(r => String(r.date)))].sort().reverse()
+  const [selectedDate, setSelectedDate] = useState<string>('')
+  const snapshotDate = selectedDate || availableDates[0] || asOf
+
+  const { data = [], isLoading } = useQuery({
+    queryKey: ['holdings-snapshot', snapshotDate],
+    queryFn: () => getHoldingsSnapshot(snapshotDate),
+    enabled: !!snapshotDate,
+  })
+  const rows = data as Row[]
+  const { sorted, sortKey: sk, sortDir: sd, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
+  const total = rows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
   return (
-    <div>
-      <SubTabs tabs={['Graph', 'Summary', 'Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure']} active={tab} onChange={setTab} />
-      {tab === 'Graph' && <InvPositionsGraph startDate={startDate} />}
-      {tab === 'Summary' && <InvPositionsSummary startDate={startDate} />}
-      {tab === 'Holdings' && <HoldingsSnapshotTab />}
+    <div className="space-y-3">
+      {availableDates.length > 0 && (
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">Snapshot Date:</label>
+          <select
+            value={snapshotDate}
+            onChange={e => setSelectedDate(e.target.value)}
+            className="border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          >
+            {availableDates.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+      )}
+    {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
+    <WithCopy>
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] text-xs">
+      <table className="w-full border-collapse">
+        <thead className="sticky top-0 z-10 bg-slate-50">
+          <tr className="text-xs text-slate-500">
+            <ColHeader label="Account" sortKey="account" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Security" sortKey="security" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Ticker" sortKey="ticker" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Type" sortKey="type" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Ccy" sortKey="currency" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Quantity" sortKey="quantity" currentKey={sk} currentDir={sd} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Price" sortKey="price" currentKey={sk} currentDir={sd} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Price Date" sortKey="price_date" currentKey={sk} currentDir={sd} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sk} currentDir={sd} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r, i) => (
+            <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+              <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
+              <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
+              <td className="px-2 py-1.5 font-mono text-slate-400 text-xs">{String(r.ticker ?? '—')}</td>
+              <td className="px-2 py-1.5 text-slate-500">{String(r.type ?? '—')}</td>
+              <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 8 })}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+              <td className="px-2 py-1.5 text-slate-400 text-xs">{String(r.price_date ?? '—')}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.value_eur))}</td>
+            </tr>
+          ))}
+          <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+            <td colSpan={8} className="px-2 py-1.5 text-right text-xs text-slate-600">Total</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    </WithCopy>
+    )}
+    </div>
+  )
+}
+
+function InvPositionsSection({ startDate: initialStartDate }: { startDate: string }) {
+  const [tab, setTab] = useState('Graph')
+
+  // Default to Dec 31 of the previous calendar year
+  const defaultDate = `${new Date().getFullYear() - 1}-12-31`
+  const [asOf, setAsOf] = useState(initialStartDate || defaultDate)
+
+  return (
+    <div className="space-y-3">
+      {/* Shared date control — applies to Graph, Summary and Detail Analysis */}
+      <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
+        <label className="text-sm text-slate-500 font-medium whitespace-nowrap">As of date:</label>
+        <input
+          type="date"
+          value={asOf}
+          onChange={e => setAsOf(e.target.value)}
+          className="border border-slate-200 rounded px-3 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+        <button
+          onClick={() => setAsOf(defaultDate)}
+          className="text-xs text-slate-400 hover:text-slate-600 underline"
+        >
+          Reset to {defaultDate}
+        </button>
+      </div>
+
+      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure']} active={tab} onChange={setTab} />
+      {tab === 'Graph' && <InvPositionsGraph startDate={asOf} />}
+      {tab === 'Summary' && <InvPositionsSummary startDate={asOf} />}
+      {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} />}
+      {tab === 'Current Holdings' && <HoldingsSnapshotTab />}
       {tab === 'Allocation' && <AllocationReport />}
       {tab === 'Sector & Industry' && <SectorTab />}
       {tab === 'FX Exposure' && <FxExposureTab />}
@@ -5715,7 +5839,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>

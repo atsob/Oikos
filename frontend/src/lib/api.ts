@@ -490,6 +490,14 @@ export const fixInvCashLinks = (pairs: {investments_id: number, candidate_tx_id:
   api.post('/tools/fix-investment-cash-links', { pairs }).then(r => r.data)
 export const getMissingInvAccountTarget = () => api.get('/tools/missing-inv-account-target').then(r => r.data)
 export const fixInvAccountTarget = () => api.post('/tools/fix-inv-account-target').then(r => r.data as { updated: number })
+
+export const importPricesFromFile = (file: File, securitiesId: number, onConflict: 'skip' | 'overwrite') => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('securities_id', String(securitiesId))
+  fd.append('on_conflict', onConflict)
+  return api.post('/tools/import-prices-from-file', fd).then(r => r.data as { inserted: number; skipped: number; total_rows: number })
+}
 export const getLogs = (lines: number, level?: string, search?: string, file?: string) =>
   api.get('/tools/logs', { params: { lines, level, search, file } }).then(r => r.data)
 
@@ -520,6 +528,8 @@ export const getNetWorthByAccount = (startDate: string, endDate: string, groupin
 
 export const getInvestmentPositionsHistory = (startDate: string) =>
   api.get('/reports/investment-positions-history', { params: { start_date: startDate } }).then(r => r.data)
+export const getHoldingsSnapshot = (asOf?: string) =>
+  api.get('/reports/holdings-snapshot', { params: asOf ? { as_of: asOf } : {} }).then(r => r.data)
 
 export const getSectorAllocation = () =>
   api.get('/reports/sector-allocation').then(r => r.data)
