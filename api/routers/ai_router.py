@@ -55,27 +55,39 @@ async def ask_ai(req: AskRequest):
 
         steps = []
         for action, observation in result.get("intermediate_steps", []):
+            obs_str = str(observation)
+            obs_truncated = obs_str[:500] + (f"\n…[{len(obs_str)-500} chars truncated]" if len(obs_str) > 500 else "")
             steps.append({
                 "thought": getattr(action, "log", "").strip(),
                 "tool": getattr(action, "tool", ""),
                 "tool_input": str(getattr(action, "tool_input", "")),
-                "observation": str(observation)[:2000],
+                "observation": obs_truncated,
             })
 
-        raw = result.get("output") or result.get("answer") or str(result)
-        # Extract only the Final Answer if the model leaked its reasoning into output
+        raw = result.get("output") or result.get("answer") or ""
         import re
+        # Extract only the Final Answer if the model leaked its reasoning into output
         m = re.search(r'final answer[:\s]+(.*)', raw, re.IGNORECASE | re.DOTALL)
-        answer = m.group(1).strip() if m else re.sub(r'^(Thought:.*?\n)+', '', raw, flags=re.DOTALL).strip()
+        if m:
+            answer = m.group(1).strip()
+        else:
+            answer = re.sub(r'^(Thought:.*?\n)+', '', raw, flags=re.DOTALL).strip()
+        # If no answer was produced (hit max_iterations without Final Answer),
+        # synthesize one from the last observation so the UI always shows something.
+        if not answer and steps:
+            last_obs = steps[-1]["observation"]
+            answer = f"I wasn't able to complete the query. Last result: {last_obs}"
+        elif not answer:
+            answer = "I wasn't able to answer that question. Please try rephrasing."
         return {"answer": answer, "steps": steps}
 
     try:
         data = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _run),
-            timeout=300,
+            timeout=600,
         )
         return data
     except asyncio.TimeoutError:
-        raise HTTPException(504, "AI request timed out after 5 minutes")
+        raise HTTPException(504, "AI request timed out after 10 minutes")
     except Exception as e:
         raise HTTPException(503, f"AI unavailable: {e}")

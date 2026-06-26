@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { PageHeader, Card, Button, Input, Spinner } from '@/components/ui'
@@ -44,6 +44,31 @@ function ReasoningSteps({ steps }: { steps: Step[] }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function ThinkingBubble() {
+  const [elapsed, setElapsed] = useState(0)
+  const cb = useCallback(() => setElapsed(s => s + 1), [])
+  useEffect(() => {
+    const id = setInterval(cb, 1000)
+    return () => clearInterval(id)
+  }, [cb])
+  const mins = Math.floor(elapsed / 60)
+  const secs = elapsed % 60
+  const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+  const hint = elapsed < 30 ? 'Thinking…'
+    : elapsed < 90 ? 'Running SQL query…'
+    : elapsed < 180 ? 'Processing results…'
+    : `Still working — LLM inference on RPi 5 can take a few minutes (${timeStr})`
+  return (
+    <div className="flex justify-start">
+      <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm flex items-center gap-3 text-sm text-slate-500">
+        <Spinner size={16} />
+        <span>{hint}</span>
+        {elapsed >= 30 && elapsed < 180 && <span className="text-slate-400 text-xs tabular-nums">{timeStr}</span>}
+      </div>
     </div>
   )
 }
@@ -155,13 +180,7 @@ export default function AIAssistant() {
               </div>
             ))}
 
-            {askMut.isPending && (
-              <div className="flex justify-start">
-                <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-                  <Spinner size={18} />
-                </div>
-              </div>
-            )}
+            {askMut.isPending && <ThinkingBubble />}
             <div ref={bottomRef} />
           </div>
 

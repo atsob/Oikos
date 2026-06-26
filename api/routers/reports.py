@@ -185,22 +185,13 @@ def get_portfolio_summary():
 
 
 @router.get("/allocation")
-def get_allocation():
-    """Asset allocation breakdown for a donut chart."""
-    with get_db() as conn:
-        # Cash accounts
-        cash_df = pd.read_sql("""
-            SELECT 'Cash & Savings' AS label,
-                   SUM(a.Accounts_Balance * COALESCE(
-                       (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
-                   )) AS value_eur
-            FROM Accounts a
-            JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
-            WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-              AND a.Is_Active = TRUE
-        """, conn)
+def get_allocation(scope: str = Query("investments")):
+    """Asset allocation breakdown for a donut chart.
 
-        # Investments
+    scope=investments (default): only securities held in Holdings, grouped by Securities_Type.
+    scope=all: full net-worth allocation — securities + cash + real assets.
+    """
+    with get_db() as conn:
         inv_df = pd.read_sql("""
             SELECT s.Securities_Type AS label,
                    SUM(h.Quantity * COALESCE(
@@ -214,19 +205,162 @@ def get_allocation():
             GROUP BY s.Securities_Type
         """, conn)
 
-        # Real assets
-        asset_df = pd.read_sql("""
-            SELECT Accounts_Type AS label,
-                   SUM(Accounts_Balance) AS value_eur
-            FROM Accounts
-            WHERE Accounts_Type IN ('Real Estate','Vehicle','Asset')
-              AND Is_Active = TRUE
-            GROUP BY Accounts_Type
-        """, conn)
+        if scope == "all":
+            cash_df = pd.read_sql("""
+                SELECT 'Cash & Savings' AS label,
+                       SUM(a.Accounts_Balance * COALESCE(
+                           (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
+                       )) AS value_eur
+                FROM Accounts a
+                WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+                  AND a.Is_Active = TRUE
+            """, conn)
+            asset_df = pd.read_sql("""
+                SELECT Accounts_Type AS label,
+                       SUM(Accounts_Balance) AS value_eur
+                FROM Accounts
+                WHERE Accounts_Type IN ('Real Estate','Vehicle','Asset')
+                  AND Is_Active = TRUE
+                GROUP BY Accounts_Type
+            """, conn)
+            result = pd.concat([cash_df, inv_df, asset_df], ignore_index=True)
+        else:
+            result = inv_df
 
-    result = pd.concat([cash_df, inv_df, asset_df], ignore_index=True)
     result = result[result["value_eur"].notna() & (result["value_eur"] > 0)]
     return _df_to_list(result)
+
+
+@router.get("/allocation-targets")
+def get_allocation_targets():
+    """Return saved target percentages from Allocation_Targets."""
+    with get_db() as conn:
+        df = pd.read_sql(
+            "SELECT Securities_Type AS securities_type, Target_Pct AS target_pct FROM Allocation_Targets ORDER BY Securities_Type",
+            conn,
+        )
+    return _df_to_list(df)
+
+
+@router.post("/allocation-targets")
+def save_allocation_targets(payload: dict):
+    """Upsert {securities_type: target_pct} map into Allocation_Targets."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        for sec_type, pct in payload.items():
+            cur.execute(
+                """INSERT INTO Allocation_Targets (Securities_Type, Target_Pct)
+                   VALUES (%s, %s)
+                   ON CONFLICT (Securities_Type)
+                   DO UPDATE SET Target_Pct = EXCLUDED.Target_Pct""",
+                (sec_type, float(pct)),
+            )
+    return {"ok": True}
+
+
+@router.get("/allocation-delta")
+def get_allocation_delta():
+    """Current allocation vs targets + delta for the Rebalancing Delta table."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            WITH fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            ),
+            prices AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+            ),
+            holdings_value AS (
+                SELECT
+                    s.Securities_Type::text AS securities_type,
+                    SUM(h.Quantity * COALESCE(p.Close, 0) * COALESCE(fx.FX_Rate, 1)) AS value_eur
+                FROM Holdings h
+                JOIN Securities s ON h.Securities_Id = s.Securities_Id
+                LEFT JOIN prices p  ON p.Securities_Id = h.Securities_Id
+                LEFT JOIN fx        ON fx.Currencies_Id_1 = s.Currencies_Id
+                WHERE h.Quantity > 0
+                GROUP BY s.Securities_Type
+            ),
+            total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
+            SELECT
+                hv.securities_type,
+                ROUND(hv.value_eur::numeric, 2)                                                           AS value_eur,
+                ROUND((hv.value_eur / NULLIF(t.grand_total, 0) * 100)::numeric, 2)                        AS actual_pct,
+                COALESCE(at.Target_Pct, 0)                                                                 AS target_pct,
+                ROUND((hv.value_eur / NULLIF(t.grand_total, 0) * 100 - COALESCE(at.Target_Pct, 0))::numeric, 2) AS delta_pct,
+                ROUND(((COALESCE(at.Target_Pct, 0) - hv.value_eur / NULLIF(t.grand_total, 0) * 100) / 100 * t.grand_total)::numeric, 2) AS rebalance_eur
+            FROM holdings_value hv
+            CROSS JOIN total t
+            LEFT JOIN Allocation_Targets at ON at.Securities_Type = hv.securities_type
+            ORDER BY value_eur DESC
+        """, conn)
+    return _df_to_list(df)
+
+
+@router.get("/rebalancing-plan")
+def get_rebalancing_plan():
+    """Per-security rebalancing action plan proportional to current holdings weight."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            WITH fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            ),
+            prices AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+            ),
+            holding_vals AS (
+                SELECT
+                    s.Securities_Id,
+                    s.Securities_Name,
+                    s.Securities_Type::text                                     AS securities_type,
+                    s.Ticker,
+                    c.Currencies_ShortName                                      AS currency,
+                    COALESCE(p.Close, 0)                                        AS current_price,
+                    COALESCE(fx.FX_Rate, 1)                                     AS fx_rate,
+                    SUM(h.Quantity)                                             AS current_qty,
+                    ROUND((SUM(h.Quantity) * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1))::numeric, 2) AS value_eur
+                FROM Holdings h
+                JOIN Securities s  ON s.Securities_Id  = h.Securities_Id
+                JOIN Currencies c  ON c.Currencies_Id  = s.Currencies_Id
+                LEFT JOIN prices p ON p.Securities_Id  = h.Securities_Id
+                LEFT JOIN fx       ON fx.Currencies_Id_1 = s.Currencies_Id
+                WHERE h.Quantity > 0
+                GROUP BY s.Securities_Id, s.Securities_Name, s.Securities_Type,
+                         s.Ticker, c.Currencies_ShortName, p.Close, fx.FX_Rate
+            ),
+            grand AS (SELECT SUM(value_eur) AS total FROM holding_vals),
+            type_vals AS (
+                SELECT securities_type, SUM(value_eur) AS type_eur
+                FROM holding_vals GROUP BY securities_type
+            )
+            SELECT
+                hv.Securities_Id                                                AS securities_id,
+                hv.Securities_Name                                              AS security,
+                hv.securities_type                                              AS type,
+                hv.Ticker                                                       AS ticker,
+                hv.currency,
+                hv.current_qty                                                  AS qty,
+                hv.current_price                                                AS price,
+                hv.value_eur,
+                ROUND((hv.value_eur / NULLIF(g.total,0)*100)::numeric, 2)      AS weight_pct,
+                ROUND((tv.type_eur  / NULLIF(g.total,0)*100)::numeric, 2)      AS type_actual_pct,
+                COALESCE(at.Target_Pct, 0)                                     AS type_target_pct,
+                ROUND((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100)::numeric, 2) AS type_delta_pct,
+                ROUND((hv.value_eur / NULLIF(tv.type_eur,0)
+                       * ((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) / 100 * g.total))::numeric, 2) AS suggested_delta_eur,
+                g.total                                                        AS portfolio_total_eur
+            FROM holding_vals hv
+            CROSS JOIN grand g
+            JOIN type_vals tv         ON tv.securities_type = hv.securities_type
+            LEFT JOIN Allocation_Targets at ON at.Securities_Type = hv.securities_type
+            ORDER BY ABS(COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) DESC,
+                     ABS(hv.value_eur / NULLIF(tv.type_eur,0)
+                         * ((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) / 100 * g.total)) DESC
+        """, conn)
+    return _df_to_list(df)
 
 
 @router.get("/net-worth-report")

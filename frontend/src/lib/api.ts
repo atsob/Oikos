@@ -104,8 +104,16 @@ export const getCapitalGains = (year: number, method: string = 'WAC') =>
 export const getDividends = (startDate: string, endDate: string) =>
   api.get('/reports/dividends', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
 
-export const getAllocationReport = () =>
-  api.get('/reports/allocation').then(r => r.data)
+export const getAllocationReport = (scope: 'investments' | 'all' = 'investments') =>
+  api.get('/reports/allocation', { params: { scope } }).then(r => r.data)
+export const getAllocationTargets = () =>
+  api.get('/reports/allocation-targets').then(r => r.data)
+export const saveAllocationTargets = (payload: Record<string, number>) =>
+  api.post('/reports/allocation-targets', payload).then(r => r.data)
+export const getAllocationDelta = () =>
+  api.get('/reports/allocation-delta').then(r => r.data)
+export const getRebalancingPlan = () =>
+  api.get('/reports/rebalancing-plan').then(r => r.data)
 
 export const getNetWorthReport = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/net-worth-report', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)

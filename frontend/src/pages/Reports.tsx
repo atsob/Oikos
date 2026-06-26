@@ -6,6 +6,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import {
   getIncomeExpense, getSavingsRate, getTopCategories, getPortfolioSummary, getAllocationReport,
+  getAllocationTargets, saveAllocationTargets, getAllocationDelta, getRebalancingPlan,
   getIncomeExpenseDetail, getDividends, getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
   getCashFlowForecast, getPnl, getCategoryBreakdown,
@@ -818,16 +819,269 @@ function FxExposureTab() {
 }
 
 function AllocationReport() {
-  const { data = [], isLoading } = useQuery({ queryKey: ['allocation'], queryFn: getAllocationReport })
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const d = data as Row[]
+  const qc = useQueryClient()
+  const [editOpen, setEditOpen] = useState(false)
+  const [cash, setCash] = useState(0)
+
+  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', 'investments'], queryFn: () => getAllocationReport('investments') })
+  const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['allocation-targets'], queryFn: getAllocationTargets })
+  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta'], queryFn: getAllocationDelta })
+  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan'], queryFn: getRebalancingPlan })
+
+  // Local editable target state
+  const [localTargets, setLocalTargets] = useState<Record<string, number>>({})
+  useEffect(() => {
+    if ((targets as Row[]).length > 0) {
+      const m: Record<string, number> = {}
+      ;(targets as Row[]).forEach(r => { m[String(r.securities_type)] = Number(r.target_pct) })
+      setLocalTargets(m)
+    }
+  }, [targets])
+
+  const saveMutation = useMutation({
+    mutationFn: saveAllocationTargets,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['allocation-targets'] })
+      qc.invalidateQueries({ queryKey: ['allocation-delta'] })
+      qc.invalidateQueries({ queryKey: ['rebalancing-plan'] })
+      setEditOpen(false)
+    },
+  })
+
+  const d = donut as Row[]
+  const deltaRows = delta as Row[]
+  const planRows = plan as Row[]
+
+  const sumTargets = Object.values(localTargets).reduce((s, v) => s + v, 0)
+  const sumOk = Math.abs(sumTargets - 100) < 0.01
+
+  // Actual vs target bar chart data
+  const barTypes = deltaRows.map(r => String(r.securities_type))
+  const actualPcts = deltaRows.map(r => Number(r.actual_pct))
+  const targetPcts = deltaRows.map(r => Number(r.target_pct))
+
+  // Rebalancing plan with optional extra cash
+  const portfolioTotal = planRows.length > 0 ? Number(planRows[0].portfolio_total_eur ?? 0) : 0
+  const planWithCash = planRows.map(r => {
+    const baseDelta = Number(r.suggested_delta_eur ?? 0)
+    const typeTgt = Number(r.type_target_pct ?? 0)
+    const cashForType = portfolioTotal > 0 ? (typeTgt / 100) * cash : 0
+    const typeWeight = Number(r.value_eur ?? 0) / (deltaRows.find(d2 => String(d2.securities_type) === String(r.type))?.value_eur as number || 1)
+    const totalDelta = baseDelta + typeWeight * cashForType
+    const estShares = Number(r.price ?? 0) > 0 ? totalDelta / (Number(r.price) * Number(r.fx_rate ?? 1)) : 0
+    return { ...r, total_delta_eur: totalDelta, est_shares: estShares }
+  }).filter(r => Math.abs(r.total_delta_eur) > 0.5)
+
+  const totalBuy = planWithCash.filter(r => r.total_delta_eur > 0).reduce((s, r) => s + r.total_delta_eur, 0)
+  const totalSell = planWithCash.filter(r => r.total_delta_eur < 0).reduce((s, r) => s + r.total_delta_eur, 0)
+
+  if (donutLoading || targetsLoading || deltaLoading || planLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
   return (
-    <Plot
-      data={[{ values: d.map(r => Number(r.value_eur)), labels: d.map(r => String(r.label)), type: 'pie', hole: 0.45, textinfo: 'label+percent' }]}
-      layout={{ height: 420, margin: { t: 20, r: 20, b: 20, l: 20 }, showlegend: true, legend: { orientation: 'v' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
-      config={{ displayModeBar: false, responsive: true }}
-      style={{ width: '100%' }}
-    />
+    <div className="space-y-6">
+      {/* Edit Target Allocations */}
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <button
+          className="w-full flex items-center gap-2 px-4 py-3 bg-slate-50 hover:bg-slate-100 text-sm font-medium text-left"
+          onClick={() => setEditOpen(v => !v)}
+        >
+          <span>{editOpen ? '▼' : '▶'}</span>
+          <span>⚙️ Edit Target Allocations</span>
+        </button>
+        {editOpen && (
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-slate-500">Rows are pre-filled from your current holdings and any previously saved targets. All changes are saved on click.</p>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead><tr className="bg-slate-50 text-slate-500">
+                  <th className="text-left px-3 py-2 border-b border-slate-200">Asset Type</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Actual %</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Target %</th>
+                </tr></thead>
+                <tbody>
+                  {d.map((r, i) => {
+                    const key = String(r.label)
+                    return (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="px-3 py-2 font-medium">{key}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                          {(Number(r.value_eur) / d.reduce((s, x) => s + Number(x.value_eur), 0) * 100).toFixed(2)}%
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number" min={0} max={100} step={0.5}
+                            value={localTargets[key] ?? 0}
+                            onChange={e => setLocalTargets(prev => ({ ...prev, [key]: parseFloat(e.target.value) || 0 }))}
+                            className="w-20 text-right border border-slate-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                          %
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className={`text-sm font-medium ${sumOk ? 'text-green-600' : 'text-red-500'}`}>
+                Sum of targets: {sumTargets.toFixed(1)}% {sumOk ? '✓' : '✗ (must equal 100%)'}
+              </span>
+              <button
+                disabled={!sumOk || saveMutation.isPending}
+                onClick={() => saveMutation.mutate(localTargets)}
+                className="px-4 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-40"
+              >
+                {saveMutation.isPending ? 'Saving…' : 'Save Targets'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Donut + Bar charts side by side */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
+          <Plot
+            data={[{ values: d.map(r => Number(r.value_eur)), labels: d.map(r => String(r.label)), type: 'pie', hole: 0.45, textinfo: 'label+percent' }]}
+            layout={{ height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' } }}
+            config={{ displayModeBar: false, responsive: true }}
+            style={{ width: '100%' }}
+          />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-600 mb-2">Actual vs. Target (%)</h3>
+          <Plot
+            data={[
+              { x: barTypes, y: actualPcts, name: 'Actual %', type: 'bar', marker: { color: '#3b82f6' } },
+              { x: barTypes, y: targetPcts, name: 'Target %', type: 'bar', marker: { color: '#f59e0b' } },
+            ]}
+            layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 } }}
+            config={{ displayModeBar: false, responsive: true }}
+            style={{ width: '100%' }}
+          />
+        </div>
+      </div>
+
+      {/* Rebalancing Delta */}
+      {deltaRows.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">Rebalancing Delta</h3>
+          <WithCopy>
+          <div className="overflow-x-auto text-xs">
+            <table className="w-full border-collapse">
+              <thead><tr className="bg-slate-50 text-slate-500 text-xs">
+                <th className="text-left px-3 py-2 border-b border-slate-200">Asset Type</th>
+                <th className="text-right px-3 py-2 border-b border-slate-200">Value (€)</th>
+                <th className="text-right px-3 py-2 border-b border-slate-200">Actual %</th>
+                <th className="text-right px-3 py-2 border-b border-slate-200">Target %</th>
+                <th className="text-right px-3 py-2 border-b border-slate-200">Delta %</th>
+                <th className="text-right px-3 py-2 border-b border-slate-200">Rebalance €</th>
+              </tr></thead>
+              <tbody>
+                {deltaRows.map((r, i) => {
+                  const delta = Number(r.delta_pct ?? 0)
+                  const reb = Number(r.rebalance_eur ?? 0)
+                  return (
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium">{String(r.securities_type)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{Number(r.actual_pct).toFixed(2)}%</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{Number(r.target_pct).toFixed(2)}%</td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${delta > 0 ? 'text-red-500' : delta < 0 ? 'text-green-600' : ''}`}>{delta > 0 ? '+' : ''}{delta.toFixed(2)}%</td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${reb > 0 ? 'text-green-600' : reb < 0 ? 'text-red-500' : ''}`}>{reb > 0 ? '+' : ''}{fmtEur(reb)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
+
+      {/* Rebalancing Action Plan */}
+      {planRows.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-slate-700">⚖️ Rebalancing Action Plan</h3>
+          </div>
+          <p className="text-xs text-slate-500 mb-3">Trades are distributed proportionally within each asset type. Only types with a saved target are included. Positive = buy, negative = sell.</p>
+          <div className="flex items-center gap-3 mb-3">
+            <label className="text-xs text-slate-600 font-medium">Available cash to deploy (€)</label>
+            <div className="flex items-center border border-slate-200 rounded overflow-hidden">
+              <button onClick={() => setCash(c => Math.max(0, c - 100))} className="px-2 py-1 text-slate-500 hover:bg-slate-100 text-sm">−</button>
+              <input type="number" min={0} value={cash} onChange={e => setCash(parseFloat(e.target.value) || 0)}
+                className="w-28 text-center border-none text-xs px-2 py-1 focus:outline-none" />
+              <button onClick={() => setCash(c => c + 100)} className="px-2 py-1 text-slate-500 hover:bg-slate-100 text-sm">+</button>
+            </div>
+          </div>
+          <WithCopy>
+          <div className="overflow-x-auto text-xs max-h-[520px] overflow-y-auto">
+            <table className="border-collapse" style={{ minWidth: '100%' }}>
+              <thead className="sticky top-0 z-20"><tr className="bg-slate-50 text-slate-500 text-xs">
+                <th className="sticky left-0 z-30 bg-slate-50 text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Action</th>
+                <th className="sticky left-[72px] z-30 bg-slate-50 text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Security</th>
+                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type</th>
+                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Ticker</th>
+                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Ccy</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Qty</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Price</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Value (€)</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Weight %</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Act %</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Tgt %</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Δ %</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Trade (€)</th>
+                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Est. Shares</th>
+              </tr></thead>
+              <tbody>
+                {planWithCash.map((r, i) => {
+                  const isBuy = r.total_delta_eur > 0
+                  const typeDelta = Number(r.type_delta_pct ?? 0)
+                  const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                  return (
+                    <tr key={i} className={`border-b border-slate-100 hover:bg-blue-50/40 ${rowBg}`}>
+                      <td className={`sticky left-0 z-10 ${rowBg} px-2 py-1.5 whitespace-nowrap`}>
+                        <span className={`inline-flex items-center gap-1 font-bold text-xs px-1.5 py-0.5 rounded ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
+                          <span className={`w-2 h-2 rounded-full ${isBuy ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                          {isBuy ? 'BUY' : 'SELL'}
+                        </span>
+                      </td>
+                      <td className={`sticky left-[72px] z-10 ${rowBg} px-2 py-1.5 font-medium max-w-[200px] truncate whitespace-nowrap`}><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
+                      <td className="px-2 py-1.5 text-slate-500">{String(r.type)}</td>
+                      <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
+                      <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.qty).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.weight_pct).toFixed(2)}%</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.type_actual_pct).toFixed(2)}%</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.type_target_pct).toFixed(2)}%</td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${typeDelta > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                        {typeDelta > 0 ? '+' : ''}{typeDelta.toFixed(2)}%
+                      </td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
+                        {isBuy ? '+' : ''}{fmtEur(r.total_delta_eur)}
+                      </td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
+                        {isBuy ? '+' : ''}{r.est_shares.toFixed(4)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+          <div className="grid grid-cols-3 gap-4 mt-4">
+            <KpiCard label="Total to Buy" value={fmtEur(totalBuy)} color="text-green-600" />
+            <KpiCard label="Total to Sell" value={fmtEur(totalSell)} color="text-red-500" />
+            <KpiCard label="Net Cash Needed" value={fmtEur(totalBuy + totalSell)} color="text-slate-700" />
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
