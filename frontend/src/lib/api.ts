@@ -480,6 +480,8 @@ export const fixTransferSign = (txIds: number[], allAccIds: number[]) =>
 export const getMissingInvCashLinks = () => api.get('/tools/missing-investment-cash-links').then(r => r.data)
 export const fixInvCashLinks = (pairs: {investments_id: number, candidate_tx_id: number}[]) =>
   api.post('/tools/fix-investment-cash-links', { pairs }).then(r => r.data)
+export const getMissingInvAccountTarget = () => api.get('/tools/missing-inv-account-target').then(r => r.data)
+export const fixInvAccountTarget = () => api.post('/tools/fix-inv-account-target').then(r => r.data as { updated: number })
 export const getLogs = (lines: number, level?: string, search?: string, file?: string) =>
   api.get('/tools/logs', { params: { lines, level, search, file } }).then(r => r.data)
 

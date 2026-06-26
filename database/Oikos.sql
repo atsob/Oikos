@@ -1,5 +1,5 @@
 -- =============================================================================
--- Personal Finance — PostgreSQL Schema
+-- Oikos Personal Finance — PostgreSQL Schema
 -- =============================================================================
 -- Run on a fresh database to create the complete schema from scratch.
 -- All object definitions are idempotent (IF NOT EXISTS / OR REPLACE).
@@ -876,6 +876,43 @@ $$;
 -- COLLATION REFRESH  (run after PostgreSQL upgrades)
 -- =============================================================================
 -- ALTER DATABASE "Finance" REFRESH COLLATION VERSION;
+
+
+-- =============================================================================
+-- VIEWS
+-- =============================================================================
+
+-- v_transactions_eur: all transactions with amounts converted to EUR via the
+-- latest available FX rate. Used by the AI assistant so it can aggregate
+-- spending/income in EUR without writing multi-currency FX joins.
+-- Exclude internal transfers by filtering WHERE accounts_id_target IS NULL.
+CREATE OR REPLACE VIEW v_transactions_eur AS
+SELECT
+    t.transactions_id,
+    t.date,
+    t.description,
+    t.total_amount,
+    c.currencies_shortname                                             AS currency,
+    COALESCE(
+        (SELECT fx.fx_rate FROM historical_fx fx
+         WHERE fx.currencies_id_1 = a.currencies_id
+         ORDER BY fx.date DESC LIMIT 1), 1
+    )                                                                  AS fx_rate,
+    t.total_amount * COALESCE(
+        (SELECT fx.fx_rate FROM historical_fx fx
+         WHERE fx.currencies_id_1 = a.currencies_id
+         ORDER BY fx.date DESC LIMIT 1), 1
+    )                                                                  AS amount_eur,
+    t.payees_id,
+    p.payees_name                                                      AS payee,
+    a.accounts_id,
+    a.accounts_name,
+    a.accounts_type,
+    t.accounts_id_target
+FROM transactions t
+JOIN accounts a    ON a.accounts_id    = t.accounts_id
+JOIN currencies c  ON c.currencies_id  = a.currencies_id
+LEFT JOIN payees p ON p.payees_id      = t.payees_id;
 
 
 -- =============================================================================

@@ -432,76 +432,24 @@ def get_weekly_summaries(limit: int = Query(12)):
 @router.post("/weekly-summaries/generate")
 def generate_weekly_summary(data: dict):
     """Generate (or regenerate) an AI summary for a given week and persist it."""
-    week_start = data.get("week_start")  # expects 'YYYY-MM-DD' (Monday)
-    if not week_start:
+    week_start_str = data.get("week_start")
+    if not week_start_str:
         raise HTTPException(400, "week_start required")
-
-    with get_db() as conn:
-        stats_df = pd.read_sql("""
-            SELECT
-                SUM(CASE WHEN s.Amount > 0 THEN s.Amount ELSE 0 END) AS income,
-                ABS(SUM(CASE WHEN s.Amount < 0 THEN s.Amount ELSE 0 END)) AS expenses
-            FROM Transactions t
-            JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
-            WHERE t.Transfers_Id IS NULL AND t.Is_Draft = FALSE
-              AND t.Date >= %(ws)s::date AND t.Date < %(ws)s::date + INTERVAL '7 days'
-        """, conn, params={"ws": week_start})
-
-        top_df = pd.read_sql("""
-            WITH RECURSIVE cp AS (
-                SELECT Categories_Id, Categories_Name::TEXT AS full_path
-                FROM Categories WHERE Categories_Id_Parent IS NULL
-                UNION ALL
-                SELECT c.Categories_Id, cp.full_path || ' : ' || c.Categories_Name
-                FROM Categories c JOIN cp ON c.Categories_Id_Parent = cp.Categories_Id
-            )
-            SELECT cp.full_path AS category, ROUND(ABS(SUM(s.Amount))::numeric, 2) AS spent
-            FROM Transactions t
-            JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
-            JOIN cp ON cp.Categories_Id = s.Categories_Id
-            WHERE t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0
-              AND t.Date >= %(ws)s::date AND t.Date < %(ws)s::date + INTERVAL '7 days'
-            GROUP BY 1 ORDER BY 2 DESC LIMIT 5
-        """, conn, params={"ws": week_start})
-
-    income = float(stats_df.iloc[0]["income"] or 0)
-    expenses = float(stats_df.iloc[0]["expenses"] or 0)
-    savings = income - expenses
-    top_cats = "; ".join(f"{r['category']} €{float(r['spent']):,.0f}" for _, r in top_df.iterrows())
-
-    prompt = (
-        f"Weekly financial summary for the week starting {week_start}. "
-        f"Income: €{income:,.0f}. Expenses: €{expenses:,.0f}. Net: €{savings:,.0f}. "
-        f"Top expense categories: {top_cats or 'none'}. "
-        "Write a concise 2-4 sentence summary of this week's spending with one practical tip. "
-        "Be direct and conversational, no markdown."
-    )
-
     try:
-        from ai.agent import run_agent
-        summary_text = run_agent(prompt)
-    except Exception:
-        summary_text = (
-            f"Income €{income:,.0f} · Expenses €{expenses:,.0f} · Net €{savings:,.0f}. "
-            f"Top: {top_cats or 'N/A'}."
-        )
-
-    conn2 = get_connection()
-    try:
-        cur = conn2.cursor()
-        cur.execute("""
-            INSERT INTO ai_weekly_summaries (week_start, summary_text)
-            VALUES (%s, %s)
-            ON CONFLICT (week_start) DO UPDATE SET summary_text = EXCLUDED.summary_text
-        """, (week_start, summary_text))
-        conn2.commit()
+        from datetime import date as _date
+        from ai.weekly_summary import run as run_weekly
+        run_weekly(week_start=_date.fromisoformat(week_start_str))
     except Exception as e:
-        conn2.rollback()
-        raise HTTPException(500, str(e))
-    finally:
-        conn2.close()
+        raise HTTPException(503, f"AI model unavailable: {e}")
 
-    return {"week_start": week_start, "summary_text": summary_text}
+    # Return the saved summary text
+    with get_db() as conn:
+        df = pd.read_sql(
+            "SELECT summary_text FROM ai_weekly_summaries WHERE week_start = %(ws)s",
+            conn, params={"ws": week_start_str}
+        )
+    summary_text = df.iloc[0]["summary_text"] if not df.empty else ""
+    return {"week_start": week_start_str, "summary_text": summary_text}
 
 
 @router.get("/monthly-summaries")
@@ -601,77 +549,18 @@ def generate_monthly_summary(data: dict):
     month_start = data.get("month_start")  # expects 'YYYY-MM-01'
     if not month_start:
         raise HTTPException(400, "month_start required")
+    try:
+        from ai.monthly_summary import run as run_monthly
+        run_monthly(target_month=month_start)
+    except Exception as e:
+        raise HTTPException(503, f"AI model unavailable: {e}")
 
-    # Gather stats for the month
     with get_db() as conn:
-        stats_df = pd.read_sql("""
-            SELECT
-                SUM(CASE WHEN s.Amount > 0 THEN s.Amount ELSE 0 END) AS income,
-                ABS(SUM(CASE WHEN s.Amount < 0 THEN s.Amount ELSE 0 END)) AS expenses
-            FROM Transactions t
-            JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
-            WHERE t.Transfers_Id IS NULL AND t.Is_Draft = FALSE
-              AND t.Date >= %(ms)s::date
-              AND t.Date <  %(ms)s::date + INTERVAL '1 month'
-        """, conn, params={"ms": month_start})
-
-        top_df = pd.read_sql("""
-            WITH RECURSIVE cp AS (
-                SELECT Categories_Id, Categories_Name::TEXT AS full_path
-                FROM Categories WHERE Categories_Id_Parent IS NULL
-                UNION ALL
-                SELECT c.Categories_Id, cp.full_path || ' : ' || c.Categories_Name
-                FROM Categories c JOIN cp ON c.Categories_Id_Parent = cp.Categories_Id
-            )
-            SELECT cp.full_path AS category, ROUND(ABS(SUM(s.Amount))::numeric, 2) AS spent
-            FROM Transactions t
-            JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
-            JOIN cp ON cp.Categories_Id = s.Categories_Id
-            WHERE t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0
-              AND t.Date >= %(ms)s::date AND t.Date < %(ms)s::date + INTERVAL '1 month'
-            GROUP BY 1 ORDER BY 2 DESC LIMIT 5
-        """, conn, params={"ms": month_start})
-
-    income = float(stats_df.iloc[0]["income"] or 0)
-    expenses = float(stats_df.iloc[0]["expenses"] or 0)
-    savings = income - expenses
-    savings_rate = (savings / income * 100) if income > 0 else 0
-    top_cats = "; ".join(f"{r['category']} €{float(r['spent']):,.0f}" for _, r in top_df.iterrows())
-
-    prompt = (
-        f"Monthly financial summary for {month_start[:7]}. "
-        f"Income: €{income:,.0f}. Expenses: €{expenses:,.0f}. "
-        f"Savings: €{savings:,.0f} ({savings_rate:.1f}% savings rate). "
-        f"Top expense categories: {top_cats or 'none'}. "
-        "Write a concise 3-5 sentence summary with key observations and one actionable tip. "
-        "Be direct and friendly, no markdown headers."
-    )
-
-    try:
-        from ai.agent import run_agent
-        summary_text = run_agent(prompt)
-    except Exception as e:
-        summary_text = (
-            f"Income €{income:,.0f} · Expenses €{expenses:,.0f} · "
-            f"Savings €{savings:,.0f} ({savings_rate:.1f}%). "
-            f"Top categories: {top_cats or 'N/A'}."
+        df = pd.read_sql(
+            "SELECT summary_text FROM ai_monthly_summaries WHERE month_start = %(ms)s",
+            conn, params={"ms": month_start}
         )
-
-    conn2 = get_connection()
-    try:
-        cur = conn2.cursor()
-        cur.execute("""
-            INSERT INTO ai_monthly_summaries (month_start, summary_text)
-            VALUES (%s, %s)
-            ON CONFLICT (month_start) DO UPDATE SET summary_text = EXCLUDED.summary_text
-        """, (month_start, summary_text))
-        conn2.commit()
-    except Exception as e:
-        conn2.rollback()
-        raise HTTPException(500, str(e))
-    finally:
-        conn2.close()
-
+    summary_text = df.iloc[0]["summary_text"] if not df.empty else ""
     return {"month_start": month_start, "summary_text": summary_text}
 
 

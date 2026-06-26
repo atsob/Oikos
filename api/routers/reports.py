@@ -1014,16 +1014,11 @@ def get_dividends_tracker(
 
     ann_days_map = {"1 Year": 365, "2 Years": 730, "3 Years": 1095, "5 Years": 1825, "Previous Year": 365}
     if period == "All Time":
-        ann_days = (df_t12["last_income_date"] - df_t12["position_start_date"]).dt.days.clip(lower=1)
+        base_ann_days = None  # computed per-security below
     elif period in ann_days_map:
-        ann_days = ann_days_map[period]
+        base_ann_days = ann_days_map[period]
     else:
-        ann_days = max((ed - sd).days, 1)
-
-    df_t12["yoc_pct"] = (
-        df_t12["period_income_eur"] / df_t12["cost_basis_eur"].replace(0, float("nan"))
-        * 100 * 365 / ann_days
-    ).fillna(0)
+        base_ann_days = max((ed - sd).days, 1)
 
     with get_db() as conn2:
         df_sec_meta = pd.read_sql("""
@@ -1040,6 +1035,23 @@ def get_dividends_tracker(
         df_t12["fwd_yield_pct"] = None
         df_t12["ex_div_date"] = None
         df_t12["div_frequency"] = None
+
+    # Map frequency to minimum annualization denominator (days per full cycle)
+    _freq_min_days = {"Annual": 365, "Semi-Annual": 182, "Quarterly": 91, "Monthly": 30}
+
+    def _ann_days_for_row(row):
+        if base_ann_days is None:
+            # All Time: span between first and last income date
+            return max((row["last_income_date"] - row["position_start_date"]).days, 1)
+        freq_floor = _freq_min_days.get(row.get("div_frequency"), 0)
+        return max(base_ann_days, freq_floor)
+
+    ann_days_series = df_t12.apply(_ann_days_for_row, axis=1)
+
+    df_t12["yoc_pct"] = (
+        df_t12["period_income_eur"] / df_t12["cost_basis_eur"].replace(0, float("nan"))
+        * 100 * 365 / ann_days_series
+    ).fillna(0)
 
     total_income = float(df_t12["period_income_eur"].sum())
     yoc_positive = df_t12[df_t12["yoc_pct"] > 0]["yoc_pct"]

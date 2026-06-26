@@ -26,12 +26,29 @@ def _compact_schema(db) -> str:
             return ""
 
 
+def _clean_sql(sql: str) -> str:
+    """Strip markdown code fences and backtick wrappers that small models add."""
+    import re
+    sql = sql.strip()
+    # ```sql ... ``` or ``` ... ```
+    sql = re.sub(r'^```(?:sql)?\s*', '', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\s*```$', '', sql)
+    # single backtick wrap `SELECT ...`
+    if sql.startswith('`') and sql.endswith('`'):
+        sql = sql[1:-1]
+    return sql.strip()
+
+
 def create_ai_agent(llm, db, rag_engine):
     """Create the AI agent with SQL and RAG tools."""
 
     schema_info = _compact_schema(db)
 
     toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+
+    # Sanitize SQL before it hits the DB — small models wrap queries in backticks
+    _orig_run = db.run
+    db.run = lambda sql, *a, **kw: _orig_run(_clean_sql(sql), *a, **kw)
 
     rag_tool = Tool(
         name="Financial_Knowledge_Base",
@@ -46,6 +63,10 @@ def create_ai_agent(llm, db, rag_engine):
     # Using JSON format here causes output parsing errors with this agent type.
     custom_prefix = f"""You are a personal finance assistant with direct read access to the user's own financial database.
 This is the user's personal data — always answer questions about it freely and helpfully. Never refuse.
+The user's primary currency is EUR (€). Always present monetary amounts in EUR with the € symbol.
+For any spending, income, or balance query use the view v_transactions_eur — it already converts all amounts to EUR.
+View columns: transactions_id, date, description, total_amount, currency, fx_rate, amount_eur, payees_id, payee, accounts_id, accounts_name, accounts_type, accounts_id_target.
+Always use amount_eur (not total_amount) for monetary aggregates. Exclude internal transfers by adding WHERE accounts_id_target IS NULL.
 
 DATABASE SCHEMA:
 {schema_info}
@@ -79,6 +100,7 @@ Question: {input}
         handle_parsing_errors=True,
         max_iterations=3,
         allow_dangerous_requests=True,
+        return_intermediate_steps=True,
     )
 
     return agent_executor

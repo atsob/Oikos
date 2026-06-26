@@ -169,7 +169,8 @@ function AISummaryPanel({
       await generateFn(active)
       await qc.invalidateQueries({ queryKey: [queryKey] })
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'Failed')
+      const axiosMsg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setErr(axiosMsg ?? (e instanceof Error ? e.message : 'Failed'))
     } finally { setBusy(false) }
   }
 

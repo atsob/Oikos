@@ -13,6 +13,7 @@ import {
   getUnlinkedTransferPairs, linkTransferPairs,
   getTransferSignMismatches, fixTransferSign,
   getMissingInvCashLinks, fixInvCashLinks,
+  getMissingInvAccountTarget, fixInvAccountTarget,
   getLogs,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
@@ -1438,6 +1439,85 @@ function UnlinkedTransferPairs() {
   )
 }
 
+// ── Fix Investment Account Target ───────────────────────────────────────────────
+function FixInvAccountTarget() {
+  const [confirm, setConfirm] = useState(false)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const { data: rows = [], isLoading, refetch } = useQuery({
+    queryKey: ['missing-inv-account-target'], queryFn: getMissingInvAccountTarget, staleTime: 30_000,
+  })
+
+  const { sorted, sortKey: sk, sortDir: sd, toggleSort } = useSortTable(rows as Row[], 'date', 'desc')
+
+  const fixMut = useMutation({
+    mutationFn: fixInvAccountTarget,
+    onSuccess: (d: { updated: number }) => {
+      setMsg({ type: 'success', text: `✅ Fixed ${d.updated} transaction(s).` })
+      setConfirm(false); refetch()
+    },
+    onError: () => { setMsg({ type: 'error', text: 'Fix failed.' }); setConfirm(false) },
+  })
+
+  const COLS = ['date', 'cash_account', 'action', 'security', 'total_amount', 'investment_account']
+
+  if (isLoading) return <Spinner />
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>🏦 Fix Missing Investment Account on Cash Transactions</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-xs text-slate-500">
+          Finds linked cash transactions (Dividend, IntInc, RtrnCap, MiscInc, CashIn, Sell) where
+          Accounts_Id_Target is NULL. Sets it to the originating investment account so the "Transfer To"
+          column shows correctly in the Cash Register.
+        </p>
+
+        {(rows as Row[]).length === 0 ? (
+          <Alert type="success">✅ No affected transactions found.</Alert>
+        ) : (
+          <>
+            <Alert type="warning">⚠️ {(rows as Row[]).length} cash transaction(s) missing their investment account reference.</Alert>
+
+            {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+            {confirm ? (
+              <ConfirmBanner
+                message={`Set Accounts_Id_Target on ${(rows as Row[]).length} transaction(s)? Cannot be undone.`}
+                onYes={() => fixMut.mutate()}
+                onNo={() => setConfirm(false)}
+                yesLabel="✅ Yes, fix all"
+                isPending={fixMut.isPending}
+              />
+            ) : (
+              <Button size="sm" onClick={() => setConfirm(true)}>
+                🔧 Fix all {(rows as Row[]).length} transaction(s)
+              </Button>
+            )}
+
+            <div className="overflow-auto border border-slate-200 rounded-lg max-h-72">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    {COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={sk} currentDir={sd} onSort={toggleSort} className="px-3 py-2 text-left text-slate-600" />)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((row, i) => (
+                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                      {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{String(row[c] ?? '')}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 // ── Fix Transfer Sign Mismatches ───────────────────────────────────────────────
 function FixTransferSignMismatches() {
   const [filterAcc, setFilterAcc] = useState<string>('')
@@ -2094,6 +2174,7 @@ const CATEGORIES: Record<string, string[]> = {
     '🔄 Fix Missing Transfer Mirrors',
     '🔀 Fix Transfer Sign Mismatches',
     '🔗 Fix Missing Investment Cash Links',
+    '🏦 Fix Missing Investment Account on Cash Tx',
   ],
   '⚙️ System': [
     '📅 Scheduled Tasks',
@@ -2116,6 +2197,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
   '🔄 Fix Missing Transfer Mirrors': FixMissingTransferMirrors,
   '🔀 Fix Transfer Sign Mismatches': FixTransferSignMismatches,
   '🔗 Fix Missing Investment Cash Links': FixMissingInvCashLinks,
+  '🏦 Fix Missing Investment Account on Cash Tx': FixInvAccountTarget,
   '📥 Fill Missing Prices': FillMissingPrices,
   '🔍 Price Quality': PriceQuality,
   '⚖ Normalize Investments': NormalizeInvestments,

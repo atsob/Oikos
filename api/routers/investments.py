@@ -51,8 +51,8 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
 
     if existing_tx_id:
         cur.execute(
-            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, payees_id=%s, description=%s WHERE transactions_id=%s",
-            (date, signed, abs(float(total_acc_cur)), payee_id, description, existing_tx_id),
+            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id_target=%s, payees_id=%s, description=%s WHERE transactions_id=%s",
+            (date, signed, abs(float(total_acc_cur)), inv_account_id, payee_id, description, existing_tx_id),
         )
     else:
         cur.execute("""

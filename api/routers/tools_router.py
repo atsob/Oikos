@@ -979,6 +979,59 @@ def fix_investment_cash_links(req: FixInvCashLinksRequest):
     return {"linked": linked, "errors": errors}
 
 
+# ── Fix Investment Account Target ───────────────────────────────────────────────
+
+_MISSING_INV_ACCOUNT_TARGET_SQL = """
+    SELECT
+        t.transactions_id,
+        t.date::text AS date,
+        a_cash.accounts_name AS cash_account,
+        i.action,
+        s.securities_name AS security,
+        t.total_amount,
+        a_inv.accounts_name AS investment_account,
+        i.investments_id
+    FROM Investments i
+    JOIN Transactions t ON i.transactions_id = t.transactions_id
+    JOIN Accounts a_cash ON t.accounts_id = a_cash.accounts_id
+    JOIN Accounts a_inv  ON i.accounts_id  = a_inv.accounts_id
+    LEFT JOIN Securities s ON i.securities_id = s.securities_id
+    WHERE t.accounts_id_target IS NULL
+      AND i.action IN ('Dividend','IntInc','RtrnCap','MiscInc','CashIn','Sell')
+    ORDER BY t.date DESC
+"""
+
+@router.get("/missing-inv-account-target")
+def missing_inv_account_target():
+    with get_db() as conn:
+        df = pd.read_sql(_MISSING_INV_ACCOUNT_TARGET_SQL, conn)
+    return _df_records(df)
+
+
+@router.post("/fix-inv-account-target")
+def fix_inv_account_target():
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE Transactions t
+            SET accounts_id_target = i.accounts_id
+            FROM Investments i
+            WHERE i.transactions_id = t.transactions_id
+              AND t.accounts_id_target IS NULL
+              AND i.action IN ('Dividend','IntInc','RtrnCap','MiscInc','CashIn','Sell')
+        """)
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+    return {"updated": updated}
+
+
 # ── Log Viewer ─────────────────────────────────────────────────────────────────
 
 @router.get("/logs")

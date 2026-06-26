@@ -64,25 +64,12 @@ def get_security_holdings(sec_id: int):
     with get_db() as conn:
         df = pd.read_sql("""
             SELECT a.accounts_name AS account,
-                   COALESCE(SUM(CASE
-                       WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
-                       WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
-                       ELSE 0 END), 0) AS qty_held,
-                   CASE
-                       WHEN SUM(CASE WHEN i.action = 'Buy' THEN i.quantity ELSE 0 END) = 0 THEN 0
-                       ELSE
-                           SUM(CASE WHEN i.action = 'Buy' THEN i.total_amount_acccur ELSE 0 END) /
-                           NULLIF(SUM(CASE WHEN i.action = 'Buy' THEN i.quantity ELSE 0 END), 0) *
-                           SUM(CASE
-                               WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
-                               WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
-                               ELSE 0
-                           END)
-                   END AS cost_basis
-            FROM investments i
-            JOIN accounts a ON a.accounts_id = i.accounts_id
-            WHERE i.securities_id = %(sid)s
-            GROUP BY a.accounts_name
+                   h.quantity AS qty_held,
+                   ROUND((h.quantity * COALESCE(h.fifo_avg_price, h.simple_avg_price, 0))::numeric, 2) AS cost_basis
+            FROM holdings h
+            JOIN accounts a ON a.accounts_id = h.accounts_id
+            WHERE h.securities_id = %(sid)s
+              AND h.quantity != 0
             ORDER BY a.accounts_name
         """, conn, params={"sid": sec_id})
         price_df = pd.read_sql("""
