@@ -208,7 +208,7 @@ async def parse_statement_endpoint(
     profile = row.iloc[0].to_dict()
 
     file_bytes = await file.read()
-    from ui.bank_import import parse_statement
+    from api.bank_parse import parse_statement
     df = parse_statement(file_bytes, file.filename or "upload", profile)
     if df.empty:
         return {"rows": [], "error": "No valid transactions found"}
