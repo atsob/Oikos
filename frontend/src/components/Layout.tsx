@@ -76,6 +76,15 @@ export default function Layout() {
             ))}
           </div>
           <p className="text-xs text-slate-500">v2.0 · React + FastAPI</p>
+          {window.location.protocol === 'https:' && window.location.hostname !== 'localhost' && (
+            <a
+              href={`http://${window.location.hostname}:8444/ca.crt`}
+              className="text-xs text-slate-400 hover:text-blue-400 underline leading-tight"
+              title="Download & install the CA certificate to trust this app on this device"
+            >
+              Install CA cert
+            </a>
+          )}
         </div>
       </aside>
 

@@ -69,9 +69,37 @@ if os.path.isdir(_dist):
 
     app.mount('/assets', StaticFiles(directory=os.path.join(_dist, 'assets')), name='assets')
 
-    @app.get('/favicon.svg', include_in_schema=False)
-    def favicon():
-        return FileResponse(os.path.join(_dist, 'favicon.svg'), media_type='image/svg+xml')
+    # PWA and root static files — each needs an explicit route because only /assets is mounted
+    @app.get('/favicon.svg',          include_in_schema=False)
+    def _f1(): return FileResponse(os.path.join(_dist, 'favicon.svg'), media_type='image/svg+xml')
+
+    @app.get('/icon-192.png',         include_in_schema=False)
+    def _f2(): return FileResponse(os.path.join(_dist, 'icon-192.png'), media_type='image/png')
+
+    @app.get('/icon-512.png',         include_in_schema=False)
+    def _f3(): return FileResponse(os.path.join(_dist, 'icon-512.png'), media_type='image/png')
+
+    @app.get('/icons.svg',            include_in_schema=False)
+    def _f4(): return FileResponse(os.path.join(_dist, 'icons.svg'), media_type='image/svg+xml')
+
+    @app.get('/manifest.webmanifest', include_in_schema=False)
+    def _f5(): return FileResponse(os.path.join(_dist, 'manifest.webmanifest'), media_type='application/manifest+json')
+
+    @app.get('/sw.js',                include_in_schema=False)
+    def _f6():
+        return FileResponse(
+            os.path.join(_dist, 'sw.js'),
+            media_type='application/javascript',
+            headers={'Cache-Control': 'no-cache, no-store, must-revalidate'},
+        )
+
+    @app.get('/registerSW.js',        include_in_schema=False)
+    def _f7():
+        return FileResponse(
+            os.path.join(_dist, 'registerSW.js'),
+            media_type='application/javascript',
+            headers={'Cache-Control': 'no-cache, no-store, must-revalidate'},
+        )
 
     class SPAMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: StarletteRequest, call_next):
