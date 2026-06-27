@@ -524,7 +524,7 @@ export default function Dashboard() {
   const setOpts = (o: DashOpts) => { setOptsState(o); saveOpts(o) }
 
   const [nwPeriod, setNwPeriod] = React.useState<string>(() =>
-    localStorage.getItem('oikos-nw-period') ?? 'All'
+    localStorage.getItem('oikos-nw-period') ?? '3Y'
   )
   const setNwPeriodSaved = (v: string) => { setNwPeriod(v); localStorage.setItem('oikos-nw-period', v) }
 

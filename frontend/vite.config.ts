@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import fs from 'fs'
 import path from 'path'
 
 export default defineConfig({
@@ -62,6 +63,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    https: {
+      key:  fs.readFileSync(path.resolve(__dirname, 'ssl/key.pem')),
+      cert: fs.readFileSync(path.resolve(__dirname, 'ssl/cert.pem')),
+    },
     proxy: {
       '/api': { target: 'http://localhost:8000', changeOrigin: true },
     },

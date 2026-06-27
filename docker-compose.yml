@@ -29,6 +29,18 @@ services:
       timeout: 10s
       retries: 3
 
+  oikos_https:
+    image: nginx:alpine
+    container_name: oikos_https
+    network_mode: host
+    volumes:
+      - ./nginx-https.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl/cert.pem:/etc/nginx/ssl/cert.pem:ro
+      - ./ssl/key.pem:/etc/nginx/ssl/key.pem:ro
+    depends_on:
+      - oikos
+    restart: unless-stopped
+
   oikos_scheduler:
     build: .
     image: atsob/oikos:latest
@@ -52,3 +64,4 @@ services:
       - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups      
     command: python scheduler.py
     restart: unless-stopped
+
