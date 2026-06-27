@@ -7,7 +7,7 @@ import { Upload, CheckCircle, XCircle, Trash2, Plus, Edit2, RefreshCw, ChevronDo
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
   getPayeeRules, createPayeeRule, updatePayeeRule, deletePayeeRule,
-  getBankPayees as getPayees, getBankCategories as getCategories,
+  getBankPayees as getPayees, getBankCategories as getCategories, getPayeeCategoryUsage,
   parseStatement, getAppTransactions, applyBankImport,
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport,
   revtParse, revtImport, revsParse, revsImport, importFile,
@@ -114,6 +114,32 @@ function ImportReconcileTab() {
   const { data: profiles = [] } = useQuery({ queryKey: ['import-profiles'], queryFn: getImportProfiles })
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
+  const { data: payeeRules = [] } = useQuery({ queryKey: ['payee-rules'], queryFn: getPayeeRules })
+  const { data: payeeCatUsage = [] } = useQuery({ queryKey: ['payee-category-usage'], queryFn: getPayeeCategoryUsage })
+
+  // Apply payee rules to a description — mirrors backend apply_payee_rules logic
+  function applyRules(description: string): { payee_name: string; category_id: number | null } {
+    const descUp = description.toUpperCase()
+    const rules = payeeRules as Record<string, unknown>[]
+    for (const rule of rules) {
+      const pat = String(rule.pattern ?? '').toUpperCase()
+      const mtyp = String(rule.match_type ?? 'contains').toLowerCase()
+      let hit = false
+      if      (mtyp === 'contains')    hit = descUp.includes(pat)
+      else if (mtyp === 'starts_with') hit = descUp.startsWith(pat)
+      else if (mtyp === 'exact')       hit = descUp === pat
+      else if (mtyp === 'regex') {
+        try { hit = new RegExp(String(rule.pattern), 'i').test(description) } catch { hit = false }
+      }
+      if (hit) {
+        return {
+          payee_name: (rule.payee_name as string) ?? '',
+          category_id: rule.categories_id != null ? Number(rule.categories_id) : null,
+        }
+      }
+    }
+    return { payee_name: '', category_id: null }
+  }
 
   const parseMut = useMutation({
     mutationFn: () => parseStatement(profileId!, file!),
@@ -133,6 +159,7 @@ function ImportReconcileTab() {
       setAppTxns(appData)
 
       // Simple matching: exact date + amount
+      const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
       const matched = rows.map((r, i) => {
         const amount = Number(r.amount)
         const exact = (appData as Record<string, unknown>[]).find(a =>
@@ -143,6 +170,9 @@ function ImportReconcileTab() {
         )
         const status = exact ? 'matched' : fuzzy ? 'possible_dup' : 'new'
         const defaultAction = exact ? 'Reconcile' : fuzzy ? 'Skip' : 'Import'
+        if (defaultAction === 'Import') {
+          initialPayeeAssign[i] = applyRules(String(r.description ?? ''))
+        }
         return {
           ...r,
           _idx: i,
@@ -150,10 +180,9 @@ function ImportReconcileTab() {
           match_tx_id: exact ? exact.id : fuzzy ? fuzzy.id : null,
           already_reconciled: (exact ?? fuzzy)?.reconciled ?? false,
           action: defaultAction,
-          payee_name: '',
-          category_id: null,
         }
       })
+      setPayeeAssign(initialPayeeAssign)
       setReviewRows(matched)
       setStep(2)
     },
@@ -315,9 +344,26 @@ function ImportReconcileTab() {
                             className="text-xs border border-slate-200 rounded px-1 py-0.5 w-40"
                           >
                             <option value="">(none)</option>
-                            {(categories as Record<string, unknown>[]).map(c => (
-                              <option key={c.id as number} value={c.id as number}>{c.name as string}</option>
-                            ))}
+                            {(() => {
+                              const cats = categories as Record<string, unknown>[]
+                              const selectedPayee = payeeAssign[r._idx as number]?.payee_name ?? ''
+                              // Find top categories for the selected payee, then fall back to overall usage
+                              const usageRows = (payeeCatUsage as Record<string, unknown>[])
+                                .filter(u => String(u.payee_name ?? '') === selectedPayee)
+                              const topIds = usageRows.map(u => Number(u.category_id))
+                              const top = topIds.length > 0
+                                ? topIds.slice(0, 8).map(id => cats.find(c => Number(c.id) === id)).filter(Boolean) as Record<string, unknown>[]
+                                : cats.filter(c => Number(c.usage_count ?? 0) > 0).slice(0, 8)
+                              const topIdSet = new Set(top.map(c => Number(c.id)))
+                              const rest = cats.filter(c => !topIdSet.has(Number(c.id)))
+                              const topLabel = topIds.length > 0 ? `── ${selectedPayee} ──` : '── Most used ──'
+                              return <>
+                                {top.length > 0 && <option disabled>{topLabel}</option>}
+                                {top.map(c => <option key={`top-${c.id}`} value={c.id as number}>{c.name as string}</option>)}
+                                {top.length > 0 && rest.length > 0 && <option disabled>── All ──</option>}
+                                {rest.map(c => <option key={c.id as number} value={c.id as number}>{c.name as string}</option>)}
+                              </>
+                            })()}
                           </select>
                         )}
                       </td>
@@ -559,26 +605,46 @@ function PayeeRulesTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['payee-rules'] }),
   })
 
+  const [ruleSearch, setRuleSearch] = useState('')
   const set = (field: string, value: unknown) => setEditing(prev => ({ ...prev, [field]: value }))
+
+  const filteredRules = ruleSearch.trim()
+    ? prSorted.filter(r =>
+        String(r.pattern ?? '').toLowerCase().includes(ruleSearch.toLowerCase()) ||
+        String(r.payee_name ?? '').toLowerCase().includes(ruleSearch.toLowerCase()) ||
+        String(r.category_name ?? '').toLowerCase().includes(ruleSearch.toLowerCase())
+      )
+    : prSorted
 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader><CardTitle>Payee Rules ({(rules as Record<string, unknown>[]).length})</CardTitle></CardHeader>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle>Payee Rules ({(rules as Record<string, unknown>[]).length})</CardTitle>
+            <input
+              type="text"
+              placeholder="Search…"
+              value={ruleSearch}
+              onChange={e => setRuleSearch(e.target.value)}
+              className="px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
+            />
+          </div>
+        </CardHeader>
         <CardBody>
           <p className="text-sm text-slate-500 mb-3">Rules automatically assign a Payee and/or Category to imported transactions based on their description. Rules are evaluated by Priority (highest first).</p>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-72">
             <table className="w-full text-xs">
-              <thead><tr className="border-b border-slate-200 text-slate-500">
-                <ColHeader label="Pattern" sortKey="pattern" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
-                <ColHeader label="Match" sortKey="match_type" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
-                <ColHeader label="Payee" sortKey="payee_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
-                <ColHeader label="Category" sortKey="category_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500" />
-                <ColHeader label="Priority" sortKey="priority" currentKey={prSK} currentDir={prSD} onSort={prSort} align="right" className="py-1 px-2 text-slate-500" />
-                <th className="py-1 px-2" />
+              <thead className="sticky top-0 z-10"><tr className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                <ColHeader label="Pattern" sortKey="pattern" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500 bg-slate-50" />
+                <ColHeader label="Match" sortKey="match_type" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500 bg-slate-50" />
+                <ColHeader label="Payee" sortKey="payee_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500 bg-slate-50" />
+                <ColHeader label="Category" sortKey="category_name" currentKey={prSK} currentDir={prSD} onSort={prSort} className="py-1 px-2 text-slate-500 bg-slate-50" />
+                <ColHeader label="Priority" sortKey="priority" currentKey={prSK} currentDir={prSD} onSort={prSort} align="right" className="py-1 px-2 text-slate-500 bg-slate-50" />
+                <th className="py-1 px-2 bg-slate-50" />
               </tr></thead>
               <tbody>
-                {prSorted.map(r => (
+                {filteredRules.map(r => (
                   <tr key={r.rule_id as number} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="py-1 px-2 font-mono">{r.pattern as string}</td>
                     <td className="py-1 px-2">{r.match_type as string}</td>

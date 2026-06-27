@@ -162,7 +162,30 @@ def list_categories():
                 SELECT c.Categories_Id, ch.full_path || ' : ' || c.Categories_Name
                 FROM Categories c JOIN ch ON c.Categories_Id_Parent = ch.Categories_Id
             )
-            SELECT Categories_Id AS id, full_path AS name FROM ch ORDER BY full_path
+            SELECT ch.Categories_Id AS id, ch.full_path AS name,
+                   COUNT(s.Splits_Id) AS usage_count
+            FROM ch
+            LEFT JOIN Splits s ON s.Categories_Id = ch.Categories_Id
+            GROUP BY ch.Categories_Id, ch.full_path
+            ORDER BY usage_count DESC, ch.full_path
+        """, conn)
+    return _df(df)
+
+
+@router.get("/payee-category-usage")
+def get_payee_category_usage():
+    """Return category usage counts grouped by payee name, for smart category pre-selection."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT p.Payees_Name AS payee_name,
+                   s.Categories_Id AS category_id,
+                   COUNT(*) AS usage_count
+            FROM Transactions t
+            JOIN Payees p ON p.Payees_Id = t.Payees_Id
+            JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+            WHERE s.Categories_Id IS NOT NULL
+            GROUP BY p.Payees_Name, s.Categories_Id
+            ORDER BY p.Payees_Name, usage_count DESC
         """, conn)
     return _df(df)
 

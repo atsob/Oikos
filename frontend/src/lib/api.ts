@@ -373,6 +373,7 @@ export const updatePayeeRule = (id: number, data: Record<string, unknown>) => ap
 export const deletePayeeRule = (id: number) => api.delete(`/bank/payee-rules/${id}`).then(r => r.data)
 export const getBankPayees = () => api.get('/bank/payees').then(r => r.data)
 export const getBankCategories = () => api.get('/bank/categories').then(r => r.data)
+export const getPayeeCategoryUsage = () => api.get('/bank/payee-category-usage').then(r => r.data)
 export const parseStatement = (profileId: number, file: File) => {
   const fd = new FormData(); fd.append('file', file)
   return api.post('/bank/parse-statement', fd, { params: { profile_id: profileId }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
