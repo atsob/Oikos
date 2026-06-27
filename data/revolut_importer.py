@@ -1155,6 +1155,16 @@ def build_savings_records(df: "pd.DataFrame") -> "tuple[list, list]":
                 "total_eur": round(abs(value), 2),
             })
 
+        elif desc_upper.startswith("SELL"):
+            # Withdrawal: sell fund units and transfer proceeds to linked cash account.
+            qty_used = abs(qty) if qty else (abs(value) / max(price, 0.0001))
+            inv_records.append({**base,
+                "action":    "Sell",
+                "quantity":  round(qty_used, 6),
+                "price":     round(price if price else 1.0, 6),
+                "total_eur": round(abs(value), 2),
+            })
+
         elif desc_upper.startswith("INTEREST PAID"):
             inv_records.append({**base,
             #    "action":    "Dividend",
@@ -1238,6 +1248,8 @@ def build_savings_records_as_tx(df: "pd.DataFrame") -> "tuple[list, list]":
 
         if desc_upper.startswith("BUY"):
             label = "Revolut Savings: Fund Purchase"
+        elif desc_upper.startswith("SELL"):
+            label = "Revolut Savings: Fund Withdrawal"
         elif desc_upper.startswith("INTEREST PAID"):
             label = "Revolut Savings: Interest Earned"
         elif desc_upper.startswith("SERVICE FEE"):

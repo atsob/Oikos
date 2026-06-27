@@ -1228,6 +1228,7 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 r3.low_3y,
                 ROUND((((sig.price_today / NULLIF(r3.high_3y, 0)) - 1) * 100)::numeric, 2) as pct_from_high_3y,
                 ROUND((((sig.price_today / NULLIF(r3.low_3y,  0)) - 1) * 100)::numeric, 2) as pct_from_low_3y,
+                ROUND(sec.Dividend_Yield::numeric, 2) as fwd_yield_pct,
                 CASE 
                     WHEN current_qty > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
                     WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'

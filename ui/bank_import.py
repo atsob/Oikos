@@ -21,13 +21,43 @@ is a separate document — we parse the CSV/XLSX export here.
 from __future__ import annotations
 
 import io
+import logging
 import re
 from datetime import date as _date, timedelta
 
 import pandas as pd
-import streamlit as st
 
 from database.connection import get_db, get_connection
+
+_log = logging.getLogger(__name__)
+
+# Streamlit is optional — only needed when running the legacy UI.
+try:
+    import streamlit as st
+    _ST = True
+except Exception:
+    st = None  # type: ignore[assignment]
+    _ST = False
+
+
+def _st_error(msg: str) -> None:
+    if _ST:
+        try:
+            st.error(msg)  # type: ignore[union-attr]
+        except Exception:
+            _log.error(msg)
+    else:
+        _log.error(msg)
+
+
+def _st_warning(msg: str) -> None:
+    if _ST:
+        try:
+            st.warning(msg)  # type: ignore[union-attr]
+        except Exception:
+            _log.warning(msg)
+    else:
+        _log.warning(msg)
 from database.queries import (
     _ensure_import_tables,
     get_import_profiles,
@@ -251,7 +281,7 @@ def parse_statement(file_bytes: bytes, file_name: str, profile: dict) -> pd.Data
             if raw is None:
                 raise ValueError("Unable to read CSV with any supported encoding.")
     except Exception as e:
-        st.error(f"Failed to read file: {e}")
+        _st_error(f"Failed to read file: {e}")
         return pd.DataFrame()
 
     # Normalise column names: strip whitespace, BOM, and surrounding quotes.
@@ -275,7 +305,7 @@ def parse_statement(file_bytes: bytes, file_name: str, profile: dict) -> pd.Data
     # Validate required columns
     missing = [c for c in [date_col, desc_col] if c and c not in raw.columns]
     if missing:
-        st.error(f"Column(s) not found in file: {missing}. Available: {list(raw.columns)}")
+        _st_error(f"Column(s) not found in file: {missing}. Available: {list(raw.columns)}")
         return pd.DataFrame()
 
     rows = []
@@ -346,7 +376,7 @@ def parse_statement(file_bytes: bytes, file_name: str, profile: dict) -> pd.Data
         rows.append({'date': txn_date, 'description': desc, 'amount': amount, 'balance': balance})
 
     if not rows:
-        st.warning("No valid transactions found in the file after parsing.")
+        _st_warning("No valid transactions found in the file after parsing.")
         return pd.DataFrame()
 
     df = pd.DataFrame(rows).sort_values('date').reset_index(drop=True)

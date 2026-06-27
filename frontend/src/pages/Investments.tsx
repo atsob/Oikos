@@ -732,12 +732,21 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   )
 }
 
+// ── Persistent state (survives navigation to other pages) ─────────────────────
+function usePersist<T>(key: string, defaultVal: T) {
+  const [val, setVal] = useState<T>(() => {
+    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : defaultVal } catch { return defaultVal }
+  })
+  const set = useCallback((v: T) => { setVal(v); try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key])
+  return [val, set] as const
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'holdings' | 'transactions' | 'cash'>('holdings')
-  const [accountId, setAccountId] = useState<number | null>(null)
+  const [tab, setTab] = usePersist<'holdings' | 'transactions' | 'cash'>('investments_tab', 'holdings')
+  const [accountId, setAccountId] = usePersist<number | null>('investments_accountId', null)
   const [showInactive, setShowInactive] = useState(false)
   const [includeClosed, setIncludeClosed] = useState(false)
   const [fromDate, setFromDate] = useState(monthsAgo(6))

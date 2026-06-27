@@ -2863,6 +2863,7 @@ type Signal = {
   pct_from_low_3y: number | null
   recommendation_signal: string | null
   final_signal: string | null
+  fwd_yield_pct: number | null
 }
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
@@ -3093,7 +3094,12 @@ function PortfolioActionSignalsTab() {
     return true
   })
 
-  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTable(filtered, 'final_signal', 'asc')
+  const [search, setSearch] = useState('')
+  const searchFiltered = search.trim()
+    ? filtered.filter(r => String(r.securities_name).toLowerCase().includes(search.trim().toLowerCase()))
+    : filtered
+
+  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTable(searchFiltered, 'final_signal', 'asc')
 
   const signalStyle = (sig: string | null): string => {
     if (!sig) return ''
@@ -3122,8 +3128,8 @@ function PortfolioActionSignalsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Filter */}
-      <div className="flex flex-wrap gap-1.5">
+      {/* Filter + Search */}
+      <div className="flex flex-wrap items-center gap-1.5">
         {([
           ['all',          'Show All'],
           ['hide_neutral', 'Hide Neutral'],
@@ -3134,6 +3140,13 @@ function PortfolioActionSignalsTab() {
             {label}
           </button>
         ))}
+        <input
+          type="text"
+          placeholder="Search security…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="ml-auto px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
+        />
       </div>
 
       <WithCopy>
@@ -3147,6 +3160,7 @@ function PortfolioActionSignalsTab() {
               <ColHeader label={<Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip>} sortKey="current_value_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Unrealized P&L: market value minus FIFO cost basis.">Unreal. P&L</Tooltip>} sortKey="unrealized_pnl_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Unrealized P&L as % of cost basis.">P&L %</Tooltip>} sortKey="unrealized_pnl_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
+              <ColHeader label={<Tooltip text="Forward dividend yield based on analyst estimates.">Fwd Yield %</Tooltip>} sortKey="fwd_yield_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Sharpe ratio: excess return divided by annual volatility.">Sharpe</Tooltip>} sortKey="sharpe_ratio" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).">Quality</Tooltip>} sortKey="quality_score" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
               <ColHeader label={<Tooltip text="Most recent available market price.">Price</Tooltip>} sortKey="price_today" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
@@ -3175,6 +3189,9 @@ function PortfolioActionSignalsTab() {
                     </td>
                     <td className={`px-3 py-2 text-right tabular-nums ${pnlPct != null ? (pnlPct >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
                       {pnlPct != null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-blue-700">
+                      {r.fwd_yield_pct != null && Number(r.fwd_yield_pct) > 0 ? `${Number(r.fwd_yield_pct).toFixed(2)}%` : '—'}
                     </td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.sharpe_ratio ?? 0) >= 1 ? 'text-green-700' : Number(r.sharpe_ratio ?? 0) < 0 ? 'text-red-600' : 'text-slate-600'}`}>
                       {r.sharpe_ratio != null ? Number(r.sharpe_ratio).toFixed(2) : '—'}
