@@ -10,7 +10,7 @@ import {
   getCurrenciesMaster, upsertCurrency,
   getPayeeTransactions, getCategoryTransactions,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
 const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts']
@@ -30,6 +30,7 @@ const extractError = (e: unknown) =>
 
 // ── Shared Modal shell ────────────────────────────────────────────────────────
 function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: React.ReactNode; footer: React.ReactNode; wide?: boolean }) {
+  useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>

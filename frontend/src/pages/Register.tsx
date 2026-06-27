@@ -8,7 +8,7 @@ import {
   getSplits, upsertSplits, clearAccount, reconcileAccount,
   createTransfer, createRecurringTemplate, searchAllTransactions,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, SearchableSelect } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, SearchableSelect, useEscapeKey } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, Save, CheckCheck, ArrowLeftRight } from 'lucide-react'
 
@@ -137,7 +137,7 @@ function TxModal({
   installmentCount, setInstallmentCount,
   installmentFreq, setInstallmentFreq,
 }: ModalProps) {
-
+  useEscapeKey(onClose)
   const set = (k: keyof TxForm, v: unknown) => onFormChange({ ...form, [k]: v })
 
   const payeeId = form.payees_id ? Number(form.payees_id) : null
@@ -289,6 +289,19 @@ function TxModal({
                     </div>
                   ))}
                   <Button size="sm" variant="secondary" onClick={addSplit} className="mt-1"><Plus size={12} /> Add split</Button>
+                  {(() => {
+                    const splitsTotal = splits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
+                    const txTotal = parseFloat(form.total_amount) || 0
+                    const remaining = txTotal - splitsTotal
+                    const pct = txTotal !== 0 ? Math.round((splitsTotal / txTotal) * 100) : 0
+                    const isMatch = Math.round(remaining * 100) === 0
+                    return (
+                      <div className={`flex justify-between text-xs pt-1 border-t border-slate-100 mt-1 ${isMatch ? 'text-green-600' : 'text-red-500'}`}>
+                        <span>{fmtEur(splitsTotal)} allocated ({pct}%)</span>
+                        <span>{isMatch ? '✓ 100% covered' : `Unallocated: ${fmtEur(remaining)}`}</span>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
             </>
@@ -497,6 +510,13 @@ export default function Register() {
     staleTime: 30_000,
   })
 
+  // Escape closes whichever inline overlay is open
+  useEscapeKey(useCallback(() => {
+    if (globalOpen) setGlobalOpen(false)
+    else if (clearOpen) setClearOpen(false)
+    else if (reconcileOpen) setReconcileOpen(false)
+  }, [globalOpen, clearOpen, reconcileOpen]))
+
   const onGridReady = useCallback((e: GridReadyEvent) => { setGridApi(e.api); e.api.autoSizeAllColumns() }, [])
 
   const setPeriod = (label: string, from: string) => {
@@ -553,6 +573,18 @@ export default function Register() {
 
   const handleSave = async () => {
     if (!form) return
+
+    // Pre-flight: validate splits before any API call
+    if (useSplits && !form.is_transfer) {
+      const validSplits = splits.filter(s => s.amount !== '' && s.amount !== '0')
+      const splitsTotal = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+      const txTotal = parseFloat(form.total_amount)
+      if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) {
+        setSaveError(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        return
+      }
+    }
+
     setSaving(true)
     setSaveError(null)
     try {
@@ -587,6 +619,11 @@ export default function Register() {
         const splitPayload = useSplits
           ? splits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
           : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || null }]
+        if (useSplits) {
+          const splitsTotal = splitPayload.reduce((sum, s) => sum + s.amount, 0)
+          const txTotal = parseFloat(form.total_amount)
+          if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        }
         for (let i = 0; i < n; i++) {
           const instDate = addPeriod(form.date, installmentFreq, i)
           const instDesc = baseDesc ? `${baseDesc} (${i + 1}/${n})` : `(${i + 1}/${n})`
@@ -627,6 +664,9 @@ export default function Register() {
           const validSplits = splits
             .filter(s => s.amount !== '' && s.amount !== '0')
             .map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
+          const splitsTotal = validSplits.reduce((sum, s) => sum + s.amount, 0)
+          const txTotal = parseFloat(form.total_amount)
+          if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
           if (validSplits.length > 0) await upsertSplits(txId, validSplits)
         } else {
           await upsertSplits(txId, [{
@@ -716,11 +756,19 @@ export default function Register() {
       <div className="flex items-center gap-3 px-6 py-3 bg-white border-b border-slate-200 flex-wrap">
         <Select className="w-56" value={accountId ?? ''} onChange={e => { setAccountId(Number(e.target.value) || null); setOffset(0) }}>
           <option value="">— Select account —</option>
-          {cashAccounts.map((a) => (
-            <option key={String(a.id)} value={String(a.id)}>
-              {String(a.name)}{!a.is_active ? ' (inactive)' : ''}
-            </option>
-          ))}
+          {CASH_ACCOUNT_TYPES.map(type => {
+            const group = cashAccounts.filter(a => String(a.type ?? '') === type)
+            if (!group.length) return null
+            return (
+              <optgroup key={type} label={type}>
+                {group.map(a => (
+                  <option key={String(a.id)} value={String(a.id)}>
+                    {String(a.name)}{!a.is_active ? ' (inactive)' : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
         </Select>
         <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} className="rounded" />

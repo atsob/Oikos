@@ -10,7 +10,7 @@ import {
   getSplits, upsertSplits, createTransfer, getPayees, getCategories, getPayeeTopCategories,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Plus, X, Save, RefreshCw } from 'lucide-react'
 
@@ -128,6 +128,7 @@ function InvModal({ form, onChange, accounts, allAccounts, securities, onSave, o
   error: string | null
   editId: number | null
 }) {
+  useEscapeKey(onClose)
   const set = (k: keyof InvFormData, v: string) => onChange({ ...form, [k]: v })
 
   const onAccountChange = (v: string) => {
@@ -381,6 +382,7 @@ function CashTxModal({
   installmentCount: string; setInstallmentCount: (v: string) => void
   installmentFreq: string; setInstallmentFreq: (v: string) => void
 }) {
+  useEscapeKey(onClose)
   const set = (k: keyof CashTxForm, v: unknown) => onFormChange({ ...form, [k]: v })
   const addSplit = () => onSplitsChange([...splits, { categories_id: '', amount: '', memo: '' }])
   const removeSplit = (i: number) => onSplitsChange(splits.filter((_, j) => j !== i))

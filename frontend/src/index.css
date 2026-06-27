@@ -72,6 +72,7 @@ html.dark .ag-theme-alpine {
   --ag-background-color: #1e293b;
   --ag-header-background-color: #293548;
   --ag-odd-row-background-color: #1e293b;
+  --ag-even-row-background-color: #1e293b;
   --ag-row-hover-color: #293548;
   --ag-border-color: #334155;
   --ag-header-foreground-color: #94a3b8;
@@ -80,6 +81,43 @@ html.dark .ag-theme-alpine {
   --ag-input-focus-border-color: #3b82f6;
   --ag-range-selection-border-color: #3b82f6;
 }
+html.dark .ag-theme-alpine .ag-root-wrapper,
+html.dark .ag-theme-alpine .ag-body-viewport { background-color: #1e293b !important; border-color: #334155 !important; }
+html.dark .ag-theme-alpine .ag-header,
+html.dark .ag-theme-alpine .ag-header-row { background-color: #293548 !important; border-color: #334155 !important; }
+html.dark .ag-theme-alpine .ag-header-cell { color: #94a3b8 !important; }
+html.dark .ag-theme-alpine .ag-row { background-color: #1e293b !important; border-color: #293548 !important; color: #e2e8f0 !important; }
+html.dark .ag-theme-alpine .ag-row-hover { background-color: #293548 !important; }
+html.dark .ag-theme-alpine .ag-row-selected { background-color: #1e3a5f !important; }
+html.dark .ag-theme-alpine .ag-paging-panel { background-color: #1e293b !important; color: #94a3b8 !important; border-color: #334155 !important; }
+html.dark .ag-theme-alpine .ag-menu { background-color: #1e293b !important; border-color: #334155 !important; color: #e2e8f0 !important; }
+
+/* Alert / notification backgrounds */
+html.dark .bg-amber-50  { background-color: #2d1a00 !important; }
+html.dark .bg-red-50    { background-color: #2d0a0a !important; }
+html.dark .bg-blue-50   { background-color: #0c1e38 !important; }
+html.dark .bg-green-50  { background-color: #052e16 !important; }
+html.dark .border-amber-300 { border-color: #92400e !important; }
+html.dark .border-red-300   { border-color: #991b1b !important; }
+html.dark .border-blue-300  { border-color: #1e40af !important; }
+html.dark .border-green-300 { border-color: #166534 !important; }
+html.dark .text-orange-700  { color: #fb923c !important; }
+
+/* Plotly charts */
+html.dark .js-plotly-plot .bg                          { fill: #1e293b !important; }
+html.dark .js-plotly-plot .gridlayer path              { stroke: #334155 !important; }
+html.dark .js-plotly-plot .zerolinelayer path          { stroke: #475569 !important; }
+html.dark .js-plotly-plot .cartesianlayer .xtick text,
+html.dark .js-plotly-plot .cartesianlayer .ytick text  { fill: #94a3b8 !important; }
+html.dark .js-plotly-plot .cartesianlayer .xlines-above path,
+html.dark .js-plotly-plot .cartesianlayer .ylines-above path { stroke: #334155 !important; }
+html.dark .js-plotly-plot .legend text                 { fill: #e2e8f0 !important; }
+html.dark .js-plotly-plot .legend .bg                  { fill: transparent !important; }
+html.dark .js-plotly-plot .annotation-text             { fill: #e2e8f0 !important; }
+html.dark .js-plotly-plot .hoverlayer .hovertext rect  { fill: #293548 !important; stroke: #475569 !important; }
+html.dark .js-plotly-plot .hoverlayer .hovertext text  { fill: #e2e8f0 !important; }
+html.dark .js-plotly-plot .hoverlayer .axistext text   { fill: #e2e8f0 !important; }
+html.dark .js-plotly-plot .hoverlayer .axistext rect   { fill: #293548 !important; }
 
 /* Shadow softening */
 html.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.4) !important; }

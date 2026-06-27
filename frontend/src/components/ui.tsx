@@ -2,6 +2,15 @@ import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 
+// ── Escape-key hook (call inside any modal with the close handler) ────────────
+export function useEscapeKey(onClose: () => void) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+}
+
 // ── Card ──────────────────────────────────────────────────────────────────────
 export function Card({ className, children }: { className?: string; children: React.ReactNode }) {
   return (

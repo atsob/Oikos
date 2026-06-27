@@ -7,7 +7,9 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { plotLayout, plotAxis } from '@/lib/utils'
+import { useTheme } from '@/lib/theme'
 import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 
 const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
@@ -27,6 +29,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: React.ReactNode; footer: React.ReactNode; wide?: boolean }) {
+  useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
@@ -391,6 +394,7 @@ function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p:
 
 // ── FX Prices tab: history chart + manual entry ───────────────────────────────
 function FxPricesTab() {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const [curId, setCurId] = useState<number | null>(null)
   const [period, setPeriod] = useState<ChartPeriod>('All')
@@ -471,7 +475,7 @@ function FxPricesTab() {
               line: { color: '#10b981', width: 1.5 },
               name: 'FX Rate vs EUR',
             }]}
-            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, plot_bgcolor: 'white', paper_bgcolor: 'white', yaxis: { tickformat: '.4f' }, hovermode: 'x unified' }}
+            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f' }), hovermode: 'x unified', ...plotLayout(isDark) }}
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
@@ -526,6 +530,7 @@ function FxPricesTab() {
 
 // ── Securities Prices tab: history chart + manual entry ───────────────────────
 function SecuritiesPricesTab() {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const [secId, setSecId] = useState<number | null>(null)
   const [period, setPeriod] = useState<ChartPeriod>('All')
@@ -621,7 +626,7 @@ function SecuritiesPricesTab() {
               type: 'scatter', mode: 'lines',
               line: { color: '#3b82f6', width: 1.5 },
             }]}
-            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, plot_bgcolor: 'white', paper_bgcolor: 'white', yaxis: { tickformat: '.4f' }, hovermode: 'x unified' }}
+            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f' }), hovermode: 'x unified', ...plotLayout(isDark) }}
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />

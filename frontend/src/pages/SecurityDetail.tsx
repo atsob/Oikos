@@ -9,6 +9,8 @@ import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy } from 'lucide-r
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard,
 } from '@/components/ui'
+import { plotLayout, plotAxis } from '@/lib/utils'
+import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice,
   getSecurityTransactions, getSecurityHoldings,
@@ -56,6 +58,7 @@ function fmtPct(n: unknown) {
 
 // ── Prices Tab ────────────────────────────────────────────────────────────────
 function PricesTab({ secId }: { secId: number }) {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
@@ -118,7 +121,7 @@ function PricesTab({ secId }: { secId: number }) {
             type: 'scatter', mode: 'lines',
             line: { color: '#3b82f6', width: 1.5 },
           }]}
-          layout={{ height: 300, margin: { t: 10, r: 10, b: 40, l: 70 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
+          layout={{ height: 300, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark), xaxis: plotAxis(isDark), hovermode: 'x unified', ...plotLayout(isDark) }}
           config={{ displayModeBar: true, responsive: true }}
           style={{ width: '100%' }}
         />
@@ -362,6 +365,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
 
 // ── Dividends Tab ─────────────────────────────────────────────────────────────
 function DividendsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
     queryKey: ['sec-dividends', secId],
     queryFn: () => getSecurityDividends(secId),
@@ -406,7 +410,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
                   marker: { color: '#3b82f6' },
                   name: 'Total Dividend per Share',
                 }]}
-                layout={{ height: 300, margin: { t: 10, r: 10, b: 40, l: 60 }, plot_bgcolor: 'white', paper_bgcolor: 'white', yaxis: { title: { text: 'Total Dividend per Share' } } }}
+                layout={{ height: 300, margin: { t: 10, r: 10, b: 40, l: 60 }, yaxis: plotAxis(isDark, { title: { text: 'Total Dividend per Share' } }), xaxis: plotAxis(isDark), ...plotLayout(isDark) }}
                 config={{ displayModeBar: false, responsive: true }}
                 style={{ width: '100%' }}
               />

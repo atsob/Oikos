@@ -27,3 +27,23 @@ export function fmtDate(date: string | null | undefined) {
   if (!date) return '—'
   return date.slice(0, 10)
 }
+
+// ── Plotly dark-mode helpers ──────────────────────────────────────────────────
+const DARK_BG   = '#1e293b'
+const DARK_GRID = '#334155'
+const DARK_TICK = '#94a3b8'
+const DARK_TEXT = '#e2e8f0'
+
+export function plotLayout(isDark: boolean): Record<string, unknown> {
+  if (!isDark) return { paper_bgcolor: 'white', plot_bgcolor: 'white' }
+  return {
+    paper_bgcolor: DARK_BG,
+    plot_bgcolor:  DARK_BG,
+    font: { color: DARK_TEXT },
+  }
+}
+
+export function plotAxis(isDark: boolean, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  if (!isDark) return overrides
+  return { gridcolor: DARK_GRID, linecolor: DARK_GRID, zerolinecolor: DARK_GRID, color: DARK_TICK, ...overrides }
+}

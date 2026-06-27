@@ -24,7 +24,8 @@ import {
   api,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
-import { fmtEur, fmtPct } from '@/lib/utils'
+import { fmtEur, fmtPct, plotLayout, plotAxis } from '@/lib/utils'
+import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Check, X } from 'lucide-react'
 
 type Row = Record<string, unknown>
@@ -294,6 +295,7 @@ function fmtPeriodHeader(p: string, grouping: string) {
 }
 
 function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: string[]; grouping: string }) {
+  const { isDark } = useTheme()
   const byPeriod: Record<string, Record<string, number>> = {}
   for (const r of rows) {
     const p = String(r.period), g = nwGroup(String(r.accounts_type)), v = Number(r.balance_eur ?? 0)
@@ -317,13 +319,14 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
           ...NW_LIAB_GROUPS.map(g => ({ x: xs, y: allPeriods.map(p => byPeriod[p]?.[g] ?? 0), name: g, type: 'bar' as const, marker: { color: NW_GROUP_COLORS[g] } })),
           { x: xs, y: allPeriods.map(p => NW_ASSET_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0) + NW_LIAB_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0)), name: 'Net Worth', type: 'scatter' as const, mode: 'lines+markers' as const, line: { color: '#1e40af', width: 2 }, marker: { size: 4, color: '#1e40af' }, yaxis: 'y' },
         ]}
-        layout={{ barmode: 'relative' as const, height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.25 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' as const }}
+        layout={{ barmode: 'relative' as const, height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.25 }, ...plotLayout(isDark), hovermode: 'x unified' as const }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
     </div>
   )
 }
 
 function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
+  const { isDark } = useTheme()
   const [accSortKey, setAccSortKey] = useState<'name' | 'latest'>('latest')
   const [accSortDir, setAccSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -372,7 +375,7 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
           ...NW_ALL_GROUPS.map(g => ({ x: xs, y: allPeriods.map(p => byPeriod[p]?.[g] ?? 0), name: g, type: 'bar' as const, marker: { color: NW_GROUP_COLORS[g] } })),
           { x: xs, y: allPeriods.map(p => NW_ASSET_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0) + NW_LIAB_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0)), name: 'Balance', type: 'scatter' as const, mode: 'lines+markers' as const, line: { color: '#e879f9', width: 2 }, marker: { size: 4, color: '#e879f9' } },
         ]}
-        layout={{ barmode: 'relative' as const, height: 340, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.3 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' as const }}
+        layout={{ barmode: 'relative' as const, height: 340, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.3 }, ...plotLayout(isDark), hovermode: 'x unified' as const }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
@@ -486,6 +489,7 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
 }
 
 function NwDetailAnalysis({ rows, allPeriods, accountMeta, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
+  const { isDark } = useTheme()
   const [selectedPeriod, setSelectedPeriod] = usePersist('nw_detail_period', '')
   const period = (selectedPeriod && allPeriods.includes(selectedPeriod)) ? selectedPeriod : (allPeriods[allPeriods.length - 1] ?? '')
   const periodRows = rows.filter(r => String(r.period) === period)
@@ -519,7 +523,7 @@ function NwDetailAnalysis({ rows, allPeriods, accountMeta, grouping }: { rows: R
             data={[{ values: donutGroups.map(g => byGroup[g]??0), labels: donutGroups, type: 'pie' as const, hole: 0.45,
               marker: { colors: donutGroups.map(g => NW_GROUP_COLORS[g]) },
               textinfo: 'label+percent' as const, hovertemplate: '%{label}: €%{value:,.2f}<extra></extra>' }]}
-            layout={{ height: 340, margin: { t: 10, b: 10, l: 10, r: 10 }, showlegend: false, paper_bgcolor: 'white' }}
+            layout={{ height: 340, margin: { t: 10, b: 10, l: 10, r: 10 }, showlegend: false, ...plotLayout(isDark) }}
             config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
         </div>
         <WithCopy>
@@ -705,6 +709,7 @@ function NetWorthSection() {
 // 2. INVESTMENT POSITIONS
 // ════════════════════════════════════════════════════════════════════════════
 function InvPositionsGraph({ startDate }: { startDate: string }) {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
     queryKey: ['inv-positions-history', startDate],
     queryFn: () => getInvestmentPositionsHistory(startDate),
@@ -746,7 +751,7 @@ function InvPositionsGraph({ startDate }: { startDate: string }) {
     <div className="space-y-4">
       <KpiCard label="Current Portfolio Value" value={fmtEur(latestTotal)} color="text-blue-700" />
       <Plot data={traces}
-        layout={{ height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.25 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
+        layout={{ height: 380, margin: { t: 10, r: 10, b: 160, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.45, x: 0.5, xanchor: 'center' }, hovermode: 'x unified', ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
     </div>
   )
@@ -763,6 +768,7 @@ function InvPositionsSummary({ startDate }: { startDate: string }) {
 }
 
 function SectorTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation'], queryFn: getSectorAllocation })
   const rows = data as Row[]
   const { sorted: sectorSorted, sortKey: sectorSK, sortDir: sectorSD, toggleSort: sectorSort } = useSortTable(rows, 'value_eur', 'desc')
@@ -774,7 +780,7 @@ function SectorTab() {
     <div className="space-y-4">
       <Plot
         data={[{ x: sectors.map(s => s[1]), y: sectors.map(s => s[0]), type: 'bar', orientation: 'h', marker: { color: '#3b82f6' }, text: sectors.map(s => fmtEur(s[1])), textposition: 'outside' }]}
-        layout={{ height: Math.max(300, sectors.length * 28), margin: { t: 10, r: 100, b: 40, l: 200 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+        layout={{ height: Math.max(300, sectors.length * 28), margin: { t: 10, r: 100, b: 40, l: 200 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
@@ -805,6 +811,7 @@ function SectorTab() {
 }
 
 function FxExposureTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure'], queryFn: getFxExposure })
   const rows = data as Row[]
   const { sorted: fxSorted, sortKey: fxSK, sortDir: fxSD, toggleSort: fxSort } = useSortTable(rows, 'eur_exposure', 'desc')
@@ -813,7 +820,7 @@ function FxExposureTab() {
     <div className="space-y-4">
       <Plot
         data={[{ x: rows.map(r => Number(r.eur_exposure)), y: rows.map(r => String(r.currency)), type: 'bar', orientation: 'h', marker: { color: '#8b5cf6' }, text: rows.map(r => fmtEur(Number(r.eur_exposure))), textposition: 'outside' }]}
-        layout={{ height: Math.max(240, rows.length * 40), margin: { t: 10, r: 100, b: 40, l: 60 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+        layout={{ height: Math.max(240, rows.length * 40), margin: { t: 10, r: 100, b: 40, l: 60 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
@@ -844,6 +851,7 @@ function FxExposureTab() {
 }
 
 function AllocationReport() {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const [editOpen, setEditOpen] = useState(false)
   const [cash, setCash] = useState(0)
@@ -969,7 +977,7 @@ function AllocationReport() {
           <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
           <Plot
             data={[{ values: d.map(r => Number(r.value_eur)), labels: d.map(r => String(r.label)), type: 'pie', hole: 0.45, textinfo: 'label+percent' }]}
-            layout={{ height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' } }}
+            layout={{ height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' }, ...plotLayout(isDark) }}
             config={{ displayModeBar: false, responsive: true }}
             style={{ width: '100%' }}
           />
@@ -981,7 +989,7 @@ function AllocationReport() {
               { x: barTypes, y: actualPcts, name: 'Actual %', type: 'bar', marker: { color: '#3b82f6' } },
               { x: barTypes, y: targetPcts, name: 'Target %', type: 'bar', marker: { color: '#f59e0b' } },
             ]}
-            layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 } }}
+            layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
             config={{ displayModeBar: false, responsive: true }}
             style={{ width: '100%' }}
           />
@@ -1491,6 +1499,7 @@ function PnlReport() {
 }
 
 function TwrTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
   const [lookback, setLookback] = usePersist('twr_lookback', 756)
   const [cfOpen, setCfOpen] = useState(false)
 
@@ -1588,7 +1597,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
                   yaxis: { title: 'TWR (%)', zeroline: false },
                   xaxis: { title: 'Date' },
                   shapes: [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#94a3b8', dash: 'dash', width: 1 } }],
-                  plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+                  ...plotLayout(isDark), hovermode: 'x unified',
                 }}
                 config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
             </div>
@@ -1658,6 +1667,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
 }
 
 function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
   const [lookback, setLookback] = usePersist('risk_lookback', 756)
   const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
 
@@ -1770,7 +1780,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
                       yaxis: { title: 'Sharpe Ratio', zeroline: false },
                       xaxis: { title: 'Date' },
                       shapes: [{ type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#E74C3C', dash: 'dash', width: 1.5 } }],
-                      plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+                      ...plotLayout(isDark), hovermode: 'x unified',
                     }}
                     config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   {d.portfolio_value > 0 && (
@@ -1792,6 +1802,7 @@ const DIV_PERIODS = ['YTD', 'Previous Year', '1 Year', '2 Years', '3 Years', '5 
 const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b82f6', '#ec4899', '#84cc16']
 
 function DividendTrackerTab() {
+  const { isDark } = useTheme()
   const [period, setPeriod] = usePersist('div_period', 'YTD')
   const [customFrom, setCustomFrom] = usePersist('div_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
   const [customTo, setCustomTo] = usePersist('div_to', new Date().toISOString().slice(0, 10))
@@ -1844,6 +1855,7 @@ function DividendTrackerTab() {
               title: `Monthly Dividend & Interest Income (€) — ${result.period_label}`,
               height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
               yaxis: { title: 'Income (€)' },
+              ...plotLayout(isDark),
             }}
             config={{ displayModeBar: false }} style={{ width: '100%' }}
           />
@@ -1896,7 +1908,7 @@ function DividendTrackerTab() {
                 textinfo: 'percent+label',
                 hovertemplate: '<b>%{label}</b><br>€ %{value:,.2f}<br>%{percent}<extra></extra>',
               }]}
-              layout={{ title: `Income Allocation by Security Type — ${result.period_label}`, height: 380, margin: { t: 50, l: 20, r: 20, b: 20 } }}
+              layout={{ title: `Income Allocation by Security Type — ${result.period_label}`, height: 380, margin: { t: 50, l: 20, r: 20, b: 20 }, ...plotLayout(isDark) }}
               config={{ displayModeBar: false }} style={{ width: '100%' }}
             />
           )}
@@ -1952,6 +1964,7 @@ const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
 }
 
 function PerformanceTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl() })
   const [period, setPeriod] = usePersist('perf_period', 'Daily')
   const [viewPct, setViewPct] = usePersist('perf_view_pct', false)
@@ -2151,6 +2164,7 @@ function PerformanceTab() {
             margin: { t: 40, l: 10, r: 40, b: 40 },
             yaxis: { automargin: true },
             xaxis: { title: viewPct ? 'Change %' : `P&L (€) — ${period}`, ticksuffix: viewPct ? '%' : '' },
+            ...plotLayout(isDark),
           }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}
         />
@@ -2193,6 +2207,7 @@ function PerformanceTab() {
 }
 
 function SavingsAccountsTab() {
+  const { isDark } = useTheme()
   const { data, isLoading } = useQuery({ queryKey: ['savings-accounts'], queryFn: getSavingsAccounts })
   const result = data as { summary: Row; detail: Row[]; detail_last: Row[] } | undefined
 
@@ -2229,7 +2244,7 @@ function SavingsAccountsTab() {
             textposition: 'outside',
             marker: { color: chart.map(c => c.annual_yoc_pct), colorscale: 'RdYlGn' },
           }]}
-          layout={{ title: 'Annual Yield over Cost (%) per Savings Account', height: Math.max(280, chart.length * 45), margin: { t: 40, l: 10, r: 40, b: 40 }, yaxis: { automargin: true }, xaxis: { title: '%' } }}
+          layout={{ title: 'Annual Yield over Cost (%) per Savings Account', height: Math.max(280, chart.length * 45), margin: { t: 40, l: 10, r: 40, b: 40 }, yaxis: { automargin: true }, xaxis: { title: '%' }, ...plotLayout(isDark) }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}
         />
       )}
@@ -2320,6 +2335,7 @@ function SavingsAccountsTab() {
 }
 
 function BondScheduleTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
   const rows = data as Row[]
   const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTable(rows, 'days_to_maturity', 'asc')
@@ -2345,7 +2361,7 @@ function BondScheduleTab() {
       </div>
       <Plot
         data={[{ type: 'bar', x: chartData.map(d => d.x), y: chartData.map(d => d.y), text: chartData.map(d => d.name), hovertemplate: '%{text}<br>%{x}<br>%{y:,.0f} EUR<extra></extra>', marker: { color: '#3b82f6' } }]}
-        layout={{ title: 'Maturity Timeline', height: 300, xaxis: { title: 'Maturity Date' }, yaxis: { title: 'Face Value (EUR)' }, margin: { t: 40, b: 60, l: 80, r: 20 } }}
+        layout={{ title: 'Maturity Timeline', height: 300, xaxis: { title: 'Maturity Date' }, yaxis: { title: 'Face Value (EUR)' }, margin: { t: 40, b: 60, l: 80, r: 20 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false }} style={{ width: '100%' }}
       />
       <WithCopy>
@@ -2389,6 +2405,7 @@ function BondScheduleTab() {
 }
 
 function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
   const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
   const [benchmarkId, setBenchmarkId] = usePersist<number | null>('bench_id', null)
   const [lookback, setLookback] = usePersist('bench_lookback', 252)
@@ -2448,7 +2465,7 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
             { x: rows.map(r => r.date), y: rows.map(r => r.portfolio), name: 'Portfolio', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2 } },
             { x: rows.map(r => r.date), y: rows.map(r => r.benchmark), name: cands.find(c => Number(c.id) === effId)?.name as string ?? 'Benchmark', type: 'scatter', mode: 'lines', line: { color: '#f59e0b', width: 2, dash: 'dot' } },
           ]}
-          layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 } }}
+          layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}
         />
       )}
@@ -2639,6 +2656,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
 const MC_TARGETS = [50000, 100000, 250000, 500000, 1000000]
 
 function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
   const [yearsAhead, setYearsAhead] = usePersist('mc_years', 10)
   const [numSims, setNumSims] = usePersist('mc_sims', 500)
   const [monthlyContrib, setMonthlyContrib] = usePersist('mc_contrib', 500)
@@ -2726,7 +2744,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
               { x: result.chart.map(c => c.month), y: result.chart.map(c => c.p10), name: '10th–90th percentile', type: 'scatter', mode: 'lines', fill: 'tonexty', fillcolor: 'rgba(59,130,246,0.15)', line: { width: 0 } },
               { x: result.chart.map(c => c.month), y: result.chart.map(c => c.p50), name: 'Median (p50)', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2.5 } },
             ]}
-            layout={{ height: 400, margin: { t: 30, r: 20, b: 50, l: 70 }, xaxis: { title: 'Months ahead' }, yaxis: { title: 'Portfolio Value (€)', tickformat: ',.0f' }, legend: { orientation: 'h', y: -0.2 } }}
+            layout={{ height: 400, margin: { t: 30, r: 20, b: 50, l: 70 }, xaxis: { title: 'Months ahead' }, yaxis: { title: 'Portfolio Value (€)', tickformat: ',.0f' }, legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark) }}
             config={{ displayModeBar: false }} style={{ width: '100%' }}
           />
           <h4 className="text-sm font-semibold text-slate-700"><Tooltip text="Percentage of simulated paths that reach or exceed each target value at any point within the projection horizon.">Probability of Reaching Target Amounts</Tooltip></h4>
@@ -2868,6 +2886,7 @@ type Signal = {
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
 function VolatilityTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = usePortfolioSignals()
   const [volPeriod, setVolPeriod] = usePersist('vol_period', 'Annual Vol (ann)')
   const rows = data as Signal[]
@@ -3036,7 +3055,7 @@ function InvestmentSignalsTab() {
                 { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0, y1: 0, line: { color: '#94a3b8', dash: 'dash', width: 1 } },
                 { type: 'line', x0: chartRows.reduce((s, r) => s + Number(r.vol_1y_ann ?? 0), 0) / chartRows.length, x1: chartRows.reduce((s, r) => s + Number(r.vol_1y_ann ?? 0), 0) / chartRows.length, y0: 0, y1: 1, yref: 'paper', line: { color: '#94a3b8', dash: 'dash', width: 1 } },
               ],
-              plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'closest',
+              ...plotLayout(isDark), hovermode: 'closest',
             }}
             config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
         </div>
@@ -3307,6 +3326,7 @@ function IEMultiSelect({ label, options, value, onChange }: {
 }
 
 function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { startDate: string; endDate: string }) {
+  const { isDark } = useTheme()
   const today = new Date().toISOString().slice(0, 10)
   const ytdStart = `${new Date().getFullYear()}-01-01`
   const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
@@ -3557,7 +3577,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
               expenseTypes.forEach((ct, i) => {
                 traces.push({ x: periods, y: periods.map(p => barByType[ct]?.[p] ?? 0), name: ct, type: 'bar', offsetgroup: 'Expenses', legendgroup: 'Expenses', marker: { color: TYPE_COLORS[ct] ?? '#922B21' }, hovertemplate: `%{x}<br>${ct}: %{y:,.2f}<extra></extra>`, ...(i === 0 ? { legendgrouptitle: { text: 'Expenses' } } : {}) })
               })
-              return <Plot data={traces} layout={{ barmode: 'stack', height: 420, margin: { t: 10, r: 20, b: 60, l: 70 }, xaxis: { type: 'category', tickangle: -45 }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', legend: { groupclick: 'toggleitem' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+              return <Plot data={traces} layout={{ barmode: 'stack', height: 420, margin: { t: 10, r: 20, b: 60, l: 70 }, xaxis: { type: 'category', tickangle: -45 }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', legend: { groupclick: 'toggleitem' }, ...plotLayout(isDark) }} config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
             })()}
           </div>
 
@@ -3575,7 +3595,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 const vals = Object.values(agg), labs = Object.keys(agg)
                 if (vals.length === 0) return <div key={label} className="text-xs text-slate-400 py-4 text-center">No {label} data</div>
                 return <Plot key={label} data={[{ type: 'pie', values: vals, labels: labs, hole: 0.4, textposition: 'inside', textinfo: 'percent+label' }]}
-                  layout={{ title: { text: `${label} Breakdown`, font: { size: 14 } }, showlegend: false, height: 380, margin: { t: 50, b: 10, l: 10, r: 10 }, paper_bgcolor: 'white' }}
+                  layout={{ title: { text: `${label} Breakdown`, font: { size: 14 } }, showlegend: false, height: 380, margin: { t: 50, b: 10, l: 10, r: 10 }, ...plotLayout(isDark) }}
                   config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
               })}
             </div>
@@ -3626,7 +3646,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   y: trendData.months.map(m => trendData.map[cat]?.[m] ?? 0),
                   name: cat, type: 'scatter', mode: 'lines+markers',
                 }))}
-                layout={{ height: 480, margin: { t: 10, r: 20, b: 80, l: 70 }, xaxis: { tickangle: -45, title: 'Month' }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', plot_bgcolor: 'white', paper_bgcolor: 'white', legend: { orientation: 'h', y: -0.35 } }}
+                layout={{ height: 480, margin: { t: 10, r: 20, b: 80, l: 70 }, xaxis: { tickangle: -45, title: 'Month' }, yaxis: { title: 'Amount (€)', tickformat: ',.0f' }, hovermode: 'x unified', ...plotLayout(isDark), legend: { orientation: 'h', y: -0.35 } }}
                 config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
           }
         </div>
@@ -3651,7 +3671,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   <div>
                     <p className="text-xs font-semibold text-green-700 mb-1">Top Income Categories</p>
                     <Plot data={[{ x: inc.map(r => r.total), y: inc.map(r => r.cat), type: 'bar', orientation: 'h', marker: { color: '#27AE60' }, text: inc.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
-                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, ...plotLayout(isDark) }}
                       config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   </div>
                 </>
@@ -3664,7 +3684,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 : <div>
                     <p className="text-xs font-semibold text-red-600 mb-1">Top Expense Categories</p>
                     <Plot data={[{ x: exp.map(r => r.abs), y: exp.map(r => r.cat), type: 'bar', orientation: 'h', marker: { color: '#E74C3C' }, text: exp.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
-                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, ...plotLayout(isDark) }}
                       config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   </div>
             })()}
@@ -3764,7 +3784,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 : <div>
                     <p className="text-xs font-semibold text-green-700 mb-1">Top Income Payees</p>
                     <Plot data={[{ x: inc.map(r => r.total), y: inc.map(r => r.payee), type: 'bar', orientation: 'h', marker: { color: '#27AE60' }, text: inc.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
-                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      layout={{ height: Math.max(250, inc.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, ...plotLayout(isDark) }}
                       config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   </div>
             })()}
@@ -3775,7 +3795,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 : <div>
                     <p className="text-xs font-semibold text-red-600 mb-1">Top Expense Payees</p>
                     <Plot data={[{ x: exp.map(r => r.abs), y: exp.map(r => r.payee), type: 'bar', orientation: 'h', marker: { color: '#E74C3C' }, text: exp.map(r => fmtEur(r.total)), textposition: 'auto', hovertemplate: '%{y}<br>€ %{x:,.2f}<extra></extra>' }]}
-                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+                      layout={{ height: Math.max(250, exp.length * 30), margin: { t: 5, r: 100, b: 30, l: 10 }, xaxis: { tickformat: ',.0f' }, ...plotLayout(isDark) }}
                       config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   </div>
             })()}
@@ -3916,6 +3936,7 @@ function CashFlowSection() {
 // 7. BUDGET & SPENDING
 // ════════════════════════════════════════════════════════════════════════════
 function BudgetReport() {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -4098,7 +4119,7 @@ function BudgetReport() {
             ]}
             layout={{ barmode: 'group', height: 340, margin: { t: 10, r: 10, b: 100, l: 70 },
               xaxis: { tickangle: -35 }, yaxis: { tickformat: ',.0f', tickprefix: '€' },
-              legend: { orientation: 'h', y: -0.45 }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+              legend: { orientation: 'h', y: -0.45 }, ...plotLayout(isDark) }}
             config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
         </div>
       )}
@@ -4184,6 +4205,7 @@ function BudgetReport() {
 }
 
 function SpendingTrendsTab() {
+  const { isDark } = useTheme()
   const [months, setMonths] = useState(12)
   const { data = [], isLoading } = useQuery({
     queryKey: ['spending-trends', months],
@@ -4212,13 +4234,14 @@ function SpendingTrendsTab() {
         ))}
       </div>
       <Plot data={traces}
-        layout={{ height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.3 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
+        layout={{ height: 380, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark), hovermode: 'x unified' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
     </div>
   )
 }
 
 function SavingsRateTab() {
+  const { isDark } = useTheme()
   const [months, setMonths] = useState(24)
   const { data = [], isLoading } = useQuery({
     queryKey: ['savings-rate-detail', months],
@@ -4241,7 +4264,7 @@ function SavingsRateTab() {
           { x: d.map(r => String(r.month)), y: d.map(r => Number(r.expenses_eur)), name: 'Expenses', type: 'bar', marker: { color: '#ef4444' } },
           { x: d.map(r => String(r.month)), y: d.map(r => Number(r.savings_rate_pct)), name: 'Savings Rate %', type: 'scatter', mode: 'lines+markers', yaxis: 'y2', line: { color: '#3b82f6', width: 2 }, marker: { size: 5 } },
         ]}
-        layout={{ barmode: 'group', height: 380, margin: { t: 10, r: 60, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, yaxis2: { overlaying: 'y', side: 'right', ticksuffix: '%', showgrid: false }, legend: { orientation: 'h', y: -0.2 }, plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified' }}
+        layout={{ barmode: 'group', height: 380, margin: { t: 10, r: 60, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, yaxis2: { overlaying: 'y', side: 'right', ticksuffix: '%', showgrid: false }, legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark), hovermode: 'x unified' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
@@ -4931,6 +4954,7 @@ function GoalsTab() {
 }
 
 function FireCalculatorTab() {
+  const { isDark } = useTheme()
   const [portfolio, setPortfolio] = useState(500000)
   const [monthlySavings, setMonthlySavings] = useState(2000)
   const [annualReturn, setAnnualReturn] = useState(7)
@@ -4981,7 +5005,7 @@ function FireCalculatorTab() {
           { x: chartX, y: chartY, name: 'Portfolio', type: 'scatter', mode: 'lines', fill: 'tozeroy', fillcolor: 'rgba(59,130,246,0.1)', line: { color: '#3b82f6', width: 2 } },
           { x: chartX, y: chartX.map(() => fireNumber), name: 'FIRE Number', type: 'scatter', mode: 'lines', line: { color: '#8b5cf6', width: 2, dash: 'dot' } },
         ]}
-        layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 80 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.2 }, plot_bgcolor: 'white', paper_bgcolor: 'white' }}
+        layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 80 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <div>
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">SWR Sensitivity</p>

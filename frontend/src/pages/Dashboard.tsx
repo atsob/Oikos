@@ -8,7 +8,8 @@ import {
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner } from '@/components/ui'
-import { fmtEur, fmtDate } from '@/lib/utils'
+import { fmtEur, fmtDate, plotLayout, plotAxis } from '@/lib/utils'
+import { useTheme } from '@/lib/theme'
 import {
   CheckCheck, Check, Trash2, AlertTriangle, AlertCircle, Info, TrendingUp,
   ChevronDown, ChevronUp, RefreshCw, Calendar, SlidersHorizontal,
@@ -518,6 +519,7 @@ function AnomaliesPanel() {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const { isDark } = useTheme()
   const qc = useQueryClient()
   const [opts, setOptsState] = React.useState<DashOpts>(loadOpts)
 
@@ -824,12 +826,12 @@ export default function Dashboard() {
                     height: 280, margin: { t: 16, r: 16, b: 16, l: 16 },
                     showlegend: true,
                     legend: { orientation: 'h', y: -0.05, x: 0.5, xanchor: 'center' },
-                    plot_bgcolor: 'white', paper_bgcolor: 'white',
                     annotations: [{
                       text: `€${totalNetWorth.toLocaleString('el-GR', { maximumFractionDigits: 0 })}`,
                       x: 0.5, y: 0.5, xref: 'paper', yref: 'paper',
-                      showarrow: false, font: { size: 15, color: '#1e293b', family: 'inherit' },
+                      showarrow: false, font: { size: 15, color: isDark ? '#e2e8f0' : '#1e293b', family: 'inherit' },
                     }],
+                    ...plotLayout(isDark),
                   }}
                   config={{ displayModeBar: false, responsive: true }}
                   style={{ width: '100%' }}
@@ -869,9 +871,10 @@ export default function Dashboard() {
                 ]}
                 layout={{
                   height: 260, margin: { t: 10, r: 10, b: 40, l: 70 },
-                  yaxis: { tickformat: ',.0f', tickprefix: '€' },
+                  yaxis: plotAxis(isDark, { tickformat: ',.0f', tickprefix: '€' }),
                   legend: { orientation: 'h', y: -0.28, x: 0.5, xanchor: 'center' },
-                  plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+                  hovermode: 'x unified',
+                  ...plotLayout(isDark),
                 }}
                 config={{ displayModeBar: false, responsive: true }}
                 style={{ width: '100%' }}

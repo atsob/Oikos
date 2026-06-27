@@ -8,7 +8,7 @@ import {
   getAccounts, getPayees, getCategories, getSplits,
   getRecentTransactionsForTemplate, createTemplateFromTransaction,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable } from '@/components/ui'
+import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
 
@@ -64,6 +64,7 @@ interface ModalProps {
 }
 
 function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payees, categories, onSave, onClose, saving, error, isEdit }: ModalProps) {
+  useEscapeKey(onClose)
   const set = (k: keyof TplForm, v: unknown) => onChange({ ...form, [k]: v as string & boolean })
 
   const addSplit = () => onSplitsChange([...splits, { categories_id: '', amount: '', memo: '' }])
@@ -212,6 +213,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
   onConfirmed: () => void
   onDeleted: () => void
 }) {
+  useEscapeKey(onClose)
   const [form, setForm] = useState<DraftForm>({
     date: String(draft.date ?? '').slice(0, 10),
     description: String(draft.description ?? ''),
@@ -522,6 +524,7 @@ function DraftsTab() {
 
 // ── From-Transaction picker modal ─────────────────────────────────────────────
 function FromTransactionModal({ onCreated, onClose }: { onCreated: (id: number) => void; onClose: () => void }) {
+  useEscapeKey(onClose)
   const [search, setSearch] = useState('')
   const [months, setMonths] = useState(24)
   const [selectedId, setSelectedId] = useState<number | null>(null)
