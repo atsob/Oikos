@@ -16,7 +16,7 @@ import {
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
-  getDividendsTracker, getAccounts,
+  getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
@@ -682,7 +682,7 @@ function NetWorthSection() {
 
       {/* Zero-balance warning */}
       {!showZeroBalance && hiddenZeroCount > 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-base text-amber-800">
           <span>⚠️ {hiddenZeroCount} selected account(s) have zero balance and might be hidden (enable 'Show zero-balance accounts' or click </span>
           <button onClick={() => setShowZeroBalance(true)} className="text-blue-600 hover:underline whitespace-nowrap">🔄 Refresh Data</button>
           <span>)</span>
@@ -1072,9 +1072,9 @@ function AllocationReport() {
                 {planWithCash.map((r, i) => {
                   const isBuy = r.total_delta_eur > 0
                   const typeDelta = Number(r.type_delta_pct ?? 0)
-                  const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                  const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50'
                   return (
-                    <tr key={i} className={`border-b border-slate-100 hover:bg-blue-50/40 ${rowBg}`}>
+                    <tr key={i} className={`border-b border-slate-100 hover:bg-blue-50 ${rowBg}`}>
                       <td className={`sticky left-0 z-10 ${rowBg} px-2 py-1.5 whitespace-nowrap`}>
                         <span className={`inline-flex items-center gap-1 font-bold text-xs px-1.5 py-0.5 rounded ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
                           <span className={`w-2 h-2 rounded-full ${isBuy ? 'bg-green-500' : 'bg-red-500'}`}></span>
@@ -1803,6 +1803,9 @@ const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b8
 
 function DividendTrackerTab() {
   const { isDark } = useTheme()
+  const [divView, setDivView] = usePersist<'actual' | 'forecast' | 'recommendations'>('div_view', 'actual')
+
+  // ── Actual state ─────────────────────────────────────────────────────────────
   const [period, setPeriod] = usePersist('div_period', 'YTD')
   const [customFrom, setCustomFrom] = usePersist('div_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
   const [customTo, setCustomTo] = usePersist('div_to', new Date().toISOString().slice(0, 10))
@@ -1813,6 +1816,45 @@ function DividendTrackerTab() {
     queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
   })
 
+  // ── Forecast state ────────────────────────────────────────────────────────────
+  const [upcomingOpen, setUpcomingOpen] = useState(false)
+
+  const { data: fcData, isLoading: fcLoading } = useQuery({
+    queryKey: ['dividends-forecast'],
+    queryFn: getDividendsForecast,
+    enabled: divView === 'forecast',
+  })
+
+  // ── Recommendations state ─────────────────────────────────────────────────────
+  const [recHolding, setRecHolding] = usePersist<'all' | 'new' | 'held'>('rec_holding', 'all')
+  const [recMinYield, setRecMinYield] = usePersist('rec_min_yield', 0)
+  const [recType, setRecType] = usePersist('rec_type', 'All')
+
+  const { data: recData, isLoading: recLoading } = useQuery({
+    queryKey: ['dividend-recommendations'],
+    queryFn: getDividendRecommendations,
+    enabled: divView === 'recommendations',
+  })
+
+  type RecRow = {
+    securities_id: number; securities_name: string; securities_type: string; sector: string | null
+    effective_yield_pct: number; five_year_avg_yield: number | null; dividend_frequency: string | null
+    analyst_rating: string | null; sharpe_ratio: number | null; div_payments_3yr: number
+    trailing_12m_eur: number; market_value_eur: number | null; cost_basis_eur: number | null
+    is_held: boolean; yield_score: number; sharpe_score: number | null; consistency_score: number
+    growth_score: number | null; analyst_score: number | null; composite_score: number; tags: string[]
+  }
+  const recRows = (recData ?? []) as RecRow[]
+  const recTypes = useMemo(() => ['All', ...Array.from(new Set(recRows.map(r => r.securities_type))).sort()], [recRows])
+  const filteredRec = useMemo(() => recRows.filter(r => {
+    if (recType !== 'All' && r.securities_type !== recType) return false
+    if (recHolding === 'new' && r.is_held) return false
+    if (recHolding === 'held' && !r.is_held) return false
+    if (r.effective_yield_pct < recMinYield) return false
+    return true
+  }), [recRows, recType, recHolding, recMinYield])
+  const { sorted: recSorted, sortKey: recSK, sortDir: recSD, toggleSort: recSort } = useSortTable(filteredRec, 'composite_score', 'desc')
+
   type TrackerResult = {
     period_label: string
     monthly: { month: string; income_eur: number }[]
@@ -1821,11 +1863,296 @@ function DividendTrackerTab() {
     detail: Row[]
     summary: Row
   }
-  const result = data as TrackerResult | undefined
-  const { sorted: divSorted, sortKey: divSK, sortDir: divSD, toggleSort: divSort } = useSortTable(result?.by_security ?? [], 'period_income_eur', 'desc')
+  type ForecastResult = {
+    summary: { total_annual_eur: number; total_monthly_eur: number; securities_count: number; portfolio_yoc_pct: number }
+    monthly_forecast: { month: string; income_eur: number }[]
+    by_security: Row[]
+    upcoming: Row[]
+  }
 
+  const result   = data   as TrackerResult  | undefined
+  const fcResult = fcData as ForecastResult | undefined
+
+  const { sorted: divSorted,  sortKey: divSK,  sortDir: divSD,  toggleSort: divSort  } = useSortTable(result?.by_security   ?? [], 'period_income_eur',    'desc')
+  const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTable(fcResult?.by_security ?? [], 'annual_forecast_eur',  'desc')
+
+  // ── View toggle ───────────────────────────────────────────────────────────────
+  const VIEW_LABELS: Record<string, string> = { actual: '📋 Actual', forecast: '🔮 Forecast', recommendations: '💡 Recommendations' }
+  const ViewToggle = (
+    <div className="flex gap-1 mb-4">
+      {(['actual', 'forecast', 'recommendations'] as const).map(v => (
+        <button key={v} onClick={() => setDivView(v)}
+          className={`px-4 py-1.5 text-xs rounded-full font-medium border transition-colors ${divView === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+          {VIEW_LABELS[v]}
+        </button>
+      ))}
+    </div>
+  )
+
+  // ── Forecast view ─────────────────────────────────────────────────────────────
+  if (divView === 'forecast') {
+    return (
+      <div className="space-y-4">
+        {ViewToggle}
+        {fcLoading ? <div className="flex justify-center py-12"><Spinner /></div>
+          : !fcResult || !fcResult.by_security.length ? (
+            <p className="text-slate-400 text-sm py-8 text-center">No forecast data — no holdings with dividend yield, rate, or trailing income.</p>
+          ) : (
+          <>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Total projected dividend and interest income over the next 12 months, based on current holdings and forward yields.">Projected Annual</Tooltip></p>
+                <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_annual_eur)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Annual forecast divided by 12 — average expected monthly income.">Monthly Average</Tooltip></p>
+                <p className="text-xl font-bold">{fmtEur(fcResult.summary.total_monthly_eur)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of currently-held securities with enough data to forecast dividends.">Securities</Tooltip></p>
+                <p className="text-xl font-bold">{fcResult.summary.securities_count}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Projected annual income divided by the total cost basis of forecasted holdings.">Portfolio YOC</Tooltip></p>
+                <p className="text-xl font-bold">{fcResult.summary.portfolio_yoc_pct.toFixed(2)}%</p>
+              </div>
+            </div>
+
+            {fcResult.monthly_forecast.length > 0 && (
+              <Plot
+                data={[{ x: fcResult.monthly_forecast.map(m => m.month), y: fcResult.monthly_forecast.map(m => m.income_eur), type: 'bar', marker: { color: '#3b82f6' }, name: 'Projected' }]}
+                layout={{
+                  title: 'Projected Monthly Dividend Income (€) — Next 12 Months',
+                  height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
+                  yaxis: { title: 'Projected Income (€)' },
+                  ...plotLayout(isDark),
+                }}
+                config={{ displayModeBar: false }} style={{ width: '100%' }}
+              />
+            )}
+
+            <WithCopy>
+              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                    <ColHeader label="Security"            sortKey="securities_name"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Security name." />
+                    <ColHeader label="Type"                sortKey="securities_type"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Asset type." />
+                    <ColHeader label="Annual Forecast (€)" sortKey="annual_forecast_eur"   currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected annual dividend income in EUR based on current holdings." />
+                    <ColHeader label="Per Payment (€)"     sortKey="per_payment_eur"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Expected income per dividend payment (annual ÷ payments per year)." />
+                    <ColHeader label="Frequency"           sortKey="frequency"             currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How often dividends are paid." />
+                    <ColHeader label="Fwd Yield %"         sortKey="dividend_yield"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata." />
+                    <ColHeader label="Next Ex-Div"         sortKey="next_expected_ex_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected next ex-dividend date (last known date advanced by frequency). Must hold shares before this date." />
+                    <ColHeader label="Next Pay Date"       sortKey="next_expected_pay_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected date cash arrives in your account." />
+                    <ColHeader label="Basis"               sortKey="method"                currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How the forecast was calculated: Dividend Rate (most accurate), Fwd Yield, or Trailing 12m actual income." />
+                    <ColHeader label="Market Value (€)"    sortKey="market_value_eur"      currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current market value of held position." />
+                    <ColHeader label="Cost Basis (€)"      sortKey="cost_basis_eur"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Total acquisition cost of held position." />
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fcSorted.map((r, i) => (
+                      <tr key={i} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                        <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.annual_forecast_eur))}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
+                        <td className="px-3 py-2 text-slate-500">{String(r.frequency)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>
+                        <td className="px-3 py-2 text-right text-slate-500">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
+                        <td className="px-3 py-2 text-right text-slate-500">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
+                        <td className="px-3 py-2 text-slate-500">
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${r.method === 'Dividend Rate' ? 'bg-green-100 text-green-700' : r.method === 'Fwd Yield' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {String(r.method)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.market_value_eur))}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <button onClick={() => setUpcomingOpen(!upcomingOpen)}
+                className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+                <span className="text-xs">{upcomingOpen ? '▼' : '▶'}</span>
+                <span>📅 Upcoming payments (next 3 months)</span>
+              </button>
+              {upcomingOpen && (
+                <div className="p-3">
+                  {fcResult.upcoming.length === 0 ? (
+                    <p className="text-slate-400 text-sm text-center py-4">No payments expected in the next 3 months.</p>
+                  ) : (
+                    <div className="overflow-x-auto overflow-y-auto max-h-80">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                          <th className="px-3 py-2 text-left">Ex-Date</th>
+                          <th className="px-3 py-2 text-left">Pay Date</th>
+                          <th className="px-3 py-2 text-left">Security</th>
+                          <th className="px-3 py-2 text-right">Amount (€)</th>
+                          <th className="px-3 py-2 text-left">Frequency</th>
+                          <th className="px-3 py-2 text-left">Basis</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {fcResult.upcoming.map((r, i) => (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 text-slate-500">{String(r.ex_date).slice(0, 10)}</td>
+                              <td className="px-3 py-2 text-slate-500">{String(r.pay_date).slice(0, 10)}</td>
+                              <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.per_payment_eur))}</td>
+                              <td className="px-3 py-2 text-slate-500">{String(r.frequency)}</td>
+                              <td className="px-3 py-2 text-slate-500 text-xs">{String(r.method)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── Recommendations view ──────────────────────────────────────────────────────
+  const _ANALYST_COLOR: Record<string, string> = {
+    strong_buy: 'bg-green-100 text-green-800', buy: 'bg-green-100 text-green-700', outperform: 'bg-green-100 text-green-700',
+    hold: 'bg-yellow-100 text-yellow-700', neutral: 'bg-yellow-100 text-yellow-700', market_perform: 'bg-yellow-100 text-yellow-700',
+    underperform: 'bg-orange-100 text-orange-700', sell: 'bg-red-100 text-red-700', strong_sell: 'bg-red-100 text-red-800',
+  }
+  const _scoreBadge = (s: number) =>
+    s >= 70 ? 'bg-green-100 text-green-800' : s >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'
+  const _sharpeColor = (v: number | null) =>
+    v === null ? 'text-slate-400' : v >= 1.0 ? 'text-green-600 font-medium' : v >= 0 ? 'text-slate-700' : 'text-red-500'
+
+  if (divView === 'recommendations') {
+    return (
+      <div className="space-y-4">
+        {ViewToggle}
+        <p className="text-xs text-slate-400">Scores are data-driven (yield · Sharpe · consistency · analyst signal · dividend growth). Not financial advice.</p>
+
+        {/* Filters */}
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <p className="text-xs text-slate-500 mb-1">Holdings</p>
+            <div className="flex gap-1">
+              {(['all', 'new', 'held'] as const).map(v => (
+                <button key={v} onClick={() => setRecHolding(v)}
+                  className={`px-3 py-1 text-xs rounded border font-medium ${recHolding === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                  {v === 'all' ? 'All' : v === 'new' ? 'Not held' : 'Held'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500 mb-1">Min Yield</p>
+            <div className="flex gap-1">
+              {[0, 1, 2, 3, 5].map(y => (
+                <button key={y} onClick={() => setRecMinYield(y)}
+                  className={`px-3 py-1 text-xs rounded border font-medium ${recMinYield === y ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                  {y === 0 ? 'Any' : `${y}%+`}
+                </button>
+              ))}
+            </div>
+          </div>
+          {recTypes.length > 1 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-1">Type</p>
+              <div className="flex flex-wrap gap-1">
+                {recTypes.map(t => (
+                  <button key={t} onClick={() => setRecType(t)}
+                    className={`px-3 py-1 text-xs rounded border font-medium ${recType === t ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {recLoading ? <div className="flex justify-center py-12"><Spinner /></div>
+          : !recSorted.length ? (
+            <p className="text-slate-400 text-sm py-8 text-center">No securities match the selected filters.</p>
+          ) : (
+          <WithCopy>
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-260px)]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <ColHeader label="Security"     sortKey="securities_name"     currentKey={recSK} currentDir={recSD} onSort={recSort} />
+                  <ColHeader label="Type"         sortKey="securities_type"     currentKey={recSK} currentDir={recSD} onSort={recSort} />
+                  <ColHeader label="Score"        sortKey="composite_score"     currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="Composite score (0–100): Yield 35% · Sharpe 25% · Consistency 25% · Analyst 10% · Yield Growth 5%. Missing factors are excluded and remaining weights renormalised." />
+                  <ColHeader label="Yield %"      sortKey="effective_yield_pct" currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="Forward dividend yield (from securities metadata). Falls back to trailing 12-month income ÷ market value when forward yield is unavailable." />
+                  <ColHeader label="5yr Avg %"    sortKey="five_year_avg_yield" currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="5-year average dividend yield — used to assess yield stability and growth trend." />
+                  <ColHeader label="Sharpe (1yr)" sortKey="sharpe_ratio"        currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="Annualised Sharpe ratio from the last 365 days of daily prices, using 3% as risk-free rate. Requires ≥30 price points." />
+                  <ColHeader label="Consistency"  sortKey="div_payments_3yr"    currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="Number of dividend payments recorded in the last 3 years. Higher = more reliable payer." />
+                  <ColHeader label="Analyst"      sortKey="analyst_score"       currentKey={recSK} currentDir={recSD} onSort={recSort}
+                    tooltip="Analyst consensus rating from securities metadata (Strong Buy / Buy / Hold / Sell)." />
+                  <ColHeader label="Held"         sortKey="market_value_eur"    currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
+                    tooltip="Current market value of your holding, or — if not held." />
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Tags</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recSorted.map((r, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium max-w-[180px] truncate"><SecLink id={r.securities_id}>{r.securities_name}</SecLink></td>
+                      <td className="px-3 py-2 text-slate-500 text-xs">{r.securities_type}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Tooltip text={`Yield: ${r.yield_score.toFixed(0)} · Sharpe: ${r.sharpe_score?.toFixed(0) ?? 'n/a'} · Consistency: ${r.consistency_score.toFixed(0)} · Analyst: ${r.analyst_score ?? 'n/a'} · Growth: ${r.growth_score?.toFixed(0) ?? 'n/a'}`}>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${_scoreBadge(r.composite_score)}`}>{r.composite_score.toFixed(0)}</span>
+                        </Tooltip>
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${r.effective_yield_pct >= 4 ? 'text-green-600' : 'text-slate-700'}`}>
+                        {r.effective_yield_pct > 0 ? `${r.effective_yield_pct.toFixed(2)}%` : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
+                        {r.five_year_avg_yield != null ? `${r.five_year_avg_yield.toFixed(2)}%` : '—'}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums text-xs ${_sharpeColor(r.sharpe_ratio)}`}>
+                        {r.sharpe_ratio != null ? r.sharpe_ratio.toFixed(2) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-slate-600">{r.div_payments_3yr || '—'}</td>
+                      <td className="px-3 py-2">
+                        {r.analyst_rating ? (
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${_ANALYST_COLOR[r.analyst_rating] ?? 'bg-slate-100 text-slate-600'}`}>
+                            {r.analyst_rating.replace(/_/g, ' ')}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs">
+                        {r.is_held && r.market_value_eur != null ? (
+                          <span className="text-blue-600 font-medium">{fmtEur(r.market_value_eur)}</span>
+                        ) : <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {r.tags.map(tag => (
+                            <span key={tag} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">{tag}</span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
+        )}
+      </div>
+    )
+  }
+
+  // ── Actual view ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
+      {ViewToggle}
       <div>
         <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Time window for aggregating dividend and interest income. Custom lets you pick any date range.">Period:</Tooltip></label>
         <div className="flex flex-wrap gap-1.5">

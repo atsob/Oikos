@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -6,7 +6,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -89,6 +89,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
 }
 
+type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
+
 // ── Securities CRUD tab ───────────────────────────────────────────────────────
 function SecuritiesTab({ search }: { search: string }) {
   const qc = useQueryClient()
@@ -98,6 +100,11 @@ function SecuritiesTab({ search }: { search: string }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [lookupQuery, setLookupQuery] = useState('')
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [lookupOk, setLookupOk] = useState(false)
+  const [searchResults, setSearchResults] = useState<TickerSearchResult[]>([])
 
   const { data: securities = [], isLoading } = useQuery({
     queryKey: ['securities', search],
@@ -107,12 +114,72 @@ function SecuritiesTab({ search }: { search: string }) {
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  const openNew = () => { setEditRow({}); setForm(EMPTY_SECURITY); setError(null) }
+  const resetLookup = () => { setLookupQuery(''); setLookupError(null); setLookupOk(false); setSearchResults([]) }
+
+  const openNew = () => { setEditRow({}); setForm(EMPTY_SECURITY); setError(null); resetLookup() }
 
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
     setForm({ ...EMPTY_SECURITY, ...Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])) })
     setError(null)
+    resetLookup()
+  }
+
+  const applyLookup = async (symbol: string) => {
+    setLookupLoading(true)
+    setLookupError(null)
+    setSearchResults([])
+    try {
+      const d = await lookupTicker(symbol)
+      setForm(f => ({
+        ...f,
+        ticker: d.ticker || f.ticker,
+        name: d.name || f.name,
+        type: d.type || f.type,
+        currencies_id: d.currencies_id != null ? String(d.currencies_id) : f.currencies_id,
+        isin: d.isin || f.isin,
+        sector: d.sector || f.sector,
+        industry: d.industry || f.industry,
+        yahoo_ticker: d.yahoo_ticker || f.yahoo_ticker,
+        dividend_yield: d.dividend_yield != null ? String(d.dividend_yield) : f.dividend_yield,
+        dividend_rate: d.dividend_rate != null ? String(d.dividend_rate) : f.dividend_rate,
+        ex_dividend_date: d.ex_dividend_date || f.ex_dividend_date,
+        dividend_pay_date: d.dividend_pay_date || f.dividend_pay_date,
+        payout_ratio: d.payout_ratio != null ? String(d.payout_ratio) : f.payout_ratio,
+        five_year_avg_yield: d.five_year_avg_yield != null ? String(d.five_year_avg_yield) : f.five_year_avg_yield,
+        analyst_rating: d.analyst_rating || f.analyst_rating,
+        analyst_target_price: d.analyst_target_price != null ? String(d.analyst_target_price) : f.analyst_target_price,
+      }))
+      setLookupOk(true)
+    } catch (e) {
+      setLookupError(extractError(e))
+    } finally {
+      setLookupLoading(false)
+    }
+  }
+
+  const handleSearch = async () => {
+    const q = lookupQuery.trim()
+    if (!q) return
+    setLookupLoading(true)
+    setLookupError(null)
+    setLookupOk(false)
+    setSearchResults([])
+    try {
+      const results = await searchTicker(q) as TickerSearchResult[]
+      if (results.length === 0) {
+        setLookupError('No results found. Try a different ticker or name.')
+        setLookupLoading(false)
+      } else if (results.length === 1) {
+        await applyLookup(results[0].symbol)  // applyLookup handles setLookupLoading(false)
+      } else {
+        setSearchResults(results)
+        setLookupLoading(false)
+      }
+    } catch (e) {
+      setLookupError(extractError(e))
+      setLookupLoading(false)
+    }
   }
 
   const handleSave = async () => {
@@ -202,6 +269,41 @@ function SecuritiesTab({ search }: { search: string }) {
               <Save size={14} /> {saving ? 'Saving…' : 'Save'}
             </Button>
           </>}>
+          {/* Yahoo Finance auto-fill */}
+          <div className="p-3 bg-blue-50 rounded-lg border border-blue-100 mb-1 space-y-2">
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-blue-700 mb-1">Auto-fill from Yahoo Finance — ticker or company name</label>
+                <Input
+                  value={lookupQuery}
+                  onChange={e => { setLookupQuery(e.target.value); setLookupOk(false); setSearchResults([]) }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
+                  placeholder="e.g. AAPL · JPMorgan Chase · VWCE.DE"
+                />
+              </div>
+              <Button size="sm" variant="secondary" onClick={handleSearch} disabled={lookupLoading || !lookupQuery.trim()}>
+                {lookupLoading ? <Spinner /> : 'Search'}
+              </Button>
+            </div>
+            {searchResults.length > 0 && (
+              <div className="border border-blue-200 rounded-md bg-white overflow-hidden">
+                <p className="text-xs text-blue-600 font-medium px-3 py-1.5 bg-blue-50 border-b border-blue-100">{searchResults.length} results — click to select</p>
+                <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                  {searchResults.map(r => (
+                    <button key={r.symbol} onClick={() => applyLookup(r.symbol)} disabled={lookupLoading}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-blue-50 transition-colors">
+                      <span className="font-mono text-sm font-semibold text-blue-700 w-24 shrink-0">{r.symbol}</span>
+                      <span className="text-sm text-slate-700 flex-1 truncate">{r.name}</span>
+                      <span className="text-xs text-slate-400 shrink-0">{r.type}</span>
+                      <span className="text-xs text-slate-400 shrink-0 w-20 text-right">{r.exchange}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          {lookupError && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2 mb-1">{lookupError}</p>}
+          {lookupOk && <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2 mb-1">Fields auto-filled — review and adjust before saving.</p>}
           <div className="grid grid-cols-3 gap-3">
             {/* Identity */}
             <SectionLabel>Identity</SectionLabel>
@@ -400,16 +502,36 @@ function FxPricesTab() {
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
   const [fxSearch, setFxSearch] = useState('')
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importConflict, setImportConflict] = useState<'skip' | 'overwrite'>('skip')
+  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
   const { data: history = [], isLoading } = useQuery({
     queryKey: ['fx-history', curId, fromDate],
     queryFn: () => getFxRates(curId!, fromDate),
     enabled: !!curId,
+  })
+
+  const rows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
+
+  const importMut = useMutation({
+    mutationFn: () => importFxFromFile(importFile!, curId!, importConflict),
+    onSuccess: (d) => {
+      setImportMsg({ ok: true, text: `Imported ${d.inserted} row(s) — ${d.skipped} skipped (${d.total_rows} total in file).` })
+      qc.invalidateQueries({ queryKey: ['fx-history'] })
+      qc.invalidateQueries({ queryKey: ['currencies'] })
+    },
+    onError: (e: { response?: { data?: { detail?: unknown } } }) => {
+      const d = e.response?.data?.detail
+      const text = Array.isArray(d) ? (d as { msg?: string }[]).map(x => x.msg ?? String(x)).join('; ') : (typeof d === 'string' ? d : 'Import failed')
+      setImportMsg({ ok: false, text })
+    },
   })
 
   const addFxMut = useMutation({
@@ -430,6 +552,16 @@ function FxPricesTab() {
     else { if (!entryValue) return; addFxMut.mutate({ currency_id: curId, date: entryDate, rate: Number(entryValue) }) }
   }
 
+  const deleteSelected = async () => {
+    if (!curId) return
+    const dates = [...selectedDates]
+    setMsg(null)
+    for (const d of dates) await deleteFxRate(curId, d)
+    setSelectedDates([])
+    qc.invalidateQueries({ queryKey: ['fx-history'] })
+    setMsg(`Deleted ${dates.length} record(s).`)
+  }
+
   const isPending = addFxMut.isPending || delFxMut.isPending
 
   return (
@@ -438,7 +570,7 @@ function FxPricesTab() {
         <div>
           <label className="text-xs font-medium text-slate-500 block mb-1">Currency</label>
           <select className="w-64 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            value={curId ?? ''} onChange={e => { setCurId(Number(e.target.value) || null); setMsg(null) }}>
+            value={curId ?? ''} onChange={e => { setCurId(Number(e.target.value) || null); setMsg(null); setSelectedDates([]) }}>
             <option value="">— Select currency —</option>
             {(currencies as Record<string,unknown>[]).map(c => (
               <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>
@@ -479,15 +611,23 @@ function FxPricesTab() {
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-3 mb-1">
             <Search size={14} className="text-slate-400" />
             <Input className="w-56 h-7 text-xs" placeholder="Search…" value={fxSearch} onChange={e => setFxSearch(e.target.value)} />
+            {selectedDates.length > 0 && (
+              <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
+                <Trash2 size={13} /> Delete {selectedDates.length} selected
+              </Button>
+            )}
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
-              rowData={[...(history as Record<string,unknown>[])].reverse()}
+              rowData={rows}
               quickFilterText={fxSearch}
+              rowSelection="multiple"
+              onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
               columnDefs={[
+                { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
                 { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
                 { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(6) : '' },
               ]}
@@ -496,6 +636,45 @@ function FxPricesTab() {
           </div>
         </div>
       )}
+
+      <div className="border-t border-slate-200 pt-4">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Import from File</p>
+        <p className="text-xs text-slate-500 mb-3">
+          Upload a tab-separated <code className="bg-slate-100 px-1 rounded">.txt</code> / <code className="bg-slate-100 px-1 rounded">.csv</code> / <code className="bg-slate-100 px-1 rounded">.tsv</code> file.
+          Expected columns: <code className="bg-slate-100 px-1 rounded">Date</code> and <code className="bg-slate-100 px-1 rounded">Rate</code> (or Close). Select a currency above first.
+        </p>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">File</label>
+            <label className="cursor-pointer flex items-center gap-2">
+              <span className="px-3 py-1.5 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 transition-colors">⬆ Choose file</span>
+              <span className="text-xs text-slate-500">{importFile ? importFile.name : 'TXT, CSV, TSV'}</span>
+              <input type="file" accept=".txt,.csv,.tsv" className="hidden"
+                onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportMsg(null) }} />
+            </label>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">If date exists</label>
+            <div className="flex gap-3">
+              {(['skip', 'overwrite'] as const).map(v => (
+                <label key={v} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input type="radio" name="fxImportConflict" value={v} checked={importConflict === v} onChange={() => setImportConflict(v)} />
+                  {v === 'skip' ? 'Skip' : 'Overwrite'}
+                </label>
+              ))}
+            </div>
+          </div>
+          <Button variant="primary" disabled={!importFile || !curId || importMut.isPending}
+            onClick={() => { setImportMsg(null); importMut.mutate() }}>
+            {importMut.isPending ? <><Spinner size={12} /> Importing…</> : '📂 Import'}
+          </Button>
+          {importMsg && (
+            <span className={`text-xs px-3 py-1.5 rounded ${importMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {importMsg.text}
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="border-t border-slate-200 pt-4">
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Manual Entry</p>
@@ -536,6 +715,7 @@ function SecuritiesPricesTab() {
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
   const [entryValue, setEntryValue] = useState('')
@@ -582,7 +762,18 @@ function SecuritiesPricesTab() {
     else { if (!entryValue) return; addPriceMut.mutate({ security_id: secId, date: entryDate, close: Number(entryValue) }) }
   }
 
+  const deleteSelected = async () => {
+    if (!secId) return
+    const dates = [...selectedDates]
+    setMsg(null)
+    for (const d of dates) await deletePrice(secId, d)
+    setSelectedDates([])
+    qc.invalidateQueries({ queryKey: ['price-history'] })
+    setMsg(`Deleted ${dates.length} record(s).`)
+  }
+
   const isPending = addPriceMut.isPending || delPriceMut.isPending
+  const priceRows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
 
   return (
     <div className="p-4 space-y-5">
@@ -590,7 +781,7 @@ function SecuritiesPricesTab() {
         <div>
           <label className="text-xs font-medium text-slate-500 block mb-1">Security</label>
           <select className="w-72 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            value={secId ?? ''} onChange={e => { setSecId(Number(e.target.value) || null); setMsg(null) }}>
+            value={secId ?? ''} onChange={e => { setSecId(Number(e.target.value) || null); setMsg(null); setSelectedDates([]) }}>
             <option value="">— Select security —</option>
             {(securities as Record<string,unknown>[]).map(s => (
               <option key={String(s.id)} value={String(s.id)}>{String(s.ticker || '')} · {String(s.name)}</option>
@@ -630,15 +821,23 @@ function SecuritiesPricesTab() {
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-3 mb-1">
             <Search size={14} className="text-slate-400" />
             <Input className="w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
+            {selectedDates.length > 0 && (
+              <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
+                <Trash2 size={13} /> Delete {selectedDates.length} selected
+              </Button>
+            )}
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
-              rowData={[...(history as Record<string,unknown>[])].reverse()}
+              rowData={priceRows}
               quickFilterText={priceSearch}
+              rowSelection="multiple"
+              onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
               columnDefs={[
+                { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
                 { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
                 { field: 'close', headerName: 'Close Price', width: 130, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(6) : '' },
                 { field: 'source', headerName: 'Source', width: 120 },

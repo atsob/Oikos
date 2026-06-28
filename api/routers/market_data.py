@@ -111,6 +111,137 @@ def get_securities(search: Optional[str] = Query(None)):
     return _df(df)
 
 
+@router.get("/search-ticker")
+def search_ticker(q: str = Query(..., min_length=1)):
+    """Search Yahoo Finance by ticker symbol or company name; returns up to 10 matches."""
+    import requests as _req
+
+    query = q.strip()
+    try:
+        resp = _req.get(
+            "https://query2.finance.yahoo.com/v1/finance/search",
+            params={"q": query, "quotesCount": 10, "newsCount": 0, "enableFuzzyQuery": True},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        quotes = resp.json().get("quotes", [])
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Search failed: {exc}")
+
+    QUOTE_TYPE_MAP = {
+        "EQUITY": "Stock", "ETF": "ETF", "MUTUALFUND": "Mutual Fund",
+        "INDEX": "Market Index", "CRYPTOCURRENCY": "Crypto", "BOND": "Bond",
+        "CURRENCY": "FX Spot", "FUTURE": "Commodity", "OPTION": "Option",
+    }
+    results = []
+    for item in quotes:
+        sym = item.get("symbol", "").strip()
+        if not sym:
+            continue
+        qt = (item.get("quoteType") or "").upper()
+        results.append({
+            "symbol": sym,
+            "name": item.get("longname") or item.get("shortname") or sym,
+            "type": QUOTE_TYPE_MAP.get(qt, qt or "Other"),
+            "exchange": item.get("exchDisp") or item.get("exchange") or "",
+        })
+    return results
+
+
+@router.get("/lookup-ticker")
+def lookup_ticker(symbol: str = Query(..., min_length=1)):
+    """Fetch metadata for a ticker from Yahoo Finance to pre-fill the security form."""
+    import yfinance as yf
+    from datetime import datetime as _dt
+
+    sym = symbol.strip().upper()
+    try:
+        ticker = yf.Ticker(sym)
+        info = ticker.info
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Yahoo Finance error: {exc}")
+
+    if not info or not info.get("quoteType"):
+        raise HTTPException(status_code=404, detail=f"Ticker '{sym}' not found on Yahoo Finance.")
+
+    QUOTE_TYPE_MAP = {
+        "EQUITY": "Stock", "ETF": "ETF", "MUTUALFUND": "Mutual Fund",
+        "INDEX": "Market Index", "CRYPTOCURRENCY": "Crypto", "BOND": "Bond",
+        "CURRENCY": "FX Spot", "FUTURE": "Commodity", "OPTION": "Option",
+    }
+    sec_type = QUOTE_TYPE_MAP.get((info.get("quoteType") or "").upper(), "Other")
+    name = info.get("longName") or info.get("shortName") or sym
+
+    ccy_code = (info.get("currency") or "").upper()
+    currencies_id = None
+    if ccy_code:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT Currencies_Id FROM Currencies WHERE UPPER(Currencies_ShortName) = %s LIMIT 1",
+                (ccy_code,),
+            )
+            row = cur.fetchone()
+            if row:
+                currencies_id = row[0]
+
+    isin = None
+    try:
+        _isin_raw = ticker.isin
+        if (
+            isinstance(_isin_raw, str)
+            and len(_isin_raw.strip()) == 12
+            and _isin_raw.strip().upper() not in ("-", "N/A", "NONE")
+        ):
+            isin = _isin_raw.strip().upper()
+    except Exception:
+        pass
+
+    def _ts(ts):
+        if not ts:
+            return None
+        try:
+            return _dt.fromtimestamp(int(ts)).date().isoformat()
+        except Exception:
+            return None
+
+    def _flt(v, factor=1.0):
+        try:
+            import math
+            f = float(v) * factor
+            return None if math.isnan(f) else round(f, 4)
+        except Exception:
+            return None
+
+    _raw_rating = info.get("recommendationKey")
+    analyst_rating = (
+        None
+        if (not _raw_rating or str(_raw_rating).strip().lower() in ("none", "n/a", ""))
+        else str(_raw_rating).strip().lower()
+    )
+
+    return {
+        "ticker": sym,
+        "name": name,
+        "type": sec_type,
+        "currencies_id": currencies_id,
+        "currency_code": ccy_code,
+        "isin": isin,
+        "sector": info.get("sector") or None,
+        "industry": info.get("industry") or None,
+        "yahoo_ticker": sym,
+        "dividend_yield": _flt(info.get("dividendYield")),
+        "dividend_rate": _flt(info.get("dividendRate")),
+        "ex_dividend_date": _ts(info.get("exDividendDate")),
+        "dividend_pay_date": _ts(info.get("dividendDate") or info.get("lastDividendDate")),
+        "payout_ratio": _flt(info.get("payoutRatio"), 100.0),
+        "five_year_avg_yield": _flt(info.get("fiveYearAvgDividendYield")),
+        "analyst_rating": analyst_rating,
+        "analyst_target_price": _flt(info.get("targetMeanPrice")),
+    }
+
+
 @router.get("/price-history")
 def get_price_history(
     security_id: int = Query(...),

@@ -18,6 +18,8 @@ import {
   getSecurityCorporateActions, createCorporateAction, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
+  downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices,
+  importPricesFromFile,
 } from '@/lib/api'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
@@ -63,14 +65,31 @@ function PricesTab({ secId }: { secId: number }) {
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importConflict, setImportConflict] = useState<'skip' | 'overwrite'>('skip')
+  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const { data: history = [], isLoading } = useQuery({
     queryKey: ['price-history', secId, fromDate],
     queryFn: () => getPriceHistory(secId, fromDate),
+  })
+
+  const importMut = useMutation({
+    mutationFn: () => importPricesFromFile(importFile!, secId, importConflict),
+    onSuccess: (d) => {
+      setImportMsg({ ok: true, text: `Imported ${d.inserted} row(s) — ${d.skipped} skipped (${d.total_rows} total in file).` })
+      qc.invalidateQueries({ queryKey: ['price-history', secId] })
+    },
+    onError: (e: { response?: { data?: { detail?: unknown } } }) => {
+      const d = e.response?.data?.detail
+      const text = Array.isArray(d) ? (d as { msg?: string }[]).map(x => x.msg ?? String(x)).join('; ') : (typeof d === 'string' ? d : 'Import failed')
+      setImportMsg({ ok: false, text })
+    },
   })
 
   const addMut = useMutation({
@@ -91,8 +110,17 @@ function PricesTab({ secId }: { secId: number }) {
     else { if (!entryValue) return; addMut.mutate({ security_id: secId, date: entryDate, close: Number(entryValue) }) }
   }
 
+  const deleteSelected = async () => {
+    const dates = [...selectedDates]
+    setMsg(null)
+    for (const d of dates) await deletePrice(secId, d)
+    setSelectedDates([])
+    qc.invalidateQueries({ queryKey: ['price-history', secId] })
+    setMsg(`Deleted ${dates.length} record(s).`)
+  }
+
   const isPending = addMut.isPending || delMut.isPending
-  const rows = [...(history as Record<string, unknown>[])].reverse()
+  const rows = useMemo(() => [...(history as Record<string, unknown>[])].reverse(), [history])
 
   const pctChange = (() => {
     const h = history as Record<string, unknown>[]
@@ -127,15 +155,23 @@ function PricesTab({ secId }: { secId: number }) {
         />
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Search size={14} className="text-slate-400" />
         <Input className="w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
+        {selectedDates.length > 0 && (
+          <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
+            <Trash2 size={13} /> Delete {selectedDates.length} selected
+          </Button>
+        )}
       </div>
       <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
         <AgGridReact
           rowData={rows}
           quickFilterText={priceSearch}
+          rowSelection="multiple"
+          onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
           columnDefs={[
+            { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
             { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
             { field: 'close', headerName: 'Close', width: 130, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(6) : '' },
             { field: 'source', headerName: 'Source', width: 120 },
@@ -143,6 +179,45 @@ function PricesTab({ secId }: { secId: number }) {
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
+      </div>
+
+      <div className="border-t border-slate-200 pt-4">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Import from File</p>
+        <p className="text-xs text-slate-500 mb-3">
+          Upload a tab-separated <code className="bg-slate-100 px-1 rounded">.txt</code> / <code className="bg-slate-100 px-1 rounded">.csv</code> / <code className="bg-slate-100 px-1 rounded">.tsv</code> file.
+          The importer finds the <code className="bg-slate-100 px-1 rounded">Date</code> header row automatically.
+        </p>
+        <div className="flex flex-wrap gap-4 items-end mb-4">
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">File</label>
+            <label className="cursor-pointer flex items-center gap-2">
+              <span className="px-3 py-1.5 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 transition-colors">⬆ Choose file</span>
+              <span className="text-xs text-slate-500">{importFile ? importFile.name : 'TXT, CSV, TSV'}</span>
+              <input type="file" accept=".txt,.csv,.tsv" className="hidden"
+                onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportMsg(null) }} />
+            </label>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">If date exists</label>
+            <div className="flex gap-3">
+              {(['skip', 'overwrite'] as const).map(v => (
+                <label key={v} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input type="radio" name="sdImportConflict" value={v} checked={importConflict === v} onChange={() => setImportConflict(v)} />
+                  {v === 'skip' ? 'Skip' : 'Overwrite'}
+                </label>
+              ))}
+            </div>
+          </div>
+          <Button variant="primary" disabled={!importFile || importMut.isPending}
+            onClick={() => { setImportMsg(null); importMut.mutate() }}>
+            {importMut.isPending ? <><Spinner size={12} /> Importing…</> : '📂 Import'}
+          </Button>
+          {importMsg && (
+            <span className={`text-xs px-3 py-1.5 rounded ${importMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {importMsg.text}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="border-t border-slate-200 pt-4">
@@ -835,8 +910,138 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   )
 }
 
+// ── Downloads Tab ─────────────────────────────────────────────────────────────
+const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']
+
+function DownloadsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const qc = useQueryClient()
+  const [period, setPeriod] = useState('1mo')
+  const [overwrite, setOverwrite] = useState(false)
+  const [status, setStatus] = useState<Record<string, 'running' | 'ok' | 'error'>>({})
+  const [messages, setMessages] = useState<Record<string, string>>({})
+
+  const extractError = (e: unknown) =>
+    (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+    (e instanceof Error ? e.message : 'Error')
+
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setStatus(s => ({ ...s, [key]: 'running' }))
+    setMessages(m => ({ ...m, [key]: '' }))
+    try {
+      const res = await fn() as { message?: string }
+      setStatus(s => ({ ...s, [key]: 'ok' }))
+      setMessages(m => ({ ...m, [key]: res?.message ?? 'Done' }))
+      qc.invalidateQueries({ queryKey: ['securities'] })
+      qc.invalidateQueries({ queryKey: ['price-history', secId] })
+      qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
+    } catch (e) {
+      setStatus(s => ({ ...s, [key]: 'error' }))
+      setMessages(m => ({ ...m, [key]: extractError(e) }))
+    }
+  }
+
+  const StatusBadge = ({ id }: { id: string }) => {
+    const s = status[id]
+    if (!s) return null
+    if (s === 'running') return <span className="inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    if (s === 'ok') return <span className="text-green-600 font-bold">✓</span>
+    return <span className="text-red-500 font-bold">✗</span>
+  }
+
+  const ActionRow = ({ id, label, onClick }: { id: string; label: string; onClick: () => void }) => (
+    <div className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+      <Button size="sm" variant="secondary" onClick={onClick} disabled={status[id] === 'running'}>
+        {status[id] === 'running'
+          ? <><span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /> Running…</>
+          : label}
+      </Button>
+      <span className="flex items-center gap-1.5 text-xs">
+        <StatusBadge id={id} />
+        {messages[id] && <span className={status[id] === 'error' ? 'text-red-600' : 'text-slate-500'}>{messages[id]}</span>}
+      </span>
+    </div>
+  )
+
+  const hasYahoo = !!(security.yahoo_ticker && String(security.yahoo_ticker).trim())
+  const hasTv = !!(security.tv_symbol && String(security.tv_symbol).trim() && security.tv_exchange && String(security.tv_exchange).trim())
+  const [downloadAllRunning, setDownloadAllRunning] = useState(false)
+
+  const handleDownloadAll = async () => {
+    setDownloadAllRunning(true)
+    const jobs: Array<[string, () => Promise<unknown>]> = []
+    if (hasYahoo) {
+      jobs.push(['yahoo-info', () => downloadYahooInfo(secId)])
+      jobs.push(['yahoo-divs', () => downloadYahooDividends(secId)])
+      jobs.push(['yahoo-px',   () => downloadYahooPrices('max', secId)])
+    }
+    if (hasTv) {
+      jobs.push(['tv-info', () => downloadTvInfo(secId, overwrite)])
+      jobs.push(['tv-px',   () => downloadTvPrices('max', secId)])
+    }
+    for (const [key, fn] of jobs) await run(key, fn)
+    setDownloadAllRunning(false)
+  }
+
+  return (
+    <div className="p-5 space-y-6 max-w-2xl">
+      <div className="flex flex-wrap gap-4 items-end p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <div>
+          <label className="text-xs font-medium text-slate-500 block mb-1">Period (for price downloads)</label>
+          <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={period} onChange={e => setPeriod(e.target.value)}>
+            {PERIODS.map(p => <option key={p}>{p}</option>)}
+          </select>
+        </div>
+        {hasTv && (
+          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} className="accent-blue-600" />
+            Overwrite existing TradingView data
+          </label>
+        )}
+        {(hasYahoo || hasTv) && (
+          <Button variant="primary" disabled={downloadAllRunning} onClick={handleDownloadAll}>
+            {downloadAllRunning
+              ? <><span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Downloading…</>
+              : 'Download All & Max'}
+          </Button>
+        )}
+      </div>
+
+      {hasYahoo ? (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Yahoo Finance</p>
+          <p className="text-xs text-slate-400 mb-2">Ticker: <span className="font-mono text-slate-600">{String(security.yahoo_ticker)}</span></p>
+          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+            <ActionRow id="yahoo-info" label="Update Security Info" onClick={() => run('yahoo-info', () => downloadYahooInfo(secId))} />
+            <ActionRow id="yahoo-divs" label="Download Dividend History" onClick={() => run('yahoo-divs', () => downloadYahooDividends(secId))} />
+            <ActionRow id="yahoo-px" label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, secId))} />
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">
+          <span className="font-semibold text-slate-500">Yahoo Finance</span> — not configured. Set a <span className="font-mono">Yahoo Ticker</span> on this security to enable these downloads.
+        </div>
+      )}
+
+      {hasTv ? (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">TradingView</p>
+          <p className="text-xs text-slate-400 mb-2">Symbol: <span className="font-mono text-slate-600">{String(security.tv_symbol)}</span> · Exchange: <span className="font-mono text-slate-600">{String(security.tv_exchange)}</span></p>
+          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+            <ActionRow id="tv-info" label={`Update Security Info${overwrite ? ' (overwrite)' : ''}`} onClick={() => run('tv-info', () => downloadTvInfo(secId, overwrite))} />
+            <ActionRow id="tv-px" label={`Download Prices (${period})`} onClick={() => run('tv-px', () => downloadTvPrices(period, secId))} />
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400">
+          <span className="font-semibold text-slate-500">TradingView</span> — not configured. Set a <span className="font-mono">TV Symbol</span> and <span className="font-mono">TV Exchange</span> on this security to enable these downloads.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions'] as const
+const TABS = ['Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'Downloads'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -911,6 +1116,7 @@ export default function SecurityDetail() {
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}
               {tab === 'Dividends' && <DividendsTab secId={secId} security={security} />}
               {tab === 'Corporate Actions' && <CorporateActionsTab secId={secId} security={security} />}
+              {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
             </CardBody>
           </Card>
         )}

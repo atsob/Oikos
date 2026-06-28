@@ -210,6 +210,12 @@ export const getCurrencies = () =>
 export const getSecurities = (search?: string) =>
   api.get('/market-data/securities', { params: search ? { search } : {} }).then(r => r.data)
 
+export const searchTicker = (q: string) =>
+  api.get('/market-data/search-ticker', { params: { q } }).then(r => r.data)
+
+export const lookupTicker = (symbol: string) =>
+  api.get('/market-data/lookup-ticker', { params: { symbol } }).then(r => r.data)
+
 export const getPriceHistory = (securityId: number, fromDate = '2020-01-01') =>
   api.get('/market-data/price-history', { params: { security_id: securityId, from_date: fromDate } }).then(r => r.data)
 
@@ -499,6 +505,14 @@ export const importPricesFromFile = (file: File, securitiesId: number, onConflic
   fd.append('on_conflict', onConflict)
   return api.post('/tools/import-prices-from-file', fd).then(r => r.data as { inserted: number; skipped: number; total_rows: number })
 }
+
+export const importFxFromFile = (file: File, currencyId: number, onConflict: 'skip' | 'overwrite') => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('currency_id', String(currencyId))
+  fd.append('on_conflict', onConflict)
+  return api.post('/tools/import-fx-from-file', fd).then(r => r.data as { inserted: number; skipped: number; total_rows: number })
+}
 export const getLogs = (lines: number, level?: string, search?: string, file?: string) =>
   api.get('/tools/logs', { params: { lines, level, search, file } }).then(r => r.data)
 
@@ -584,6 +598,12 @@ export const getSavingsAccounts = () =>
 
 export const getDividendsTracker = (period: string, startDate?: string, endDate?: string) =>
   api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)
+
+export const getDividendsForecast = () =>
+  api.get('/reports/dividends-forecast').then(r => r.data)
+
+export const getDividendRecommendations = () =>
+  api.get('/reports/dividend-recommendations').then(r => r.data)
 
 export const getBondSchedule = () =>
   api.get('/reports/bond-schedule').then(r => r.data)

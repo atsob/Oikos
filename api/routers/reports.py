@@ -1216,6 +1216,420 @@ def get_dividends_tracker(
     }
 
 
+# ── Dividend Forecast ───────────────────────────────────────────────────────────
+@router.get("/dividends-forecast")
+def get_dividends_forecast():
+    """Projected 12-month dividend income for currently-held dividend-paying securities."""
+    import calendar as _cal
+    from datetime import date as _date
+
+    today = _date.today()
+
+    def _add_months(d: _date, n: int) -> _date:
+        m = d.month + n
+        y = d.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        return d.replace(year=y, month=m, day=min(d.day, _cal.monthrange(y, m)[1]))
+
+    _FREQ_MAP = {"monthly": 12, "quarterly": 4, "semi-annual": 2, "bi-annual": 2, "annual": 1, "yearly": 1}
+
+    def _ppy(freq_str) -> int:
+        if not freq_str or (isinstance(freq_str, float) and pd.isna(freq_str)):
+            return 4
+        return _FREQ_MAP.get(str(freq_str).strip().lower(), 4)
+
+    def _next_dates(anchor, freq_str, horizon_months: int = 12) -> list:
+        ppy = _ppy(freq_str)
+        interval = max(round(12 / ppy), 1)
+        try:
+            d = pd.Timestamp(anchor).date() if anchor and not (isinstance(anchor, float) and pd.isna(anchor)) else today
+        except Exception:
+            d = today
+        while d <= today:
+            d = _add_months(d, interval)
+        cutoff = _add_months(today, horizon_months)
+        dates = []
+        while d <= cutoff:
+            dates.append(d)
+            d = _add_months(d, interval)
+        return dates
+
+    query = """
+        WITH fx_latest AS (
+            SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+            FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+        ),
+        price_latest AS (
+            SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+            FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+        ),
+        holdings_agg AS (
+            SELECT h.Securities_Id,
+                SUM(h.Quantity) AS total_qty,
+                SUM(h.Quantity * COALESCE(h.Fifo_Avg_Cost_EUR, h.Fifo_Avg_Price * COALESCE(fx.FX_Rate, 1), 0)) AS cost_basis_eur
+            FROM Holdings h
+            JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
+            LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE h.Quantity > 0
+            GROUP BY h.Securities_Id
+        ),
+        last_div AS (
+            SELECT DISTINCT ON (Securities_Id)
+                Securities_Id, Ex_Date AS last_ex_date, Amount AS last_amount
+            FROM Securities_Dividends ORDER BY Securities_Id, Ex_Date DESC
+        ),
+        trailing_income AS (
+            SELECT i.Securities_Id,
+                SUM(i.Total_Amount_AccCur * COALESCE(fx.FX_Rate, 1)) AS trailing_12m_income_eur
+            FROM Investments i
+            JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
+            LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE i.Action IN ('Dividend','IntInc','Reinvest')
+              AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+            GROUP BY i.Securities_Id
+        )
+        SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+            s.Securities_Type AS securities_type,
+            ha.total_qty, ha.cost_basis_eur,
+            ROUND((ha.total_qty * COALESCE(pl.Close, 0) * COALESCE(fx2.FX_Rate, 1))::numeric, 2) AS market_value_eur,
+            s.Dividend_Yield AS dividend_yield, s.Dividend_Rate AS dividend_rate,
+            s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
+            s.Dividend_Frequency AS dividend_frequency,
+            ld.last_ex_date, ld.last_amount,
+            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur
+        FROM Securities s
+        JOIN holdings_agg ha ON ha.Securities_Id = s.Securities_Id
+        LEFT JOIN price_latest pl  ON pl.Securities_Id  = s.Securities_Id
+        LEFT JOIN fx_latest    fx2 ON fx2.Currencies_Id_1 = s.Currencies_Id
+        LEFT JOIN last_div     ld  ON ld.Securities_Id  = s.Securities_Id
+        LEFT JOIN trailing_income ti ON ti.Securities_Id = s.Securities_Id
+        WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
+        ORDER BY s.Securities_Name
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn)
+
+    if df.empty:
+        return {"summary": {}, "monthly_forecast": [], "by_security": [], "upcoming": []}
+
+    rows = []
+    for _, r in df.iterrows():
+        mv   = float(r.get("market_value_eur") or 0)
+        cost = float(r.get("cost_basis_eur")   or 0)
+        qty  = float(r.get("total_qty")         or 0)
+        dr   = r.get("dividend_rate")
+        dy   = r.get("dividend_yield")
+        t12  = float(r.get("trailing_12m_income_eur") or 0)
+
+        if pd.notna(dr) and float(dr) > 0 and mv > 0 and qty > 0:
+            price  = mv / qty
+            annual = (float(dr) / price * mv) if price else 0
+            method = "Dividend Rate"
+        elif pd.notna(dy) and float(dy) > 0 and mv > 0:
+            annual = mv * float(dy) / 100
+            method = "Fwd Yield"
+        elif t12 > 0:
+            annual = t12
+            method = "Trailing 12m"
+        else:
+            continue
+
+        if annual <= 0:
+            continue
+
+        freq    = r.get("dividend_frequency")
+        ppy     = _ppy(freq)
+        per_pmt = annual / ppy
+
+        raw_ex  = r.get("ex_dividend_date")
+        raw_pay = r.get("dividend_pay_date")
+
+        ex_anchor  = raw_ex if pd.notna(raw_ex) else r.get("last_ex_date")
+        pay_anchor = raw_pay if pd.notna(raw_pay) else ex_anchor
+        ex_dates   = _next_dates(ex_anchor,  freq, horizon_months=13)
+        pay_dates  = _next_dates(pay_anchor, freq, horizon_months=13)
+
+        _lag = 0
+        if pd.notna(raw_ex) and pd.notna(raw_pay):
+            _lag = max((pd.Timestamp(raw_pay).date() - pd.Timestamp(raw_ex).date()).days, 0)
+
+        rows.append({
+            "securities_id":            int(r["securities_id"]),
+            "securities_name":          str(r["securities_name"]),
+            "securities_type":          str(r["securities_type"]),
+            "total_qty":                round(qty, 4),
+            "market_value_eur":         round(mv, 2),
+            "cost_basis_eur":           round(cost, 2),
+            "annual_forecast_eur":      round(annual, 2),
+            "per_payment_eur":          round(per_pmt, 2),
+            "payments_per_year":        ppy,
+            "frequency":                str(freq) if freq and not (isinstance(freq, float) and pd.isna(freq)) else "Quarterly (assumed)",
+            "method":                   method,
+            "dividend_yield":           float(dy) if pd.notna(dy) else None,
+            "next_expected_ex_date":    str(ex_dates[0])  if ex_dates  else None,
+            "next_expected_pay_date":   str(pay_dates[0]) if pay_dates else None,
+            "last_known_ex_date":       str(pd.Timestamp(raw_ex).date())  if pd.notna(raw_ex)  else None,
+            "last_known_pay_date":      str(pd.Timestamp(raw_pay).date()) if pd.notna(raw_pay) else None,
+            "pay_lag_days":             _lag if _lag else None,
+            "_ex_dates":                [str(d) for d in ex_dates],
+            "_pay_dates":               [str(d) for d in pay_dates],
+        })
+
+    if not rows:
+        return {"summary": {}, "monthly_forecast": [], "by_security": [], "upcoming": []}
+
+    total_annual  = sum(r["annual_forecast_eur"] for r in rows)
+    total_monthly = total_annual / 12
+    total_cost    = sum(r["cost_basis_eur"] for r in rows)
+    portfolio_yoc = (total_annual / total_cost * 100) if total_cost > 0 else 0
+
+    monthly_map: dict = {}
+    for r in rows:
+        for d in r["_pay_dates"]:
+            key = str(_date.fromisoformat(d).replace(day=1))
+            monthly_map[key] = round(monthly_map.get(key, 0) + r["per_payment_eur"], 2)
+    monthly_forecast = sorted(
+        [{"month": k, "income_eur": v} for k, v in monthly_map.items()],
+        key=lambda x: x["month"]
+    )[:12]
+
+    cutoff_3m = str(_add_months(today, 3))
+    upcoming: list = []
+    for r in rows:
+        for ex_d, pay_d in zip(r["_ex_dates"], r["_pay_dates"]):
+            if ex_d <= cutoff_3m:
+                upcoming.append({
+                    "ex_date":         ex_d,
+                    "pay_date":        pay_d,
+                    "securities_name": r["securities_name"],
+                    "per_payment_eur": r["per_payment_eur"],
+                    "frequency":       r["frequency"],
+                    "method":          r["method"],
+                })
+    upcoming.sort(key=lambda x: x["ex_date"])
+
+    by_security = sorted(
+        [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
+        key=lambda x: x["annual_forecast_eur"], reverse=True
+    )
+
+    return {
+        "summary": {
+            "total_annual_eur":  round(total_annual, 2),
+            "total_monthly_eur": round(total_monthly, 2),
+            "securities_count":  len(rows),
+            "portfolio_yoc_pct": round(portfolio_yoc, 2),
+        },
+        "monthly_forecast": monthly_forecast,
+        "by_security":      by_security,
+        "upcoming":         upcoming,
+    }
+
+
+# ── Dividend Income Recommendations ────────────────────────────────────────────
+@router.get("/dividend-recommendations")
+def get_dividend_recommendations():
+    """Score and rank securities in the database for passive income potential.
+
+    5-factor composite score (0–100):
+      Yield (35%) · Sharpe (25%) · Consistency (25%) · Analyst (10%) · 5yr Growth (5%)
+    """
+
+    query = """
+        WITH fx_latest AS (
+            SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+            FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+        ),
+        price_latest AS (
+            SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+            FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+        ),
+        holdings_agg AS (
+            SELECT h.Securities_Id,
+                SUM(h.Quantity) AS total_qty,
+                SUM(h.Quantity * COALESCE(h.Fifo_Avg_Cost_EUR,
+                    h.Fifo_Avg_Price * COALESCE(fx.FX_Rate, 1), 0)) AS cost_basis_eur
+            FROM Holdings h
+            JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
+            LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE h.Quantity > 0
+            GROUP BY h.Securities_Id
+        ),
+        trailing_income AS (
+            SELECT i.Securities_Id,
+                SUM(i.Total_Amount_AccCur * COALESCE(fx.FX_Rate, 1)) AS trailing_12m_income_eur
+            FROM Investments i
+            JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
+            LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE i.Action IN ('Dividend', 'IntInc', 'Reinvest')
+              AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+            GROUP BY i.Securities_Id
+        ),
+        sharpe_data AS (
+            SELECT Securities_Id,
+                COUNT(*) AS price_days,
+                ROUND(((AVG(daily_r) * 252 - 0.03) / NULLIF(STDDEV(daily_r) * SQRT(252), 0))::numeric, 3)
+                    AS sharpe_ratio
+            FROM (
+                SELECT Securities_Id,
+                    Close / NULLIF(LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date), 0) - 1
+                        AS daily_r
+                FROM Historical_Prices
+                WHERE Date >= CURRENT_DATE - INTERVAL '365 days'
+            ) t
+            WHERE daily_r IS NOT NULL
+            GROUP BY Securities_Id
+            HAVING COUNT(*) >= 30
+        ),
+        div_consistency AS (
+            SELECT Securities_Id, COUNT(*) AS div_payments
+            FROM Securities_Dividends
+            WHERE Ex_Date >= CURRENT_DATE - INTERVAL '3 years'
+            GROUP BY Securities_Id
+        )
+        SELECT
+            s.Securities_Id            AS securities_id,
+            s.Securities_Name          AS securities_name,
+            s.Securities_Type          AS securities_type,
+            COALESCE(NULLIF(TRIM(s.Sector), ''), NULL) AS sector,
+            s.Dividend_Yield           AS dividend_yield,
+            s.Five_Year_Avg_Yield      AS five_year_avg_yield,
+            s.Dividend_Frequency       AS dividend_frequency,
+            LOWER(s.Analyst_Rating)    AS analyst_rating,
+            s.Analyst_Target_Price     AS analyst_target_price,
+            COALESCE(pl.Close, 0) * COALESCE(fx2.FX_Rate, 1) AS current_price_eur,
+            ha.total_qty,
+            ha.cost_basis_eur,
+            ROUND((COALESCE(ha.total_qty, 0) * COALESCE(pl.Close, 0) * COALESCE(fx2.FX_Rate, 1))::numeric, 2)
+                AS market_value_eur,
+            sd.sharpe_ratio,
+            sd.price_days,
+            COALESCE(dc.div_payments, 0) AS div_payments,
+            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur
+        FROM Securities s
+        LEFT JOIN holdings_agg ha   ON ha.Securities_Id = s.Securities_Id
+        LEFT JOIN price_latest pl   ON pl.Securities_Id = s.Securities_Id
+        LEFT JOIN fx_latest    fx2  ON fx2.Currencies_Id_1 = s.Currencies_Id
+        LEFT JOIN sharpe_data  sd   ON sd.Securities_Id = s.Securities_Id
+        LEFT JOIN div_consistency dc ON dc.Securities_Id = s.Securities_Id
+        LEFT JOIN trailing_income ti ON ti.Securities_Id = s.Securities_Id
+        WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL
+               OR ti.trailing_12m_income_eur > 0 OR dc.div_payments > 0)
+        ORDER BY s.Securities_Name
+    """
+
+    with get_db() as conn:
+        df = pd.read_sql(query, conn)
+
+    if df.empty:
+        return []
+
+    def _sf(v):
+        try:
+            f = float(v)
+            return None if pd.isna(f) else f
+        except Exception:
+            return None
+
+    def _ff(v, d=0.0):
+        return _sf(v) or d
+
+    _ANALYST_SCORE = {
+        "strong_buy": 100, "buy": 75, "outperform": 75,
+        "hold": 50, "neutral": 50, "market_perform": 50,
+        "underperform": 25, "sell": 0, "strong_sell": 0,
+    }
+
+    rows = []
+    for _, r in df.iterrows():
+        dy      = _ff(r.get("dividend_yield"))
+        t12     = _ff(r.get("trailing_12m_income_eur"))
+        mv      = _ff(r.get("market_value_eur"))
+        cost    = _ff(r.get("cost_basis_eur"))
+        qty     = _ff(r.get("total_qty"))
+        five_yr = _ff(r.get("five_year_avg_yield"))
+        div_pay = int(_ff(r.get("div_payments")))
+        sharpe  = _sf(r.get("sharpe_ratio"))
+        analyst = str(r.get("analyst_rating") or "").strip().lower() or None
+
+        # Effective yield: forward → trailing-based fallback
+        eff_yield = dy if dy > 0 else (t12 / mv * 100 if mv > 0 and t12 > 0 else 0)
+
+        if eff_yield <= 0 and div_pay == 0:
+            continue  # no dividend signal at all
+
+        # ── Factor scores (0–100) ─────────────────────────────────────────────
+        # Yield: 0%→0, 8%+→100 (cap at 8% to avoid trap yields skewing ranking)
+        yield_score = min(eff_yield / 8.0 * 100, 100)
+
+        # Sharpe: maps [-0.5, 2.0] → [0, 100]
+        sharpe_score = max(min((sharpe + 0.5) / 2.5 * 100, 100), 0) if sharpe is not None else None
+
+        # Consistency: quarterly payer over 3yr = 12 payments = 100
+        consistency_score = min(div_pay / 12.0 * 100, 100)
+
+        # 5yr growth: current yield above 5yr avg signals rising dividends
+        if five_yr > 0 and eff_yield > 0:
+            growth_score = min(max(eff_yield / five_yr * 50, 0), 100)
+        else:
+            growth_score = None
+
+        # Analyst signal
+        analyst_score = _ANALYST_SCORE.get(analyst) if analyst else None
+
+        # Weighted composite (re-normalise across available components)
+        _components = {
+            "yield":       (yield_score,      0.35),
+            "consistency": (consistency_score, 0.25),
+        }
+        if sharpe_score  is not None: _components["sharpe"]  = (sharpe_score,  0.25)
+        if growth_score  is not None: _components["growth"]  = (growth_score,  0.05)
+        if analyst_score is not None: _components["analyst"] = (analyst_score, 0.10)
+
+        total_w   = sum(w for _, w in _components.values())
+        composite = sum(s * w for s, w in _components.values()) / total_w if total_w else 0
+
+        # ── Tags ──────────────────────────────────────────────────────────────
+        tags: list[str] = []
+        if eff_yield >= 4:           tags.append("High Yield")
+        if consistency_score >= 70:  tags.append("Consistent")
+        if sharpe is not None and sharpe >= 0.8: tags.append("Good Sharpe")
+        if five_yr > 0 and eff_yield > five_yr:  tags.append("Yield Growing")
+        if analyst_score is not None and analyst_score >= 75: tags.append("Analyst: Buy")
+
+        freq = r.get("dividend_frequency")
+        freq_str = str(freq) if freq is not None and not (isinstance(freq, float) and pd.isna(freq)) else None
+
+        rows.append({
+            "securities_id":       int(r["securities_id"]),
+            "securities_name":     str(r["securities_name"]),
+            "securities_type":     str(r["securities_type"]),
+            "sector":              str(r["sector"]) if r.get("sector") and not (isinstance(r["sector"], float) and pd.isna(r["sector"])) else None,
+            "effective_yield_pct": round(eff_yield, 2),
+            "five_year_avg_yield": round(five_yr, 2) if five_yr > 0 else None,
+            "dividend_frequency":  freq_str,
+            "analyst_rating":      analyst or None,
+            "analyst_target_eur":  round(float(r["analyst_target_price"]) * _ff(r.get("current_price_eur"), 1) / _ff(r.get("current_price_eur"), 1), 2) if _sf(r.get("analyst_target_price")) else None,
+            "sharpe_ratio":        round(sharpe, 2) if sharpe is not None else None,
+            "price_days":          int(_ff(r.get("price_days"))) if r.get("price_days") is not None else None,
+            "div_payments_3yr":    div_pay,
+            "trailing_12m_eur":    round(t12, 2),
+            "market_value_eur":    round(mv, 2) if mv > 0 else None,
+            "cost_basis_eur":      round(cost, 2) if cost > 0 else None,
+            "is_held":             qty > 0,
+            "yield_score":         round(yield_score, 1),
+            "sharpe_score":        round(sharpe_score, 1) if sharpe_score is not None else None,
+            "consistency_score":   round(consistency_score, 1),
+            "growth_score":        round(growth_score, 1) if growth_score is not None else None,
+            "analyst_score":       analyst_score,
+            "composite_score":     round(composite, 1),
+            "tags":                tags,
+        })
+
+    rows.sort(key=lambda x: x["composite_score"], reverse=True)
+    return rows
+
+
 def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
     """All buy/sell investment transactions with EUR amounts for FIFO/LIFO lot matching."""
     query = """
