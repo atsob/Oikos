@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getDbHealth, runDbMaintenance, getReferentialIntegrity, toolsSyncBalances,
@@ -2206,7 +2207,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
 }
 
 export default function Tools() {
-  const [category, setCategory] = useState('💾 Database')
+  const [category, setCategory] = usePersist('tools_category', '💾 Database')
   const [tool, setTool] = useState<Record<string, string>>({
     '💾 Database': '💾 Backup & Restore',
     '⚙️ System': '📅 Scheduled Tasks',

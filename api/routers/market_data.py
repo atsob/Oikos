@@ -362,10 +362,10 @@ def download_tv_info(data: dict = {}):
 
 @router.post("/download/isin")
 def download_isin(data: dict = {}):
-    """Fetch missing ISINs from OpenFIGI."""
+    """Fetch missing ISINs from EODHD Fundamentals."""
     try:
-        from data.downloaders import download_isin_from_openfigi
-        download_isin_from_openfigi(target_sec_id=data.get("security_id"))
+        from data.downloaders import download_isin_from_eodhd
+        download_isin_from_eodhd(target_sec_id=data.get("security_id"))
         return {"ok": True, "message": "ISIN lookup complete"}
     except Exception as e:
         raise HTTPException(500, str(e))

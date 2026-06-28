@@ -2145,6 +2145,234 @@ def get_cash_flow_forecast(months_ahead: int = Query(6)):
     return rows
 
 
+@router.get("/cash-flow-forecast-full")
+def get_cash_flow_forecast_full(
+    days: int = Query(60),
+    months_back: int = Query(2),
+):
+    """
+    Full cash-flow forecast replicating the Streamlit view:
+    - Explicitly scheduled future transactions (Date > today, within horizon)
+    - Recurring patterns detected from last N complete months, projected forward
+    Returns: { scheduled, recurring, metrics }
+    """
+    import datetime as _dt
+
+    today = _dt.date.today()
+    cutoff = today + _dt.timedelta(days=days)
+    mb = max(2, min(6, int(months_back)))
+
+    with get_db() as conn:
+        df_future = pd.read_sql("""
+            WITH LatestFX AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            )
+            SELECT
+                t.Date,
+                p.Payees_Name,
+                a.Accounts_Name,
+                c.Currencies_ShortName AS currency,
+                CASE WHEN c.Currencies_ShortName = 'EUR' THEN s.Amount
+                     ELSE s.Amount * COALESCE(fx.FX_Rate, 1) END AS amount_eur,
+                cat.Categories_Name AS category
+            FROM Transactions t
+            JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
+            JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
+            LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
+            LEFT JOIN Splits s ON t.Transactions_Id = s.Transactions_Id
+            LEFT JOIN Categories cat ON s.Categories_Id = cat.Categories_Id
+            LEFT JOIN LatestFX fx ON fx.Currencies_Id_1 = c.Currencies_Id
+            WHERE t.Date > CURRENT_DATE
+              AND t.Transfers_Id IS NULL
+            ORDER BY t.Date ASC
+        """, conn)
+
+        df_recurring = pd.read_sql(f"""
+            WITH
+            recent AS (
+                SELECT
+                    t.Payees_Id, p.Payees_Name,
+                    s.Categories_Id, cat.Categories_Name,
+                    DATE_TRUNC('month', t.Date)::date AS month_start,
+                    t.Date,
+                    SUM(s.Amount) AS amount,
+                    a.Currencies_Id
+                FROM Transactions t
+                JOIN  Accounts a  ON a.Accounts_Id  = t.Accounts_Id
+                LEFT JOIN Payees p ON p.Payees_Id   = t.Payees_Id
+                LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+                LEFT JOIN Categories cat ON cat.Categories_Id = s.Categories_Id
+                WHERE t.Date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '{mb} months'
+                  AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
+                  AND t.Payees_Id IS NOT NULL
+                  AND t.Transfers_Id IS NULL
+                GROUP BY t.Payees_Id, p.Payees_Name, s.Categories_Id, cat.Categories_Name,
+                         t.Date, DATE_TRUNC('month', t.Date)::date, a.Currencies_Id
+            ),
+            qualified AS (
+                SELECT Payees_Id, Categories_Id, Currencies_Id
+                FROM   recent
+                GROUP  BY Payees_Id, Categories_Id, Currencies_Id
+                HAVING COUNT(DISTINCT month_start) = {mb}
+            ),
+            tx_freq AS (
+                SELECT r.Payees_Id, r.Categories_Id, r.Currencies_Id,
+                       COUNT(*)::float / {mb} AS avg_tx_per_month
+                FROM recent r
+                JOIN qualified q ON q.Payees_Id=r.Payees_Id AND q.Categories_Id=r.Categories_Id AND q.Currencies_Id=r.Currencies_Id
+                GROUP BY r.Payees_Id, r.Categories_Id, r.Currencies_Id
+            ),
+            tx_lag AS (
+                SELECT r.Payees_Id, r.Categories_Id, r.Currencies_Id,
+                       (r.Date - LAG(r.Date) OVER (
+                           PARTITION BY r.Payees_Id, r.Categories_Id, r.Currencies_Id ORDER BY r.Date
+                       ))::float AS days_since_prev
+                FROM recent r
+                JOIN qualified q ON q.Payees_Id=r.Payees_Id AND q.Categories_Id=r.Categories_Id AND q.Currencies_Id=r.Currencies_Id
+            ),
+            interval_tx AS (
+                SELECT Payees_Id, Categories_Id, Currencies_Id,
+                       COALESCE(AVG(days_since_prev), 30) AS avg_interval
+                FROM   tx_lag
+                GROUP  BY Payees_Id, Categories_Id, Currencies_Id
+            ),
+            monthly_repr AS (
+                SELECT r.Payees_Id, r.Payees_Name, r.Categories_Id, r.Categories_Name,
+                       r.month_start, r.Currencies_Id, MIN(r.Date) AS repr_date
+                FROM recent r
+                JOIN qualified q ON q.Payees_Id=r.Payees_Id AND q.Categories_Id=r.Categories_Id AND q.Currencies_Id=r.Currencies_Id
+                GROUP BY r.Payees_Id, r.Payees_Name, r.Categories_Id, r.Categories_Name, r.month_start, r.Currencies_Id
+            ),
+            monthly_lag AS (
+                SELECT *,
+                       (repr_date - LAG(repr_date) OVER (
+                           PARTITION BY Payees_Id, Categories_Id, Currencies_Id ORDER BY month_start
+                       ))::float AS days_since_prev
+                FROM monthly_repr
+            ),
+            interval_monthly AS (
+                SELECT Payees_Id, Categories_Id, Currencies_Id,
+                       COALESCE(AVG(days_since_prev), 30) AS avg_interval
+                FROM   monthly_lag
+                GROUP  BY Payees_Id, Categories_Id, Currencies_Id
+            ),
+            amount_stats AS (
+                SELECT r.Payees_Id, r.Categories_Id, r.Currencies_Id,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.amount) AS median_amount,
+                       MAX(r.Date) AS last_date
+                FROM recent r
+                JOIN qualified q ON q.Payees_Id=r.Payees_Id AND q.Categories_Id=r.Categories_Id AND q.Currencies_Id=r.Currencies_Id
+                GROUP BY r.Payees_Id, r.Categories_Id, r.Currencies_Id
+            ),
+            names AS (
+                SELECT DISTINCT ON (Payees_Id, Categories_Id, Currencies_Id)
+                       Payees_Id, Payees_Name, Categories_Id, Categories_Name, Currencies_Id
+                FROM   monthly_repr
+            ),
+            stats AS (
+                SELECT n.Payees_Id, n.Payees_Name, n.Categories_Id, n.Categories_Name,
+                       am.median_amount AS avg_amount,
+                       CASE WHEN tf.avg_tx_per_month > 1.5 THEN it.avg_interval
+                            ELSE im.avg_interval END AS avg_days_between,
+                       am.last_date, n.Currencies_Id
+                FROM names n
+                JOIN amount_stats   am ON am.Payees_Id=n.Payees_Id AND am.Categories_Id=n.Categories_Id AND am.Currencies_Id=n.Currencies_Id
+                JOIN tx_freq        tf ON tf.Payees_Id=n.Payees_Id AND tf.Categories_Id=n.Categories_Id AND tf.Currencies_Id=n.Currencies_Id
+                JOIN interval_tx    it ON it.Payees_Id=n.Payees_Id AND it.Categories_Id=n.Categories_Id AND it.Currencies_Id=n.Currencies_Id
+                JOIN interval_monthly im ON im.Payees_Id=n.Payees_Id AND im.Categories_Id=n.Categories_Id AND im.Currencies_Id=n.Currencies_Id
+            ),
+            fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            )
+            SELECT
+                s.Payees_Name,
+                s.Categories_Name                        AS category,
+                ROUND(s.avg_days_between::numeric, 0)    AS avg_days_between,
+                s.last_date,
+                (s.last_date + ROUND(s.avg_days_between)::int)::date AS next_expected_date,
+                c.Currencies_ShortName                   AS currency,
+                ROUND((s.avg_amount * COALESCE(fx.FX_Rate, 1))::numeric, 2) AS avg_amount_eur
+            FROM   stats s
+            JOIN   Currencies c ON c.Currencies_Id    = s.Currencies_Id
+            LEFT   JOIN fx      ON fx.Currencies_Id_1 = s.Currencies_Id
+            ORDER  BY next_expected_date ASC
+        """, conn)
+
+    # Filter scheduled to horizon
+    if not df_future.empty:
+        df_future['date'] = pd.to_datetime(df_future['date'])
+        df_f = df_future[df_future['date'].dt.date <= cutoff].copy()
+    else:
+        df_f = pd.DataFrame()
+
+    # Deduplicate: drop recurring patterns whose payee already has scheduled transactions
+    if not df_recurring.empty and not df_f.empty:
+        scheduled_payees = set(
+            df_f['payees_name'].dropna().str.strip().str.lower().unique()
+        )
+        df_recurring = df_recurring[
+            ~df_recurring['payees_name'].str.strip().str.lower().isin(scheduled_payees)
+        ].copy()
+
+    # Project recurring patterns as concrete future occurrences
+    recur_rows = []
+    if not df_recurring.empty:
+        df_recurring['next_expected_date'] = pd.to_datetime(df_recurring['next_expected_date'])
+        today_ts = pd.Timestamp(today)
+        cutoff_ts = pd.Timestamp(cutoff)
+        for _, row in df_recurring.iterrows():
+            avg_d = float(row['avg_days_between']) if pd.notna(row['avg_days_between']) else None
+            if not avg_d or avg_d < 1:
+                continue
+            next_dt = row['next_expected_date']
+            while next_dt <= today_ts:
+                next_dt += pd.Timedelta(days=avg_d)
+            while next_dt <= cutoff_ts:
+                recur_rows.append({
+                    'date': next_dt.date().isoformat(),
+                    'payees_name': str(row['payees_name'] or ''),
+                    'category': str(row.get('category') or ''),
+                    'amount_eur': float(row['avg_amount_eur']),
+                    'avg_days_between': int(round(avg_d)),
+                    'currency': str(row['currency'] or 'EUR'),
+                })
+                next_dt += pd.Timedelta(days=avg_d)
+
+    recur_rows.sort(key=lambda x: x['date'])
+
+    # Build scheduled list
+    scheduled = []
+    if not df_f.empty:
+        for _, row in df_f.iterrows():
+            scheduled.append({
+                'date': str(row['date'])[:10],
+                'payees_name': str(row['payees_name'] or ''),
+                'accounts_name': str(row['accounts_name'] or ''),
+                'category': str(row.get('category') or ''),
+                'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
+                'currency': str(row['currency'] or 'EUR'),
+            })
+
+    sched_in  = sum(r['amount_eur'] for r in scheduled if r['amount_eur'] > 0)
+    sched_out = sum(r['amount_eur'] for r in scheduled if r['amount_eur'] < 0)
+    recur_in  = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] > 0)
+    recur_out = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] < 0)
+
+    return {
+        'scheduled': scheduled,
+        'recurring': recur_rows,
+        'metrics': {
+            'sched_in':  round(sched_in,  2),
+            'sched_out': round(sched_out, 2),
+            'recur_in':  round(recur_in,  2),
+            'recur_out': round(recur_out, 2),
+            'net_total': round(sched_in + sched_out + recur_in + recur_out, 2),
+        },
+    }
+
+
 @router.get("/budgets")
 def get_budgets(year: int = Query(2024), month: Optional[int] = Query(None)):
     """Budget entries by category and year."""

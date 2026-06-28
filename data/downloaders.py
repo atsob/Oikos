@@ -1211,35 +1211,38 @@ def download_securities_info_from_tradingview(target_sec_id=None, overwrite=Fals
         conn.close()
 
 
-# Maps TradingView exchange codes → OpenFIGI exchCode
-_TV_TO_OPENFIGI_EXCH: dict[str, str] = {
-    "NASDAQ":   "UQ",
-    "NYSE":     "UN",
-    "AMEX":     "UA",
+# Maps TradingView exchange codes → EODHD exchange suffix
+_TV_TO_EODHD_EXCH: dict[str, str] = {
+    "NASDAQ":   "US",
+    "NYSE":     "US",
+    "AMEX":     "US",
     "ATHEX":    "AT",
-    "BME":      "SM",
-    "XETR":     "GY",
-    "FWB":      "GY",
-    "TSX":      "CT",
-    "VIE":      "AV",
-    "EURONEXT": "FP",
-    "LSE":      "LN",
-    "SWB":      "GY",
+    "BME":      "MC",
+    "XETR":     "XETRA",
+    "FWB":      "F",
+    "TSX":      "TO",
+    "VIE":      "VI",
+    "EURONEXT": "PA",
+    "LSE":      "LSE",
+    "SWB":      "SG",
 }
 
 
-def download_isin_from_openfigi(target_sec_id=None):
-    """Fetch ISIN from OpenFIGI for securities that are missing it.
+def download_isin_from_eodhd(target_sec_id=None):
+    """Fetch ISIN from EODHD Fundamentals API for securities missing it.
 
-    Uses the free OpenFIGI /v3/mapping endpoint (no API key needed for up to
-    25 requests/minute).  Each request covers a batch of 10 securities.
-    TV_Exchange is mapped to OpenFIGI exchCode where possible to narrow the
-    match; securities with no matching exchange are looked up without it.
+    Uses the already-configured EODHD API key.  For each security it first
+    calls the fundamentals endpoint with filter=General::ISIN; if that returns
+    nothing (wrong exchange suffix, unlisted security) it falls back to the
+    EODHD search endpoint and matches by ticker symbol.
 
     Only fills NULL/empty ISIN slots — never overwrites an existing value.
     """
-    OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
-    BATCH = 10
+    from config.settings import ENV_CONFIG
+    api_key = ENV_CONFIG.get('eodhd_api_key', '')
+    if not api_key:
+        print("EODHD: no API key configured — aborting ISIN lookup.")
+        return
 
     conn = get_connection()
     cur  = conn.cursor()
@@ -1261,58 +1264,59 @@ def download_isin_from_openfigi(target_sec_id=None):
         rows = cur.fetchall()
 
         if not rows:
-            print("OpenFIGI: no securities need ISIN lookup.")
-            logging.info("OpenFIGI: no securities need ISIN lookup.")
+            print("EODHD: no securities need ISIN lookup.")
+            logging.info("EODHD: no securities need ISIN lookup.")
             return
 
-        print(f"OpenFIGI: looking up ISIN for {len(rows)} securities…")
-        logging.info(f"OpenFIGI: ISIN lookup for {len(rows)} securities")
+        print(f"EODHD: looking up ISIN for {len(rows)} securities…")
+        logging.info(f"EODHD: ISIN lookup for {len(rows)} securities")
 
         isin_updates = []
 
-        for i in range(0, len(rows), BATCH):
-            batch = rows[i : i + BATCH]
-            jobs = []
-            for _sec_id, _sec_name, ticker, tv_exchange in batch:
-                job: dict = {"idType": "TICKER", "idValue": ticker, "marketSecDes": "Equity"}
-                exch = _TV_TO_OPENFIGI_EXCH.get(tv_exchange or "")
-                if exch:
-                    job["exchCode"] = exch
-                jobs.append(job)
+        for sec_id, sec_name, ticker, tv_exchange in rows:
+            eodhd_exch = _TV_TO_EODHD_EXCH.get(tv_exchange or '', 'US')
+            isin = None
 
+            # Primary: fundamentals endpoint with exchange suffix
             try:
-                resp = requests.post(
-                    OPENFIGI_URL,
-                    json=jobs,
-                    headers={"Content-Type": "application/json"},
-                    timeout=15,
+                resp = requests.get(
+                    f"https://eodhd.com/api/fundamentals/{ticker}.{eodhd_exch}",
+                    params={"api_token": api_key, "filter": "General::ISIN"},
+                    timeout=10,
                 )
-                if resp.status_code == 429:
-                    print("  OpenFIGI rate limit hit — waiting 60s…")
-                    time.sleep(60)
-                    continue
-                if resp.status_code != 200:
-                    logging.warning(f"OpenFIGI HTTP {resp.status_code}: {resp.text[:200]}")
-                    continue
-                results = resp.json()
+                if resp.status_code == 200:
+                    raw = resp.text.strip().strip('"')
+                    if raw and len(raw) == 12 and raw not in ('null', 'None', 'N/A', ''):
+                        isin = raw.upper()
             except Exception as e:
-                logging.warning(f"OpenFIGI request error: {e}")
-                continue
+                logging.debug(f"EODHD fundamentals error for {ticker}: {e}")
 
-            for j, result in enumerate(results):
-                sec_id, sec_name, ticker, _ = batch[j]
-                if "error" in result or not result.get("data"):
-                    continue
-                for item in result["data"]:
-                    raw_isin = item.get("isin") or item.get("ISIN") or ""
-                    if isinstance(raw_isin, str) and len(raw_isin.strip()) == 12:
-                        isin = raw_isin.strip().upper()
-                        print(f"  {sec_name} ({ticker}): ISIN={isin}")
-                        logging.info(f"OpenFIGI {sec_name}: ISIN={isin}")
-                        isin_updates.append((isin, sec_id))
-                        break  # first valid result wins
+            # Fallback: search endpoint (handles wrong exchange suffix / delisted)
+            if not isin:
+                try:
+                    sresp = requests.get(
+                        f"https://eodhd.com/api/search/{ticker}",
+                        params={"api_token": api_key, "limit": 10},
+                        timeout=10,
+                    )
+                    if sresp.status_code == 200:
+                        for item in sresp.json():
+                            if item.get('Code', '').upper() == ticker.upper():
+                                raw = (item.get('ISIN') or item.get('isin') or '').strip()
+                                if raw and len(raw) == 12:
+                                    isin = raw.upper()
+                                    break
+                except Exception as e:
+                    logging.debug(f"EODHD search error for {ticker}: {e}")
 
-            time.sleep(0.5)  # stay well within rate limit
+            if isin:
+                print(f"  {sec_name} ({ticker}): ISIN={isin}")
+                logging.info(f"EODHD {sec_name}: ISIN={isin}")
+                isin_updates.append((isin, sec_id))
+            else:
+                print(f"  {sec_name} ({ticker}): not found")
+
+            time.sleep(0.2)  # ~5 req/s — well within EODHD limits
 
         if isin_updates:
             cur.executemany(
@@ -1320,15 +1324,15 @@ def download_isin_from_openfigi(target_sec_id=None):
                 isin_updates,
             )
             conn.commit()
-            print(f"OpenFIGI: {len(isin_updates)} ISIN(s) written.")
-            logging.info(f"OpenFIGI: {len(isin_updates)} ISIN(s) written.")
+            print(f"EODHD: {len(isin_updates)} ISIN(s) written.")
+            logging.info(f"EODHD: {len(isin_updates)} ISIN(s) written.")
         else:
-            print("OpenFIGI: no ISINs found in response.")
-            logging.info("OpenFIGI: no ISINs found.")
+            print("EODHD: no ISINs found.")
+            logging.info("EODHD: no ISINs found.")
 
     except Exception as e:
-        print(f"Error in download_isin_from_openfigi: {e}")
-        logging.error(f"OpenFIGI ISIN error: {e}")
+        print(f"Error in download_isin_from_eodhd: {e}")
+        logging.error(f"EODHD ISIN error: {e}")
     finally:
         cur.close()
         conn.close()

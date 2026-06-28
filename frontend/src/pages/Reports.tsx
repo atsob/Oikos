@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -10,7 +11,7 @@ import {
   getHoldingsSnapshot,
   getIncomeExpenseDetail, getDividends, getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
-  getCashFlowForecast, getPnl, getCategoryBreakdown,
+  getCashFlowForecast, getCashFlowForecastFull, getPnl, getCategoryBreakdown,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
   getSpendingByPayee, getSpendingTrends, getSavingsRateDetail,
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals,
@@ -41,14 +42,6 @@ function SecLink({ id, children }: { id: unknown; children: React.ReactNode }) {
     <button onClick={() => navigate(`/securities/${id}`)}
       className="text-blue-600 hover:underline text-left">{children}</button>
   )
-}
-
-function usePersist<T>(key: string, defaultVal: T) {
-  const [val, setVal] = useState<T>(() => {
-    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : defaultVal } catch { return defaultVal }
-  })
-  const set = useCallback((v: T) => { setVal(v); try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key])
-  return [val, set] as const
 }
 
 // ── Sidebar tabs ──────────────────────────────────────────────────────────────
@@ -1242,7 +1235,7 @@ function DetailAnalysisTab({ asOf }: { asOf: string }) {
 }
 
 function InvPositionsSection({ startDate: initialStartDate }: { startDate: string }) {
-  const [tab, setTab] = useState('Graph')
+  const [tab, setTab] = usePersist('inv_positions_tab', 'Graph')
 
   // Default to Dec 31 of the previous calendar year
   const defaultDate = `${new Date().getFullYear() - 1}-12-31`
@@ -3670,7 +3663,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const [cashTypes, setCashTypes] = useState<string[]>(DEFAULT_CASH_TYPES)
   const [invTypes, setInvTypes] = useState<string[]>(DEFAULT_INV_TYPES)
   const [topN, setTopN] = useState(10)
-  const [ieTab, setIeTab] = useState('Chart')
+  const [ieTab, setIeTab] = usePersist('ie_tab', 'Chart')
   const [drillCat, setDrillCat] = useState<string>('All Categories')
   const [drillPayee, setDrillPayee] = useState<string>('All Payees')
 
@@ -4438,49 +4431,220 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
 // ════════════════════════════════════════════════════════════════════════════
 // 6. CASH FLOW FORECAST
 // ════════════════════════════════════════════════════════════════════════════
+const CF_HORIZONS = [
+  { label: '30d', days: 30 },
+  { label: '60d', days: 60 },
+  { label: '3m',  days: 90 },
+  { label: '6m',  days: 180 },
+  { label: '12m', days: 365 },
+]
+const CF_COLOR_MAP: Record<string, string> = {
+  'Income · Scheduled':         '#2ECC71',
+  'Expense · Scheduled':        '#E74C3C',
+  'Income · Recurring (est.)':  '#82E0AA',
+  'Expense · Recurring (est.)': '#F1948A',
+}
+
 function CashFlowSection() {
-  const [monthsAhead, setMonthsAhead] = useState(6)
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['cash-flow-forecast', monthsAhead],
-    queryFn: () => getCashFlowForecast(monthsAhead),
+  const { isDark } = useTheme()
+  const [days, setDays] = usePersist<number>('cf_days', 60)
+  const [monthsBack, setMonthsBack] = usePersist<number>('cf_months_back', 2)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['cash-flow-forecast-full', days, monthsBack],
+    queryFn: () => getCashFlowForecastFull(days, monthsBack),
   })
+
+  const result = data as {
+    scheduled: Row[]
+    recurring: Row[]
+    metrics: { sched_in: number; sched_out: number; recur_in: number; recur_out: number; net_total: number }
+  } | undefined
+
+  // Build chart data: aggregate scheduled + recurring by calendar month
+  const chartTraces = useMemo(() => {
+    if (!result) return []
+    const bySeriesMonth: Record<string, Record<string, number>> = {}
+    const addRow = (date: string, amt: number, source: string) => {
+      const flow = amt >= 0 ? 'Income' : 'Expense'
+      const series = `${flow} · ${source}`
+      const month = date.slice(0, 7) // YYYY-MM
+      if (!bySeriesMonth[series]) bySeriesMonth[series] = {}
+      bySeriesMonth[series][month] = (bySeriesMonth[series][month] ?? 0) + amt
+    }
+    for (const r of result.scheduled) addRow(String(r.date), Number(r.amount_eur), 'Scheduled')
+    for (const r of result.recurring) addRow(String(r.date), Number(r.amount_eur), 'Recurring (est.)')
+
+    const allMonths = [...new Set([
+      ...Object.values(bySeriesMonth).flatMap(m => Object.keys(m))
+    ])].sort()
+
+    return Object.entries(bySeriesMonth).map(([series, monthMap]) => ({
+      x: allMonths.map(m => `${m}-01`),
+      y: allMonths.map(m => monthMap[m] ?? 0),
+      name: series,
+      type: 'bar' as const,
+      marker: { color: CF_COLOR_MAP[series] ?? '#94a3b8' },
+    }))
+  }, [result])
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const d = data as Row[]
+
+  const m = result?.metrics
+  const scheduled = result?.scheduled ?? []
+  const recurring = result?.recurring ?? []
+
+  const KPI_METRICS = m ? [
+    { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.' },
+    { label: 'Scheduled Out', value: fmtEur(m.sched_out), color: 'text-red-600',   tip: 'Total expenses from explicitly scheduled future transactions within the horizon.' },
+    { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns, projected forward.' },
+    { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns, projected forward.' },
+    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled and recurring in/out amounts within the horizon.' },
+  ] : []
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-slate-600">Months ahead</label>
-        {[3, 6, 12].map(m => (
-          <button key={m} onClick={() => setMonthsAhead(m)}
-            className={`px-2.5 py-1 rounded text-xs font-medium ${monthsAhead === m ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{m}M</button>
-        ))}
-      </div>
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-3 py-2 text-left">Template</th>
-            <th className="px-3 py-2 text-left">Account</th>
-            <th className="px-3 py-2 text-left">Payee</th>
-            <th className="px-3 py-2 text-left">Periodicity</th>
-            <th className="px-3 py-2 text-left">Next Due</th>
-            <th className="px-3 py-2 text-right">Amount</th>
-          </tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {d.map((r, i) => (
-              <tr key={i} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium">{String(r.name)}</td>
-                <td className="px-3 py-2 text-slate-600">{String(r.account ?? '—')}</td>
-                <td className="px-3 py-2 text-slate-600">{String(r.payee ?? '—')}</td>
-                <td className="px-3 py-2 text-slate-500">{String(r.periodicity ?? '—')}</td>
-                <td className="px-3 py-2 text-slate-500">{String(r.next_due_date ?? '—').slice(0, 10)}</td>
-                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(r.amount))}</td>
-              </tr>
+    <div className="space-y-6">
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-6">
+        <div className="flex items-center gap-2">
+          <Tooltip text="How far ahead to project cash flows. Scheduled transactions are filtered to this window; recurring patterns are projected until the cutoff date.">
+            <span className="text-sm text-slate-500 cursor-help underline decoration-dotted">Horizon</span>
+          </Tooltip>
+          <div className="flex gap-1">
+            {CF_HORIZONS.map(h => (
+              <button key={h.days} onClick={() => setDays(h.days)}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${days === h.days ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {h.label}
+              </button>
             ))}
-          </tbody>
-        </table>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Tooltip text={`A payee + category pair must appear in every one of the last ${monthsBack} complete calendar months to be classified as recurring. Increase to require a longer consistent history; decrease to catch newer patterns.`}>
+            <span className="text-sm text-slate-500 cursor-help underline decoration-dotted">Recurring window: <strong>{monthsBack}m</strong></span>
+          </Tooltip>
+          <input type="range" min={2} max={6} step={1} value={monthsBack}
+            onChange={e => setMonthsBack(Number(e.target.value))}
+            className="w-24 accent-blue-600" />
+        </div>
       </div>
-      </WithCopy>
+
+      {/* KPI metrics */}
+      {KPI_METRICS.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {KPI_METRICS.map(k => (
+            <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+              <Tooltip text={k.tip}>
+                <div className="text-xs text-slate-500 mb-0.5 cursor-help underline decoration-dotted">{k.label}</div>
+              </Tooltip>
+              <div className={`text-sm font-bold tabular-nums ${k.color}`}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bar chart */}
+      {chartTraces.length > 0 ? (
+        <Plot
+          data={chartTraces}
+          layout={{
+            barmode: 'relative' as const,
+            height: 320,
+            margin: { t: 10, r: 10, b: 50, l: 70 },
+            yaxis: { tickformat: ',.0f', tickprefix: '€' },
+            xaxis: { tickformat: '%b %Y', dtick: 'M1', type: 'date' as const },
+            legend: { orientation: 'h' as const, y: -0.35, x: 0.5, xanchor: 'center' as const },
+            hovermode: 'x unified' as const,
+            ...plotLayout(isDark),
+          }}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: '100%' }}
+        />
+      ) : (
+        <p className="text-sm text-slate-400 text-center py-6">No cash flows found within the selected horizon.</p>
+      )}
+
+      {/* Explicitly Scheduled Future Transactions */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-2">📅 Explicitly Scheduled Future Transactions</h3>
+        {scheduled.length === 0 ? (
+          <p className="text-sm text-slate-400">No transactions scheduled within this horizon.</p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Payee</th>
+                  <th className="px-3 py-2 text-left">Account</th>
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-right">Amount (€)</th>
+                  <th className="px-3 py-2 text-left">Currency</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {scheduled.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.accounts_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
+
+      {/* Projected Recurring Payments */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">🔁 Projected Recurring Payments</h3>
+        <p className="text-xs text-slate-400 mb-2">
+          Payee + Category combinations detected in <strong>every one</strong> of the last <strong>{monthsBack} complete months</strong>,
+          projected forward at their average payment interval. Payees with explicit scheduled entries are excluded to avoid double-counting.
+        </p>
+        {recurring.length === 0 ? (
+          <p className="text-sm text-slate-400">No recurring payments projected within this horizon.</p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Projected Date</th>
+                  <th className="px-3 py-2 text-left">Payee</th>
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-right">Est. Amount (€)</th>
+                  <th className="px-3 py-2 text-right">Interval (days)</th>
+                  <th className="px-3 py-2 text-left">Currency</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {recurring.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium text-blue-600">{String(r.payees_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">{String(r.avg_days_between)}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
     </div>
   )
 }
@@ -4848,7 +5012,7 @@ function SavingsRateTab() {
 }
 
 function BudgetSection() {
-  const [tab, setTab] = useState('Budget vs Actual')
+  const [tab, setTab] = usePersist('budget_tab', 'Budget vs Actual')
   return (
     <div>
       <SubTabs tabs={['Budget vs Actual', 'Spending Trends', 'Savings Rate']} active={tab} onChange={setTab} />
@@ -5394,7 +5558,7 @@ function DividendIncomeTaxTab() {
 }
 
 function TaxSection() {
-  const [tab, setTab] = useState('Capital Gains')
+  const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
   return (
     <div>
       <SubTabs tabs={['Capital Gains', 'Tax-Loss Harvesting', 'Dividend Income']} active={tab} onChange={setTab} />
@@ -5636,7 +5800,7 @@ function LoanAmortizationTab() {
 }
 
 function PlanningSection() {
-  const [tab, setTab] = useState('Goals')
+  const [tab, setTab] = usePersist('planning_tab', 'Goals')
   return (
     <div>
       <SubTabs tabs={['Goals', 'FIRE Calculator', 'Loan Amortization']} active={tab} onChange={setTab} />
@@ -6411,7 +6575,7 @@ function CustomReportsSection() {
 // ════════════════════════════════════════════════════════════════════════════
 export default function Reports() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') ?? 'net-worth')
+  const [activeTab, setActiveTab] = usePersist('reports_active_tab', searchParams.get('tab') ?? 'net-worth')
   const [startDate, setStartDate] = useState('2020-01-01')
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
   const current = REPORT_TABS.find(t => t.key === activeTab)
@@ -6433,7 +6597,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>

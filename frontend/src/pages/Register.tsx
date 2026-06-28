@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent } from 'ag-grid-community'
@@ -82,13 +83,6 @@ const PERIODS = [
   { label: 'All', from: () => '2000-01-01' },
 ]
 
-function usePersist<T>(key: string, defaultVal: T) {
-  const [val, setVal] = useState<T>(() => {
-    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : defaultVal } catch { return defaultVal }
-  })
-  const set = useCallback((v: T) => { setVal(v); try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key])
-  return [val, set] as const
-}
 
 // ── Register page ─────────────────────────────────────────────────────────────
 export default function Register() {

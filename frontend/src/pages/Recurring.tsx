@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getRecurringTemplates, getTemplateSplits, createRecurringTemplate,
@@ -638,7 +639,7 @@ function FromTransactionModal({ onCreated, onClose }: { onCreated: (id: number) 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Recurring() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'templates' | 'drafts'>('templates')
+  const [tab, setTab] = usePersist<'templates' | 'drafts'>('recurring_tab', 'templates')
   const [modalOpen, setModalOpen] = useState(false)
   const [fromTxOpen, setFromTxOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)

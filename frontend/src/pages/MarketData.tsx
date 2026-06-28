@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -1019,11 +1020,11 @@ function DownloadsTab() {
         </div>
       </div>
 
-      {/* OpenFIGI */}
+      {/* EODHD */}
       <div>
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">OpenFIGI</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">EODHD</p>
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
-          <ActionRow id="openfigi-isin" label="Fetch Missing ISINs" onClick={() => run('openfigi-isin', () => downloadIsin(sid))} />
+          <ActionRow id="eodhd-isin" label="Fetch Missing ISINs" onClick={() => run('eodhd-isin', () => downloadIsin(sid))} />
         </div>
       </div>
 
@@ -1381,8 +1382,7 @@ function AlertsTab() {
 
 export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const initialTab = searchParams.get('tab') ?? 'Currencies'
-  const [tab, setTab] = useState(initialTab)
+  const [tab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
   const [search, setSearch] = useState('')
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({

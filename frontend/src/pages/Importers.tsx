@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable,
@@ -2600,10 +2601,10 @@ const BROKERAGE_TABS = ['📊 Interactive Brokers', '💚 Revolut Trading', '�
 const QIF_TABS = ['📁 QIF Importer', '🔁 Transfer Issues']
 
 export default function Importers() {
-  const [section, setSection] = useState<'bank' | 'brokerage' | 'qif'>('bank')
-  const [bankTab, setBankTab] = useState(BANK_TABS[0])
-  const [brokerTab, setBrokerTab] = useState(BROKERAGE_TABS[0])
-  const [qifTab, setQifTab] = useState(QIF_TABS[0])
+  const [section, setSection] = usePersist<'bank' | 'brokerage' | 'qif'>('importers_section', 'bank')
+  const [bankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
+  const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
+  const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
 
   return (
     <div>

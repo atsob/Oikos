@@ -230,13 +230,13 @@ export function StatCard({ label, value, sub, color, subs }: {
 // ── Tooltip ────────────────────────────────────────────────────────────────────
 // Portal-based so it isn't clipped by table overflow or sticky headers.
 export function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const [pos, setPos] = useState<{ x: number; top: number; bottom: number } | null>(null)
   return (
     <span
       className="inline-flex items-center gap-0.5 cursor-help"
       onMouseEnter={e => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        setPos({ x: r.left + r.width / 2, y: r.top })
+        setPos({ x: r.left + r.width / 2, top: r.top, bottom: r.bottom })
       }}
       onMouseLeave={() => setPos(null)}
     >
@@ -244,7 +244,11 @@ export function Tooltip({ text, children }: { text: string; children: React.Reac
       <span className="ml-0.5 text-slate-400 text-[10px] leading-none">ⓘ</span>
       {pos && createPortal(
         <div
-          style={{ position: 'fixed', left: pos.x, top: pos.y - 8, transform: 'translate(-50%, -100%)', zIndex: 9999 }}
+          style={
+            pos.top > 160
+              ? { position: 'fixed', left: pos.x, top: pos.top - 8, transform: 'translate(-50%, -100%)', zIndex: 9999 }
+              : { position: 'fixed', left: pos.x, top: pos.bottom + 8, transform: 'translateX(-50%)', zIndex: 9999 }
+          }
           className="w-56 rounded bg-slate-800 px-2.5 py-1.5 text-xs text-white shadow-lg whitespace-normal text-center pointer-events-none"
         >
           {text}

@@ -459,7 +459,7 @@ function UpcomingBillsPanel() {
 // ── Unusual Transactions ──────────────────────────────────────────────────────
 function AnomaliesPanel() {
   const [days, setDays] = React.useState(30)
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = React.useState(true)
   const { data: anomalies = [], isLoading } = useQuery({
     queryKey: ['anomalies', days],
     queryFn: () => getAnomalies(days),

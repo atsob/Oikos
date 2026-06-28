@@ -139,6 +139,9 @@ export const saveBudget = (data: { year: number; categories_id: number; budget_a
 export const getCashFlowForecast = (monthsAhead = 6) =>
   api.get('/reports/cash-flow-forecast', { params: { months_ahead: monthsAhead } }).then(r => r.data)
 
+export const getCashFlowForecastFull = (days = 60, monthsBack = 2) =>
+  api.get('/reports/cash-flow-forecast-full', { params: { days, months_back: monthsBack } }).then(r => r.data)
+
 export const searchAllTransactions = (q: string, limit = 50) =>
   api.get('/register/search', { params: { q, limit } }).then(r => r.data)
 

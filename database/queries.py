@@ -1162,14 +1162,33 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
              GROUP BY hp.Securities_Id
         ),
         latest_only AS (
-            SELECT rp.*, yp.price_ytd_start 
+            SELECT rp.*, yp.price_ytd_start
             FROM ranked_prices rp
             LEFT JOIN ytd_prices yp ON rp.Securities_Id = yp.Securities_Id
             WHERE rp.rev_rank = 1
         ),
+        -- All 4 volatility windows in one GROUP BY scan instead of 4 correlated subqueries
+        volatility AS (
+            SELECT Securities_Id,
+                   ROUND((STDDEV(daily_ret) FILTER (WHERE Date > CURRENT_DATE - INTERVAL '1 month')   * SQRT(252) * 100)::numeric, 2) AS vol_1m_ann,
+                   ROUND((STDDEV(daily_ret) FILTER (WHERE Date > CURRENT_DATE - INTERVAL '3 months')  * SQRT(252) * 100)::numeric, 2) AS vol_3m_ann,
+                   ROUND((STDDEV(daily_ret) FILTER (WHERE Date > CURRENT_DATE - INTERVAL '12 months') * SQRT(252) * 100)::numeric, 2) AS vol_1y_ann,
+                   ROUND((STDDEV(daily_ret) FILTER (WHERE Date >= date_trunc('year', CURRENT_DATE))   * SQRT(252) * 100)::numeric, 2) AS vol_ytd_ann
+            FROM base_data
+            GROUP BY Securities_Id
+        ),
+        -- Latest FX rate per currency — replaces 2 correlated subqueries in recommendations
+        latest_fx AS (
+            SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+            FROM Historical_FX
+            WHERE Date <= CURRENT_DATE
+            ORDER BY Currencies_Id_1, Date DESC
+        ),
         performance_data AS (
-            SELECT 
-                lo.Securities_Id, Sec.Securities_Name, lo.price_today,
+            SELECT
+                lo.Securities_Id, Sec.Securities_Name,
+                lo.Date AS price_today_date,
+                lo.price_today,
                 ROUND(((lo.price_today / NULLIF(lo.price_1d, 0)) - 1) * 100, 2) as daily_chg_pct,
                 ROUND(((lo.price_today / NULLIF(lo.price_1w, 0)) - 1) * 100, 2) as weekly_chg_pct,
                 ROUND(((lo.price_today / NULLIF(lo.price_1m, 0)) - 1) * 100, 2) as monthly_chg_pct,
@@ -1178,14 +1197,12 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 ROUND(((lo.price_today / NULLIF(lo.price_1y, 0)) - 1) * 100, 2) as annual_chg_pct,
                 ROUND(((lo.price_today / NULLIF(lo.price_3y, 0)) - 1) * 100, 2) as triannual_chg_pct,
                 ROUND(((lo.price_today / NULLIF(lo.price_ytd_start, 0)) - 1) * 100, 2) as ytd_chg_pct,
-                (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2) FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id AND bd.Date > (lo.Date - INTERVAL '1 month')) as vol_1m_ann,
-                (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2) FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id AND bd.Date > (lo.Date - INTERVAL '3 months')) as vol_3m_ann,
-                (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2) FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id AND bd.Date > (lo.Date - INTERVAL '12 months')) as vol_1y_ann,
-                (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2) FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id AND bd.Date >= date_trunc('year', CURRENT_DATE)) as vol_ytd_ann
+                v.vol_1m_ann, v.vol_3m_ann, v.vol_1y_ann, v.vol_ytd_ann
             FROM latest_only lo
             JOIN Securities Sec ON lo.Securities_Id = Sec.Securities_Id
-            AND Sec.Is_Active
-            AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
+                AND Sec.Is_Active
+                AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
+            LEFT JOIN volatility v ON v.Securities_Id = lo.Securities_Id
         ),
         rfr AS (
             SELECT COALESCE(annual_chg_pct, 2.36) as value 
@@ -1208,7 +1225,8 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
             FROM investment_signals sig
             LEFT JOIN Holdings h ON sig.Securities_Id = h.Securities_Id
                 AND (%s IS NULL OR h.Accounts_Id = %s)
-			GROUP BY sig.Securities_Id, sig.Securities_Name, sig.price_today, sig.daily_chg_pct, sig.weekly_chg_pct,
+	        GROUP BY sig.Securities_Id, sig.Securities_Name, sig.price_today_date, sig.price_today,
+                     sig.daily_chg_pct, sig.weekly_chg_pct,
                      sig.monthly_chg_pct, sig.quarterly_chg_pct, sig.semiannual_chg_pct, sig.annual_chg_pct,
                      sig.triannual_chg_pct, sig.ytd_chg_pct, sig.vol_1m_ann, sig.vol_3m_ann, sig.vol_1y_ann,
                      sig.vol_ytd_ann, sig.quality_score, sig.sharpe_ratio
@@ -1216,10 +1234,9 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
         recommendations AS (
             SELECT
                 sig.*,
-                sig.market_value_base_curr * COALESCE((SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = sec.Currencies_Id AND Date <= CURRENT_DATE ORDER BY Date DESC LIMIT 1), 1) as current_value_eur,
+                sig.market_value_base_curr * COALESCE(fx.FX_Rate, 1) as current_value_eur,
                 CASE WHEN sig.total_cost_eur > 0 THEN
-                    sig.market_value_base_curr * COALESCE((SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = sec.Currencies_Id AND Date <= CURRENT_DATE ORDER BY Date DESC LIMIT 1), 1)
-                    - sig.total_cost_eur
+                    sig.market_value_base_curr * COALESCE(fx.FX_Rate, 1) - sig.total_cost_eur
                 ELSE NULL END as unrealized_pnl_eur,
                 sec.Analyst_Rating as wall_street_view,
                 sec.Analyst_Target_Price as target_price,
@@ -1240,6 +1257,7 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
             FROM portfolio_status sig
             JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
             LEFT JOIN range_3y r3 ON r3.Securities_Id = sig.Securities_Id
+            LEFT JOIN latest_fx fx ON fx.Currencies_Id_1 = sec.Currencies_Id
         )
         SELECT *,
             CASE
@@ -1265,8 +1283,7 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('buy', 'strong_buy')  THEN '🔬 WATCH: ANALYST BUY'
                 WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell', 'underperform') THEN '🔬 WATCH: ANALYST SELL'
                 ELSE recommendation_signal
-            END as final_signal,
-			(SELECT Date FROM Historical_Prices WHERE Securities_Id = recommendations.Securities_Id AND Date <= CURRENT_DATE ORDER BY Date DESC LIMIT 1) as price_today_date
+            END as final_signal
         FROM recommendations
         ORDER BY sharpe_ratio DESC;
     """

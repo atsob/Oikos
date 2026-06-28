@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -734,14 +735,6 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   )
 }
 
-// ── Persistent state (survives navigation to other pages) ─────────────────────
-function usePersist<T>(key: string, defaultVal: T) {
-  const [val, setVal] = useState<T>(() => {
-    try { const s = localStorage.getItem(key); return s !== null ? JSON.parse(s) : defaultVal } catch { return defaultVal }
-  })
-  const set = useCallback((v: T) => { setVal(v); try { localStorage.setItem(key, JSON.stringify(v)) } catch {} }, [key])
-  return [val, set] as const
-}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {

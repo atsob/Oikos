@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, CellValueChangedEvent, RowClickedEvent } from 'ag-grid-community'
@@ -1119,7 +1120,7 @@ function SecuritiesTab({ search }: { search: string }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function StaticData() {
-  const [tab, setTab] = useState('Payees')
+  const [tab, setTab] = usePersist('static_data_tab', 'Payees')
   const [search, setSearch] = useState('')
 
   return (

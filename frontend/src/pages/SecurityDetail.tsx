@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -1115,7 +1116,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       jobs.push(['tv-info', () => downloadTvInfo(secId, overwrite)])
       jobs.push(['tv-px',   () => downloadTvPrices('max', secId)])
     }
-    jobs.push(['openfigi-isin', () => downloadIsin(secId)])
+    jobs.push(['eodhd-isin', () => downloadIsin(secId)])
     for (const [key, fn] of jobs) await run(key, fn)
     setDownloadAllRunning(false)
   }
@@ -1176,10 +1177,10 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       )}
 
       <div>
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">OpenFIGI</p>
-        <p className="text-xs text-slate-400 mb-2">Looks up ISIN via Bloomberg's free OpenFIGI API when Yahoo Finance doesn't provide it.</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">EODHD</p>
+        <p className="text-xs text-slate-400 mb-2">Looks up ISIN via EODHD Fundamentals when Yahoo Finance doesn't provide it.</p>
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
-          <ActionRow id="openfigi-isin" label="Fetch ISIN" onClick={() => run('openfigi-isin', () => downloadIsin(secId))} />
+          <ActionRow id="eodhd-isin" label="Fetch ISIN" onClick={() => run('eodhd-isin', () => downloadIsin(secId))} />
         </div>
       </div>
     </div>
@@ -1193,7 +1194,7 @@ type Tab = typeof TABS[number]
 export default function SecurityDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('Setup')
+  const [tab, setTab] = usePersist<Tab>('security_detail_tab', 'Setup')
 
   const secId = Number(id)
 
