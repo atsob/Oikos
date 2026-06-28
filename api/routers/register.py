@@ -202,6 +202,34 @@ def create_transaction(tx: TransactionIn):
         conn.close()
 
 
+@router.get("/transactions/{tx_id}")
+def get_transaction(tx_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.transactions_id AS id,
+                   t.accounts_id,
+                   t.date::text AS date,
+                   t.description,
+                   t.total_amount,
+                   t.payees_id,
+                   t.is_draft,
+                   t.cleared,
+                   t.reconciled,
+                   t.accounts_id_target AS transfer_account_id
+            FROM Transactions t
+            WHERE t.transactions_id = %s
+        """, (tx_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "Transaction not found")
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+    finally:
+        conn.close()
+
+
 @router.put("/transactions/{tx_id}")
 def update_transaction(tx_id: int, data: dict[str, Any]):
     tx_allowed = {"date", "description", "total_amount", "payees_id", "cleared", "reconciled", "is_draft", "accounts_id_target"}

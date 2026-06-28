@@ -1,6 +1,7 @@
 """Market Data API endpoints: currencies, FX rates, securities, price history."""
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 import math
 import pandas as pd
 from database.connection import get_db
@@ -359,6 +360,17 @@ def download_tv_info(data: dict = {}):
         raise HTTPException(500, str(e))
 
 
+@router.post("/download/isin")
+def download_isin(data: dict = {}):
+    """Fetch missing ISINs from OpenFIGI."""
+    try:
+        from data.downloaders import download_isin_from_openfigi
+        download_isin_from_openfigi(target_sec_id=data.get("security_id"))
+        return {"ok": True, "message": "ISIN lookup complete"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/download/tv-prices")
 def download_tv_prices(data: dict = {}):
     """Download historical prices from TradingView."""
@@ -425,6 +437,33 @@ def add_fx_rate(data: dict):
     finally:
         conn.close()
 
+
+
+class BulkDeletePricesRequest(BaseModel):
+    security_id: int
+    dates: List[str]
+
+@router.delete("/prices/bulk")
+def delete_prices_bulk(payload: BulkDeletePricesRequest):
+    """Delete multiple historical price records in a single query."""
+    if not payload.dates:
+        return {"deleted": 0}
+    from database.connection import get_connection as _gc
+    conn = _gc()
+    try:
+        cur = conn.cursor()
+        placeholders = ','.join(['%s'] * len(payload.dates))
+        cur.execute(
+            f"DELETE FROM Historical_Prices WHERE Securities_Id=%s AND Date IN ({placeholders})",
+            [payload.security_id] + payload.dates,
+        )
+        conn.commit()
+        return {"deleted": cur.rowcount}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
 
 
 @router.delete("/prices")

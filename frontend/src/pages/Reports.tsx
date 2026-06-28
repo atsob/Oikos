@@ -21,12 +21,16 @@ import {
   getIncomeExpenseFull,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
   getCustomReportFilterData, runCustomReport, runCustomReportDrillDown, runCustomReportInvestmentDrillDown,
+  updateTransaction, upsertSplits, getSplits, getCategories, getPayees, deleteTransaction,
+  getTransactionById,
   api,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtPct, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Trash2, Plus, Check, X } from 'lucide-react'
+import { Trash2, Plus, Check, X, Pencil, RefreshCw } from 'lucide-react'
+import { TxModal, useNoOpRecurring } from '@/components/TxModal'
+import type { TxForm, SplitRow } from '@/components/TxModal'
 
 type Row = Record<string, unknown>
 
@@ -50,13 +54,13 @@ function usePersist<T>(key: string, defaultVal: T) {
 // ── Sidebar tabs ──────────────────────────────────────────────────────────────
 const REPORT_TABS = [
   { key: 'net-worth',       label: '📊 Net Worth' },
+  { key: 'income-expense',  label: '💰 Income & Expense' },
+  { key: 'cashflow',        label: '🔄 Cash Flow Forecast' },
+  { key: 'budget',          label: '🎯 Budget & Spending' },
   { key: 'inv-positions',   label: '📈 Inv. Positions' },
   { key: 'inv-performance', label: '💹 Inv. Performance' },
-  { key: 'securities',      label: '🔍 Securities Analysis' },
-  { key: 'income-expense',  label: '💰 Income & Expense' },
-  { key: 'cashflow',        label: '🔄 Cash Flow' },
-  { key: 'budget',          label: '🎯 Budget & Spending' },
   { key: 'tax',             label: '🧾 Investment Tax' },
+  { key: 'securities',      label: '🔍 Securities Analysis' },
   { key: 'planning',        label: '🏖️ Financial Planning' },
   { key: 'custom',          label: '📋 Custom Reports' },
 ]
@@ -3652,8 +3656,11 @@ function IEMultiSelect({ label, options, value, onChange }: {
   )
 }
 
+type IEDrillCell = { category: string; period: string } | null
+
 function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { startDate: string; endDate: string }) {
   const { isDark } = useTheme()
+  const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
   const ytdStart = `${new Date().getFullYear()}-01-01`
   const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
@@ -3667,9 +3674,118 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const [drillCat, setDrillCat] = useState<string>('All Categories')
   const [drillPayee, setDrillPayee] = useState<string>('All Payees')
 
+  // Committed params — query only runs when user clicks "Update"
+  const [qStart, setQStart] = useState(startDate)
+  const [qEnd, setQEnd] = useState(endDate)
+  const [qCash, setQCash] = useState<string[]>(cashTypes)
+  const [qInv, setQInv] = useState<string[]>(invTypes)
+  const isDirty = startDate !== qStart || endDate !== qEnd || cashTypes.join(',') !== qCash.join(',') || invTypes.join(',') !== qInv.join(',')
+  const commitParams = () => { setQStart(startDate); setQEnd(endDate); setQCash([...cashTypes]); setQInv([...invTypes]) }
+
+  // Drill-down state
+  const [drillCell, setDrillCell] = useState<IEDrillCell>(null)
+
+  // TxModal state (reuses Cash Register modal)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [modalForm, setModalForm] = useState<TxForm | null>(null)
+  const [modalSplits, setModalSplits] = useState<SplitRow[]>([])
+  const [modalUseSplits, setModalUseSplits] = useState(false)
+  const [modalSaving, setModalSaving] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
+  const recurring = useNoOpRecurring()
+
+  const { data: categoriesRaw = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const { data: payeesRaw = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: accountsRaw = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const categories = categoriesRaw as Record<string, unknown>[]
+  const payees = payeesRaw as Record<string, unknown>[]
+  const accounts = accountsRaw as Record<string, unknown>[]
+
+  const openEdit = async (r: Row) => {
+    if (!r.transaction_id) return
+    const txId = Number(r.transaction_id)
+    type ApiTx = { id: number; accounts_id: number; date: string; description: string | null; total_amount: number; payees_id: number | null; is_draft: boolean; cleared: boolean; reconciled: boolean; transfer_account_id: number | null }
+    type ApiSplit = { id: number; categories_id: number | null; category: string; amount: number; memo: string | null }
+    const [tx, txSplits] = await Promise.all([
+      getTransactionById(txId) as Promise<ApiTx>,
+      getSplits(txId) as Promise<ApiSplit[]>,
+    ])
+    const loadedSplits: SplitRow[] = txSplits.length > 0
+      ? txSplits.map(s => ({
+          categories_id: s.categories_id != null ? String(s.categories_id) : '',
+          amount: String(s.amount),
+          memo: s.memo ?? '',
+        }))
+      : [{ categories_id: '', amount: '0', memo: '' }]
+    const splitsTotal = txSplits.reduce((sum, s) => sum + (s.amount || 0), 0)
+    setModalForm({
+      id: txId,
+      accounts_id: tx.accounts_id,
+      date: String(tx.date ?? '').slice(0, 10),
+      description: tx.description ?? '',
+      total_amount: String(tx.total_amount ?? splitsTotal),
+      payees_id: tx.payees_id != null ? String(tx.payees_id) : '',
+      categories_id: loadedSplits[0]?.categories_id ?? '',
+      memo: loadedSplits[0]?.memo ?? '',
+      is_draft: Boolean(tx.is_draft),
+      cleared: Boolean(tx.cleared),
+      reconciled: Boolean(tx.reconciled),
+      is_transfer: tx.transfer_account_id != null,
+      transfer_account_id: tx.transfer_account_id != null ? String(tx.transfer_account_id) : '',
+    })
+    setModalSplits(loadedSplits)
+    setModalUseSplits(loadedSplits.length > 1)
+    setModalError(null)
+    setModalOpen(true)
+  }
+
+  const handleModalSave = async () => {
+    if (!modalForm?.id) return
+    setModalSaving(true); setModalError(null)
+    try {
+      const statusFields = { is_draft: modalForm.is_draft, cleared: modalForm.cleared, reconciled: modalForm.reconciled }
+      await updateTransaction(modalForm.id, {
+        date: modalForm.date,
+        description: modalForm.description || null,
+        total_amount: parseFloat(modalForm.total_amount),
+        payees_id: modalForm.payees_id ? Number(modalForm.payees_id) : null,
+        ...statusFields,
+      })
+      if (modalUseSplits) {
+        const validSplits = modalSplits.filter(s => s.amount !== '' && s.amount !== '0')
+        const splitsTotal = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+        const txTotal = parseFloat(modalForm.total_amount)
+        if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100))
+          throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        await upsertSplits(modalForm.id, validSplits.map(s => ({
+          categories_id: s.categories_id ? Number(s.categories_id) : null,
+          amount: parseFloat(s.amount),
+          memo: s.memo || null,
+        })))
+      } else {
+        await upsertSplits(modalForm.id, [{
+          categories_id: modalForm.categories_id ? Number(modalForm.categories_id) : null,
+          amount: parseFloat(modalForm.total_amount),
+          memo: modalForm.memo || null,
+        }])
+      }
+      await qc.refetchQueries({ queryKey: ['ie-full'], type: 'active' })
+      setModalOpen(false)
+    } catch (e: unknown) {
+      setModalError(e instanceof Error ? e.message : 'Save failed')
+    } finally { setModalSaving(false) }
+  }
+
+  const handleModalDelete = async () => {
+    if (!modalForm?.id || !confirm('Delete this transaction?')) return
+    await deleteTransaction(modalForm.id)
+    await qc.refetchQueries({ queryKey: ['ie-full'], type: 'active' })
+    setModalOpen(false)
+  }
+
   const { data: rawData = [], isLoading } = useQuery({
-    queryKey: ['ie-full', startDate, endDate, cashTypes.join(','), invTypes.join(',')],
-    queryFn: () => getIncomeExpenseFull(startDate, endDate, cashTypes, invTypes),
+    queryKey: ['ie-full', qStart, qEnd, qCash.join(','), qInv.join(',')],
+    queryFn: () => getIncomeExpenseFull(qStart, qEnd, qCash, qInv),
     staleTime: 60_000,
   })
 
@@ -3819,9 +3935,19 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <IEMultiSelect label="Investment Accounts" options={ALL_ACCOUNT_TYPES.filter(t => !cashTypes.includes(t))}
             value={invTypes} onChange={setInvTypes} />
         </div>
-        <button onClick={() => { setCashTypes(DEFAULT_CASH_TYPES); setInvTypes(DEFAULT_INV_TYPES) }}
+        <button onClick={() => {
+          setStartDate(ytdStart); setEndDate(today)
+          setReportType('Total Summary'); setPeriodType('Monthly')
+          setCashTypes(DEFAULT_CASH_TYPES); setInvTypes(DEFAULT_INV_TYPES)
+          setQStart(ytdStart); setQEnd(today); setQCash(DEFAULT_CASH_TYPES); setQInv(DEFAULT_INV_TYPES)
+        }}
           className="mt-4 px-3 py-1.5 text-xs bg-slate-100 text-slate-600 rounded hover:bg-slate-200 border border-slate-300">
           Reset Defaults
+        </button>
+        <button onClick={commitParams} disabled={!isDirty}
+          className={`mt-4 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border font-medium transition-colors ${isDirty ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700' : 'bg-slate-100 text-slate-400 border-slate-300 cursor-not-allowed'}`}>
+          <RefreshCw size={11} />
+          Update
         </button>
       </div>
 
@@ -3880,7 +4006,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
       <div className="border-t border-slate-200" />
 
       {/* Inner tabs */}
-      <SubTabs tabs={['Chart', 'Detailed Table', 'Trend Analysis', 'Top Categories', 'Top Payees']} active={ieTab} onChange={setIeTab} />
+      <SubTabs tabs={['Chart', 'Details', 'Trend Analysis', 'Top Categories', 'Top Payees']} active={ieTab} onChange={setIeTab} />
 
       {/* ── CHART TAB ── */}
       {ieTab === 'Chart' && (
@@ -3931,11 +4057,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
       )}
 
       {/* ── DETAILED TABLE TAB ── */}
-      {ieTab === 'Detailed Table' && (
-        <div>
-          <p className="text-sm font-semibold text-slate-700 mb-2">{reportType} — {periodType} Breakdown</p>
+      {ieTab === 'Details' && (
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-slate-700">{reportType} — {periodType} Breakdown</p>
+          <p className="text-xs text-slate-400">Click any period cell to drill down into the underlying transactions.</p>
           <WithCopy>
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50">
@@ -3950,7 +4077,17 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1 sticky left-0 bg-white font-medium">{r.category}</td>
                     <td className="px-2 py-1 text-slate-500">{r.cat_type}</td>
-                    {allPeriods.map(p => <td key={p} className={`px-2 py-1 text-right tabular-nums ${(r.periods[p] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.periods[p] ?? 0)}</td>)}
+                    {allPeriods.map(p => {
+                      const val = r.periods[p] ?? 0
+                      const isActive = drillCell?.category === r.category && drillCell?.period === p
+                      return (
+                        <td key={p}
+                          onClick={() => setDrillCell(isActive ? null : { category: r.category, period: p })}
+                          className={`px-2 py-1 text-right tabular-nums cursor-pointer rounded transition-colors ${isActive ? 'bg-blue-100 ring-1 ring-blue-400' : 'hover:bg-blue-50'} ${val >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {val !== 0 ? fmtEur(val) : ''}
+                        </td>
+                      )
+                    })}
                     <td className={`px-2 py-1 text-right tabular-nums font-semibold ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
                   </tr>
                 ))}
@@ -3958,6 +4095,59 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             </table>
           </div>
           </WithCopy>
+
+          {/* Drill-down panel */}
+          {drillCell && (() => {
+            const drillRows = rows.filter(r => String(r.category_full_path ?? '') === drillCell.category && getPeriodKey(String(r.date ?? ''), periodType) === drillCell.period)
+            const drillTotal = drillRows.reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+            return (
+              <div className="border border-blue-200 rounded-lg bg-blue-50">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-blue-200">
+                  <p className="text-xs font-semibold text-blue-800">{drillCell.category} — {drillCell.period} <span className="font-normal text-blue-600">({drillRows.length} transactions, total: {fmtEur(drillTotal)})</span></p>
+                  <button onClick={() => setDrillCell(null)} className="text-blue-400 hover:text-blue-600 text-xs">✕ Close</button>
+                </div>
+                <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead className="sticky top-0 bg-blue-50">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200 whitespace-nowrap">Date</th>
+                        <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200">Description</th>
+                        <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200">Payee</th>
+                        <th className="text-right px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200">Amount</th>
+                        <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200">Account</th>
+                        <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200">Source</th>
+                        <th className="px-2 py-1.5 border-b border-blue-200" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drillRows.map((r, i) => (
+                        <tr key={i} className="border-b border-blue-100 hover:bg-white">
+                          <td className="px-2 py-1 whitespace-nowrap">{String(r.date ?? '').slice(0, 10)}</td>
+                          <td className="px-2 py-1 max-w-[160px] truncate">{String(r.description ?? '')}</td>
+                          <td className="px-2 py-1">{String(r.payees_name ?? '')}</td>
+                          <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {Number(r.split_amount_original ?? r.split_amount) !== 0
+                              ? `${fmtEur(Number(r.split_amount_original ?? r.split_amount))} ${String(r.original_currency ?? 'EUR') !== 'EUR' ? `(${String(r.original_currency)})` : ''}`
+                              : ''}
+                          </td>
+                          <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                          <td className="px-2 py-1 text-slate-400">{String(r.source_type ?? '')}</td>
+                          <td className="px-2 py-1">
+                            {r.transaction_id && (
+                              <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
+                                <Pencil size={11} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -4065,24 +4255,32 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                   <table className="w-full border-collapse">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
+                      <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Payee</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
                       <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount (€)</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Source</th>
+                      <th className="px-2 py-1.5 border-b border-slate-200" />
                     </tr></thead>
                     <tbody>
                       {drillRows.map((r, i) => (
                         <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-2 py-1">{String(r.date ?? '').slice(0, 10)}</td>
+                          <td className="px-2 py-1 whitespace-nowrap">{String(r.date ?? '').slice(0, 10)}</td>
                           <td className="px-2 py-1 max-w-[180px] truncate">{String(r.description ?? '')}</td>
                           <td className="px-2 py-1">{String(r.payees_name ?? '')}</td>
                           <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
                           <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
                           <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
                           <td className="px-2 py-1 text-slate-500">{String(r.source_type ?? '')}</td>
+                          <td className="px-2 py-1">
+                            {r.transaction_id && (
+                              <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
+                                <Pencil size={11} />
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -4179,20 +4377,28 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                     <table className="w-full border-collapse">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Date</th>
+                        <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
                         <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Amount (€)</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Account</th>
+                        <th className="px-2 py-1.5 border-b border-slate-200" />
                       </tr></thead>
                       <tbody>
                         {drillRows.map((r, i) => (
                           <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                            <td className="px-2 py-1">{String(r.date ?? '').slice(0, 10)}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">{String(r.date ?? '').slice(0, 10)}</td>
                             <td className="px-2 py-1 max-w-[180px] truncate">{String(r.description ?? '')}</td>
                             <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
                             <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
                             <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                            <td className="px-2 py-1">
+                              {r.transaction_id && (
+                                <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
+                                  <Pencil size={11} />
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -4204,6 +4410,26 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             })()}
           </div>
         </div>
+      )}
+
+      {modalOpen && modalForm && (
+        <TxModal
+          form={modalForm}
+          splits={modalSplits}
+          useSplits={modalUseSplits}
+          setUseSplits={setModalUseSplits}
+          onFormChange={setModalForm}
+          onSplitsChange={setModalSplits}
+          payees={payees}
+          categories={categories}
+          accounts={accounts}
+          onSave={handleModalSave}
+          onDelete={handleModalDelete}
+          onClose={() => setModalOpen(false)}
+          saving={modalSaving}
+          error={modalError}
+          {...recurring}
+        />
       )}
     </div>
   )

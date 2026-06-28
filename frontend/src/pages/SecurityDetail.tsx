@@ -12,14 +12,14 @@ import {
 import { plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
-  getSecurities, getPriceHistory, addPrice, deletePrice,
+  getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityDividends,
   getSecurityCorporateActions, createCorporateAction, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices,
-  importPricesFromFile,
+  downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
+  importPricesFromFile, upsertSecurity, getCurrencies,
 } from '@/lib/api'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
@@ -113,10 +113,14 @@ function PricesTab({ secId }: { secId: number }) {
   const deleteSelected = async () => {
     const dates = [...selectedDates]
     setMsg(null)
-    for (const d of dates) await deletePrice(secId, d)
-    setSelectedDates([])
-    qc.invalidateQueries({ queryKey: ['price-history', secId] })
-    setMsg(`Deleted ${dates.length} record(s).`)
+    try {
+      await deletePricesBulk(secId, dates.map(d => d.trim()))
+      setSelectedDates([])
+      qc.invalidateQueries({ queryKey: ['price-history', secId] })
+      setMsg(`Deleted ${dates.length} record(s).`)
+    } catch (e) {
+      setMsg(`Error: ${(e as Error).message}`)
+    }
   }
 
   const isPending = addMut.isPending || delMut.isPending
@@ -910,6 +914,139 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   )
 }
 
+// ── Security Setup Tab ────────────────────────────────────────────────────────
+const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
+
+const EMPTY_SETUP = {
+  ticker: '', name: '', type: 'Stock', currencies_id: '', is_active: 'true', is_tax_exempt: 'false',
+  isin: '', sector: '', industry: '', yahoo_ticker: '', tv_symbol: '', tv_exchange: '',
+  maturity_date: '', coupon_rate: '', coupon_frequency: '', face_value: '',
+  dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
+  dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
+  analyst_rating: '', analyst_target_price: '',
+}
+
+function SetupField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
+function SetupSection({ children }: { children: React.ReactNode }) {
+  return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
+}
+
+function SecuritySetupTab({ security, onSaved }: { security: Record<string, unknown>; onSaved?: () => void }) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState<Record<string, string>>(() => ({
+    ...EMPTY_SETUP,
+    ...Object.fromEntries(Object.entries(security).map(([k, v]) => [k, v != null ? String(v) : ''])),
+  }))
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // Re-sync form when security data loads (first render may have empty security object)
+  const securityRef = React.useRef(security)
+  React.useEffect(() => {
+    if (security.id && security.id !== securityRef.current.id) {
+      securityRef.current = security
+      setForm({ ...EMPTY_SETUP, ...Object.fromEntries(Object.entries(security).map(([k, v]) => [k, v != null ? String(v) : ''])) })
+      setSaveMsg(null)
+    }
+  }, [security])
+
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSave = async () => {
+    setSaving(true); setSaveMsg(null)
+    try {
+      await upsertSecurity({ ...form, id: form.id ? Number(form.id) : undefined, currencies_id: form.currencies_id ? Number(form.currencies_id) : null })
+      qc.invalidateQueries({ queryKey: ['securities'] })
+      setSaveMsg({ ok: true, text: 'Security saved.' })
+      onSaved?.()
+    } catch (e) {
+      const err = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (e instanceof Error ? e.message : 'Save failed')
+      setSaveMsg({ ok: false, text: String(err) })
+    } finally { setSaving(false) }
+  }
+
+  const BoolSelect = ({ k, label }: { k: string; label: string }) => (
+    <SetupField label={label}>
+      <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form[k] ?? 'false'} onChange={e => set(k, e.target.value)}>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </SetupField>
+  )
+
+  return (
+    <div className="p-5 max-w-4xl space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <SetupSection>Identity</SetupSection>
+        <SetupField label="Ticker *"><Input value={form.ticker} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
+        <div className="col-span-2">
+          <SetupField label="Name *"><Input value={form.name} onChange={e => set('name', e.target.value)} /></SetupField>
+        </div>
+        <SetupField label="Type *">
+          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type} onChange={e => set('type', e.target.value)}>
+            {SECURITY_TYPES.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </SetupField>
+        <SetupField label="Currency">
+          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.currencies_id} onChange={e => set('currencies_id', e.target.value)}>
+            <option value="">— select —</option>
+            {(currencies as Record<string,unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>)}
+          </select>
+        </SetupField>
+        <SetupField label="ISIN"><Input value={form.isin} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" className="font-mono" /></SetupField>
+        <BoolSelect k="is_active" label="Is Active" />
+        <BoolSelect k="is_tax_exempt" label="Tax Exempt" />
+        <SetupField label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></SetupField>
+        <SetupField label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></SetupField>
+
+        <SetupSection>Data Sources</SetupSection>
+        <SetupField label="Yahoo Ticker"><Input value={form.yahoo_ticker} onChange={e => set('yahoo_ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
+        <SetupField label="TV Symbol"><Input value={form.tv_symbol} onChange={e => set('tv_symbol', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
+        <SetupField label="TV Exchange"><Input value={form.tv_exchange} onChange={e => set('tv_exchange', e.target.value)} placeholder="NASDAQ" /></SetupField>
+
+        <SetupSection>Fixed Income</SetupSection>
+        <SetupField label="Maturity Date"><Input type="date" value={form.maturity_date} onChange={e => set('maturity_date', e.target.value)} /></SetupField>
+        <SetupField label="Coupon Rate %"><Input type="number" step="0.001" value={form.coupon_rate} onChange={e => set('coupon_rate', e.target.value)} placeholder="0.000" /></SetupField>
+        <SetupField label="Coupon Frequency"><Input value={form.coupon_frequency} onChange={e => set('coupon_frequency', e.target.value)} placeholder="Annual" /></SetupField>
+        <SetupField label="Face Value"><Input type="number" step="0.01" value={form.face_value} onChange={e => set('face_value', e.target.value)} placeholder="1000.00" /></SetupField>
+
+        <SetupSection>Dividends</SetupSection>
+        <SetupField label="Dividend Yield %"><Input type="number" step="0.0001" value={form.dividend_yield} onChange={e => set('dividend_yield', e.target.value)} placeholder="0.0000" /></SetupField>
+        <SetupField label="Dividend Rate"><Input type="number" step="0.0001" value={form.dividend_rate} onChange={e => set('dividend_rate', e.target.value)} placeholder="0.0000" /></SetupField>
+        <SetupField label="Dividend Frequency"><Input value={form.dividend_frequency} onChange={e => set('dividend_frequency', e.target.value)} placeholder="Quarterly" /></SetupField>
+        <SetupField label="Ex-Dividend Date"><Input type="date" value={form.ex_dividend_date} onChange={e => set('ex_dividend_date', e.target.value)} /></SetupField>
+        <SetupField label="Dividend Pay Date"><Input type="date" value={form.dividend_pay_date} onChange={e => set('dividend_pay_date', e.target.value)} /></SetupField>
+        <SetupField label="Payout Ratio %"><Input type="number" step="0.01" value={form.payout_ratio} onChange={e => set('payout_ratio', e.target.value)} placeholder="0.00" /></SetupField>
+        <SetupField label="5Y Avg Yield %"><Input type="number" step="0.0001" value={form.five_year_avg_yield} onChange={e => set('five_year_avg_yield', e.target.value)} placeholder="0.0000" /></SetupField>
+
+        <SetupSection>Analyst</SetupSection>
+        <SetupField label="Rating"><Input value={form.analyst_rating} onChange={e => set('analyst_rating', e.target.value)} placeholder="Buy" /></SetupField>
+        <SetupField label="Target Price"><Input type="number" step="0.01" value={form.analyst_target_price} onChange={e => set('analyst_target_price', e.target.value)} placeholder="0.00" /></SetupField>
+      </div>
+
+      <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+        <Button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.ticker?.trim()}>
+          <Save size={14} /> {saving ? 'Saving…' : 'Save Changes'}
+        </Button>
+        {saveMsg && (
+          <span className={`text-xs px-3 py-1.5 rounded ${saveMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+            {saveMsg.text}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Downloads Tab ─────────────────────────────────────────────────────────────
 const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']
 
@@ -978,6 +1115,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       jobs.push(['tv-info', () => downloadTvInfo(secId, overwrite)])
       jobs.push(['tv-px',   () => downloadTvPrices('max', secId)])
     }
+    jobs.push(['openfigi-isin', () => downloadIsin(secId)])
     for (const [key, fn] of jobs) await run(key, fn)
     setDownloadAllRunning(false)
   }
@@ -1036,18 +1174,26 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <span className="font-semibold text-slate-500">TradingView</span> — not configured. Set a <span className="font-mono">TV Symbol</span> and <span className="font-mono">TV Exchange</span> on this security to enable these downloads.
         </div>
       )}
+
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">OpenFIGI</p>
+        <p className="text-xs text-slate-400 mb-2">Looks up ISIN via Bloomberg's free OpenFIGI API when Yahoo Finance doesn't provide it.</p>
+        <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+          <ActionRow id="openfigi-isin" label="Fetch ISIN" onClick={() => run('openfigi-isin', () => downloadIsin(secId))} />
+        </div>
+      </div>
     </div>
   )
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'Downloads'] as const
+const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'Downloads'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<Tab>('Prices')
+  const [tab, setTab] = useState<Tab>('Setup')
 
   const secId = Number(id)
 
@@ -1111,6 +1257,7 @@ export default function SecurityDetail() {
             </div>
 
             <CardBody className="p-0">
+              {tab === 'Setup' && <SecuritySetupTab security={security} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}
               {tab === 'Investment Transactions' && <InvestmentTransactionsTab secId={secId} security={security} />}
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}

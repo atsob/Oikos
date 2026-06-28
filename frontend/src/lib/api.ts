@@ -54,6 +54,9 @@ export const deleteDraft = (id: number) =>
 export const getTransactions = (params: Record<string, unknown>) =>
   api.get('/register/transactions', { params }).then(r => r.data)
 
+export const getTransactionById = (id: number) =>
+  api.get(`/register/transactions/${id}`).then(r => r.data)
+
 export const createTransaction = (data: Record<string, unknown>) =>
   api.post('/register/transactions', data).then(r => r.data)
 
@@ -243,6 +246,9 @@ export const downloadYahooPrices = (period: string, securityId?: number) =>
 export const downloadTvInfo = (securityId?: number, overwrite = false) =>
   api.post('/market-data/download/tv-info', { overwrite, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 
+export const downloadIsin = (securityId?: number) =>
+  api.post('/market-data/download/isin', securityId ? { security_id: securityId } : {}).then(r => r.data)
+
 export const downloadTvPrices = (period: string, securityId?: number) =>
   api.post('/market-data/download/tv-prices', { period, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 
@@ -275,6 +281,9 @@ export const addPrice = (data: { security_id: number; date: string; close: numbe
 
 export const deletePrice = (security_id: number, date: string) =>
   api.delete('/market-data/prices', { params: { security_id, date } }).then(r => r.data)
+
+export const deletePricesBulk = (security_id: number, dates: string[]) =>
+  api.delete('/market-data/prices/bulk', { data: { security_id, dates } }).then(r => r.data)
 
 export const addFxRate = (data: { currency_id: number; date: string; rate: number }) =>
   api.post('/market-data/fx', data).then(r => r.data)

@@ -6,7 +6,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -1016,6 +1016,14 @@ function DownloadsTab() {
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
           <ActionRow id="tv-info" label={`Update Securities Info${overwrite ? ' (overwrite)' : ''}`} onClick={() => run('tv-info', () => downloadTvInfo(sid, overwrite))} />
           <ActionRow id="tv-px"   label={`Download Prices (${period})`} onClick={() => run('tv-px', () => downloadTvPrices(period, sid))} />
+        </div>
+      </div>
+
+      {/* OpenFIGI */}
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">OpenFIGI</p>
+        <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+          <ActionRow id="openfigi-isin" label="Fetch Missing ISINs" onClick={() => run('openfigi-isin', () => downloadIsin(sid))} />
         </div>
       </div>
 

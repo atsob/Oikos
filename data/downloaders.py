@@ -1211,6 +1211,129 @@ def download_securities_info_from_tradingview(target_sec_id=None, overwrite=Fals
         conn.close()
 
 
+# Maps TradingView exchange codes → OpenFIGI exchCode
+_TV_TO_OPENFIGI_EXCH: dict[str, str] = {
+    "NASDAQ":   "UQ",
+    "NYSE":     "UN",
+    "AMEX":     "UA",
+    "ATHEX":    "AT",
+    "BME":      "SM",
+    "XETR":     "GY",
+    "FWB":      "GY",
+    "TSX":      "CT",
+    "VIE":      "AV",
+    "EURONEXT": "FP",
+    "LSE":      "LN",
+    "SWB":      "GY",
+}
+
+
+def download_isin_from_openfigi(target_sec_id=None):
+    """Fetch ISIN from OpenFIGI for securities that are missing it.
+
+    Uses the free OpenFIGI /v3/mapping endpoint (no API key needed for up to
+    25 requests/minute).  Each request covers a batch of 10 securities.
+    TV_Exchange is mapped to OpenFIGI exchCode where possible to narrow the
+    match; securities with no matching exchange are looked up without it.
+
+    Only fills NULL/empty ISIN slots — never overwrites an existing value.
+    """
+    OPENFIGI_URL = "https://api.openfigi.com/v3/mapping"
+    BATCH = 10
+
+    conn = get_connection()
+    cur  = conn.cursor()
+    try:
+        sql = """
+            SELECT Securities_Id, Securities_Name,
+                   COALESCE(NULLIF(Yahoo_Ticker,''), NULLIF(TV_Symbol,'')) AS ticker,
+                   TV_Exchange
+            FROM   Securities
+            WHERE  COALESCE(NULLIF(Yahoo_Ticker,''), NULLIF(TV_Symbol,'')) IS NOT NULL
+              AND  (ISIN IS NULL OR ISIN = '')
+        """
+        params = []
+        if target_sec_id:
+            sql += " AND Securities_Id = %s"
+            params.append(int(target_sec_id))
+        sql += " ORDER BY Securities_Name"
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+        if not rows:
+            print("OpenFIGI: no securities need ISIN lookup.")
+            logging.info("OpenFIGI: no securities need ISIN lookup.")
+            return
+
+        print(f"OpenFIGI: looking up ISIN for {len(rows)} securities…")
+        logging.info(f"OpenFIGI: ISIN lookup for {len(rows)} securities")
+
+        isin_updates = []
+
+        for i in range(0, len(rows), BATCH):
+            batch = rows[i : i + BATCH]
+            jobs = []
+            for _sec_id, _sec_name, ticker, tv_exchange in batch:
+                job: dict = {"idType": "TICKER", "idValue": ticker, "marketSecDes": "Equity"}
+                exch = _TV_TO_OPENFIGI_EXCH.get(tv_exchange or "")
+                if exch:
+                    job["exchCode"] = exch
+                jobs.append(job)
+
+            try:
+                resp = requests.post(
+                    OPENFIGI_URL,
+                    json=jobs,
+                    headers={"Content-Type": "application/json"},
+                    timeout=15,
+                )
+                if resp.status_code == 429:
+                    print("  OpenFIGI rate limit hit — waiting 60s…")
+                    time.sleep(60)
+                    continue
+                if resp.status_code != 200:
+                    logging.warning(f"OpenFIGI HTTP {resp.status_code}: {resp.text[:200]}")
+                    continue
+                results = resp.json()
+            except Exception as e:
+                logging.warning(f"OpenFIGI request error: {e}")
+                continue
+
+            for j, result in enumerate(results):
+                sec_id, sec_name, ticker, _ = batch[j]
+                if "error" in result or not result.get("data"):
+                    continue
+                for item in result["data"]:
+                    raw_isin = item.get("isin") or item.get("ISIN") or ""
+                    if isinstance(raw_isin, str) and len(raw_isin.strip()) == 12:
+                        isin = raw_isin.strip().upper()
+                        print(f"  {sec_name} ({ticker}): ISIN={isin}")
+                        logging.info(f"OpenFIGI {sec_name}: ISIN={isin}")
+                        isin_updates.append((isin, sec_id))
+                        break  # first valid result wins
+
+            time.sleep(0.5)  # stay well within rate limit
+
+        if isin_updates:
+            cur.executemany(
+                "UPDATE Securities SET ISIN=%s WHERE Securities_Id=%s AND (ISIN IS NULL OR ISIN='')",
+                isin_updates,
+            )
+            conn.commit()
+            print(f"OpenFIGI: {len(isin_updates)} ISIN(s) written.")
+            logging.info(f"OpenFIGI: {len(isin_updates)} ISIN(s) written.")
+        else:
+            print("OpenFIGI: no ISINs found in response.")
+            logging.info("OpenFIGI: no ISINs found.")
+
+    except Exception as e:
+        print(f"Error in download_isin_from_openfigi: {e}")
+        logging.error(f"OpenFIGI ISIN error: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
 def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=None):
     """Download and upsert historical daily prices from TradingView into DB.
 

@@ -1945,7 +1945,14 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
             a.accounts_name,
             a.accounts_type,
             NULL as payees_name,
-            'Realized P&L' as source_type
+            'Realized P&L' as source_type,
+            NULL::integer as transaction_id,
+            NULL::integer as split_id,
+            NULL::integer as payees_id,
+            NULL::numeric as total_amount,
+            NULL::boolean as is_draft,
+            NULL::boolean as cleared,
+            NULL::boolean as reconciled
         FROM RealizedPNL rp
         JOIN Accounts a ON rp.Accounts_Id = a.Accounts_Id
     ),
@@ -1975,7 +1982,14 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
             a.accounts_name,
             a.accounts_type,
             p.payees_name,
-            'Bank' as source_type
+            'Bank' as source_type,
+            t.transactions_id as transaction_id,
+            s.splits_id as split_id,
+            t.payees_id,
+            t.total_amount,
+            t.is_draft,
+            t.cleared,
+            t.reconciled
         FROM Transactions t
         JOIN Splits s ON t.transactions_id = s.transactions_id
         JOIN CategoryHierarchy ch ON s.categories_id = ch.Categories_Id
@@ -2040,7 +2054,14 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
             a.accounts_name,
             a.accounts_type,
             NULL as payees_name,
-            'Investment' as source_type
+            'Investment' as source_type,
+            NULL::integer as transaction_id,
+            NULL::integer as split_id,
+            NULL::integer as payees_id,
+            NULL::numeric as total_amount,
+            NULL::boolean as is_draft,
+            NULL::boolean as cleared,
+            NULL::boolean as reconciled
         FROM Investments t
         JOIN Accounts a ON t.accounts_id = a.accounts_id
         JOIN Currencies curr ON a.currencies_id = curr.currencies_id
@@ -2093,7 +2114,14 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
                 ELSE 'Expense'::text 
             END
         ) as Categories_Type,
-        COALESCE(c.Level, 0) as category_level
+        COALESCE(c.Level, 0) as category_level,
+        td.transaction_id,
+        td.split_id,
+        td.payees_id,
+        td.total_amount,
+        td.is_draft,
+        td.cleared,
+        td.reconciled
     FROM TransactionData td
     LEFT JOIN CategoryHierarchy c ON td.categories_id = c.Categories_Id
     """
