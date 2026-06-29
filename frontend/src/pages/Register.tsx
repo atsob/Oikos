@@ -80,7 +80,7 @@ const PERIODS = [
   { label: '3M', from: () => monthsAgo(3) },
   { label: '6M', from: () => monthsAgo(6) },
   { label: 'YTD', from: ytdStart },
-  { label: 'All', from: () => '2000-01-01' },
+  { label: 'All', from: () => '1900-01-01' },
 ]
 
 

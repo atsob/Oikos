@@ -27,7 +27,7 @@ import {
   api,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
-import { fmtEur, fmtPct, plotLayout, plotAxis } from '@/lib/utils'
+import { fmtEur, fmtPct, fmtNum, fmtQty, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Check, X, Pencil, RefreshCw } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
@@ -834,7 +834,7 @@ function FxExposureTab() {
             {fxSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 font-mono font-medium">{String(r.currency)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.native_exposure).toLocaleString('el-GR', { maximumFractionDigits: 2 })}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.native_exposure), 2)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.eur_exposure))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-amber-600">{fmtEur(Number(r.sensitivity_5pct_eur))}</td>
               </tr>
@@ -1082,8 +1082,8 @@ function AllocationReport() {
                       <td className="px-2 py-1.5 text-slate-500">{String(r.type)}</td>
                       <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                       <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.qty).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.qty), 4)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.price), 4)}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.weight_pct).toFixed(2)}%</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.type_actual_pct).toFixed(2)}%</td>
@@ -1143,8 +1143,8 @@ function HoldingsSnapshotTab() {
                 <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
                 <td className="px-2 py-1.5 font-mono text-slate-500 text-xs"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.last_price ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.last_price ?? 0), 4)}</td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.value_eur ?? 0))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{total > 0 ? (Number(r.value_eur ?? 0) / total * 100).toFixed(1) + '%' : '—'}</td>
@@ -1215,8 +1215,8 @@ function DetailAnalysisTab({ asOf }: { asOf: string }) {
               <td className="px-2 py-1.5 font-mono text-slate-400 text-xs">{String(r.ticker ?? '—')}</td>
               <td className="px-2 py-1.5 text-slate-500">{String(r.type ?? '—')}</td>
               <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 8 })}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 8)}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.price), 4)}</td>
               <td className="px-2 py-1.5 text-slate-400 text-xs">{String(r.price_date ?? '—')}</td>
               <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.value_eur))}</td>
             </tr>
@@ -1430,8 +1430,8 @@ function PnlReport() {
                   {sortedDrill.map((r, i) => (
                     <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
                       <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? Number(r.qty_today).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? `${Number(r.price_today).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${r.currency ?? ''}` : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? `${fmtNum(Number(r.price_today), 4)} ${r.currency ?? ''}` : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
                       <PnlCell val={Number(r[pk] ?? 0)} pct={showPct && pctKey(win) ? Number(r[pctKey(win)!] ?? 0) : null} />
                       {showFxSplit && mktKey && <><PnlCell val={Number(r[mktKey] ?? 0)} /><PnlCell val={fxKey ? Number(r[fxKey] ?? 0) : 0} /></>}
@@ -1753,8 +1753,8 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
                 <KpiCard label="Sharpe Ratio"       value={d.sharpe.toFixed(2)}  color={d.sharpe >= 1 ? 'text-green-700' : d.sharpe < 0 ? 'text-red-600' : ''} tooltip="Excess return over the 3% risk-free rate, divided by total volatility. Above 1.0 is good; above 2.0 is excellent." />
                 <KpiCard label="Sortino Ratio"      value={d.sortino.toFixed(2)} color={d.sortino >= 1 ? 'text-green-700' : d.sortino < 0 ? 'text-red-600' : ''} tooltip="Like Sharpe but only penalises downside volatility, ignoring upside swings. Better metric when return distribution is positively skewed." />
                 <KpiCard label="Max Drawdown"       value={`${d.max_drawdown_pct.toFixed(2)}%`} color="text-red-600" tooltip="Largest peak-to-trough decline in portfolio value during the selected lookback period." />
-                <KpiCard label="VaR 95% (daily)"    value={`${d.var_95_pct.toFixed(2)}%  ·  € ${d.var_95_eur.toLocaleString()}`}  color="text-amber-600" tooltip="Value at Risk: on a typical day, there is only a 5% chance of losing more than this amount. Shown as % and EUR at current portfolio value." />
-                <KpiCard label="CVaR 95% (daily)"   value={`${d.cvar_95_pct.toFixed(2)}%  ·  € ${d.cvar_95_eur.toLocaleString()}`} color="text-amber-600" tooltip="Conditional VaR (Expected Shortfall): average loss on the worst 5% of days. A more conservative tail-risk measure than plain VaR." />
+                <KpiCard label="VaR 95% (daily)"    value={`${d.var_95_pct.toFixed(2)}%  ·  € ${d.var_95fmtNum(_eur, 0)}`}  color="text-amber-600" tooltip="Value at Risk: on a typical day, there is only a 5% chance of losing more than this amount. Shown as % and EUR at current portfolio value." />
+                <KpiCard label="CVaR 95% (daily)"   value={`${d.cvar_95_pct.toFixed(2)}%  ·  € ${d.cvar_95fmtNum(_eur, 0)}`} color="text-amber-600" tooltip="Conditional VaR (Expected Shortfall): average loss on the worst 5% of days. A more conservative tail-risk measure than plain VaR." />
                 <KpiCard label="Beta"               value={d.beta  != null ? d.beta.toFixed(2)   : '—'} subtitle={benchSecId ? bms.find(b => b.id === benchSecId)?.name as string : undefined} tooltip="Sensitivity of your portfolio's returns to the chosen benchmark. Beta > 1 means the portfolio amplifies benchmark moves; < 1 means it dampens them." />
                 <KpiCard label="Alpha (annualised)" value={d.alpha != null ? `${d.alpha.toFixed(2)}%` : '—'} color={d.alpha != null ? (d.alpha > 0 ? 'text-green-700' : 'text-red-600') : ''} tooltip="Jensen's Alpha: annualised excess return above what CAPM predicts given your Beta. Positive = genuine outperformance after adjusting for market risk." />
               </div>
@@ -1782,7 +1782,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
                     config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
                   {d.portfolio_value > 0 && (
                     <p className="text-xs text-slate-400 mt-1">
-                      Returns are value-weighted by current position size (total: € {d.portfolio_value.toLocaleString()}). VaR/CVaR EUR figures assume this portfolio size.
+                      Returns are value-weighted by current position size (total: € {fmtNum(d.portfolio_value, 0)}). VaR/CVaR EUR figures assume this portfolio size.
                     </p>
                   )}
                 </div>
@@ -2598,10 +2598,10 @@ function SavingsAccountsTab() {
                     <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
                     <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
                     <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.principal ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{Number(r.total_interest ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{Number(r.annual_interest_cash ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{Number(r.current_balance ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.principal ?? 0), 2)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.annual_interest_cash ?? 0), 2)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtNum(Number(r.current_balance ?? 0), 2)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_total)}</td>
@@ -2639,9 +2639,9 @@ function SavingsAccountsTab() {
                     <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
                     <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
                     <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? Number(r.avg_principal_last).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{r.last_interest_sum != null ? Number(r.last_interest_sum).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.annual_interest_cash_last != null ? Number(r.annual_interest_cash_last).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{r.last_interest_sum != null ? fmtNum(Number(r.last_interest_sum), 2) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.annual_interest_cash_last != null ? fmtNum(Number(r.annual_interest_cash_last), 2) : '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct_last)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct_last)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_last)}</td>
@@ -2708,8 +2708,8 @@ function BondScheduleTab() {
               {bondSorted.map((r, i) => (
                 <tr key={i} className="hover:bg-slate-50">
                   <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                  <td className="px-3 py-2 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{Number(r.face_value ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.face_value ?? 0), 2)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.total_face_eur ?? 0))}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.coupon_rate != null ? `${Number(r.coupon_rate).toFixed(2)}%` : '—'}</td>
                   <td className="px-3 py-2 text-right">{String(r.coupon_frequency ?? '—')}</td>
@@ -3075,7 +3075,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
           <div className="grid grid-cols-5 gap-3">
             {result.probabilities.map(p => (
               <div key={p.target} className="bg-slate-50 rounded-lg p-3 text-center">
-                <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Probability that the portfolio reaches €${p.target.toLocaleString()} within ${yearsAhead} years across ${numSims} simulated scenarios.`}>€{p.target.toLocaleString()}</Tooltip></p>
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Probability that the portfolio reaches €${fmtNum(p.target, 0)} within ${yearsAhead} years across ${numSims} simulated scenarios.`}>€{fmtNum(p.target, 0)}</Tooltip></p>
                 <p className="text-lg font-bold">{p.probability_pct.toFixed(1)}%</p>
               </div>
             ))}
@@ -3543,16 +3543,16 @@ function PortfolioActionSignalsTab() {
                       {r.quality_score != null ? Number(r.quality_score).toFixed(2) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.price_today != null ? Number(r.price_today).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                      {r.price_today != null ? fmtNum(Number(r.price_today), 4) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.high_3y != null ? Number(r.high_3y).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                      {r.high_3y != null ? fmtNum(Number(r.high_3y), 4) : '—'}
                     </td>
                     <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_high_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {r.pct_from_high_3y != null ? `${Number(r.pct_from_high_3y) >= 0 ? '+' : ''}${Number(r.pct_from_high_3y).toFixed(2)}%` : '—'}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.low_3y != null ? Number(r.low_3y).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                      {r.low_3y != null ? fmtNum(Number(r.low_3y), 4) : '—'}
                     </td>
                     <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_low_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {r.pct_from_low_3y != null ? `${Number(r.pct_from_low_3y) >= 0 ? '+' : ''}${Number(r.pct_from_low_3y).toFixed(2)}%` : '—'}
@@ -3806,7 +3806,6 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
 
   const bankTotal = allRows.filter(r => r.source_type === 'Bank').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
   const invTotal = allRows.filter(r => r.source_type === 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
-
   // Pivot rows by period
   type PivotRow = { category: string; cat_type: string; periods: Record<string, number>; total: number }
   const pivotMap = useMemo<PivotRow[]>(() => {
@@ -5053,8 +5052,8 @@ function CgTable({ rows }: { rows: Row[] }) {
                 <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
                 <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
                 <td className="px-2 py-1.5 text-slate-600">{String(r.account)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 })}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.sell_price ?? 0).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.sell_price ?? 0), 4)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.avg_cost ?? 0))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.proceeds_eur ?? 0))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_eur ?? 0))}</td>
@@ -5157,7 +5156,7 @@ function CapitalGainsReport() {
             <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2">
               <span className="text-green-700 text-sm font-medium">
                 ✅ <strong>{dExempt.length} tax-exempt sale(s) excluded</strong>{' '}
-                (€ {sum(dExempt) >= 0 ? '+' : ''}{sum(dExempt).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net G/L) — shown in expander below.
+                (€ {sum(dExempt) >= 0 ? '+' : ''}{fmtNum(sum(dExempt), 2)} net G/L) — shown in expander below.
               </span>
             </div>
           )}
@@ -5166,19 +5165,19 @@ function CapitalGainsReport() {
           <div className="flex flex-wrap gap-3">
             <CgMetric
               label="🟢 Cat 1 Net G/L — Real Shares"
-              value={`€ ${netCat1 >= 0 ? '+' : ''}${netCat1.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={`€ ${netCat1 >= 0 ? '+' : ''}${fmtNum(netCat1, 2)}`}
               color={netCat1 >= 0 ? 'text-green-700' : 'text-red-600'}
               help="Direct equity / UCITS positions — 0% CGT in Greece."
             />
             <CgMetric
               label="🔴 Cat 2+3 Net G/L — Derivatives"
-              value={`€ ${netDeriv >= 0 ? '+' : ''}${netDeriv.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={`€ ${netDeriv >= 0 ? '+' : ''}${fmtNum(netDeriv, 2)}`}
               color={netDeriv >= 0 ? 'text-green-700' : 'text-red-600'}
               help="CFDs and precious-metal FX spots — taxed at the rate shown."
             />
             <CgMetric
               label={`Est. Derivatives Tax @ ${taxRate}%`}
-              value={`€ ${taxEst.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={`€ ${fmtNum(taxEst, 2)}`}
               color="text-slate-700"
               help="Only on net positive derivative gains. Category 1 is always 0%."
             />
@@ -5200,7 +5199,7 @@ function CapitalGainsReport() {
               const l1  = dCat1.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const st1 = dCat1.filter(r => r.holding_type === 'Short-term').reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const lt1 = dCat1.filter(r => r.holding_type === 'Long-term').reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
-              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${fmtNum(n, 2)}`
               return (
                 <>
                   <div className="flex flex-wrap gap-2">
@@ -5239,7 +5238,7 @@ function CapitalGainsReport() {
               const g2 = dCat2.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const l2 = dCat2.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const n2 = sum(dCat2)
-              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${fmtNum(n, 2)}`
               return (
                 <>
                   <div className="flex flex-wrap gap-2">
@@ -5271,7 +5270,7 @@ function CapitalGainsReport() {
               const g3 = dCat3.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const l3 = dCat3.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
               const n3 = sum(dCat3)
-              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${fmtNum(n, 2)}`
               return (
                 <>
                   <div className="flex flex-wrap gap-2">
@@ -5305,15 +5304,15 @@ function CapitalGainsReport() {
                     <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[160px]">
                       <div className="text-xs text-slate-500">{label}</div>
                       <div className={`font-semibold tabular-nums text-sm ${color}`}>
-                        € {val >= 0 && label !== `Est. Tax @ ${taxRate}%` ? '+' : ''}{val.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        € {val >= 0 && label !== `Est. Tax @ ${taxRate}%` ? '+' : ''}{fmtNum(val, 2)}
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className={`rounded-lg px-4 py-3 text-sm ${netDeriv >= 0 ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
                   {netDeriv >= 0
-                    ? <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {netDeriv.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> net profit in <strong>Table 4E, Codes 865–866</strong>.</>
-                    : <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {Math.abs(netDeriv).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> net loss in <strong>Table 4E, Codes 869–870</strong> — carry-forward for up to 5 years.</>
+                    ? <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {fmtNum(netDeriv, 2)}</strong> net profit in <strong>Table 4E, Codes 865–866</strong>.</>
+                    : <>📝 <strong>E1 Declaration (Derivatives):</strong> Report <strong>€ {fmtNum(Math.abs(netDeriv), 2)}</strong> net loss in <strong>Table 4E, Codes 869–870</strong> — carry-forward for up to 5 years.</>
                   }
                 </div>
               </div>
@@ -5330,7 +5329,7 @@ function CapitalGainsReport() {
                   onClick={() => setShowExempt(v => !v)}
                 >
                   <span>{showExempt ? '▾' : '▸'}</span>
-                  🟢 Tax-Exempt Sales — {dExempt.length} transaction(s), € {sum(dExempt) >= 0 ? '+' : ''}{sum(dExempt).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net G/L (excluded from all totals)
+                  🟢 Tax-Exempt Sales — {dExempt.length} transaction(s), € {sum(dExempt) >= 0 ? '+' : ''}{fmtNum(sum(dExempt), 2)} net G/L (excluded from all totals)
                 </button>
                 {showExempt && (
                   <div className="mt-2 space-y-2">
@@ -5465,7 +5464,7 @@ function DividendIncomeTaxTab() {
   const totalBank   = sum(bankRows)
   const grandTotal  = totalDiv + totalIntInv + totalBank
 
-  const fmt2 = (n: number) => `€ ${n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const fmt2 = (n: number) => `€ ${fmtNum(n, 2)}`
 
   return (
     <div className="space-y-5">
@@ -6540,8 +6539,8 @@ function CustomReportsSection() {
                                   ? <>
                                       <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{String(r.security ?? '')}</td>
                                       <td className="px-2 py-1.5 text-slate-500">{String(r.action ?? '')}</td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.quantity != null ? Number(r.quantity).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.price != null ? Number(r.price).toLocaleString('el-GR', { maximumFractionDigits: 4 }) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.quantity != null ? fmtNum(Number(r.quantity), 4) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.price != null ? fmtNum(Number(r.price), 4) : '—'}</td>
                                       <td className="px-2 py-1.5 text-right tabular-nums">{r.amount != null ? fmtEur(Number(r.amount)) : '—'}</td>
                                     </>
                                   : <>

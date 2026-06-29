@@ -5,6 +5,7 @@ import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable,
 } from '@/components/ui'
 import { Upload, CheckCircle, XCircle, Trash2, Plus, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { fmtNum } from '@/lib/utils'
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
   getPayeeRules, createPayeeRule, updatePayeeRule, deletePayeeRule,
@@ -21,7 +22,7 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const fmt2 = (n: number) => n?.toFixed(2) ?? '—'
+const fmt2 = (n: number) => fmtNum(n, 2)
 
 /** Load saved importer settings and return a save function. Settings are applied via the returned `apply` callback. */
 function useImporterSettings(key: string, apply: (s: Record<string, unknown>) => void) {
@@ -1026,9 +1027,9 @@ function RevolutSavingsTab() {
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.action as string}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1064,7 +1065,7 @@ function RevolutSavingsTab() {
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1350,9 +1351,9 @@ function IBFlexTab() {
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
                           <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1387,7 +1388,7 @@ function IBFlexTab() {
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1586,9 +1587,9 @@ function RevolutTradingTab() {
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
                           <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.quantity ?? 0).toFixed(4)}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.price ?? 0).toFixed(4)}</td>
-                          <td className="py-1 px-2 text-right">{Number(r.total_eur ?? 0).toFixed(2)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1623,7 +1624,7 @@ function RevolutTradingTab() {
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
-                            <td className="py-1 px-2 text-right">{Number(r.amount ?? 0).toFixed(2)}</td>
+                            <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -2029,9 +2030,9 @@ function SaxoTab() {
                           <td className="py-1 pr-3">{r.account as string}</td>
                           <td className="py-1 pr-3">{r.action as string}</td>
                           <td className="py-1 pr-3">{r.symbol as string ?? r.description as string}</td>
-                          <td className="py-1 pr-3 text-right">{typeof r.quantity === 'number' ? r.quantity.toFixed(4) : ''}</td>
-                          <td className="py-1 pr-3 text-right">{typeof r.price === 'number' ? r.price.toFixed(4) : ''}</td>
-                          <td className="py-1 pr-3 text-right">{typeof r.total === 'number' ? r.total.toFixed(2) : ''}</td>
+                          <td className="py-1 pr-3 text-right">{typeof r.quantity === 'number' ? fmtNum(r.quantity, 4) : ''}</td>
+                          <td className="py-1 pr-3 text-right">{typeof r.price === 'number' ? fmtNum(r.price, 4) : ''}</td>
+                          <td className="py-1 pr-3 text-right">{typeof r.total === 'number' ? fmtNum(r.total, 2) : ''}</td>
                         </tr>
                       )
                     })}
@@ -2152,7 +2153,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
                       <td className="py-1 pr-3 font-mono">{r.date as string}</td>
                       <td className="py-1 pr-3">{r.charge_type as string}</td>
                       <td className="py-1 pr-3 max-w-xs truncate">{r.name as string ?? r.desc as string}</td>
-                      <td className="py-1 pr-3 text-right">{typeof r.total_eur === 'number' ? r.total_eur.toFixed(2) : ''}</td>
+                      <td className="py-1 pr-3 text-right">{typeof r.total_eur === 'number' ? fmtNum(r.total_eur, 2) : ''}</td>
                       <td className="py-1 pr-3">{r.currency as string}</td>
                     </tr>
                   ))}

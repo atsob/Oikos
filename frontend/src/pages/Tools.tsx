@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useSettings } from '@/lib/hooks'
+import { SETTINGS_DEFAULTS } from '@/lib/settings'
+import type { AppSettings } from '@/lib/settings'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getDbHealth, runDbMaintenance, getReferentialIntegrity, toolsSyncBalances,
@@ -16,6 +18,7 @@ import {
   getMissingInvCashLinks, fixInvCashLinks,
   getMissingInvAccountTarget, fixInvAccountTarget,
   getLogs,
+  getCurrenciesMaster,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { cn } from '@/lib/utils'
@@ -1870,6 +1873,133 @@ function LogViewer() {
   )
 }
 
+// ── App Settings ──────────────────────────────────────────────────────────────
+function AppSettingsPanel() {
+  const [saved, setSaved] = useSettings()
+  const [form, setForm] = useState<AppSettings>(saved)
+  const { data: currencyRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['currencies-master'], queryFn: getCurrenciesMaster })
+  const [dirty, setDirty] = useState(false)
+  const [saved_, setSaved_] = useState(false)
+
+  const set = (k: keyof AppSettings, v: string | number) => {
+    setForm(f => ({ ...f, [k]: v }))
+    setDirty(true)
+    setSaved_(false)
+  }
+
+  const handleSave = () => {
+    setSaved(form)
+    setDirty(false)
+    setSaved_(true)
+    setTimeout(() => setSaved_(false), 2000)
+  }
+
+  const handleReset = () => {
+    setForm({ ...SETTINGS_DEFAULTS })
+    setDirty(true)
+    setSaved_(false)
+  }
+
+  const preview = (n: number) => {
+    const { decimalSep, thousandSep } = form
+    const [i, d] = Math.abs(n).toFixed(2).split('.')
+    const th = i.replace(/\B(?=(\d{3})+(?!\d))/g, thousandSep)
+    return `${n < 0 ? '-' : ''}€${th}${decimalSep}${d}`
+  }
+
+  const previewDate = (iso: string) => {
+    const [y, m, d] = iso.split('-')
+    if (form.dateFormat === 'DD/MM/YYYY') return `${d}/${m}/${y}`
+    if (form.dateFormat === 'MM/DD/YYYY') return `${m}/${d}/${y}`
+    return iso
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>⚙️ Application Settings</CardTitle></CardHeader>
+      <CardBody>
+        <div className="space-y-6 max-w-lg">
+
+          {/* Number formatting */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Number Formatting</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Decimal separator</label>
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={form.decimalSep} onChange={e => set('decimalSep', e.target.value)}>
+                  <option value=",">, (comma) — 1.234,56</option>
+                  <option value=".">. (dot) — 1,234.56</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Thousand separator</label>
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={form.thousandSep} onChange={e => set('thousandSep', e.target.value)}>
+                  <option value=".">. (dot)</option>
+                  <option value=",">, (comma)</option>
+                  <option value=" ">  (space)</option>
+                  <option value="">None</option>
+                </select>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Preview: {preview(1234567.89)} · {preview(-0.5)}</p>
+          </div>
+
+          {/* Date format */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Date Format</h3>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.dateFormat} onChange={e => set('dateFormat', e.target.value)}>
+              <option value="DD/MM/YYYY">DD/MM/YYYY (European)</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
+              <option value="MM/DD/YYYY">MM/DD/YYYY (US)</option>
+            </select>
+            <p className="mt-2 text-xs text-slate-400">Preview: {previewDate('2026-06-29')}</p>
+          </div>
+
+          {/* Calendar */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Calendar</h3>
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Week starts on</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+                value={form.weekStartDay} onChange={e => set('weekStartDay', Number(e.target.value))}>
+                <option value={1}>Monday</option>
+                <option value={0}>Sunday</option>
+                <option value={6}>Saturday</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Reporting currency */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Reporting Currency</h3>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.reportingCurrency} onChange={e => set('reportingCurrency', e.target.value)}>
+              {currencyRows.map(c => (
+                <option key={String(c.code)} value={String(c.code)}>
+                  {String(c.code)}{c.name ? ` — ${String(c.name)}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              Monetary values in tables and cards are converted to the selected currency using the latest available FX rate. Charts remain in EUR as their data is already the result of historical FX calculations.
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+            <Button onClick={handleSave} disabled={!dirty}>Save Settings</Button>
+            <Button variant="secondary" onClick={handleReset}>Reset to Defaults</Button>
+            {saved_ && <span className="text-sm text-green-600 font-medium">✓ Saved</span>}
+          </div>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
 // ── Scheduled Tasks ───────────────────────────────────────────────────────────
 
 type SchedType = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once-per-day'
@@ -2178,6 +2308,7 @@ const CATEGORIES: Record<string, string[]> = {
     '🏦 Fix Missing Investment Account on Cash Tx',
   ],
   '⚙️ System': [
+    '⚙️ App Settings',
     '📅 Scheduled Tasks',
   ],
   '📊 Market Data & Prices': [
@@ -2194,6 +2325,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
   '🔧 DB Maintenance': DbMaintenance,
   '🛢 SQL Interface': SqlInterface,
   '📤 Data Export': DataExport,
+  '⚙️ App Settings': AppSettingsPanel,
   '📅 Scheduled Tasks': ScheduledTasks,
   '🔄 Fix Missing Transfer Mirrors': FixMissingTransferMirrors,
   '🔀 Fix Transfer Sign Mismatches': FixTransferSignMismatches,
@@ -2210,7 +2342,7 @@ export default function Tools() {
   const [category, setCategory] = usePersist('tools_category', '💾 Database')
   const [tool, setTool] = useState<Record<string, string>>({
     '💾 Database': '💾 Backup & Restore',
-    '⚙️ System': '📅 Scheduled Tasks',
+    '⚙️ System': '⚙️ App Settings',
     '📊 Market Data & Prices': '📥 Fill Missing Prices',
     '📋 Logs': '📋 Log Viewer',
   })

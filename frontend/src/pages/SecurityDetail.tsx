@@ -10,7 +10,7 @@ import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy } from 'lucide-r
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard,
 } from '@/components/ui'
-import { plotLayout, plotAxis } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
@@ -21,7 +21,10 @@ import {
   getSecurityPriceAnomalies, deleteSecurityPrice,
   downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
+  getAccounts,
 } from '@/lib/api'
+import { InvTransactionModal, emptyInvForm, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
+import type { InvFormData } from '@/components/InvTransactionModal'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
 const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
@@ -50,13 +53,10 @@ function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p:
   )
 }
 
-function fmt(n: unknown, dec = 4) {
+function fmt(n: unknown, dec = 4) { return fmtNum(n != null ? Number(n) : null, dec) }
+function fmtPctLocal(n: unknown, dec = 2) {
   if (n == null) return '—'
-  return Number(n).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec })
-}
-function fmtPct(n: unknown) {
-  if (n == null) return '—'
-  return `${Number(n).toFixed(2)}%`
+  return fmtPct(Number(n), dec)
 }
 
 // ── Prices Tab ────────────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ function PricesTab({ secId }: { secId: number }) {
         <PeriodSelector value={period} onChange={setPeriod} />
         {pctChange != null && !isLoading && (
           <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-            {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(2)}%
+            {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
           </span>
         )}
       </div>
@@ -231,9 +231,9 @@ function PricesTab({ secId }: { secId: number }) {
           columnDefs={[
             { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
             { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
-            { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '' },
-            { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '—' },
-            { field: 'low',    headerName: 'Low',    width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+            { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
+            { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+            { field: 'low',    headerName: 'Low',    width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
             { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toLocaleString() : '—' },
             { field: 'source', headerName: 'Source', width: 110 },
             { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
@@ -314,6 +314,7 @@ function PricesTab({ secId }: { secId: number }) {
 
 // ── Investment Transactions Tab ────────────────────────────────────────────────
 function InvestmentTransactionsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const qc = useQueryClient()
   const { data: txData = [], isLoading: txLoading } = useQuery({
     queryKey: ['sec-transactions', secId],
     queryFn: () => getSecurityTransactions(secId),
@@ -322,6 +323,78 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
     queryKey: ['sec-holdings', secId],
     queryFn: () => getSecurityHoldings(secId),
   })
+  const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
+  const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: getSecurities })
+
+  const [editId, setEditId] = useState<number | null>(null)
+  const [form, setForm] = useState<InvFormData>(emptyInvForm())
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const accounts = accountsData as Record<string, unknown>[]
+  const investmentAccounts = accounts.filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
+  const securities = securitiesData as Record<string, unknown>[]
+
+  const openEdit = useCallback((row: Record<string, unknown>) => {
+    setForm({
+      accounts_id: row.accounts_id != null ? String(row.accounts_id) : '',
+      securities_id: row.securities_id != null ? String(row.securities_id) : String(secId),
+      date: String(row.date ?? '').slice(0, 10),
+      action: String(row.action ?? 'Buy'),
+      quantity: row.quantity != null ? String(row.quantity) : '',
+      price_per_share: row.price_per_share != null ? String(row.price_per_share) : '',
+      commission: row.commission != null ? String(row.commission) : '0',
+      fx_rate: row.fx_rate != null ? String(row.fx_rate) : '1',
+      total_amount_acccur: row.total_acc_cur != null ? String(row.total_acc_cur) : '',
+      total_amount_seccur: row.total_sec_cur != null ? String(row.total_sec_cur) : '',
+      instrument_type: String(row.instrument_type ?? ''),
+      description: String(row.description ?? ''),
+      cash_account_id: row.cash_account_id != null ? String(row.cash_account_id) : '',
+    })
+    setEditId(Number(row.id))
+    setSaveError(null)
+  }, [secId])
+
+  const handleSave = async () => {
+    if (!editId) return
+    setSaving(true); setSaveError(null)
+    const payload = {
+      accounts_id: Number(form.accounts_id),
+      securities_id: Number(form.securities_id),
+      date: form.date,
+      action: form.action,
+      quantity: form.quantity ? parseFloat(form.quantity) : null,
+      price_per_share: form.price_per_share ? parseFloat(form.price_per_share) : null,
+      commission: form.commission ? parseFloat(form.commission) : null,
+      fx_rate: form.fx_rate ? parseFloat(form.fx_rate) : 1,
+      total_amount_acccur: form.total_amount_acccur ? parseFloat(form.total_amount_acccur) : null,
+      total_amount_seccur: form.total_amount_seccur ? parseFloat(form.total_amount_seccur) : null,
+      instrument_type: form.instrument_type || null,
+      description: form.description || null,
+      cash_account_id: form.cash_account_id ? Number(form.cash_account_id) : null,
+    }
+    try {
+      await updateInvestment(editId, payload)
+      qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+      qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
+      setEditId(null)
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!editId || !confirm('Delete this investment transaction?')) return
+    setSaving(true); setSaveError(null)
+    try {
+      await deleteInvestment(editId)
+      qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+      qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
+      setEditId(null)
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Delete failed')
+    } finally { setSaving(false) }
+  }
 
   const transactions = txData as Record<string, unknown>[]
   const holdings = (holdingsData as { holdings: Record<string, unknown>[]; latest_price: number | null; price_date: string | null }) ?? { holdings: [], latest_price: null, price_date: null }
@@ -331,10 +404,15 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const totalPnl = totalValue - totalCost
 
   const copyText = useCallback(() => {
-    const header = 'Account\tQty Held\tCost Basis\tCur. Value\tUnrealised P&L'
-    const rows = holdings.holdings.map(r =>
-      `${r.account}\t${fmt(r.qty_held)}\t${fmt(r.cost_basis, 2)}\t${fmt(r.current_value, 2)}\t${fmt(r.unrealised_pnl, 2)}`
-    ).join('\n')
+    const header = 'Account\tQty Held\tCost Basis\tCost/Share\tCur. Value\tUnrealised P&L\tP&L %'
+    const rows = holdings.holdings.map(r => {
+      const qty = Number(r.qty_held ?? 0)
+      const cost = Number(r.cost_basis ?? 0)
+      const pnl = Number(r.unrealised_pnl ?? 0)
+      const costPerShare = qty ? cost / qty : null
+      const pnlPct = cost ? pnl / cost * 100 : null
+      return `${r.account}\t${fmt(r.qty_held)}\t${fmt(r.cost_basis, 2)}\t${fmt(costPerShare, 4)}\t${fmt(r.current_value, 2)}\t${fmt(r.unrealised_pnl, 2)}\t${pnlPct != null ? pnlPct.toFixed(2) + '%' : '—'}`
+    }).join('\n')
     navigator.clipboard.writeText(header + '\n' + rows)
   }, [holdings.holdings])
 
@@ -379,10 +457,29 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'account', headerName: 'Account', flex: 2 },
               { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
               { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+              {
+                headerName: 'Cost/Share', flex: 1,
+                valueGetter: (p: { data: Record<string, unknown> }) => {
+                  const qty = Number(p.data?.qty_held ?? 0)
+                  const cost = Number(p.data?.cost_basis ?? 0)
+                  return qty ? cost / qty : null
+                },
+                valueFormatter: (p: { value: unknown }) => fmt(p.value, 4),
+              },
               { field: 'current_value', headerName: 'Cur. Value', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               {
                 field: 'unrealised_pnl', headerName: 'Unrealised P&L', flex: 1,
                 valueFormatter: (p: { value: unknown }) => fmt(p.value, 2),
+                cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
+              },
+              {
+                headerName: 'P&L %', flex: 1,
+                valueGetter: (p: { data: Record<string, unknown> }) => {
+                  const cost = Number(p.data?.cost_basis ?? 0)
+                  const pnl = Number(p.data?.unrealised_pnl ?? 0)
+                  return cost ? pnl / cost * 100 : null
+                },
+                valueFormatter: (p: { value: unknown }) => p.value != null ? `${(Number(p.value) >= 0 ? '+' : '')}${Number(p.value).toFixed(2)}%` : '—',
                 cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
               },
             ]}
@@ -413,9 +510,27 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'description', headerName: 'Description', flex: 1 },
             ]}
             defaultColDef={{ resizable: true, sortable: true, filter: true }}
+            rowStyle={{ cursor: 'pointer' }}
+            onRowDoubleClicked={e => { if (e.data) openEdit(e.data as Record<string, unknown>) }}
           />
         </div>
       </div>
+
+      {editId !== null && (
+        <InvTransactionModal
+          form={form}
+          onChange={setForm}
+          accounts={investmentAccounts}
+          allAccounts={accounts}
+          securities={securities}
+          onSave={handleSave}
+          onDelete={handleDelete}
+          onClose={() => { setEditId(null); setSaveError(null) }}
+          saving={saving}
+          error={saveError}
+          editId={editId}
+        />
+      )}
     </div>
   )
 }
@@ -448,7 +563,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
     for (const r of anomalies) await deleteMut.mutateAsync(r.date as string)
   }
 
-  const pctFmt = (v: unknown) => v != null ? `${((Number(v) - 1) * 100).toFixed(1)}%` : '—'
+  const pctFmt = (v: unknown) => v != null ? fmtPctLocal((Number(v) - 1) * 100, 1) : '—'
 
   return (
     <div className="p-4 space-y-4">
@@ -523,7 +638,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Dividend Yield" value={fmtPct(security.dividend_yield)} />
-        <StatCard label="Annual Rate" value={security.dividend_rate != null ? String(Number(security.dividend_rate).toFixed(4)) : '—'} />
+        <StatCard label="Annual Rate" value={security.dividend_rate != null ? fmtNum(Number(security.dividend_rate), 4) : '—'} />
         <StatCard label="5Y Avg Yield" value={fmtPct(security.five_year_avg_yield)} />
         <StatCard label="Payout Ratio" value={fmtPct(security.payout_ratio)} />
       </div>

@@ -9,7 +9,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
-import { plotLayout, plotAxis } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, fmtQty } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 
@@ -52,9 +52,9 @@ const SECURITY_COLS: ColDef[] = [
   { field: 'name', headerName: 'Name', flex: 2, minWidth: 180 },
   { field: 'type', headerName: 'Type', width: 110 },
   { field: 'currency', headerName: 'Currency', width: 90 },
-  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—' },
+  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
   { field: 'price_date', headerName: 'Price Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-  { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
+  { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '—' },
   { field: 'price_records', headerName: '# Prices', width: 90, type: 'numericColumn' },
   { field: 'held_quantity', headerName: 'Held Qty', width: 90, type: 'numericColumn' },
 ]
@@ -62,7 +62,7 @@ const SECURITY_COLS: ColDef[] = [
 const CURRENCY_COLS: ColDef[] = [
   { field: 'code', headerName: 'Code', width: 90 },
   { field: 'name', headerName: 'Currency', flex: 2 },
-  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
   { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
 ]
@@ -70,9 +70,9 @@ const CURRENCY_COLS: ColDef[] = [
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
   { field: 'date', headerName: 'Date', width: 110 },
-  { field: 'close', headerName: 'Close', width: 110, type: 'numericColumn', valueFormatter: p => Number(p.value).toFixed(4) },
-  { field: 'prev_close', headerName: 'Prev', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
-  { field: 'next_close', headerName: 'Next', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+  { field: 'close', headerName: 'Close', width: 110, type: 'numericColumn', valueFormatter: p => fmtNum(Number(p.value), 4) },
+  { field: 'prev_close', headerName: 'Prev', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+  { field: 'next_close', headerName: 'Next', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'ratio_prev', headerName: 'Ratio Prev', width: 110, type: 'numericColumn' },
   { field: 'ratio_next', headerName: 'Ratio Next', width: 110, type: 'numericColumn' },
 ]
@@ -216,13 +216,13 @@ function SecuritiesTab({ search }: { search: string }) {
     { field: 'tv_exchange', headerName: 'TV Exchange', width: 110 },
     { field: 'isin', headerName: 'ISIN', width: 130 },
     { field: 'maturity_date', headerName: 'Maturity Date', width: 115, valueFormatter: p => p.value?.slice(0, 10) ?? '' },
-    { field: 'coupon_rate', headerName: 'Coupon Rate', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '' },
-    { field: 'face_value', headerName: 'Face Value', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '' },
+    { field: 'coupon_rate', headerName: 'Coupon Rate', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
+    { field: 'face_value', headerName: 'Face Value', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '' },
     { field: 'type', headerName: 'Type', width: 110 },
     { field: 'currency', headerName: 'Ccy', width: 65 },
-    { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 4 }) : '—' },
+    { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
     { field: 'price_date', headerName: 'Price Date', width: 100, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-    { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '' },
+    { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
     { field: 'price_records', headerName: '# Prices', width: 80, type: 'numericColumn' },
     { field: 'held_quantity', headerName: 'Held Qty', width: 80, type: 'numericColumn' },
     {
@@ -420,7 +420,7 @@ function CurrenciesTab({ search }: { search: string }) {
   const colDefs: ColDef[] = [
     { field: 'code', headerName: 'Code', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
     { field: 'name', headerName: 'Currency', flex: 2 },
-    { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+    { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
     { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
     { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
     {
@@ -588,7 +588,7 @@ function FxPricesTab() {
               const first = Number(h[0].rate), last = Number(h[h.length - 1].rate)
               if (!first) return null
               const pct = ((last - first) / first) * 100
-              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{fmtPct(pct, 2)}</span>
             })()}
           </div>
         </div>
@@ -630,7 +630,7 @@ function FxPricesTab() {
               columnDefs={[
                 { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
                 { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
-                { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(6) : '' },
+                { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 6) : '' },
               ]}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
             />
@@ -816,7 +816,7 @@ function SecuritiesPricesTab() {
               const first = Number(h[0].close), last = Number(h[h.length - 1].close)
               if (!first) return null
               const pct = ((last - first) / first) * 100
-              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{fmtPct(pct, 2)}</span>
             })()}
           </div>
         </div>
@@ -893,9 +893,9 @@ function SecuritiesPricesTab() {
               columnDefs={[
                 { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
                 { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
-                { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '' },
-                { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '—' },
-                { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+                { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
+                { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+                { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
                 { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toLocaleString() : '—' },
                 { field: 'source', headerName: 'Source', width: 110 },
                 { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
@@ -1242,13 +1242,13 @@ function WatchlistTab() {
                 </td>
                 <td className="px-3 py-2 text-slate-500 text-xs">{String(row.securities_type ?? '—')}</td>
                 <td className="px-3 py-2 text-slate-500 text-xs">{String(row.currency ?? '—')}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{row.current_price != null ? Number(row.current_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.target_price != null ? Number(row.target_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.stop_loss != null ? Number(row.stop_loss).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.target_price != null ? fmtNum(Number(row.target_price), 4) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.stop_loss != null ? fmtNum(Number(row.stop_loss), 4) : '—'}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_target)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_stop)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.upside_to_analyst)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.dividend_yield != null ? `${Number(row.dividend_yield).toFixed(2)}%` : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.dividend_yield != null ? fmtPct(Number(row.dividend_yield), 2) : '—'}</td>
                 <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{String(row.added_date ?? '—')}</td>
                 <td className="px-3 py-2">
                   <div className="flex gap-1">
@@ -1428,9 +1428,9 @@ function AlertsTab() {
                   <td className="px-3 py-2">{alertTypeBadge(row.alert_type)}</td>
                   <td className="px-3 py-2 font-medium">{row.securities_name != null ? String(row.securities_name) : '—'}</td>
                   <td className="px-3 py-2 text-slate-500 text-xs">{row.asset_type != null ? String(row.asset_type) : '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? Number(row.threshold).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? fmtNum(Number(row.threshold), 4) : '—'}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${triggered ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
-                    {row.current_price != null ? Number(row.current_price).toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
+                    {row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}
                   </td>
                   <td className="px-3 py-2 text-slate-400 text-xs">{row.note != null ? String(row.note) : ''}</td>
                   <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{row.created_at != null ? String(row.created_at).slice(0, 16) : '—'}</td>

@@ -12,21 +12,13 @@ import {
 } from '@/lib/api'
 import { api } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
-import { fmtEur, fmtDate } from '@/lib/utils'
+import { fmtEur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, X, Save, RefreshCw } from 'lucide-react'
+import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
+import type { InvFormData } from '@/components/InvTransactionModal'
 
 const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
 
-const ACTIONS = [
-  'Buy', 'Sell', 'Dividend', 'Reinvest', 'Split',
-  'ShrIn', 'ShrOut', 'IntInc', 'CashIn', 'CashOut',
-  'Grant', 'Vest', 'Exercise', 'Expire', 'MiscExp', 'MiscInc', 'RtrnCap',
-]
-
-const INSTRUMENT_TYPES = [
-  '', 'Stock', 'ETF', 'Bond', 'CFD', 'CEF', 'CFDOnETF', 'CFDOnStock',
-  'CFDOnIndex', 'CFDOnFutures', 'CFDOnFund', 'Fund', 'Option', 'FX Spot', 'Other',
-]
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().slice(0, 10) }
@@ -40,16 +32,8 @@ const PERIODS = [
   { label: '3M', from: () => monthsAgo(3) },
   { label: '6M', from: () => monthsAgo(6) },
   { label: 'YTD', from: ytdStart },
-  { label: 'All', from: () => '2000-01-01' },
+  { label: 'All', from: () => '1900-01-01' },
 ]
-
-// ── API helpers ───────────────────────────────────────────────────────────────
-const createInvestment = (data: Record<string, unknown>) =>
-  api.post('/investments/transactions', data).then(r => r.data)
-const deleteInvestment = (id: number) =>
-  api.delete(`/investments/transactions/${id}`).then(r => r.data)
-const updateInvestment = (id: number, data: Record<string, unknown>) =>
-  api.put(`/investments/transactions/${id}`, data).then(r => r.data)
 
 // HOLDING_COLS removed — Holdings tab now uses an inline editable table
 
@@ -66,12 +50,12 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
         ? <button onClick={() => navigate(`/securities/${p.data.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
         : <span>{p.value}</span>
   },
-  { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { maximumFractionDigits: 8 }) : '—' },
+  { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
   { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtEur(Number(p.value)), cellStyle: { fontWeight: 600 } },
-  { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? Number(p.value).toFixed(4) : '—' },
+  { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'currency', headerName: 'Curr', width: 65 },
   { field: 'instrument_type', headerName: 'Instrument', width: 110 },
   { field: 'account', headerName: 'Account', flex: 1, minWidth: 130 },
@@ -80,250 +64,6 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
     cellStyle: p => p.value ? { color: '#2563eb', fontSize: '12px' } : { color: '#cbd5e1', fontSize: '12px' } },
   { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 120 },
 ]
-
-const CASH_ACTIONS = new Set(['Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnCap', 'MiscExp', 'MiscInc', 'CashOut', 'CashIn'])
-
-// ── Investment form modal ─────────────────────────────────────────────────────
-interface InvFormData {
-  accounts_id: string
-  securities_id: string
-  date: string
-  action: string
-  quantity: string
-  price_per_share: string
-  commission: string
-  fx_rate: string
-  total_amount_acccur: string
-  total_amount_seccur: string
-  instrument_type: string
-  description: string
-  cash_account_id: string
-}
-
-const emptyInvForm = (): InvFormData => ({
-  accounts_id: '',
-  securities_id: '',
-  date: today(),
-  action: 'Buy',
-  quantity: '',
-  price_per_share: '',
-  commission: '0',
-  fx_rate: '1',
-  total_amount_acccur: '',
-  total_amount_seccur: '',
-  instrument_type: '',
-  description: '',
-  cash_account_id: '',
-})
-
-function InvModal({ form, onChange, accounts, allAccounts, securities, onSave, onDelete, onClose, saving, error, editId }: {
-  form: InvFormData
-  onChange: (f: InvFormData) => void
-  accounts: Record<string, unknown>[]
-  allAccounts: Record<string, unknown>[]
-  securities: Record<string, unknown>[]
-  onSave: () => void
-  onDelete?: () => void
-  onClose: () => void
-  saving: boolean
-  error: string | null
-  editId: number | null
-}) {
-  useEscapeKey(onClose)
-  const set = (k: keyof InvFormData, v: string) => onChange({ ...form, [k]: v })
-
-  // Auto-fetch FX rate when date, security or account changes
-  useEffect(() => {
-    if (!form.date || !form.securities_id || !form.accounts_id) return
-    const sec = (securities as Record<string, unknown>[]).find(s => String(s.id) === form.securities_id)
-    const acc = (accounts as Record<string, unknown>[]).find(a => String(a.id) === form.accounts_id)
-    if (!sec || !acc) return
-    const secCurrency = String(sec.currency ?? '')
-    const accCurrency = String(acc.currency ?? '')
-    if (!secCurrency || !accCurrency || secCurrency === accCurrency) {
-      onChange({ ...form, fx_rate: '1' })
-      return
-    }
-    // Fetch FX rates for both currencies (vs EUR) then cross-rate
-    const currenciesToFetch: string[] = []
-    if (secCurrency !== 'EUR') currenciesToFetch.push(secCurrency)
-    if (accCurrency !== 'EUR') currenciesToFetch.push(accCurrency)
-    getFxRates(undefined, '2015-01-01').then((rows: { date: string; currency: string; rate: number }[]) => {
-      const onOrBefore = (currency: string) => {
-        const filtered = rows.filter(r => r.currency === currency && r.date <= form.date)
-        if (!filtered.length) return null
-        return filtered[filtered.length - 1].rate
-      }
-      // rates are "1 EUR = rate X" convention
-      let fx: number | null = null
-      if (secCurrency === 'EUR') {
-        // sec is EUR, acc is non-EUR: 1 sec EUR buys rate_acc acc units → fx = rate_acc
-        const rAcc = onOrBefore(accCurrency)
-        if (rAcc) fx = rAcc
-      } else if (accCurrency === 'EUR') {
-        // sec is non-EUR, acc is EUR: 1 sec unit = 1/rate_sec EUR → fx = 1/rate_sec
-        const rSec = onOrBefore(secCurrency)
-        if (rSec) fx = 1 / rSec
-      } else {
-        // both non-EUR: cross via EUR
-        const rSec = onOrBefore(secCurrency)
-        const rAcc = onOrBefore(accCurrency)
-        if (rSec && rAcc) fx = rAcc / rSec
-      }
-      if (fx !== null) onChange({ ...form, fx_rate: fx.toFixed(6) })
-    }).catch(() => {/* leave fx_rate unchanged */})
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.date, form.securities_id, form.accounts_id])
-
-  const onAccountChange = (v: string) => {
-    const next = { ...form, accounts_id: v }
-    if (v) {
-      getLinkedAccount(Number(v)).then(r => {
-        onChange({ ...next, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' })
-      }).catch(() => onChange(next))
-    } else {
-      onChange({ ...next, cash_account_id: '' })
-    }
-  }
-
-  const autoCalc = (key: keyof InvFormData, val: string) => {
-    const next = { ...form, [key]: val }
-    const qty = parseFloat(next.quantity) || 0
-    const price = parseFloat(next.price_per_share) || 0
-    const comm = parseFloat(next.commission) || 0
-    const fx = parseFloat(next.fx_rate) || 1
-    if (qty && price) {
-      const isIncome = ['Dividend', 'Reinvest', 'IntInc', 'ShrIn', 'MiscInc', 'RtrnCap'].includes(next.action)
-      const baseSec = qty * price
-      const totalSec = isIncome ? baseSec : baseSec + comm
-      next.total_amount_seccur = totalSec.toFixed(8)
-      next.total_amount_acccur = (totalSec * fx).toFixed(2)
-    }
-    onChange(next)
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-          <h2 className="text-base font-semibold">{editId ? 'Edit Investment Transaction' : 'New Investment Transaction'}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
-        </div>
-
-        <div className="px-5 py-4 space-y-3">
-          {/* Date + Action */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Date *</label>
-              <Input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Action *</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.action} onChange={e => set('action', e.target.value)}>
-                {ACTIONS.map(a => <option key={a}>{a}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Account */}
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => onAccountChange(e.target.value)}>
-              <option value="">— select —</option>
-              {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
-            </select>
-          </div>
-
-          {/* Cash account (linked transaction) */}
-          {CASH_ACTIONS.has(form.action) && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Cash Account (linked transaction)</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.cash_account_id} onChange={e => set('cash_account_id', e.target.value)}>
-                <option value="">— none —</option>
-                {allAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Security */}
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Security *</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.securities_id} onChange={e => set('securities_id', e.target.value)}>
-              <option value="">— select —</option>
-              {(securities as Record<string,unknown>[]).map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.ticker ?? '')} · {String(s.name)}</option>)}
-            </select>
-          </div>
-
-          {/* Qty + Price */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Quantity</label>
-              <Input type="number" step="any" value={form.quantity} onChange={e => autoCalc('quantity', e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Price per Share</label>
-              <Input type="number" step="any" value={form.price_per_share} onChange={e => autoCalc('price_per_share', e.target.value)} placeholder="0.00" />
-            </div>
-          </div>
-
-          {/* Commission + FX */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Commission</label>
-              <Input type="number" step="any" value={form.commission} onChange={e => autoCalc('commission', e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">FX Rate</label>
-              <Input type="number" step="any" value={form.fx_rate} onChange={e => autoCalc('fx_rate', e.target.value)} placeholder="1" />
-            </div>
-          </div>
-
-          {/* Total sec currency + Total acc currency */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Total (sec. currency)</label>
-              <Input type="number" step="any" value={form.total_amount_seccur} onChange={e => set('total_amount_seccur', e.target.value)} placeholder="0.00" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Total (acc. currency)</label>
-              <Input type="number" step="any" value={form.total_amount_acccur} onChange={e => {
-                const totalAcc = parseFloat(e.target.value)
-                const totalSec = parseFloat(form.total_amount_seccur)
-                const next = { ...form, total_amount_acccur: e.target.value }
-                if (totalAcc && totalSec) next.fx_rate = (totalAcc / totalSec).toFixed(6)
-                onChange(next)
-              }} placeholder="0.00" />
-            </div>
-          </div>
-
-          {/* Instrument type */}
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Instrument Type</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.instrument_type} onChange={e => set('instrument_type', e.target.value)}>
-              {INSTRUMENT_TYPES.map(t => <option key={t} value={t}>{t || '— none —'}</option>)}
-            </select>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Notes</label>
-            <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Notes / description" />
-          </div>
-
-          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
-        </div>
-
-        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200">
-          <div>{editId && onDelete && <Button variant="destructive" size="sm" onClick={onDelete} disabled={saving}>Delete</Button>}</div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button onClick={onSave} disabled={saving}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Date offset helper for installments ──────────────────────────────────────
 function addPeriod(dateStr: string, freq: string, n: number): string {
@@ -694,7 +434,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
     } finally { setSaving(false) }
   }
 
-  const fmt6 = (v: unknown) => v != null ? Number(v).toLocaleString('el-GR', { maximumFractionDigits: 6 }) : '—'
+  const fmt6 = (v: unknown) => v != null ? fmtQty(Number(v), 6) : '—'
   const fmtP = (v: unknown) => v != null ? fmtEur(Number(v)) : '—'
   const gain = (row: Record<string, unknown>) =>
     Number(row.quantity) * (Number(row.last_price ?? 0) - Number(row.fifo_avg_price ?? row.simple_avg_price ?? 0)) * Number(row.fx_rate ?? 1)
@@ -816,7 +556,6 @@ export default function Investments() {
   const { data: holdings = [], isLoading: holdingsLoading } = useQuery({
     queryKey: ['holdings', accountId, includeClosed],
     queryFn: () => getHoldings(accountId ?? undefined, includeClosed),
-    enabled: tab === 'holdings',
   })
 
   const invParams = { account_id: accountId ?? undefined, from_date: fromDate, to_date: toDate, action: actionFilter || undefined, limit: PAGE_SIZE, offset }
@@ -1005,6 +744,24 @@ export default function Investments() {
   const totalGain = (holdings as Record<string, unknown>[]).reduce((s, h) =>
     s + Number(h.quantity) * (Number(h.last_price ?? 0) - Number(h.fifo_avg_price ?? h.simple_avg_price ?? 0)) * Number(h.fx_rate ?? 1), 0)
 
+  const selectedAccount = investmentAccounts.find(a => Number(a.id) === accountId)
+
+  const CASH_OUT_ACTIONS = new Set(['Buy', 'MiscExp', 'CashOut'])
+  const CASH_IN_ACTIONS = new Set(['Sell', 'Dividend', 'IntInc', 'CashIn', 'RtrnCap', 'MiscInc'])
+  const invWithBalance = useMemo(() => {
+    const rows = [...(invData?.investments ?? [])] as Record<string, unknown>[]
+    let balance = 0
+    const ascending = [...rows].reverse().map(r => {
+      const action = String(r.action)
+      const amount = Number(r.total ?? 0)
+      if (CASH_OUT_ACTIONS.has(action)) balance -= amount
+      else if (CASH_IN_ACTIONS.has(action)) balance += amount
+      // ShrIn, ShrOut, Split, Grant, Vest, Exercise, Expire — no cash movement
+      return { ...r, running_balance: Math.round(balance * 100) / 100 }
+    })
+    return ascending.reverse()
+  }, [invData])
+
   const setPeriod = (label: string, from: string) => {
     setFromDate(from); setActivePeriod(label); setOffset(0)
   }
@@ -1066,13 +823,14 @@ export default function Investments() {
       total_amount_seccur: row.total_seccur != null ? String(row.total_seccur) : '',
       instrument_type: String(row.instrument_type ?? ''),
       description: String(row.notes ?? ''),
-      cash_account_id: '',
+      // Use the cash account from the existing linked transaction; fall back to the account's configured linked account
+      cash_account_id: row.cash_account_id != null ? String(row.cash_account_id) : '',
     }
     setEditId(Number(row.id))
     setForm(baseForm)
     setSaveError(null); setModalOpen(true)
-    // Load linked account in background
-    if (accId) {
+    // Only query linked account if there is no existing cash link
+    if (accId && !row.cash_account_id) {
       getLinkedAccount(Number(accId)).then(r => {
         setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
       }).catch(() => {})
@@ -1083,9 +841,14 @@ export default function Investments() {
     <div>
       <PageHeader
         title="Investments"
-        subtitle={tab === 'holdings'
-          ? `Portfolio value: ${fmtEur(totalValue)} · Unrealized: ${fmtEur(totalGain)}`
-          : 'Investment transaction history'}
+        subtitle={(() => {
+          const accName = selectedAccount ? String(selectedAccount.name) + ' · ' : ''
+          const runningBalance = invWithBalance.length > 0 ? Number((invWithBalance[0] as Record<string, unknown>).running_balance ?? 0) : 0
+          const displayValue = totalValue !== 0 ? totalValue : runningBalance
+          if (tab === 'holdings') return `${accName}Portfolio: ${fmtEur(totalValue)} · Unrealized: ${fmtEur(totalGain)}`
+          if (selectedAccount) return `${accName}Balance: ${fmtEur(displayValue)}`
+          return 'Investment transaction history'
+        })()}
         actions={
           <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
             onClick={() => {
@@ -1233,8 +996,13 @@ export default function Investments() {
               <>
                 <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
                   <AgGridReact
-                    rowData={invData?.investments ?? []}
-                    columnDefs={makeInvCols(navigate)}
+                    rowData={invWithBalance}
+                    columnDefs={[
+                      ...makeInvCols(navigate),
+                      { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn', pinned: 'right',
+                        cellRenderer: CashBalanceCell,
+                      },
+                    ]}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
                     onGridReady={e => e.api.autoSizeAllColumns()}
@@ -1289,7 +1057,7 @@ export default function Investments() {
       )}
 
       {modalOpen && (
-        <InvModal
+        <InvTransactionModal
           form={form}
           onChange={setForm}
           accounts={investmentAccounts}
@@ -1303,6 +1071,7 @@ export default function Investments() {
           editId={editId}
         />
       )}
+
     </div>
   )
 }

@@ -40,19 +40,26 @@ def get_security_transactions(sec_id: int):
     with get_db() as conn:
         df = pd.read_sql("""
             SELECT i.investments_id AS id,
+                   i.accounts_id,
+                   i.securities_id,
                    a.accounts_name AS account,
                    i.date::text AS date,
                    i.action,
                    i.quantity,
                    i.price_per_share,
                    i.commission,
+                   i.fx_rate,
                    i.total_amount_seccur AS total_sec_cur,
                    i.total_amount_acccur AS total_acc_cur,
+                   i.instrument_type,
                    c.currencies_shortname AS currency,
-                   i.description
+                   i.description,
+                   i.transactions_id,
+                   tx.accounts_id AS cash_account_id
             FROM investments i
             JOIN accounts a ON a.accounts_id = i.accounts_id
             LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
+            LEFT JOIN transactions tx ON tx.transactions_id = i.transactions_id
             WHERE i.securities_id = %(sid)s
             ORDER BY i.date DESC
         """, conn, params={"sid": sec_id})

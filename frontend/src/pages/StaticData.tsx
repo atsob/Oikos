@@ -12,6 +12,7 @@ import {
   getPayeeTransactions, getCategoryTransactions,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
 const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts']
@@ -230,7 +231,7 @@ function PayeesTab({ search }: { search: string }) {
                             <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.date ?? '').slice(0, 10)}</td>
                             <td className="px-2 py-1 text-slate-600">{String(tx.account ?? '')}</td>
                             <td className="px-2 py-1 text-slate-600 truncate max-w-[180px]">{String(tx.description ?? '')}</td>
-                            <td className="px-2 py-1 text-right font-mono text-slate-700">{Number(tx.amount ?? 0).toFixed(2)} {String(tx.currency ?? '')}</td>
+                            <td className="px-2 py-1 text-right font-mono text-slate-700">{fmtNum(Number(tx.amount ?? 0), 2)} {String(tx.currency ?? '')}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -539,7 +540,7 @@ function AccountsTab({ search }: { search: string }) {
             { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
             { field: 'type', headerName: 'Type', width: 130 },
             { field: 'currency', headerName: 'Currency', width: 90 },
-            { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 2 }) : '—' },
+            { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
             { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
             { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
             { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
@@ -644,7 +645,7 @@ const SECURITY_COLS: ColDef[] = [
   { field: 'type', headerName: 'Type', width: 130, editable: true },
   { field: 'instrument_type', headerName: 'Instrument', width: 120, editable: true },
   { field: 'currency', headerName: 'Currency', width: 90, editable: false },
-  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 4 }) : '—' },
+  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'price_date', headerName: 'Price Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
   { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn', editable: false },
 ]
@@ -654,7 +655,7 @@ const CURRENCY_COLS: ColDef[] = [
   { field: 'code', headerName: 'Code', width: 90, editable: true },
   { field: 'name', headerName: 'Name', flex: 2, minWidth: 160, editable: true },
   { field: 'symbol', headerName: 'Symbol', width: 80, editable: true },
-  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 120, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
+  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 120, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'rate_date', headerName: 'Rate Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
 ]
 
@@ -1071,7 +1072,7 @@ function SecuritiesTab({ search }: { search: string }) {
             { field: 'type', headerName: 'Type', width: 130 },
             { field: 'instrument_type', headerName: 'Instrument', width: 120 },
             { field: 'currency', headerName: 'Currency', width: 90 },
-            { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toLocaleString('el-GR', { minimumFractionDigits: 4 }) : '—' },
+            { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
             { field: 'price_date', headerName: 'Price Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
             { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn' },
             {

@@ -1,4 +1,12 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { getSettings, saveSettings, subscribeSettings } from './settings'
+import type { AppSettings } from './settings'
+
+export function useSettings(): [AppSettings, (s: AppSettings) => void] {
+  const [settings, setSettings] = useState<AppSettings>(getSettings)
+  useEffect(() => subscribeSettings(setSettings), [])
+  return [settings, saveSettings]
+}
 
 export function usePersist<T>(key: string, defaultVal: T) {
   const [val, setVal] = useState<T>(() => {

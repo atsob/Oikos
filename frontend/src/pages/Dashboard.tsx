@@ -8,7 +8,7 @@ import {
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner } from '@/components/ui'
-import { fmtEur, fmtDate, plotLayout, plotAxis } from '@/lib/utils'
+import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
   CheckCheck, Check, Trash2, AlertTriangle, AlertCircle, Info, TrendingUp,
@@ -354,7 +354,7 @@ function AccountsPanel({ accounts, opts }: { accounts: Record<string, unknown>[]
                   const localAmt = Number(a.balance ?? 0)
                   const eurAmt = Number(a.balance_eur ?? 0)
                   // "35,364 HUF" shown as secondary for non-EUR cash accounts
-                  const localStr = `${Math.abs(localAmt).toLocaleString('el-GR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${String(a.currency)}`
+                  const localStr = `${fmtNum(Math.abs(localAmt), 0)} ${String(a.currency)}`
                   return (
                     <div key={String(a.id)} className="flex items-center justify-between px-4 py-2 hover:bg-slate-50">
                       <div className="min-w-0 flex items-center gap-1.5">
@@ -827,7 +827,7 @@ export default function Dashboard() {
                     showlegend: true,
                     legend: { orientation: 'h', y: -0.05, x: 0.5, xanchor: 'center' },
                     annotations: [{
-                      text: `€${totalNetWorth.toLocaleString('el-GR', { maximumFractionDigits: 0 })}`,
+                      text: `€${fmtNum(totalNetWorth, 0)}`,
                       x: 0.5, y: 0.5, xref: 'paper', yref: 'paper',
                       showarrow: false, font: { size: 15, color: isDark ? '#e2e8f0' : '#1e293b', family: 'inherit' },
                     }],
