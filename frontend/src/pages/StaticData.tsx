@@ -723,12 +723,16 @@ function InstitutionsTab({ search }: { search: string }) {
   }
 
   const handleSave = async () => {
+    if ((form.bic ?? '').length > 11) { setError('BIC Code must be 11 characters or fewer'); return }
     setSaving(true); setError(null)
     try {
       await upsertInstitution({ id: editRow?.id ?? undefined, ...form })
       qc.invalidateQueries({ queryKey: ['institutions'] })
       setEditRow(null)
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail ?? (e instanceof Error ? e.message : 'Save failed'))
+    }
     finally { setSaving(false) }
   }
 
@@ -802,7 +806,7 @@ function InstitutionsTab({ search }: { search: string }) {
                 {INSTITUTION_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="BIC Code"><Input value={form.bic ?? ''} onChange={e => set('bic', e.target.value)} placeholder="ABCDGRAA" /></Field>
+            <Field label="BIC Code"><Input value={form.bic ?? ''} onChange={e => set('bic', e.target.value)} placeholder="ABCDGRAA" maxLength={11} /></Field>
             <Field label="Moody's"><Input value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)} placeholder="Aaa" /></Field>
             <Field label="S&P"><Input value={form.sp ?? ''} onChange={e => set('sp', e.target.value)} placeholder="AAA" /></Field>
             <Field label="Fitch"><Input value={form.fitch ?? ''} onChange={e => set('fitch', e.target.value)} placeholder="AAA" /></Field>

@@ -251,8 +251,9 @@ def get_price_history(
     """Daily close price history for one security."""
     with get_db() as conn:
         df = pd.read_sql("""
-            SELECT Date::text AS date, Close AS close, Source AS source,
-                   Downloaded_At::text AS downloaded_at
+            SELECT Date::text AS date, Close AS close,
+                   High AS high, Low AS low, Volume AS volume,
+                   Source AS source, Downloaded_At::text AS downloaded_at
             FROM Historical_Prices
             WHERE Securities_Id = %(sid)s AND Date >= %(from_date)s
             ORDER BY Date ASC

@@ -124,8 +124,24 @@ function PricesTab({ secId }: { secId: number }) {
     }
   }
 
+  const [maDays, setMaDays] = useState(5)
+
   const isPending = addMut.isPending || delMut.isPending
   const rows = useMemo(() => [...(history as Record<string, unknown>[])].reverse(), [history])
+
+  const maData = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    if (h.length < 2 || maDays < 2) return { x: [] as string[], y: [] as (number | null)[] }
+    const x: string[] = [], y: (number | null)[] = []
+    for (let i = 0; i < h.length; i++) {
+      x.push(h[i].date as string)
+      if (i < maDays - 1) { y.push(null); continue }
+      let sum = 0
+      for (let j = i - maDays + 1; j <= i; j++) sum += Number(h[j].close)
+      y.push(sum / maDays)
+    }
+    return { x, y }
+  }, [history, maDays])
 
   const pctChange = (() => {
     const h = history as Record<string, unknown>[]
@@ -146,15 +162,52 @@ function PricesTab({ secId }: { secId: number }) {
         )}
       </div>
 
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-medium text-slate-500">MA Days</label>
+        <input
+          type="number" min={2} max={200} value={maDays}
+          onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
+          className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
+        />
+      </div>
+
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <Plot
-          data={[{
-            x: (history as Record<string, unknown>[]).map(r => r.date),
-            y: (history as Record<string, unknown>[]).map(r => r.close),
-            type: 'scatter', mode: 'lines',
-            line: { color: '#3b82f6', width: 1.5 },
-          }]}
-          layout={{ height: 300, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark), xaxis: plotAxis(isDark), hovermode: 'x unified', ...plotLayout(isDark) }}
+          data={[
+            {
+              x: (history as Record<string, unknown>[]).map(r => r.date),
+              y: (history as Record<string, unknown>[]).map(r => r.close),
+              type: 'scatter', mode: 'lines', name: 'Close',
+              line: { color: '#3b82f6', width: 1.5 },
+              yaxis: 'y',
+            },
+            {
+              x: maData.x, y: maData.y,
+              type: 'scatter', mode: 'lines', name: `MA${maDays}`,
+              line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
+              yaxis: 'y',
+              connectgaps: false,
+            },
+            {
+              x: (history as Record<string, unknown>[]).map(r => r.date),
+              y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
+              type: 'bar', name: 'Volume',
+              marker: { color: 'rgba(148,163,184,0.4)' },
+              yaxis: 'y2',
+              hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
+            },
+          ]}
+          layout={{
+            height: 340,
+            margin: { t: 10, r: 60, b: 40, l: 70 },
+            hovermode: 'x unified',
+            yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
+            yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
+              title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
+            legend: { orientation: 'h', y: -0.15, x: 0 },
+            bargap: 0.1,
+            ...plotLayout(isDark),
+          }}
           config={{ displayModeBar: true, responsive: true }}
           style={{ width: '100%' }}
         />
@@ -177,9 +230,12 @@ function PricesTab({ secId }: { secId: number }) {
           onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
           columnDefs={[
             { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-            { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
-            { field: 'close', headerName: 'Close', width: 130, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(6) : '' },
-            { field: 'source', headerName: 'Source', width: 120 },
+            { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
+            { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '' },
+            { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+            { field: 'low',    headerName: 'Low',    width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+            { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toLocaleString() : '—' },
+            { field: 'source', headerName: 'Source', width: 110 },
             { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
           ]}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}

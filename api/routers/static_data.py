@@ -1,9 +1,12 @@
 """Static Data API endpoints: institutions, categories, payees, accounts."""
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+import logging
 import math
 import pandas as pd
 from database.connection import get_db
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -322,33 +325,58 @@ def delete_category(cid: int):
 
 @router.post("/institutions")
 def upsert_institution(data: dict):
-    conn_obj = __import__('database.connection', fromlist=['get_connection']).get_connection()
+    iid = data.get('id')
+    name = (data.get('name') or '').strip()
+    inst_type = (data.get('type') or '').strip()
+
+    if not name:
+        raise HTTPException(422, "Institution name is required")
+    if not inst_type:
+        raise HTTPException(422, "Institution type is required")
+
+    col_map = {
+        'name':    'Institutions_Name',
+        'type':    'Institutions_Type',
+        'bic':     'BIC_Code',
+        'moodys':  'Moodys',
+        'sp':      'S_P',
+        'fitch':   'Fitch',
+        'website': 'Website',
+        'contact': 'Contact',
+        'phone':   'Phone',
+        'email':   'Email',
+        'notes':   'Notes',
+    }
+    # Coerce empty strings to None for all optional fields
+    fields = {}
+    for k in col_map:
+        v = data.get(k)
+        fields[k] = v if (v not in ('', None) or k in ('name', 'type')) else None
+    fields['name'] = name
+    fields['type'] = inst_type
+
     try:
-        cur = conn_obj.cursor()
-        iid = data.get('id')
-        raw = {k: data.get(k) for k in ('name','type','bic','moodys','sp','fitch','website','contact','phone','email','notes')}
-        # convert empty strings to None for optional fields so DB doesn't reject '' in ENUM/TEXT columns
-        fields = {k: (v if v not in ('', None) else None) if k != 'name' else v for k, v in raw.items()}
-        col_map = {'name':'Institutions_Name','type':'Institutions_Type','bic':'BIC_Code',
-                   'moodys':'Moodys','sp':'S_P','fitch':'Fitch','website':'Website',
-                   'contact':'Contact','phone':'Phone','email':'Email','notes':'Notes'}
-        if iid:
-            sets = ", ".join(f"{col_map[k]}=%s" for k in fields if k in col_map)
-            vals = [fields[k] for k in fields if k in col_map] + [iid]
-            cur.execute(f"UPDATE Institutions SET {sets} WHERE Institutions_Id=%s", vals)
-        else:
-            cols = ", ".join(col_map[k] for k in fields if k in col_map)
-            phs = ", ".join("%s" for k in fields if k in col_map)
-            vals = [fields[k] for k in fields if k in col_map]
-            cur.execute(f"INSERT INTO Institutions ({cols}) VALUES ({phs}) RETURNING Institutions_Id", vals)
-            iid = cur.fetchone()[0]
-        conn_obj.commit()
-        return {"id": iid}
+        with get_db() as conn:
+            cur = conn.cursor()
+            if iid:
+                sets = ", ".join(f"{col_map[k]}=%s" for k in fields)
+                vals = [fields[k] for k in fields] + [iid]
+                cur.execute(f"UPDATE Institutions SET {sets} WHERE Institutions_Id=%s", vals)
+            else:
+                cols = ", ".join(col_map[k] for k in fields)
+                phs  = ", ".join("%s" for _ in fields)
+                vals = [fields[k] for k in fields]
+                cur.execute(
+                    f"INSERT INTO Institutions ({cols}) VALUES ({phs}) RETURNING Institutions_Id",
+                    vals,
+                )
+                iid = cur.fetchone()[0]
+            return {"id": iid}
+    except HTTPException:
+        raise
     except Exception as e:
-        conn_obj.rollback()
-        raise __import__('fastapi', fromlist=['HTTPException']).HTTPException(500, str(e))
-    finally:
-        conn_obj.close()
+        log.exception("upsert_institution failed: %s", e)
+        raise HTTPException(500, str(e))
 
 
 @router.delete("/institutions/{iid}")

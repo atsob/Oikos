@@ -773,8 +773,25 @@ function SecuritiesPricesTab() {
     setMsg(`Deleted ${dates.length} record(s).`)
   }
 
+  const [maDays, setMaDays] = useState(5)
+
   const isPending = addPriceMut.isPending || delPriceMut.isPending
   const priceRows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
+
+  const maData = useMemo(() => {
+    const rows = history as Record<string, unknown>[]
+    if (rows.length < 2 || maDays < 2) return { x: [] as string[], y: [] as (number | null)[] }
+    const x: string[] = []
+    const y: (number | null)[] = []
+    for (let i = 0; i < rows.length; i++) {
+      x.push(rows[i].date as string)
+      if (i < maDays - 1) { y.push(null); continue }
+      let sum = 0
+      for (let j = i - maDays + 1; j <= i; j++) sum += Number(rows[j].close)
+      y.push(sum / maDays)
+    }
+    return { x, y }
+  }, [history, maDays])
 
   return (
     <div className="p-4 space-y-5">
@@ -811,14 +828,50 @@ function SecuritiesPricesTab() {
         <div className="flex justify-center py-12"><Spinner /></div>
       ) : (
         <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-500">MA Days</label>
+            <input
+              type="number" min={2} max={200} value={maDays}
+              onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
+              className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
+            />
+          </div>
           <Plot
-            data={[{
-              x: (history as Record<string,unknown>[]).map(r => r.date),
-              y: (history as Record<string,unknown>[]).map(r => r.close),
-              type: 'scatter', mode: 'lines',
-              line: { color: '#3b82f6', width: 1.5 },
-            }]}
-            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f' }), hovermode: 'x unified', ...plotLayout(isDark) }}
+            data={[
+              {
+                x: (history as Record<string,unknown>[]).map(r => r.date),
+                y: (history as Record<string,unknown>[]).map(r => r.close),
+                type: 'scatter', mode: 'lines', name: 'Close',
+                line: { color: '#3b82f6', width: 1.5 },
+                yaxis: 'y',
+              },
+              {
+                x: maData.x, y: maData.y,
+                type: 'scatter', mode: 'lines', name: `MA${maDays}`,
+                line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
+                yaxis: 'y',
+                connectgaps: false,
+              },
+              {
+                x: (history as Record<string,unknown>[]).map(r => r.date),
+                y: (history as Record<string,unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
+                type: 'bar', name: 'Volume',
+                marker: { color: 'rgba(148,163,184,0.4)' },
+                yaxis: 'y2',
+                hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
+              },
+            ]}
+            layout={{
+              height: 360,
+              margin: { t: 10, r: 60, b: 40, l: 70 },
+              hovermode: 'x unified',
+              yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
+              yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
+                title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
+              legend: { orientation: 'h', y: -0.15, x: 0 },
+              bargap: 0.1,
+              ...plotLayout(isDark),
+            }}
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
@@ -839,9 +892,12 @@ function SecuritiesPricesTab() {
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
               columnDefs={[
                 { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-                { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
-                { field: 'close', headerName: 'Close Price', width: 130, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(6) : '' },
-                { field: 'source', headerName: 'Source', width: 120 },
+                { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
+                { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '' },
+                { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+                { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toFixed(4) : '—' },
+                { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toLocaleString() : '—' },
+                { field: 'source', headerName: 'Source', width: 110 },
                 { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
               ]}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
@@ -1225,8 +1281,20 @@ function AlertsTab() {
   const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' })
   const [editId, setEditId] = useState<number | null>(null)
   const [err, setErr] = useState('')
+  const [search, setSearch] = useState('')
 
   const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'created_at', 'desc')
+  const filtered = search.trim()
+    ? sorted.filter(r => {
+        const q = search.toLowerCase()
+        return (
+          String(r.securities_name ?? '').toLowerCase().includes(q) ||
+          String(r.asset_type ?? '').toLowerCase().includes(q) ||
+          String(r.alert_type ?? '').toLowerCase().includes(q) ||
+          String(r.note ?? '').toLowerCase().includes(q)
+        )
+      })
+    : sorted
 
   const saveMut = useMutation({
     mutationFn: saveAlert,
@@ -1285,8 +1353,11 @@ function AlertsTab() {
 
   return (
     <div className="p-4 space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-slate-500">{rows.length} alert{rows.length !== 1 ? 's' : ''} defined</p>
+      <div className="flex justify-between items-center gap-3">
+        <div className="flex items-center gap-2 flex-1">
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search alerts…" className="max-w-xs" />
+          <p className="text-sm text-slate-500 whitespace-nowrap">{filtered.length} of {rows.length} alert{rows.length !== 1 ? 's' : ''}</p>
+        </div>
         <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Alert</Button>
       </div>
 
@@ -1339,7 +1410,7 @@ function AlertsTab() {
             <th className="px-3 py-2"></th>
           </tr></thead>
           <tbody className="divide-y divide-slate-100">
-            {sorted.map(row => {
+            {filtered.map(row => {
               const isActive = Boolean(row.is_active)
               const triggered = row.current_price != null && row.threshold != null && (
                 (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
@@ -1372,7 +1443,7 @@ function AlertsTab() {
                 </tr>
               )
             })}
-            {sorted.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400 text-sm">No alerts defined yet.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400 text-sm">{rows.length === 0 ? 'No alerts defined yet.' : 'No alerts match your search.'}</td></tr>}
           </tbody>
         </table>
       </div>

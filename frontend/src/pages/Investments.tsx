@@ -1,11 +1,11 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef } from 'ag-grid-community'
 import {
-  getHoldings, getInvestments, getAccounts, getSecurities,
+  getHoldings, getInvestments, getAccounts, getSecurities, getFxRates,
   updateHolding, stakingReinvest, getLinkedAccount,
   getTransactions, createTransaction, updateTransaction, deleteTransaction,
   getSplits, upsertSplits, createTransfer, getPayees, getCategories, getPayeeTopCategories,
@@ -132,6 +132,49 @@ function InvModal({ form, onChange, accounts, allAccounts, securities, onSave, o
   useEscapeKey(onClose)
   const set = (k: keyof InvFormData, v: string) => onChange({ ...form, [k]: v })
 
+  // Auto-fetch FX rate when date, security or account changes
+  useEffect(() => {
+    if (!form.date || !form.securities_id || !form.accounts_id) return
+    const sec = (securities as Record<string, unknown>[]).find(s => String(s.id) === form.securities_id)
+    const acc = (accounts as Record<string, unknown>[]).find(a => String(a.id) === form.accounts_id)
+    if (!sec || !acc) return
+    const secCurrency = String(sec.currency ?? '')
+    const accCurrency = String(acc.currency ?? '')
+    if (!secCurrency || !accCurrency || secCurrency === accCurrency) {
+      onChange({ ...form, fx_rate: '1' })
+      return
+    }
+    // Fetch FX rates for both currencies (vs EUR) then cross-rate
+    const currenciesToFetch: string[] = []
+    if (secCurrency !== 'EUR') currenciesToFetch.push(secCurrency)
+    if (accCurrency !== 'EUR') currenciesToFetch.push(accCurrency)
+    getFxRates(undefined, '2015-01-01').then((rows: { date: string; currency: string; rate: number }[]) => {
+      const onOrBefore = (currency: string) => {
+        const filtered = rows.filter(r => r.currency === currency && r.date <= form.date)
+        if (!filtered.length) return null
+        return filtered[filtered.length - 1].rate
+      }
+      // rates are "1 EUR = rate X" convention
+      let fx: number | null = null
+      if (secCurrency === 'EUR') {
+        // sec is EUR, acc is non-EUR: 1 sec EUR buys rate_acc acc units → fx = rate_acc
+        const rAcc = onOrBefore(accCurrency)
+        if (rAcc) fx = rAcc
+      } else if (accCurrency === 'EUR') {
+        // sec is non-EUR, acc is EUR: 1 sec unit = 1/rate_sec EUR → fx = 1/rate_sec
+        const rSec = onOrBefore(secCurrency)
+        if (rSec) fx = 1 / rSec
+      } else {
+        // both non-EUR: cross via EUR
+        const rSec = onOrBefore(secCurrency)
+        const rAcc = onOrBefore(accCurrency)
+        if (rSec && rAcc) fx = rAcc / rSec
+      }
+      if (fx !== null) onChange({ ...form, fx_rate: fx.toFixed(6) })
+    }).catch(() => {/* leave fx_rate unchanged */})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.date, form.securities_id, form.accounts_id])
+
   const onAccountChange = (v: string) => {
     const next = { ...form, accounts_id: v }
     if (v) {
@@ -243,7 +286,13 @@ function InvModal({ form, onChange, accounts, allAccounts, securities, onSave, o
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Total (acc. currency)</label>
-              <Input type="number" step="any" value={form.total_amount_acccur} onChange={e => set('total_amount_acccur', e.target.value)} placeholder="0.00" />
+              <Input type="number" step="any" value={form.total_amount_acccur} onChange={e => {
+                const totalAcc = parseFloat(e.target.value)
+                const totalSec = parseFloat(form.total_amount_seccur)
+                const next = { ...form, total_amount_acccur: e.target.value }
+                if (totalAcc && totalSec) next.fx_rate = (totalAcc / totalSec).toFixed(6)
+                onChange(next)
+              }} placeholder="0.00" />
             </div>
           </div>
 
@@ -1038,7 +1087,15 @@ export default function Investments() {
           ? `Portfolio value: ${fmtEur(totalValue)} · Unrealized: ${fmtEur(totalGain)}`
           : 'Investment transaction history'}
         actions={
-          <Button size="sm" onClick={() => { setEditId(null); setForm(emptyInvForm()); setSaveError(null); setModalOpen(true) }}>
+          <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
+            onClick={() => {
+              setEditId(null)
+              setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
+              setSaveError(null); setModalOpen(true)
+              getLinkedAccount(accountId!).then(r => {
+                setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
+              }).catch(() => {})
+            }}>
             <Plus size={14} /> New Transaction
           </Button>
         }

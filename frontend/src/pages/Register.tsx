@@ -389,7 +389,7 @@ export default function Register() {
             <Button size="sm" variant="secondary" onClick={() => { setReconcileMsg(null); setReconcileOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Reconcile
             </Button>
-            <Button size="sm" onClick={openNew} disabled={!accountId}><Plus size={14} /> Add</Button>
+            <Button size="sm" onClick={openNew} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
           </div>
         }
       />
