@@ -1292,6 +1292,7 @@ def get_dividends_forecast():
             s.Securities_Type AS securities_type,
             ha.total_qty, ha.cost_basis_eur,
             ROUND((ha.total_qty * COALESCE(pl.Close, 0) * COALESCE(fx2.FX_Rate, 1))::numeric, 2) AS market_value_eur,
+            COALESCE(fx2.FX_Rate, 1) AS fx_rate,
             s.Dividend_Yield AS dividend_yield, s.Dividend_Rate AS dividend_rate,
             s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
             s.Dividend_Frequency AS dividend_frequency,
@@ -1317,13 +1318,14 @@ def get_dividends_forecast():
         mv   = float(r.get("market_value_eur") or 0)
         cost = float(r.get("cost_basis_eur")   or 0)
         qty  = float(r.get("total_qty")         or 0)
+        fx   = float(r.get("fx_rate")           or 1)
         dr   = r.get("dividend_rate")
         dy   = r.get("dividend_yield")
         t12  = float(r.get("trailing_12m_income_eur") or 0)
 
-        if pd.notna(dr) and float(dr) > 0 and mv > 0 and qty > 0:
-            price  = mv / qty
-            annual = (float(dr) / price * mv) if price else 0
+        if pd.notna(dr) and float(dr) > 0 and qty > 0:
+            # dr is in security currency; multiply by qty to get total in sec currency, then convert to EUR
+            annual = float(dr) * qty * fx
             method = "Dividend Rate"
         elif pd.notna(dy) and float(dy) > 0 and mv > 0:
             annual = mv * float(dy) / 100

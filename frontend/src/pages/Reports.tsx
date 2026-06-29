@@ -1929,39 +1929,49 @@ function DividendTrackerTab() {
             )}
 
             <WithCopy>
-              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-                <table className="w-full text-sm">
+              <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
+                <table className="w-full text-sm table-fixed">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[7%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[7%]" />
+                  </colgroup>
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                    <ColHeader label="Security"            sortKey="securities_name"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Security name." />
-                    <ColHeader label="Type"                sortKey="securities_type"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Asset type." />
-                    <ColHeader label="Annual Forecast (€)" sortKey="annual_forecast_eur"   currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected annual dividend income in EUR based on current holdings." />
-                    <ColHeader label="Per Payment (€)"     sortKey="per_payment_eur"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Expected income per dividend payment (annual ÷ payments per year)." />
-                    <ColHeader label="Frequency"           sortKey="frequency"             currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How often dividends are paid." />
-                    <ColHeader label="Fwd Yield %"         sortKey="dividend_yield"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata." />
-                    <ColHeader label="Next Ex-Div"         sortKey="next_expected_ex_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected next ex-dividend date (last known date advanced by frequency). Must hold shares before this date." />
-                    <ColHeader label="Next Pay Date"       sortKey="next_expected_pay_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected date cash arrives in your account." />
-                    <ColHeader label="Basis"               sortKey="method"                currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How the forecast was calculated: Dividend Rate (most accurate), Fwd Yield, or Trailing 12m actual income." />
-                    <ColHeader label="Market Value (€)"    sortKey="market_value_eur"      currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current market value of held position." />
-                    <ColHeader label="Cost Basis (€)"      sortKey="cost_basis_eur"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Total acquisition cost of held position." />
+                    <ColHeader label="Security"      sortKey="securities_name"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Security name." />
+                    <ColHeader label="Annual (€)"    sortKey="annual_forecast_eur"    currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected annual dividend income in EUR based on current holdings." />
+                    <ColHeader label="Per Pmt (€)"   sortKey="per_payment_eur"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Expected income per dividend payment (annual ÷ payments per year)." />
+                    <ColHeader label="Frequency"     sortKey="frequency"              currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How often dividends are paid." />
+                    <ColHeader label="Yield %"       sortKey="dividend_yield"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata." />
+                    <ColHeader label="Ex-Div"        sortKey="next_expected_ex_date"  currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected next ex-dividend date. Must hold shares before this date." />
+                    <ColHeader label="Pay Date"      sortKey="next_expected_pay_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected date cash arrives in your account." />
+                    <ColHeader label="Mkt Val (€)"   sortKey="market_value_eur"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current market value of held position." />
+                    <ColHeader label="Cost (€)"      sortKey="cost_basis_eur"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Total acquisition cost of held position." />
+                    <ColHeader label="Basis"         sortKey="method"                 currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How the forecast was calculated: Dividend Rate (most accurate), Fwd Yield, or Trailing 12m actual income." />
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {fcSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                        <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.annual_forecast_eur))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
-                        <td className="px-3 py-2 text-slate-500">{String(r.frequency)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>
-                        <td className="px-3 py-2 text-right text-slate-500">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
-                        <td className="px-3 py-2 text-right text-slate-500">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
-                        <td className="px-3 py-2 text-slate-500">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${r.method === 'Dividend Rate' ? 'bg-green-100 text-green-700' : r.method === 'Fwd Yield' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {String(r.method)}
+                        <td className="px-2 py-1.5 font-medium truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.annual_forecast_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
+                        <td className="px-2 py-1.5 text-slate-500 truncate" title={String(r.frequency)}>{String(r.frequency)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-500">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-500">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.market_value_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur))}</td>
+                        <td className="px-2 py-1.5">
+                          <span className={`whitespace-nowrap px-1 py-0.5 rounded text-[10px] ${r.method === 'Dividend Rate' ? 'bg-green-100 text-green-700' : r.method === 'Fwd Yield' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {r.method === 'Dividend Rate' ? 'Div Rate' : r.method === 'Trailing 12m' ? 'Trail 12m' : String(r.method)}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.market_value_eur))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur))}</td>
                       </tr>
                     ))}
                   </tbody>
