@@ -5082,10 +5082,9 @@ function CgMetric({ label, value, color, help }: { label: string; value: string;
   )
 }
 
-function CapitalGainsReport() {
-  const [year, setYear] = useState(new Date().getFullYear())
+function CapitalGainsReport({ year }: { year: number }) {
   const [taxRate, setTaxRate] = useState(15)
-  const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('WAC')
+  const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
   const [showExempt, setShowExempt] = useState(false)
   const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -5124,10 +5123,6 @@ function CapitalGainsReport() {
 
       {/* Controls */}
       <div className="flex flex-wrap items-end gap-4">
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Tax Year</label>
-          <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
-        </div>
         <div>
           <label className="text-xs text-slate-500 block mb-1">Cost Basis Method</label>
           <div className="flex gap-3 items-center h-9">
@@ -5292,18 +5287,18 @@ function CapitalGainsReport() {
             <>
               <hr className="border-slate-200" />
               <div className="space-y-3">
-                <h3 className="text-base font-semibold text-slate-700">📊 Combined Derivatives Summary (Categories 2 + 3)</h3>
+                <h3 className="text-lg font-bold text-slate-800">📊 Combined Derivatives Summary (Categories 2 + 3)</h3>
                 <p className="text-xs text-slate-500">Categories 2 and 3 are <strong>netted together</strong> on the Greek tax return (they share the same E1 form codes).</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { label: 'CFDs Net G/L (Cat 2)',            val: sum(dCat2), color: sum(dCat2) >= 0 ? 'text-green-700' : 'text-red-600' },
                     { label: 'Precious Metals Net G/L (Cat 3)', val: sum(dCat3), color: sum(dCat3) >= 0 ? 'text-green-700' : 'text-red-600' },
                     { label: 'Combined Net G/L',                val: netDeriv,  color: netDeriv >= 0 ? 'text-green-700' : 'text-red-600' },
                     { label: `Est. Tax @ ${taxRate}%`,          val: taxEst,    color: 'text-slate-700' },
                   ].map(({ label, val, color }) => (
-                    <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[160px]">
-                      <div className="text-xs text-slate-500">{label}</div>
-                      <div className={`font-semibold tabular-nums text-sm ${color}`}>
+                    <div key={label} className="bg-slate-50 rounded-lg px-4 py-3">
+                      <div className="text-xs text-slate-500 mb-1">{label}</div>
+                      <div className={`font-bold tabular-nums text-2xl ${color}`}>
                         € {val >= 0 && label !== `Est. Tax @ ${taxRate}%` ? '+' : ''}{fmtNum(val, 2)}
                       </div>
                     </div>
@@ -5406,42 +5401,106 @@ function TaxLossHarvestingTab() {
   )
 }
 
-function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: boolean }) {
+function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boolean }) {
   return (
-    <WithCopy>
-    <div className="overflow-x-auto overflow-y-auto max-h-80 text-xs">
+    <div className="overflow-x-auto text-xs ml-4 mt-1 mb-2">
       <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-          <th className="text-left px-2 py-1.5 border-b border-slate-200">Date</th>
-          {showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>}
-          <th className="text-left px-2 py-1.5 border-b border-slate-200">Account</th>
-          {!showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Bank / Payee</th>}
-          {!showSecLink && <th className="text-left px-2 py-1.5 border-b border-slate-200">Category</th>}
-          <th className="text-left px-2 py-1.5 border-b border-slate-200">Type</th>
-          <th className="text-right px-2 py-1.5 border-b border-slate-200">Amount (€)</th>
+        <thead><tr className="bg-slate-100 text-slate-500 uppercase tracking-wide">
+          <th className="text-left px-2 py-1 border-b border-slate-200">Date</th>
+          {showSecLink && <th className="text-left px-2 py-1 border-b border-slate-200">Security</th>}
+          {!showSecLink && <th className="text-left px-2 py-1 border-b border-slate-200">Bank / Payee</th>}
+          {!showSecLink && <th className="text-left px-2 py-1 border-b border-slate-200">Category</th>}
+          <th className="text-left px-2 py-1 border-b border-slate-200">Account</th>
+          <th className="text-left px-2 py-1 border-b border-slate-200">Type</th>
+          <th className="text-right px-2 py-1 border-b border-slate-200">Amount (€)</th>
         </tr></thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-              <td className="px-2 py-1.5 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-              {showSecLink && <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name ?? r.security ?? '')}</SecLink></td>}
-              <td className="px-2 py-1.5 text-slate-500">{String(r.account_name ?? '')}</td>
-              {!showSecLink && <td className="px-2 py-1.5 text-slate-500">{String(r.payee ?? '—')}</td>}
-              {!showSecLink && <td className="px-2 py-1.5 text-slate-500">{String(r.category ?? '')}</td>}
-              <td className="px-2 py-1.5 text-slate-500">{String(r.action ?? r.currency ?? '')}</td>
-              <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(r.amount_eur ?? 0))}</td>
+              <td className="px-2 py-1 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
+              {showSecLink && <td className="px-2 py-1 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name ?? r.security ?? '')}</SecLink></td>}
+              {!showSecLink && <td className="px-2 py-1 text-slate-500">{String(r.payee ?? '—')}</td>}
+              {!showSecLink && <td className="px-2 py-1 text-slate-500">{String(r.category ?? '')}</td>}
+              <td className="px-2 py-1 text-slate-500">{String(r.account_name ?? '')}</td>
+              <td className="px-2 py-1 text-slate-500">{String(r.action ?? r.currency ?? '')}</td>
+              <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(r.amount_eur ?? 0))}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
-    </WithCopy>
   )
 }
 
-function DividendIncomeTaxTab() {
-  const [year, setYear] = useState(new Date().getFullYear())
-  const [showRoc, setShowRoc] = useState(false)
+function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: boolean }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const toggle = (key: string) => setExpanded(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
+
+  // Group by security+account (or payee+account for bank rows)
+  type Group = { key: string; label: string; account: string; total: number; rows: Row[] }
+  const groups = useMemo<Group[]>(() => {
+    const map = new Map<string, Group>()
+    for (const r of rows) {
+      const label = showSecLink
+        ? String(r.securities_name ?? r.security ?? '—')
+        : String(r.payee ?? r.category ?? '—')
+      const account = String(r.account_name ?? '')
+      const key = `${label}||${account}`
+      if (!map.has(key)) map.set(key, { key, label, account, total: 0, rows: [] })
+      const g = map.get(key)!
+      g.total += Number(r.amount_eur ?? 0)
+      g.rows.push(r)
+    }
+    return [...map.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
+  }, [rows, showSecLink])
+
+  const grandTotal = groups.reduce((s, g) => s + g.total, 0)
+
+  return (
+    <div className="text-xs border border-slate-200 rounded-lg overflow-hidden">
+      <table className="w-full border-collapse">
+        <thead><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide text-xs">
+          <th className="text-left px-3 py-2 border-b border-slate-200 w-6"></th>
+          <th className="text-left px-3 py-2 border-b border-slate-200">{showSecLink ? 'Security' : 'Payee / Source'}</th>
+          <th className="text-left px-3 py-2 border-b border-slate-200">Account</th>
+          <th className="text-right px-3 py-2 border-b border-slate-200">Transactions</th>
+          <th className="text-right px-3 py-2 border-b border-slate-200">Total (€)</th>
+        </tr></thead>
+        <tbody>
+          {groups.map(g => (
+            <>
+              <tr key={g.key} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
+                <td className="px-3 py-2 text-slate-400">{expanded.has(g.key) ? '▾' : '▸'}</td>
+                <td className="px-3 py-2 font-medium">
+                  {showSecLink
+                    ? <SecLink id={g.rows[0].securities_id}>{g.label}</SecLink>
+                    : g.label}
+                </td>
+                <td className="px-3 py-2 text-slate-500">{g.account}</td>
+                <td className="px-3 py-2 text-right text-slate-500">{g.rows.length}</td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${g.total < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(g.total)}</td>
+              </tr>
+              {expanded.has(g.key) && (
+                <tr key={g.key + '_detail'}>
+                  <td colSpan={5} className="bg-slate-50 border-b border-slate-200 p-0">
+                    <IncomeDetailRows rows={g.rows} showSecLink={showSecLink} />
+                  </td>
+                </tr>
+              )}
+            </>
+          ))}
+          <tr className="bg-slate-50 font-semibold border-t-2 border-slate-300">
+            <td className="px-3 py-2" colSpan={4}>Total</td>
+            <td className={`px-3 py-2 text-right tabular-nums ${grandTotal < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(grandTotal)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function DividendIncomeTaxTab({ year }: { year: number }) {
+  const [showRoc, setShowRoc] = useState(true)
   const qc = useQueryClient()
   useEffect(() => { qc.removeQueries({ queryKey: ['bank-interest-tax'] }) }, [])
   const invQ = useQuery({ queryKey: ['dividend-income-tax', year], queryFn: () => getDividendIncomeTax(year) })
@@ -5474,12 +5533,8 @@ function DividendIncomeTaxTab() {
         <strong>Bank &amp; Savings interest</strong> (interest credited to Checking, Savings, and Cash accounts).{' '}
         <strong>Return of Capital (RtrnCap)</strong> events are listed for reference only — they are not taxable income
         but reduce cost basis and affect capital gains on eventual sale. All amounts are converted to EUR.
+        Click any row to expand individual transactions.
       </p>
-
-      <div className="flex items-center gap-3">
-        <label className="text-xs text-slate-500">Tax Year</label>
-        <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
-      </div>
 
       {/* Headline metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -5558,12 +5613,17 @@ function DividendIncomeTaxTab() {
 
 function TaxSection() {
   const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
+  const [year, setYear] = useState(new Date().getFullYear() - 1)
   return (
-    <div>
-      <SubTabs tabs={['Capital Gains', 'Tax-Loss Harvesting', 'Dividend Income']} active={tab} onChange={setTab} />
-      {tab === 'Capital Gains' && <CapitalGainsReport />}
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <label className="text-xs text-slate-500 font-medium">Tax Year</label>
+        <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
+      </div>
+      <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
+      {tab === 'Capital Gains' && <CapitalGainsReport year={year} />}
+      {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} />}
       {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab />}
-      {tab === 'Dividend Income' && <DividendIncomeTaxTab />}
     </div>
   )
 }
@@ -6596,7 +6656,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && activeTab !== 'tax' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>
