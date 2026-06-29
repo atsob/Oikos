@@ -218,13 +218,9 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                     f"exceeded income of €{income:,.2f} by €{abs(net):,.2f}."
                 )
             blocks.append(
-                f"WEEKLY CASH FLOWS ({week_start} to {period_end}):\n"
-                f"  Income:   €{income:,.2f}\n"
-                f"  Expenses: €{expense:,.2f}  (negative = money out)\n"
-                f"  Tax:      €{tax:,.2f}  (negative = money out, treated as an expense)\n"
-                f"  Interest: €{interest:,.2f}\n"
-                f"  Other:    €{other:,.2f}\n"
-                f"  NET:      €{net:,.2f}  — {net_explanation}"
+                f"CASH FLOWS ({week_start} to {period_end}):\n"
+                f"  Income €{income:,.2f} | Expenses €{expense:,.2f} | Tax €{tax:,.2f} | Net €{net:,.2f}\n"
+                f"  {net_explanation}"
             )
     except Exception as e:
         conn.rollback()
@@ -343,28 +339,69 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
         logging.exception("INVESTMENT P&L query failed")
         blocks.append(f"INVESTMENT P&L: unavailable ({e})")
 
-    # 4. Top 5 transactions this week (largest absolute amounts, real expenses only)
+    # 4. Spending by category this week
     try:
         df = _query(conn, """
-            SELECT t.Date, p.Payees_Name, ABS(t.Total_Amount) AS abs_amount, t.Total_Amount,
-                   CASE WHEN t.Total_Amount < 0 THEN 'EXPENSE/BUY' ELSE 'INCOME/SELL' END AS direction
+            WITH RECURSIVE cat_root AS (
+                SELECT Categories_Id, Categories_Name, Categories_Id_Parent
+                FROM Categories
+                UNION ALL
+                SELECT p.Categories_Id, p.Categories_Name, p.Categories_Id_Parent
+                FROM Categories p
+                JOIN cat_root c ON c.Categories_Id_Parent = p.Categories_Id
+            ),
+            top_level AS (
+                SELECT Categories_Id, Categories_Name
+                FROM Categories
+                WHERE Categories_Id_Parent IS NULL
+            )
+            SELECT
+                COALESCE(tl.Categories_Name, c.Categories_Name) AS category,
+                SUM(ABS(s.Amount)) AS total
+            FROM Splits s
+            JOIN Categories c ON c.Categories_Id = s.Categories_Id
+            JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+            LEFT JOIN top_level tl ON tl.Categories_Id = COALESCE(c.Categories_Id_Parent, c.Categories_Id)
+            WHERE t.Date BETWEEN %s AND %s
+              AND c.Categories_Type = 'Expense'
+              AND t.Transfers_Id IS NULL
+            GROUP BY COALESCE(tl.Categories_Name, c.Categories_Name)
+            ORDER BY total DESC
+            LIMIT 8
+        """, (week_start, period_end))
+        if not df.empty:
+            rows = "\n".join(
+                f"  {r.category}: €{float(r.total):,.2f}"
+                for _, r in df.iterrows()
+            )
+            blocks.append(f"SPENDING BY CATEGORY THIS WEEK (expenses only):\n{rows}")
+    except Exception as e:
+        conn.rollback()
+        logging.exception("SPENDING BY CATEGORY query failed")
+        blocks.append(f"SPENDING BY CATEGORY: unavailable ({e})")
+
+    # 5. Top 5 transactions this week (largest absolute amounts, real expenses only)
+    try:
+        df = _query(conn, """
+            SELECT t.Date, p.Payees_Name, t.Total_Amount,
+                   CASE WHEN t.Total_Amount < 0 THEN 'expense' ELSE 'income' END AS direction
             FROM Transactions t
             LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
             WHERE t.Date BETWEEN %s AND %s
             AND t.Transfers_Id IS NULL
             AND t.Transactions_Id NOT IN (
                 SELECT Transactions_Id FROM Investments WHERE Transactions_Id IS NOT NULL
-            )  -- exclude investment funding transactions
+            )
             AND p.Payees_Name IS NOT NULL
             ORDER BY ABS(t.Total_Amount) DESC
             LIMIT 5
         """, (week_start, period_end))
         if not df.empty:
             rows = "\n".join(
-                f"  {r.date}  {r.direction:12s}  {r.payees_name:30s}  €{abs(float(r.total_amount)):,.2f}"
+                f"  {r.date}  [{r.direction}]  {r.payees_name}  €{abs(float(r.total_amount)):,.2f}"
                 for _, r in df.iterrows()
             )
-            blocks.append(f"TOP 5 TRANSACTIONS THIS WEEK (direction is EXPENSE/BUY or INCOME/SELL):\n{rows}")
+            blocks.append(f"TOP 5 INDIVIDUAL TRANSACTIONS THIS WEEK:\n{rows}")
     except Exception as e:
         conn.rollback()
         logging.exception("TOP TRANSACTIONS query failed")
@@ -378,34 +415,29 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a personal finance assistant producing a concise weekly summary
-    for the account holder. Use plain, friendly language. Highlight any
-    noteworthy items (unusually large expenses, good investment week, etc.).
-    Keep the summary under 250 words.
+    You are a personal finance assistant. Write a short weekly summary in 3–4 paragraphs of plain prose.
+    Use "you" / "your". No greeting, no sign-off, no bullet lists, no markdown.
 
-    STRICT RULES — violating any of these makes the summary wrong:
-    1. Never invent or calculate numbers. Copy figures verbatim from the CONTEXT block.
-    2. Never use bracket placeholders. Address the reader as "you" / "your".
-    3. Each transaction row includes a direction label: EXPENSE/BUY means money went out;
-       INCOME/SELL means money came in. Use this label — do not guess the direction from the name.
-    4. Do not summarise any transactions not present in the CONTEXT block.
-       The transaction list is complete — do not add an "unnamed payee" or "remaining amount" line.
-    5. Do not claim data is unavailable unless the CONTEXT block explicitly says "unavailable".
-    6. Do NOT write a letter. No greeting, no sign-off. Write plain paragraphs only.
-    7. Tax is treated as an expense. The NET already accounts for all outflows including tax.
-       Use the pre-computed explanation on the NET line verbatim — do not rephrase or recalculate it.
-    8. Present the top-transactions list EXACTLY ONCE as a single numbered list with name and amount.
-       Do not repeat transactions as bullet highlights AND again as a numbered list.
+    Follow this structure exactly:
+    Paragraph 1 – Cash flows: state the week's income, total expenses, and net. Quote the net explanation from the context verbatim.
+    Paragraph 2 – Spending breakdown: mention the top spending categories and their amounts.
+    Paragraph 3 – Investments: mention the investment P&L for the week. If positive say it was a good week; if negative mention the loss.
+    Paragraph 4 – Notable transactions: briefly mention the 1–2 largest individual transactions and what they were.
+
+    Rules:
+    - Only use numbers that appear in the CONTEXT block. Never invent or calculate.
+    - Never use placeholders like [X] or (insert value here).
+    - Keep the total length under 200 words.
 """)
 
 
 def generate_summary(llm, context: str) -> str:
     prompt = (
         f"{SYSTEM_PROMPT}\n\n"
-        f"--- BEGIN CONTEXT (use ONLY these numbers) ---\n"
+        f"=== FINANCIAL DATA FOR THIS WEEK ===\n"
         f"{context}\n"
-        f"--- END CONTEXT ---\n\n"
-        f"Write the weekly summary now, using only the data above:"
+        f"=== END OF DATA ===\n\n"
+        f"Write the 3–4 paragraph summary now:"
     )
     try:
         response = llm.invoke(prompt)
@@ -459,7 +491,7 @@ def run(week_start: date | None = None):
         logging.info(f"Week start: {week_start}  Period end: {period_end}")
 
         context = _gather_context(conn, week_start.isoformat(), period_end)
-        logging.info("Context gathered.")
+        logging.info("Context gathered (%d chars):\n%s", len(context), context)
 
         llm = init_llm()
         summary = generate_summary(llm, context)

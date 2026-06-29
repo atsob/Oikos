@@ -43,9 +43,24 @@ const I_STYLES: Record<InsightType, { bg: string; border: string; node: React.Re
 // Securities-related icons are "price_anomaly" or "stale_price" — split them out
 const SEC_ICONS = new Set(['price_anomaly', 'stale_price', 'missing_price'])
 
+const DISMISSED_INSIGHTS_KEY = 'oikos-dismissed-insights'
+function loadDismissed(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_INSIGHTS_KEY) || '[]')) }
+  catch { return new Set() }
+}
+function saveDismissed(s: Set<string>) {
+  localStorage.setItem(DISMISSED_INSIGHTS_KEY, JSON.stringify([...s]))
+}
+
 function InsightsPanel({ insights }: { insights: Insight[] }) {
   const [open, setOpen] = React.useState(false)
-  const financial = insights.filter(i => !SEC_ICONS.has(i.icon))
+  const [dismissed, setDismissed] = React.useState<Set<string>>(loadDismissed)
+  const financial = insights.filter(i => !SEC_ICONS.has(i.icon) && !dismissed.has(i.title))
+  const dismiss = (title: string) => {
+    const next = new Set(dismissed).add(title)
+    setDismissed(next)
+    saveDismissed(next)
+  }
   if (!financial.length) return null
   const hasDanger = financial.some(i => i.type === 'danger')
   return (
@@ -63,10 +78,16 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
             return (
               <div key={i} className={`flex gap-3 p-3 rounded-lg border ${s.bg} ${s.border}`}>
                 <div className="mt-0.5">{s.node}</div>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-800">{ins.title}</p>
                   <p className="text-xs text-slate-600 mt-0.5">{ins.message}</p>
                 </div>
+                <button
+                  onClick={() => dismiss(ins.title)}
+                  className="text-xs text-slate-400 hover:text-slate-600 shrink-0 self-start mt-0.5"
+                  title="Dismiss">
+                  Dismiss
+                </button>
               </div>
             )
           })}
@@ -168,11 +189,22 @@ function AISummaryPanel({
     setBusy(true); setErr(null)
     try {
       await generateFn(active)
-      await qc.invalidateQueries({ queryKey: [queryKey] })
+      // Generation runs in background — poll until the summary appears (up to 10 min)
+      const deadline = Date.now() + 10 * 60 * 1000
+      const poll = async () => {
+        await qc.invalidateQueries({ queryKey: [queryKey] })
+        const updated = qc.getQueryData<Record<string, unknown>[]>([queryKey]) ?? []
+        const found = updated.find(s => String(s[dateField]).slice(0, 10) === active.slice(0, 10))
+        if (found) { setBusy(false); return }
+        if (Date.now() > deadline) { setBusy(false); setErr('Generation timed out — try again'); return }
+        setTimeout(poll, 5000)
+      }
+      setTimeout(poll, 5000)
     } catch (e: unknown) {
       const axiosMsg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setErr(axiosMsg ?? (e instanceof Error ? e.message : 'Failed'))
-    } finally { setBusy(false) }
+      setBusy(false)
+    }
   }
 
   return (

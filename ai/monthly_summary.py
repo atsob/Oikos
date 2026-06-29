@@ -358,32 +358,30 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a personal finance assistant producing a concise monthly summary
-    for the account holder. Use plain, friendly language. Highlight any
-    noteworthy items (unusually large expenses, good investment month, etc.).
-    Keep the summary under 500 words.
+    You are a personal finance assistant. Write a short monthly summary in 4–5 paragraphs of plain prose.
+    Use "you" / "your". No greeting, no sign-off, no bullet lists, no markdown.
 
-    STRICT RULES — violating any of these makes the summary wrong:
-    1. Never invent or calculate numbers. Copy figures verbatim from the CONTEXT block.
-    2. Never use bracket placeholders. Address the reader as "you" / "your".
-    3. Do not summarise any payees or amounts not present in the CONTEXT block.
-       The top-payees list is complete — do not add an "unnamed payee" or "remaining amount" line.
-    4. Do not claim data is unavailable unless the CONTEXT block explicitly says "unavailable".
-    5. Do NOT write a letter. No greeting, no sign-off. Write plain paragraphs only.
-    6. Tax is treated as an expense. The NET already accounts for all outflows including tax.
-       Use the pre-computed explanation on the NET line verbatim — do not rephrase or recalculate it.
-    7. Present the top-payees list EXACTLY ONCE as a single numbered list with name and amount on each line.
-       Do not repeat payees as bullet highlights AND again as a numbered list.
+    Follow this structure exactly:
+    Paragraph 1 – Cash flows: state the month's income, total expenses, and net. Quote the net explanation from the context verbatim.
+    Paragraph 2 – Spending breakdown: mention the top spending categories and their amounts. Note anything unusual or large.
+    Paragraph 3 – Top payees: briefly mention the 2–3 largest individual payees and amounts.
+    Paragraph 4 – Investments: mention the investment P&L for the month and any notable movements.
+    Paragraph 5 – Net worth: state the net worth snapshot and how it compares to the month start if available.
+
+    Rules:
+    - Only use numbers that appear in the DATA block. Never invent or calculate.
+    - Never use placeholders like [X] or (insert value here).
+    - Keep the total length under 300 words.
 """)
 
 
 def generate_summary(llm, context: str) -> str:
     prompt = (
         f"{SYSTEM_PROMPT}\n\n"
-        f"--- BEGIN CONTEXT (use ONLY these numbers) ---\n"
+        f"=== FINANCIAL DATA FOR THIS MONTH ===\n"
         f"{context}\n"
-        f"--- END CONTEXT ---\n\n"
-        f"Write the monthly summary now, using only the data above:"
+        f"=== END OF DATA ===\n\n"
+        f"Write the 4–5 paragraph summary now:"
     )
     try:
         response = llm.invoke(prompt)

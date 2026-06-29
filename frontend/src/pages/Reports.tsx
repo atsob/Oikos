@@ -1497,7 +1497,7 @@ function PnlReport() {
 
 function TwrTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const [lookback, setLookback] = usePersist('twr_lookback', 756)
+  const [lookback, setLookback] = usePersist('twr_lookback', 730)
   const [cfOpen, setCfOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
@@ -1529,14 +1529,15 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
       {/* Lookback slider */}
       <div>
         <label className="block text-xs font-medium text-slate-600 mb-1">
-          <Tooltip text="How many calendar days of price history to use for TWR. MWR always uses all-time cash flows regardless of this setting.">TWR lookback (calendar days)</Tooltip>
-          {' '}— <span className="text-blue-600 font-semibold">{lookback}</span>
+          <Tooltip text="How many calendar days of price history to use for TWR. MWR always uses all-time cash flows regardless of this setting.">TWR Lookback</Tooltip>
         </label>
-        <input type="range" min={60} max={3650} step={92} value={lookback}
-          onChange={e => setLookback(Number(e.target.value))}
-          className="w-full accent-blue-600" />
-        <div className="flex justify-between text-xs text-slate-400 mt-1">
-          {['60d', '1y', '3y', '5y', '10y'].map(l => <span key={l}>{l}</span>)}
+        <div className="flex gap-2">
+          {([91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
+            <button key={d} onClick={() => setLookback(d)}
+              className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : '10Y'}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1547,7 +1548,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
           {/* KPI cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard
-              label={`TWR (${lookback}d window)`}
+              label={`TWR (${lookback}-day window)`}
               value={`${d.twr_window_pct >= 0 ? '+' : ''}${d.twr_window_pct.toFixed(2)}%`}
               color={d.twr_window_pct >= 0 ? 'text-green-700' : 'text-red-600'}
               tooltip="Total Time-Weighted Return over the selected lookback window. Eliminates the distortion caused by deposit/withdrawal timing." />
@@ -1665,7 +1666,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
 
 function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const [lookback, setLookback] = usePersist('risk_lookback', 756)
+  const [lookback, setLookback] = usePersist('risk_lookback', 730)
   const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
 
   const { data: bmCandidates = [] } = useQuery({
@@ -1711,13 +1712,15 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
       <div className="grid grid-cols-2 gap-6">
         <div>
           <label className="block text-xs font-medium text-slate-600 mb-1">
-            <Tooltip text="How many calendar days of price history to use. Longer windows smooth out short-term noise but may include outdated market regimes.">Lookback days</Tooltip> — <span className="text-blue-600 font-semibold">{lookback}</span>
+            <Tooltip text="How many calendar days of price history to use. Longer windows smooth out short-term noise but may include outdated market regimes.">Lookback</Tooltip>
           </label>
-          <input type="range" min={60} max={3650} step={92} value={lookback}
-            onChange={e => setLookback(Number(e.target.value))}
-            className="w-full accent-blue-600" />
-          <div className="flex justify-between text-xs text-slate-400 mt-1">
-            {['60d', '1y', '3y', '5y', '10y'].map(l => <span key={l}>{l}</span>)}
+          <div className="flex gap-2">
+            {([91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
+              <button key={d} onClick={() => setLookback(d)}
+                className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : '10Y'}
+              </button>
+            ))}
           </div>
         </div>
         <div>
@@ -1738,10 +1741,10 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
           {/* Data range info / warning */}
           {d.insufficient
             ? <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded px-3 py-2">
-                ⚠️ Only <strong>{d.trading_days} trading days</strong> of data available ({d.date_from} → {d.date_to}), covering less than half the requested {lookback}-day window. Download more historical prices to extend the analysis.
+                ⚠️ Only <strong>{d.trading_days} trading days</strong> of data available ({d.date_from} → {d.date_to}), covering less than half the requested {lookback} calendar-day window. Download more historical prices to extend the analysis.
               </div>
             : d.trading_days > 0
-              ? <p className="text-xs text-slate-500">Using <strong>{d.trading_days} trading days</strong> of return data ({d.date_from} → {d.date_to}).</p>
+              ? <p className="text-xs text-slate-500">Using <strong>{d.trading_days} trading days</strong> of return data ({d.date_from} → {d.date_to}) within a {lookback}-calendar-day window.</p>
               : <p className="text-xs text-slate-400">Insufficient price history — need at least 30 days of data for current holdings.</p>
           }
 
@@ -1753,8 +1756,8 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
                 <KpiCard label="Sharpe Ratio"       value={d.sharpe.toFixed(2)}  color={d.sharpe >= 1 ? 'text-green-700' : d.sharpe < 0 ? 'text-red-600' : ''} tooltip="Excess return over the 3% risk-free rate, divided by total volatility. Above 1.0 is good; above 2.0 is excellent." />
                 <KpiCard label="Sortino Ratio"      value={d.sortino.toFixed(2)} color={d.sortino >= 1 ? 'text-green-700' : d.sortino < 0 ? 'text-red-600' : ''} tooltip="Like Sharpe but only penalises downside volatility, ignoring upside swings. Better metric when return distribution is positively skewed." />
                 <KpiCard label="Max Drawdown"       value={`${d.max_drawdown_pct.toFixed(2)}%`} color="text-red-600" tooltip="Largest peak-to-trough decline in portfolio value during the selected lookback period." />
-                <KpiCard label="VaR 95% (daily)"    value={`${d.var_95_pct.toFixed(2)}%  ·  € ${d.var_95fmtNum(_eur, 0)}`}  color="text-amber-600" tooltip="Value at Risk: on a typical day, there is only a 5% chance of losing more than this amount. Shown as % and EUR at current portfolio value." />
-                <KpiCard label="CVaR 95% (daily)"   value={`${d.cvar_95_pct.toFixed(2)}%  ·  € ${d.cvar_95fmtNum(_eur, 0)}`} color="text-amber-600" tooltip="Conditional VaR (Expected Shortfall): average loss on the worst 5% of days. A more conservative tail-risk measure than plain VaR." />
+                <KpiCard label="VaR 95% (daily)"    value={`${d.var_95_pct.toFixed(2)}%  ·  € ${fmtNum(d.var_95_eur, 0)}`}  color="text-amber-600" tooltip="Value at Risk: on a typical day, there is only a 5% chance of losing more than this amount. Shown as % and EUR at current portfolio value." />
+                <KpiCard label="CVaR 95% (daily)"   value={`${d.cvar_95_pct.toFixed(2)}%  ·  € ${fmtNum(d.cvar_95_eur, 0)}`} color="text-amber-600" tooltip="Conditional VaR (Expected Shortfall): average loss on the worst 5% of days. A more conservative tail-risk measure than plain VaR." />
                 <KpiCard label="Beta"               value={d.beta  != null ? d.beta.toFixed(2)   : '—'} subtitle={benchSecId ? bms.find(b => b.id === benchSecId)?.name as string : undefined} tooltip="Sensitivity of your portfolio's returns to the chosen benchmark. Beta > 1 means the portfolio amplifies benchmark moves; < 1 means it dampens them." />
                 <KpiCard label="Alpha (annualised)" value={d.alpha != null ? `${d.alpha.toFixed(2)}%` : '—'} color={d.alpha != null ? (d.alpha > 0 ? 'text-green-700' : 'text-red-600') : ''} tooltip="Jensen's Alpha: annualised excess return above what CAPM predicts given your Beta. Positive = genuine outperformance after adjusting for market risk." />
               </div>
@@ -2742,7 +2745,7 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
   const [benchmarkId, setBenchmarkId] = usePersist<number | null>('bench_id', null)
-  const [lookback, setLookback] = usePersist('bench_lookback', 252)
+  const [lookback, setLookback] = usePersist('bench_lookback', 365)
   const [resample, setResample] = usePersist('bench_resample', 'Daily')
   const cands = candidates as Row[]
 
@@ -2770,11 +2773,11 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
           </select>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="How many trading days of history to include. Both portfolio and benchmark are indexed from the same start date.">Lookback</Tooltip></label>
-          {([63, 126, 252, 504, 756] as const).map(d => (
+          <label className="text-xs text-slate-500"><Tooltip text="Lookback window in calendar days: 3M = 91, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095. Both portfolio and benchmark are indexed to 100 at the start date.">Lookback</Tooltip></label>
+          {([91, 182, 365, 730, 1095] as const).map(d => (
             <button key={d} onClick={() => setLookback(d)}
               className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              {d === 63 ? 'QTD' : d === 126 ? '6M' : d === 252 ? '1Y' : d === 504 ? '2Y' : '3Y'}
+              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : '3Y'}
             </button>
           ))}
         </div>
@@ -2994,7 +2997,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
   const [yearsAhead, setYearsAhead] = usePersist('mc_years', 10)
   const [numSims, setNumSims] = usePersist('mc_sims', 500)
   const [monthlyContrib, setMonthlyContrib] = usePersist('mc_contrib', 500)
-  const [lookbackMc, setLookbackMc] = usePersist('mc_lookback', 756)
+  const [lookbackMc, setLookbackMc] = usePersist('mc_lookback', 730)
   const [overrideOpen, setOverrideOpen] = useState(false)
   const [overrideReturn, setOverrideReturn] = useState<string>('')
   const [overrideVol, setOverrideVol] = useState<string>('')
@@ -3037,9 +3040,15 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
           <input type="number" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={monthlyContrib} onChange={e => setMonthlyContrib(Number(e.target.value))} />
         </div>
         <div>
-          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Historical window used to estimate expected return and volatility for the simulation. Shorter windows react faster to recent market conditions.">Calibration Window (days)</Tooltip></label>
-          <input type="range" min={252} max={1260} step={42} value={lookbackMc} onChange={e => setLookbackMc(Number(e.target.value))} className="w-full" />
-          <span className="text-xs text-slate-600">{lookbackMc}</span>
+          <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Historical window used to estimate expected return and volatility for the simulation. Shorter windows react faster to recent market conditions.">Calibration Window</Tooltip></label>
+          <div className="flex gap-2 flex-wrap">
+            {([182, 365, 730, 1095, 1825] as const).map(d => (
+              <button key={d} onClick={() => setLookbackMc(d)}
+                className={`px-2 py-1 text-xs rounded border ${lookbackMc === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                {d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : '5Y'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

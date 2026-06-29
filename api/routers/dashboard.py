@@ -2,8 +2,12 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 import math
+import threading
 import pandas as pd
 from database.connection import get_db, get_connection
+
+# Tracks in-progress AI generation jobs: key → True while running
+_generating: dict[str, bool] = {}
 
 router = APIRouter()
 
@@ -431,25 +435,28 @@ def get_weekly_summaries(limit: int = Query(12)):
 
 @router.post("/weekly-summaries/generate")
 def generate_weekly_summary(data: dict):
-    """Generate (or regenerate) an AI summary for a given week and persist it."""
+    """Kick off AI summary generation in a background thread; returns immediately."""
     week_start_str = data.get("week_start")
     if not week_start_str:
         raise HTTPException(400, "week_start required")
-    try:
+
+    job_key = f"weekly:{week_start_str}"
+    if _generating.get(job_key):
+        return {"status": "generating", "week_start": week_start_str}
+
+    def _run():
         from datetime import date as _date
         from ai.weekly_summary import run as run_weekly
-        run_weekly(week_start=_date.fromisoformat(week_start_str))
-    except Exception as e:
-        raise HTTPException(503, f"AI model unavailable: {e}")
+        _generating[job_key] = True
+        try:
+            run_weekly(week_start=_date.fromisoformat(week_start_str))
+        except Exception:
+            pass
+        finally:
+            _generating.pop(job_key, None)
 
-    # Return the saved summary text
-    with get_db() as conn:
-        df = pd.read_sql(
-            "SELECT summary_text FROM ai_weekly_summaries WHERE week_start = %(ws)s",
-            conn, params={"ws": week_start_str}
-        )
-    summary_text = df.iloc[0]["summary_text"] if not df.empty else ""
-    return {"week_start": week_start_str, "summary_text": summary_text}
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "generating", "week_start": week_start_str}
 
 
 @router.get("/monthly-summaries")
@@ -545,23 +552,27 @@ def confirm_all_drafts():
 
 @router.post("/monthly-summaries/generate")
 def generate_monthly_summary(data: dict):
-    """Generate (or regenerate) an AI summary for a given month and persist it."""
+    """Kick off AI summary generation in a background thread; returns immediately."""
     month_start = data.get("month_start")  # expects 'YYYY-MM-01'
     if not month_start:
         raise HTTPException(400, "month_start required")
-    try:
-        from ai.monthly_summary import run as run_monthly
-        run_monthly(target_month=month_start)
-    except Exception as e:
-        raise HTTPException(503, f"AI model unavailable: {e}")
 
-    with get_db() as conn:
-        df = pd.read_sql(
-            "SELECT summary_text FROM ai_monthly_summaries WHERE month_start = %(ms)s",
-            conn, params={"ms": month_start}
-        )
-    summary_text = df.iloc[0]["summary_text"] if not df.empty else ""
-    return {"month_start": month_start, "summary_text": summary_text}
+    job_key = f"monthly:{month_start}"
+    if _generating.get(job_key):
+        return {"status": "generating", "month_start": month_start}
+
+    def _run():
+        from ai.monthly_summary import run as run_monthly
+        _generating[job_key] = True
+        try:
+            run_monthly(target_month=month_start)
+        except Exception:
+            pass
+        finally:
+            _generating.pop(job_key, None)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "generating", "month_start": month_start}
 
 
 @router.get("/insights")

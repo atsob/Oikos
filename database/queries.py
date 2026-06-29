@@ -5837,6 +5837,11 @@ def _compute_current_signals() -> pd.DataFrame:
                 FROM performance_data
                 WHERE vol_1y_ann > 0
             ),
+            holdings_agg AS (
+                SELECT Securities_Id, SUM(COALESCE(Quantity, 0)) AS current_qty
+                FROM Holdings
+                GROUP BY Securities_Id
+            ),
             recommendations AS (
                 SELECT
                     sig.Securities_Id,
@@ -5845,16 +5850,18 @@ def _compute_current_signals() -> pd.DataFrame:
                     sec.Analyst_Rating       AS wall_street_view,
                     sec.Analyst_Target_Price AS analyst_target_price,
                     ROUND((((sec.Analyst_Target_Price / NULLIF(sig.price_today, 0)) - 1) * 100)::numeric, 2) AS upside_pct,
-                    -- Treat every security as if held so SELL/REDUCE fires on bad math
+                    COALESCE(ha.current_qty, 0) AS current_qty,
                     CASE
-                        WHEN sharpe_ratio < 0 OR quality_score < -5 THEN '🔴 SELL / REDUCE'
+                        WHEN COALESCE(ha.current_qty, 0) > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
                         WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
                         WHEN sharpe_ratio > 0.7 OR quality_score > 8  THEN '🟢 BUY'
                         WHEN sharpe_ratio > 0.3 OR quality_score > 0  THEN '🟡 HOLD'
+                        WHEN COALESCE(ha.current_qty, 0) = 0 AND sharpe_ratio > 0.5 THEN '👀 WATCHLIST'
                         ELSE '⚪ NEUTRAL'
                     END AS recommendation_signal
                 FROM investment_signals sig
                 JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
+                LEFT JOIN holdings_agg ha ON ha.Securities_Id = sig.Securities_Id
             )
             SELECT
                 Securities_Id   AS securities_id,
@@ -5874,6 +5881,8 @@ def _compute_current_signals() -> pd.DataFrame:
                     WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('buy','strong_buy') THEN '📈 ANALYST UPGRADE'
                     WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('sell','underperform') THEN '🔻 ANALYST UNDERPERFORM'
                     WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('buy','strong_buy') THEN '📊 ANALYST BUY'
+                    WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('buy','strong_buy') THEN '🔬 WATCH: ANALYST BUY'
+                    WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell','underperform') THEN '🔬 WATCH: ANALYST SELL'
                     ELSE recommendation_signal
                 END AS final_signal
             FROM recommendations
@@ -5993,7 +6002,7 @@ def check_triggered_alerts() -> list:
                         when = str(changed_at)[:16]
                 else:
                     when = None
-                suffix = f" _(as of {when})_" if when else ''
+                suffix = f" (as of {when})" if when else ''
                 results.append({
                     'level': 'info',
                     'message': (f"📊 **Signal Change** — {row['securities_name']}: "
