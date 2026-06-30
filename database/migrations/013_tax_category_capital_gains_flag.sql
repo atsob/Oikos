@@ -5,3 +5,5 @@ ALTER TABLE Tax_Category_Rules
 
 -- CDs: maturity is principal return, not a capital gain — interest tracked via IntInc
 UPDATE Tax_Category_Rules SET Show_In_Capital_Gains = FALSE WHERE Tax_Category = 'CD';
+-- Bonds: coupon is IntInc; maturity gain is interest income, not a capital gain event
+UPDATE Tax_Category_Rules SET Show_In_Capital_Gains = FALSE WHERE Tax_Category = 'Bond';

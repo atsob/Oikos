@@ -5242,7 +5242,7 @@ function CapitalGainsReport({ year }: { year: number }) {
                   <div className="text-xs text-slate-400 mt-0.5">across all taxable categories</div>
                 </div>
                 <div className="bg-slate-50 rounded-lg px-4 py-3">
-                  <div className="text-xs text-slate-500 mb-1">Taxable Losses (info)</div>
+                  <div className="text-xs text-slate-500 mb-1">Capital Losses (info)</div>
                   <div className="text-xl font-bold tabular-nums text-red-600">{fmt2(grossTaxableLosses)}</div>
                   <div className="text-xs text-slate-400 mt-0.5">not deducted from tax estimate</div>
                 </div>
@@ -5292,33 +5292,61 @@ function CapitalGainsReport({ year }: { year: number }) {
           })}
 
           {/* Exempt section expander */}
-          {dExempt.length > 0 && (
-            <div>
-              <button
-                className="flex items-center gap-2 text-sm font-medium text-green-700 hover:text-green-800"
-                onClick={() => setShowExempt(v => !v)}
-              >
-                <span>{showExempt ? '▾' : '▸'}</span>
-                Tax-Exempt Sales — {dExempt.length} transaction(s), {fmt2(sum(dExempt))} net G/L (excluded from all totals)
-              </button>
-              {showExempt && (
-                <div className="mt-2 space-y-2">
-                  <p className="text-xs text-slate-500">
-                    Categories with <strong>Gains Taxable = No</strong> (e.g. Local Listed, Foreign Listed, UCITS) or securities marked Tax Exempt. Not included in any taxable total above.
-                  </p>
-                  <CgTable rows={dExempt} method={method} />
+          {dExempt.length > 0 && (() => {
+            const exemptGrossG = dExempt.filter(r => Number(r.gain_loss_eur ?? 0) > 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+            const exemptGrossL = dExempt.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
+            const exemptNet    = sum(dExempt)
+            return (
+              <div className="space-y-3">
+                <button
+                  className="flex items-center gap-2 text-sm font-semibold text-green-700 hover:text-green-800"
+                  onClick={() => setShowExempt(v => !v)}
+                >
+                  <span>{showExempt ? '▾' : '▸'}</span>
+                  Tax-Exempt Sales — {dExempt.length} transaction(s) (excluded from all totals)
+                </button>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'Gross Gains',        val: exemptGrossG, color: 'text-green-700' },
+                    { label: 'Losses (info only)',  val: exemptGrossL, color: 'text-red-600' },
+                    { label: 'Net G/L',             val: exemptNet,    color: exemptNet >= 0 ? 'text-green-700' : 'text-red-600' },
+                  ].map(({ label, val, color }) => (
+                    <div key={label} className="bg-slate-50 rounded px-3 py-2 min-w-[130px]">
+                      <div className="text-xs text-slate-500">{label}</div>
+                      <div className={`font-semibold tabular-nums text-sm ${color}`}>{fmt2(val)}</div>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
+                {showExempt && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Categories with <strong>Gains Taxable = No</strong> (e.g. Local Listed, Foreign Listed, UCITS) or securities marked Tax Exempt. Not included in any taxable total above.
+                    </p>
+                    <CgTable rows={dExempt} method={method} />
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Reference note */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-800">
-            <strong>Greek CGT Quick Reference (L.4172/2013, Art. 42):</strong>{' '}
-            Local Listed / Foreign Listed / UCITS: <strong>0% CGT</strong> — declare profits in E1 Codes <strong>867–868</strong>.{' '}
-            Non-UCITS / CFD / FX Spot: <strong>15% CGT</strong> — net profit → E1 Codes <strong>865–866</strong>, net loss → Codes <strong>869–870</strong> (carry-forward ≤ 5 years).{' '}
-            Tax rates and categories are configurable in <strong>Static Data → Tax Rules</strong>.
-            All figures are indicative — consult a certified Greek tax advisor.
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-800 space-y-1">
+            <div><strong>Greek CGT Quick Reference — all figures are indicative, consult a certified Greek tax advisor.</strong></div>
+            <div>
+              <strong>Exempt (0% CGT):</strong> Local Listed, Foreign Listed, UCITS — direct holdings only (Art. 42, L.4172/2013).
+              Gains must still be declared in <strong>E1 Table 4E, Codes 659–660</strong> to clear living-standard presumptions (<em>τεκμήρια</em>).
+            </div>
+            <div>
+              <strong>Taxable (15% CGT):</strong> Non-UCITS funds/ETFs, CFDs, FX Spot — gains → <strong>E1 Codes 865–866</strong>.
+              Losses within the same category → <strong>E1 Codes 869–870</strong> (carry-forward within same category, ≤ 5 years). Tax is computed on <em>gross gains</em>; losses do not offset gains in this report.
+            </div>
+            <div>
+              <strong>Crypto (15% CGT):</strong> Digital assets taxed under Art. 42A, L.4172/2013. Same 15% rate; separate E1 declaration.
+            </div>
+            <div>
+              <strong>Bonds / CDs:</strong> Excluded from Capital Gains — coupon and maturity interest reported under Interest &amp; Dividend Income.
+              Tax rates and categories are configurable in <strong>Static Data → Tax Rules</strong>.
+            </div>
           </div>
 
         </>
@@ -5371,6 +5399,24 @@ function TaxLossHarvestingTab() {
         </div>
         </WithCopy>
       )}
+
+      {/* Reference note */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-800 space-y-1">
+        <div><strong>Tax-Loss Harvesting Quick Reference — all figures are indicative, consult a certified Greek tax advisor.</strong></div>
+        <div>
+          <strong>What is it?</strong> Selling a position at a loss before year-end to realise a taxable loss.
+          Under Greek law, losses within a taxable category (e.g. Non-UCITS, CFD, FX Spot, Crypto) can be carried forward for up to <strong>5 years</strong> and offset future gains in the <em>same category</em> (Art. 42, L.4172/2013).
+        </div>
+        <div>
+          <strong>Exempt categories (Local Listed, Foreign Listed, UCITS):</strong> No CGT applies, so realising losses in these categories has no tax benefit. Losses cannot offset gains in taxable categories.
+        </div>
+        <div>
+          <strong>Wash-sale rule:</strong> Greece does not have an explicit wash-sale rule equivalent to the US 30-day rule, but repurchasing the same security immediately may be challenged by AADE on substance grounds. Consult your advisor before re-entering a harvested position.
+        </div>
+        <div>
+          <strong>Timing:</strong> The sale must settle before 31 December to count for the current tax year. Losses are declared in <strong>E1 Codes 869–870</strong> for derivatives / CFDs / FX Spot / Crypto.
+        </div>
+      </div>
     </div>
   )
 }
@@ -5521,6 +5567,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
   const divRows      = invRows.filter(r => r.section === 'dividend' && !isExempt(r))
   const divExempt    = invRows.filter(r => r.section === 'dividend' &&  isExempt(r))
   const intInvRows   = invRows.filter(r => r.section === 'interest'  && !isExempt(r))
+  const intExempt    = invRows.filter(r => r.section === 'interest'  &&  isExempt(r))  // T-bills & exempt bonds
   const invRoc       = invRows.filter(r => r.action  === 'RtrnCap')
 
   const sum    = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
@@ -5611,10 +5658,16 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       </div>
 
       {/* CD / Bond Interest */}
-      {intInvRows.length > 0 && (
+      {(intInvRows.length > 0 || intExempt.length > 0) && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold text-slate-700">CD / Bond Interest Income</h3>
-          <IncomeTable rows={intInvRows} />
+          {intInvRows.length > 0 && <IncomeTable rows={intInvRows} />}
+          {intExempt.length > 0 && (
+            <>
+              <p className="text-xs text-green-700 font-medium mt-2">Tax-Exempt Interest (T-Bills, Exempt Bonds)</p>
+              <IncomeTable rows={intExempt} />
+            </>
+          )}
         </div>
       )}
 
@@ -5643,6 +5696,30 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
         {bankRows.length === 0
           ? <p className="text-xs text-slate-400">No bank or savings interest found for {year}.</p>
           : <IncomeTable rows={bankRows} showSecLink={false} />}
+      </div>
+
+      {/* Reference note */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-800 space-y-1">
+        <div><strong>Greek Income Tax Quick Reference — all figures are indicative, consult a certified Greek tax advisor.</strong></div>
+        <div>
+          <strong>Dividends (5%):</strong> Greek-source dividends are subject to <strong>5% withholding tax</strong> (Art. 36, L.4172/2013), withheld at source.
+          Foreign dividends are grossed up and taxed at 5%; foreign WHT is credited up to the Greek rate.
+          Declare in <strong>E1 Table 4D, Codes 289–294</strong> (foreign) or <strong>Codes 285–288</strong> (domestic).
+        </div>
+        <div>
+          <strong>CD / Bond Coupon Interest (15%):</strong> Interest from time deposits and bonds is taxed at <strong>15%</strong>, withheld at source by the paying institution (Art. 40, L.4172/2013).
+          T-bill discount at maturity is tax-exempt for Greek government securities (Is_Tax_Exempt flag).
+          Declare interest income in <strong>E1 Table 4Δ, Codes 595–596</strong>.
+        </div>
+        <div>
+          <strong>Bank / Savings Interest (15%):</strong> Taxed at <strong>15%</strong>, withheld at source. Same declaration as bond interest.
+        </div>
+        <div>
+          <strong>Return of Capital:</strong> Not income — reduces your cost basis in the security. No tax due in the year received; affects capital gains calculation on future sale.
+        </div>
+        <div>
+          <strong>Reinvested dividends:</strong> Excluded for UCITS, Local Listed and Foreign Listed (scrip/DRIP — not a taxable income event in Greece). Configurable per category in <strong>Static Data → Tax Rules</strong>.
+        </div>
       </div>
     </div>
   )

@@ -3282,8 +3282,53 @@ def get_dividend_income_tax(year: int = Query(None)):
       )
     ORDER BY i.Date DESC, s.Securities_Name
     """
+    # Bond/T-bill maturity interest: Sell of Show_In_Capital_Gains=FALSE bonds
+    # The "gain" (proceeds - cost) is the interest at maturity, not a capital gain.
+    maturity_query = """
+    WITH buy_cost AS (
+        SELECT i.Securities_Id, i.Accounts_Id,
+               SUM(ABS(i.Total_Amount_AccCur)) AS total_cost
+        FROM Investments i
+        JOIN Securities s ON s.Securities_Id = i.Securities_Id
+        JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = s.Tax_Category
+        WHERE i.Action = 'Buy'
+          AND COALESCE(tcr.Show_In_Capital_Gains, TRUE) = FALSE
+          AND s.Tax_Category != 'CD'  -- CDs already have IntInc, skip
+        GROUP BY i.Securities_Id, i.Accounts_Id
+    )
+    SELECT
+        i.Date::text                        AS date,
+        s.Securities_Id                     AS securities_id,
+        s.Securities_Name                   AS securities_name,
+        a.Accounts_Name                     AS account_name,
+        'MaturityInc'                       AS action,
+        s.Tax_Category                      AS tax_category,
+        COALESCE(s.Is_Tax_Exempt, FALSE)    AS is_tax_exempt,
+        'interest'                          AS section,
+        NULL::numeric                       AS dividend_local_tax_rate,
+        -- Interest = proceeds - cost basis
+        ABS(i.Total_Amount_AccCur) - COALESCE(bc.total_cost, 0) AS amount_eur,
+        NULL::numeric                       AS tax_amount,
+        NULL::numeric                       AS tax_amount_eur
+    FROM Investments i
+    JOIN Securities s ON s.Securities_Id = i.Securities_Id
+    JOIN Accounts   a ON a.Accounts_Id   = i.Accounts_Id
+    JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = s.Tax_Category
+    LEFT JOIN buy_cost bc ON bc.Securities_Id = i.Securities_Id
+                         AND bc.Accounts_Id   = i.Accounts_Id
+    WHERE i.Action IN ('Sell','Expire')
+      AND EXTRACT(YEAR FROM i.Date) = %(year)s
+      AND COALESCE(tcr.Show_In_Capital_Gains, TRUE) = FALSE
+      AND s.Tax_Category != 'CD'
+      AND ABS(i.Total_Amount_AccCur) - COALESCE(bc.total_cost, 0) > 0.005
+    ORDER BY i.Date DESC, s.Securities_Name
+    """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"year": year})
+        df_mat = pd.read_sql(maturity_query, conn, params={"year": year})
+    if not df_mat.empty:
+        df = pd.concat([df, df_mat], ignore_index=True)
+        df = df.sort_values('date', ascending=False)
     # Compute local_tax_liability in Python: max(0, gross_eur * rate/100 - abs(withholding_eur))
     def _local_liability(row):
         rate = row.get('dividend_local_tax_rate')
