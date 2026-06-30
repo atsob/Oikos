@@ -42,17 +42,25 @@ def _build_inv_description(action: str, security: str | None, ticker: str | None
 def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account_id: int,
                               date: str, action: str, total_acc_cur: float,
                               description: str | None, existing_tx_id: int | None,
-                              payee_id: int | None = None):
-    """Create or update the linked cash transaction for an investment entry."""
+                              payee_id: int | None = None,
+                              tax_amount: float = 0.0):
+    """Create or update the linked cash transaction for an investment entry.
+
+    tax_amount is the withholding tax (negative, account currency).
+    The transfer amount is net = total_acc_cur + tax_amount.
+    """
     if action not in _VIABLE_CASH_ACTIONS or not total_acc_cur:
         return
     cash_out = action in _CASH_OUT_ACTIONS
-    signed = -abs(float(total_acc_cur)) if cash_out else abs(float(total_acc_cur))
+    gross = float(total_acc_cur)
+    tax   = float(tax_amount or 0.0)
+    net   = gross + tax          # tax is negative, so this reduces the receipt
+    signed = -abs(net) if cash_out else abs(net)
 
     if existing_tx_id:
         cur.execute(
             "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id_target=%s, payees_id=%s, description=%s WHERE transactions_id=%s",
-            (date, signed, abs(float(total_acc_cur)), inv_account_id, payee_id, description, existing_tx_id),
+            (date, signed, abs(net), inv_account_id, payee_id, description, existing_tx_id),
         )
     else:
         cur.execute("""
@@ -61,7 +69,7 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
                  Accounts_Id_Target, Total_Amount_Target, Transfers_Id, Payees_Id)
             VALUES (%s,%s,%s,%s,TRUE,%s,%s,NULL,%s)
             RETURNING Transactions_Id
-        """, (cash_account_id, date, description, signed, inv_account_id, abs(float(total_acc_cur)), payee_id))
+        """, (cash_account_id, date, description, signed, inv_account_id, abs(net), payee_id))
         tx_id = cur.fetchone()[0]
         cur.execute("UPDATE Investments SET Transactions_Id=%s WHERE Investments_Id=%s", (tx_id, inv_id))
 
@@ -102,6 +110,7 @@ def get_investments(
             i.total_amount_seccur AS total_seccur,
             i.fx_rate AS fx_rate,
             i.commission AS commission,
+            i.tax_amount AS tax_amount,
             i.instrument_type AS instrument_type,
             a.accounts_name AS account,
             c.currencies_shortname AS currency,
@@ -168,8 +177,8 @@ def create_investment(data: dict):
             INSERT INTO Investments
                 (Accounts_Id, Securities_Id, Date, Action, Quantity, Price_Per_Share,
                  Commission, FX_Rate, Total_Amount_AccCur, Total_Amount_SecCur,
-                 Instrument_Type, Description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 Instrument_Type, Description, Tax_Amount)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING Investments_Id
         """, (
             data.get("accounts_id"), data.get("securities_id"), data.get("date"),
@@ -177,6 +186,7 @@ def create_investment(data: dict):
             data.get("commission", 0), data.get("fx_rate", 1),
             data.get("total_amount_acccur"), data.get("total_amount_seccur"),
             data.get("instrument_type") or None, data.get("description"),
+            data.get("tax_amount") or None,
         ))
         inv_id = cur.fetchone()[0]
 
@@ -198,10 +208,13 @@ def create_investment(data: dict):
                 data.get("date"), data.get("action"),
                 data.get("total_amount_acccur") or 0,
                 cash_desc, None, payee_id,
+                tax_amount=float(data.get("tax_amount") or 0),
             )
             _refresh_balance(cur, int(cash_account_id))
 
         conn.commit()
+        from database.crud import update_holdings
+        update_holdings()
         return {"id": inv_id}
     except Exception as e:
         conn.rollback()
@@ -230,7 +243,8 @@ def update_investment(inv_id: int, data: dict):
                 Total_Amount_AccCur  = %s,
                 Total_Amount_SecCur  = %s,
                 Instrument_Type      = %s,
-                Description          = %s
+                Description          = %s,
+                Tax_Amount           = %s
             WHERE Investments_Id = %s
             RETURNING Transactions_Id
         """, (
@@ -238,7 +252,8 @@ def update_investment(inv_id: int, data: dict):
             data.get("action"), data.get("quantity"), data.get("price_per_share"),
             data.get("commission", 0), data.get("fx_rate", 1),
             data.get("total_amount_acccur"), data.get("total_amount_seccur"),
-            data.get("instrument_type") or None, data.get("description"), inv_id,
+            data.get("instrument_type") or None, data.get("description"),
+            data.get("tax_amount") or None, inv_id,
         ))
         if cur.rowcount == 0:
             raise HTTPException(404, "Not found")
@@ -262,10 +277,13 @@ def update_investment(inv_id: int, data: dict):
                 data.get("date"), data.get("action"),
                 data.get("total_amount_acccur") or 0,
                 cash_desc, existing_tx_id, payee_id,
+                tax_amount=float(data.get("tax_amount") or 0),
             )
             _refresh_balance(cur, int(cash_account_id))
 
         conn.commit()
+        from database.crud import update_holdings
+        update_holdings()
         return {"id": inv_id}
     except HTTPException:
         raise
@@ -292,6 +310,12 @@ def delete_investment(inv_id: int):
             raise HTTPException(404, "Not found")
         linked_tx_id = row[0]
 
+        cur.execute("SELECT Accounts_Id, Securities_Id FROM Investments WHERE Investments_Id = %s", (inv_id,))
+        inv_row = cur.fetchone()
+        if not inv_row:
+            raise HTTPException(404, "Not found")
+        inv_account_id = inv_row[0]
+
         cur.execute("DELETE FROM Investments WHERE Investments_Id = %s", (inv_id,))
 
         # Remove the linked cash transaction and refresh its account balance
@@ -306,6 +330,11 @@ def delete_investment(inv_id: int):
                 _refresh_balance(cur, cash_account_id)
 
         conn.commit()
+
+        # Recalculate holdings after the commit so the deleted row is gone
+        from database.crud import update_holdings
+        update_holdings()
+
         return {"deleted": inv_id}
     except HTTPException:
         raise

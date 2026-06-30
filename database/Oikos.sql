@@ -55,6 +55,61 @@ CREATE SEQUENCE IF NOT EXISTS transfers_id_seq START 1 INCREMENT 1;
 -- LOOKUP / REFERENCE TABLES
 -- =============================================================================
 
+-- Tax category rules (must be created before Securities which references it)
+CREATE TABLE IF NOT EXISTS Tax_Category_Rules (
+    Tax_Category            VARCHAR(50)  PRIMARY KEY,
+    Display_Name            VARCHAR(100) NOT NULL,
+    Gains_Taxable           BOOLEAN      DEFAULT FALSE,
+    Gains_Rate              NUMERIC(5,2),
+    Gains_Tax_Code          VARCHAR(20),
+    Dividend_Local_Tax_Rate NUMERIC(5,2),
+    Dividend_WHT_Creditable BOOLEAN      DEFAULT TRUE,
+    Reinvest_Taxable        BOOLEAN      DEFAULT FALSE,
+    Income_Tax_Rate         NUMERIC(5,2),
+    Show_In_Capital_Gains   BOOLEAN      NOT NULL DEFAULT TRUE,
+    Notes                   TEXT
+);
+
+INSERT INTO Tax_Category_Rules
+    (Tax_Category, Display_Name,
+     Gains_Taxable, Gains_Rate, Gains_Tax_Code,
+     Dividend_Local_Tax_Rate, Dividend_WHT_Creditable, Reinvest_Taxable,
+     Income_Tax_Rate, Notes)
+VALUES
+    ('Local Listed',   'Local Listed Shares',   FALSE, NULL, '659-660', 5.00, TRUE,  FALSE, NULL, 'Listed shares on local exchange. Capital gains exempt for retail (<0.5% holding). Dividends taxed at 5% with foreign WHT credit.'),
+    ('Foreign Listed', 'Foreign Listed Shares',  FALSE, NULL, NULL,      5.00, TRUE,  FALSE, NULL, 'Foreign shares under a tax treaty. Capital gains generally exempt. Dividends 5% with WHT credit.'),
+    ('UCITS',          'UCITS EU Fund / ETF',    FALSE, NULL, NULL,      0.00, FALSE, FALSE, NULL, 'EU-domiciled UCITS funds. Both capital gains and reinvested dividends are exempt.'),
+    ('Non-UCITS',      'Non-UCITS Fund / ETF',   TRUE,  15.00, NULL,     5.00, TRUE,  TRUE,  NULL, 'Non-UCITS funds and leveraged/inverse ETFs. Capital gains taxed at 15%, dividends at 5%.'),
+    ('CD',             'Time Deposit / CD',      FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Interest income from time deposits and CDs taxed at 15% (withheld at source).'),
+    ('Bond',           'Bond / Fixed Income',    FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Coupon interest taxed at 15%. Capital gains treatment depends on instrument.'),
+    ('Crypto',         'Cryptocurrency',         TRUE,  15.00, NULL,     NULL, FALSE, TRUE,  15.00,'Capital gains taxed at 15%. Staking and other income taxed at 15% as income at receipt.'),
+    ('Other',          'Other / Unclassified',   NULL,  NULL, NULL,      NULL, NULL,  NULL,  NULL, 'Review manually — tax treatment not determined.')
+ON CONFLICT (Tax_Category) DO NOTHING;
+
+-- Instrument type → effective tax category override
+CREATE TABLE IF NOT EXISTS Instrument_Type_Tax_Override (
+    Instrument_Type        VARCHAR(50) PRIMARY KEY,
+    Tax_Category_Override  VARCHAR(50) REFERENCES Tax_Category_Rules(Tax_Category) ON DELETE SET NULL,
+    Notes                  TEXT
+);
+
+INSERT INTO Instrument_Type_Tax_Override (Instrument_Type, Tax_Category_Override, Notes) VALUES
+    ('Stock',         NULL,         'Use underlying security''s Tax_Category'),
+    ('ETF',           NULL,         'Use underlying security''s Tax_Category'),
+    ('Bond',          'Bond',       'Always bond tax rules regardless of security'),
+    ('CFD',           'Non-UCITS',  'All CFDs are fully taxable'),
+    ('CEF',           'Non-UCITS',  'Closed-end funds treated as Non-UCITS'),
+    ('CFDOnETF',      'Non-UCITS',  'UCITS exemption does not apply to CFD wrappers'),
+    ('CFDOnStock',    NULL,         'Use underlying security''s Tax_Category'),
+    ('CFDOnIndex',    'Non-UCITS',  'Index CFDs fully taxable'),
+    ('CFDOnFutures',  'Non-UCITS',  'Futures CFDs fully taxable'),
+    ('CFDOnFund',     'Non-UCITS',  'Fund CFDs fully taxable'),
+    ('Fund',          NULL,         'Use underlying security''s Tax_Category'),
+    ('Option',        'Other',      'Options — review manually'),
+    ('FX Spot',       'Other',      'Includes commodity/FX pairs traded as FX Spot on SAXO'),
+    ('Other',         'Other',      'Review manually')
+ON CONFLICT (Instrument_Type) DO NOTHING;
+
 CREATE TABLE Currencies (
     Currencies_Id       SERIAL PRIMARY KEY,
     Currencies_ShortName CHAR(3) UNIQUE NOT NULL,   -- EUR, USD, GBP, BTC …
@@ -130,8 +185,8 @@ CREATE TABLE Securities (
     Coupon_Rate          NUMERIC(6, 4),
     Face_Value           NUMERIC(20, 8),
     Coupon_Frequency     VARCHAR(20) DEFAULT 'Annual',
-    Is_Tax_Exempt        BOOLEAN DEFAULT FALSE,      -- if TRUE, capital gains are always tax-exempt
-                                                     -- (overridden when traded as CFD/CFDOnETF etc.)
+    Is_Tax_Exempt        BOOLEAN DEFAULT FALSE,
+    Tax_Category         VARCHAR(50) REFERENCES Tax_Category_Rules(Tax_Category) ON DELETE SET NULL,
     Dividend_Yield       NUMERIC(8,4),
     Dividend_Rate        NUMERIC(16,6),
     Dividend_Frequency   VARCHAR(20),
@@ -379,6 +434,42 @@ FOR EACH ROW EXECUTE FUNCTION update_accounts_balance_with_transfer();
 
 
 -- =============================================================================
+-- CORPORATE ACTIONS
+-- =============================================================================
+
+CREATE TYPE corporate_action_type AS ENUM (
+    'Split',
+    'Reverse Split',
+    'Merger',
+    'Acquisition',
+    'Spinoff',
+    'Rights Issue',
+    'Name Change',
+    'Delisting',
+    'Other',
+    'Default',
+    'Dividend',
+    'Return of Capital'
+);
+
+CREATE TABLE IF NOT EXISTS Corporate_Actions (
+    Corporate_Actions_Id  SERIAL PRIMARY KEY,
+    Securities_Id         INTEGER      NOT NULL REFERENCES Securities(Securities_Id),
+    Action_Type           corporate_action_type NOT NULL,
+    Effective_Date        DATE         NOT NULL,
+    Ratio_New             NUMERIC,
+    Ratio_Old             NUMERIC,
+    Gross_Per_Share       NUMERIC(18, 8),
+    Tax_Rate              NUMERIC(7, 4),       -- 0–100 percent
+    Description           TEXT,
+    Created_At            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_corporate_actions_sec_date
+    ON Corporate_Actions (Securities_Id, Effective_Date);
+
+
+-- =============================================================================
 -- INVESTMENTS
 -- =============================================================================
 
@@ -398,6 +489,8 @@ CREATE TABLE Investments (
     Transactions_Id  INTEGER REFERENCES Transactions(Transactions_Id),  -- linked cash-side row (BuyX/SellX/DivX)
     Instrument_Type  Investments_Instrument_Type,  -- optional: actual traded instrument (e.g. CFDOnETF, CFDOnStock)
                                                   -- overrides Security.Is_Tax_Exempt for tax calculations when set
+    Tax_Amount          NUMERIC(18, 6),              -- withholding tax (negative = tax withheld, in account currency)
+    Corporate_Actions_Id INTEGER REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE SET NULL,
     embedding        vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_investments_id          ON Investments(Investments_Id);
@@ -409,6 +502,8 @@ CREATE        INDEX IF NOT EXISTS idx_investments_date        ON Investments(Dat
 CREATE        INDEX IF NOT EXISTS idx_investments_accsec_covering
     ON Investments(Accounts_Id, Securities_Id, Date DESC)
     INCLUDE (Action, Quantity, Total_Amount_AccCur, Total_Amount_SecCur, FX_Rate, Price_Per_Share);
+CREATE        INDEX IF NOT EXISTS idx_investments_corporate_actions_id
+    ON Investments(Corporate_Actions_Id) WHERE Corporate_Actions_Id IS NOT NULL;
 
 
 -- =============================================================================
@@ -490,40 +585,6 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
-
--- =============================================================================
--- CORPORATE ACTIONS
--- =============================================================================
-
-CREATE TYPE corporate_action_type AS ENUM (
-    'Split',
-    'Reverse Split',
-    'Merger',
-    'Acquisition',
-    'Spinoff',
-    'Rights Issue',
-    'Name Change',
-    'Delisting',
-    'Other',
-    'Default',    -- company default / bankruptcy write-off
-    'Dividend',
-    'Return of Capital'
-);
-
-CREATE TABLE IF NOT EXISTS Corporate_Actions (
-    Corporate_Actions_Id  SERIAL PRIMARY KEY,
-    Securities_Id         INTEGER      NOT NULL REFERENCES Securities(Securities_Id),
-    Action_Type           corporate_action_type NOT NULL,
-    Effective_Date        DATE         NOT NULL,
-    Ratio_New             NUMERIC,
-    Ratio_Old             NUMERIC,
-    Description           TEXT,
-    Created_At            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_corporate_actions_sec_date
-    ON Corporate_Actions (Securities_Id, Effective_Date);
 
 
 -- =============================================================================
@@ -824,16 +885,6 @@ CREATE TABLE IF NOT EXISTS Scheduler_Jobs (
     last_status  VARCHAR(20),
     last_message TEXT
 );
-
-
--- =============================================================================
--- ENUM MIGRATIONS  (safe to re-run; ADD VALUE IF NOT EXISTS is idempotent)
--- =============================================================================
-
-DO $$ BEGIN
-    ALTER TYPE corporate_action_type ADD VALUE IF NOT EXISTS 'Return of Capital';
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
 
 
 -- =============================================================================

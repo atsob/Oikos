@@ -11,13 +11,14 @@ import {
   getPayeeRules, createPayeeRule, updatePayeeRule, deletePayeeRule,
   getBankPayees as getPayees, getBankCategories as getCategories, getPayeeCategoryUsage,
   parseStatement, getAppTransactions, applyBankImport,
-  getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport,
+  getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport, saveSecurityMappings,
   revtParse, revtImport, revsParse, revsImport, importFile,
   getImporterSettings, saveImporterSettings, getLinkedAccount,
   saxoGetSettings, saxoSaveAccountMap, saxoGetAuthUrl, saxoExchangeCode, saxoRefreshToken,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
   coinbaseGetSettings, coinbaseTest, coinbaseFetch, coinbaseImport,
+  getSecurities,
 } from '@/lib/api'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1092,6 +1093,69 @@ function RevolutSavingsTab() {
   )
 }
 
+// ── Shared: Security Mapping Panel ───────────────────────────────────────────
+// sec_matches: { [isin_or_name]: [sec_id | null, match_type_str] }
+// overrides:   user choices { [isin_or_name]: sec_id | 0 (=create new) }
+
+function SecurityMappingPanel({
+  secMatches,
+  overrides,
+  onChange,
+}: {
+  secMatches: Record<string, { sec_id: number | null; match_type: string }>
+  overrides: Record<string, number>
+  onChange: (key: string, val: number) => void
+}) {
+  const { data: allSecs = [] } = useQuery({
+    queryKey: ['all-securities'],
+    queryFn: () => getSecurities(),
+    staleTime: 60_000,
+  })
+  const newEntries = Object.entries(secMatches).filter(([, v]) => v.sec_id === null)
+  if (newEntries.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>🔗 Security Mapping ({newEntries.length} unmatched)</CardTitle>
+      </CardHeader>
+      <CardBody>
+        <p className="text-xs text-slate-500 mb-3">
+          These securities were not found in your database. Map each to an existing security or leave as "Create new" to add it automatically.
+        </p>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 text-slate-500">
+              <th className="py-1 px-2 text-left">IB Name / ISIN</th>
+              <th className="py-1 px-2 text-left">Map to existing security</th>
+            </tr>
+          </thead>
+          <tbody>
+            {newEntries.map(([key]) => (
+              <tr key={key} className="border-b border-slate-100">
+                <td className="py-1.5 px-2 font-mono text-slate-700">{key}</td>
+                <td className="py-1.5 px-2">
+                  <Select
+                    value={String(overrides[key] ?? '')}
+                    onChange={e => onChange(key, Number(e.target.value))}
+                  >
+                    <option value="">— Create new security —</option>
+                    {(allSecs as Record<string, unknown>[]).map(s => (
+                      <option key={s.id as number} value={String(s.id)}>
+                        {s.name as string} ({s.ticker as string})
+                      </option>
+                    ))}
+                  </Select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardBody>
+    </Card>
+  )
+}
+
 // ── Brokerage → Interactive Brokers ──────────────────────────────────────────
 
 function IBFlexTab() {
@@ -1113,6 +1177,7 @@ function IBFlexTab() {
   const [filterTo, setFilterTo] = useState('')
   const [replaceMode, setReplaceMode] = useState(false)
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
   const [expandedInv, setExpandedInv] = useState(true)
   const [expandedTx, setExpandedTx] = useState(true)
@@ -1133,26 +1198,36 @@ function IBFlexTab() {
       if (accountId) {
         const parsed = await ibFlexParse(data.xml, accountId, cashAccountId ?? undefined)
         setParseResult(parsed)
+        setSecMappingOverrides({})
       }
     },
   })
 
   const parseMut = useMutation({
     mutationFn: () => ibFlexParse(rawXml, accountId!, cashAccountId ?? undefined),
-    onSuccess: (d) => { setParseResult(d); _persistSettings() },
+    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); _persistSettings() },
   })
 
   const importMut = useMutation({
-    mutationFn: () => ibFlexImport({
-      xml: xml || rawXml,
-      account_id: accountId,
-      cash_account_id: cashAccountId,
-      replace_mode: replaceMode,
-      import_inv: true,
-      import_tx: true,
-      filter_from: filterFrom || null,
-      filter_to: filterTo || null,
-    }),
+    mutationFn: async () => {
+      // Save any user-defined security mappings before importing so _get_or_create_security picks them up
+      const toSave = Object.fromEntries(
+        Object.entries(secMappingOverrides).filter(([, v]) => v > 0)
+      ) as Record<string, number>
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Interactive Brokers', toSave)
+      }
+      return ibFlexImport({
+        xml: xml || rawXml,
+        account_id: accountId,
+        cash_account_id: cashAccountId,
+        replace_mode: replaceMode,
+        import_inv: true,
+        import_tx: true,
+        filter_from: filterFrom || null,
+        filter_to: filterTo || null,
+      })
+    },
     onSuccess: (d) => {
       setImportResult(d)
       _persistSettings()
@@ -1162,6 +1237,7 @@ function IBFlexTab() {
   const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const meta = parseResult?.meta as Record<string, unknown> ?? {}
+  const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
 
   // Apply date filter to preview display (same logic as server-side import filter)
   const filterRecord = (r: Record<string, unknown>) => {
@@ -1398,6 +1474,14 @@ function IBFlexTab() {
                 </CardBody>
               )}
             </Card>
+          )}
+
+          {Object.keys(secMatches).length > 0 && (
+            <SecurityMappingPanel
+              secMatches={secMatches}
+              overrides={secMappingOverrides}
+              onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+            />
           )}
 
           {newInv + newTx > 0 ? (

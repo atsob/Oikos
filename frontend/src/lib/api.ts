@@ -209,6 +209,19 @@ export const getCurrenciesMaster = () =>
 export const upsertCurrency = (data: Record<string, unknown>) =>
   api.post('/static-data/currencies', data).then(r => r.data)
 
+export const getTaxCategoryRules = () =>
+  api.get('/static-data/tax-category-rules').then(r => r.data)
+export const createTaxCategoryRule = (data: Record<string, unknown>) =>
+  api.post('/static-data/tax-category-rules', data).then(r => r.data)
+export const updateTaxCategoryRule = (taxCategory: string, data: Record<string, unknown>) =>
+  api.put(`/static-data/tax-category-rules/${encodeURIComponent(taxCategory)}`, data).then(r => r.data)
+export const getInstrumentTypeOverrides = () =>
+  api.get('/static-data/instrument-type-overrides').then(r => r.data)
+export const createInstrumentTypeOverride = (data: Record<string, unknown>) =>
+  api.post('/static-data/instrument-type-overrides', data).then(r => r.data)
+export const updateInstrumentTypeOverride = (instrumentType: string, data: Record<string, unknown>) =>
+  api.put(`/static-data/instrument-type-overrides/${encodeURIComponent(instrumentType)}`, data).then(r => r.data)
+
 // ── Market Data ───────────────────────────────────────────────────────────────
 export const getCurrencies = () =>
   api.get('/market-data/currencies').then(r => r.data)
@@ -401,6 +414,9 @@ export const getAppTransactions = (accountId: number, dateFrom: string, dateTo: 
 export const applyBankImport = (data: Record<string, unknown>) => api.post('/bank/apply-import', data).then(r => r.data)
 export const getReconciliationHistoryAccounts = () => api.get('/bank/reconciliation-history-accounts').then(r => r.data)
 export const getReconciliationHistory = (accountId: number) => api.get(`/bank/reconciliation-history/${accountId}`).then(r => r.data)
+export const saveSecurityMappings = (source: string, mappings: Record<string, number>) =>
+  api.post('/bank/save-security-mappings', { source, mappings }).then(r => r.data)
+
 export const ibFlexFetch = (token: string, queryId: string) => api.post('/bank/ib-flex-fetch', { token, query_id: queryId }).then(r => r.data)
 export const ibFlexParse = (xml: string, accountId: number, cashAccountId?: number) =>
   api.post('/bank/ib-flex-parse', { xml, account_id: accountId, cash_account_id: cashAccountId ?? null }).then(r => r.data)

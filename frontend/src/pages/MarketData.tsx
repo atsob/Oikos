@@ -7,7 +7,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtQty } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -84,6 +84,7 @@ const EMPTY_SECURITY = {
   dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
   dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
   analyst_rating: '', analyst_target_price: '',
+  tax_category: '',
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -112,6 +113,7 @@ function SecuritiesTab({ search }: { search: string }) {
     queryFn: () => getSecurities(search || undefined),
   })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+  const { data: taxRules = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -326,6 +328,14 @@ function SecuritiesTab({ search }: { search: string }) {
             <Field label="ISIN"><Input value={form.isin} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" className="font-mono" /></Field>
             <BoolField label="Is Active" k="is_active" />
             <BoolField label="Tax Exempt" k="is_tax_exempt" />
+            <Field label="Tax Category">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.tax_category ?? ''} onChange={e => set('tax_category', e.target.value)}>
+                <option value="">— not set —</option>
+                {(taxRules as Record<string,unknown>[]).map(r => (
+                  <option key={String(r.tax_category)} value={String(r.tax_category)}>{String(r.display_name)}</option>
+                ))}
+              </select>
+            </Field>
             <Field label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></Field>
             <Field label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></Field>
 

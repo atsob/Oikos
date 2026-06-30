@@ -80,6 +80,7 @@ def get_securities(search: Optional[str] = Query(None)):
                    c.Currencies_ShortName AS currency,
                    s.Is_Active AS is_active,
                    s.Is_Tax_Exempt AS is_tax_exempt,
+                   s.Tax_Category AS tax_category,
                    s.ISIN AS isin,
                    s.Sector AS sector,
                    s.Industry AS industry,

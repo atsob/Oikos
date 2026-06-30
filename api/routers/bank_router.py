@@ -471,6 +471,21 @@ def ib_flex_parse(data: dict):
         raise HTTPException(500, str(e))
 
 
+@router.post("/save-security-mappings")
+def save_security_mappings_endpoint(data: dict):
+    """Persist user-defined security mappings for a given importer source."""
+    source   = data.get("source", "")
+    mappings = data.get("mappings", {})   # {isin_or_name → securities_id}
+    if not source:
+        raise HTTPException(400, "source required")
+    try:
+        from database.queries import save_security_mappings
+        save_security_mappings(source, {k: int(v) for k, v in mappings.items() if v})
+        return {"saved": len(mappings)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/ib-flex-import")
 def ib_flex_import(data: dict):
     """Import IB Flex records (new only, skipping existing/fuzzy)."""

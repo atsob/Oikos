@@ -10,12 +10,14 @@ import {
   getSecuritiesMaster, upsertSecurity,
   getCurrenciesMaster, upsertCurrency,
   getPayeeTransactions, getCategoryTransactions,
+  getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
+  getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
-const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts']
+const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Tax Rules', 'Instrument Tax']
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
@@ -1123,6 +1125,367 @@ function SecuritiesTab({ search }: { search: string }) {
   )
 }
 
+// ── Tax Rules Tab ─────────────────────────────────────────────────────────────
+type TaxRule = Record<string, unknown>
+
+function TaxRuleField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
+
+const EMPTY_TAX_RULE: TaxRule = {
+  tax_category: '', display_name: '',
+  gains_taxable: null, gains_rate: null, gains_tax_code: null,
+  dividend_local_tax_rate: null, dividend_wht_creditable: null,
+  reinvest_taxable: null, income_tax_rate: null, show_in_capital_gains: true, notes: null,
+}
+
+function TaxRulesTab() {
+  const qc = useQueryClient()
+  const { data: rules = [], isLoading } = useQuery<TaxRule[]>({
+    queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules,
+  })
+  const [editKey, setEditKey] = useState<string | null>(null)
+  const [isNew, setIsNew] = useState(false)
+  const [form, setForm] = useState<TaxRule>({})
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
+
+  const openEdit = (r: TaxRule) => {
+    setIsNew(false)
+    setEditKey(String(r.tax_category))
+    setForm({ ...r })
+    setSaveMsg(null)
+  }
+
+  const openNew = () => {
+    setIsNew(true)
+    setEditKey('__new__')
+    setForm({ ...EMPTY_TAX_RULE })
+    setSaveMsg(null)
+  }
+
+  const saveMut = useMutation({
+    mutationFn: () => isNew
+      ? createTaxCategoryRule(form)
+      : updateTaxCategoryRule(String(editKey), form),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tax-category-rules'] })
+      setSaveMsg({ ok: true, text: 'Saved.' })
+      if (isNew) { setIsNew(false); setEditKey(String(form.tax_category)) }
+    },
+    onError: (e: Error) => setSaveMsg({ ok: false, text: e.message }),
+  })
+
+  const BoolCell = ({ val }: { val: unknown }) =>
+    val === true ? <span className="text-green-600 font-medium">Yes</span>
+    : val === false ? <span className="text-slate-400">No</span>
+    : <span className="text-slate-300">—</span>
+
+  const PctCell = ({ val }: { val: unknown }) =>
+    val != null ? <span>{Number(val).toFixed(2)}%</span> : <span className="text-slate-300">—</span>
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">
+          Investment tax rates applied per security category in reports and corporate actions.
+          Changes take effect immediately across all Investment Tax reports.
+        </p>
+        <Button size="sm" onClick={openNew}><Plus size={13} /> Add Category</Button>
+      </div>
+
+      <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide">
+              <th className="text-left px-3 py-2 border-b border-slate-200">Category</th>
+              <th className="text-center px-3 py-2 border-b border-slate-200">Gains Taxable</th>
+              <th className="text-right px-3 py-2 border-b border-slate-200">Gains Rate</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200">Tax Code</th>
+              <th className="text-right px-3 py-2 border-b border-slate-200">Div. Local Tax</th>
+              <th className="text-center px-3 py-2 border-b border-slate-200">WHT Credit</th>
+              <th className="text-center px-3 py-2 border-b border-slate-200">Reinvest Taxable</th>
+              <th className="text-right px-3 py-2 border-b border-slate-200">Income Tax</th>
+              <th className="text-center px-3 py-2 border-b border-slate-200">Show Cap. Gains</th>
+              <th className="px-3 py-2 border-b border-slate-200 w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rules as TaxRule[]).map(r => (
+              <tr key={String(r.tax_category)} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium">
+                  <div>{String(r.display_name)}</div>
+                  <div className="text-slate-400 font-normal">{String(r.tax_category)}</div>
+                </td>
+                <td className="px-3 py-2 text-center"><BoolCell val={r.gains_taxable} /></td>
+                <td className="px-3 py-2 text-right"><PctCell val={r.gains_rate} /></td>
+                <td className="px-3 py-2 text-slate-500">{r.gains_tax_code ? String(r.gains_tax_code) : '—'}</td>
+                <td className="px-3 py-2 text-right"><PctCell val={r.dividend_local_tax_rate} /></td>
+                <td className="px-3 py-2 text-center"><BoolCell val={r.dividend_wht_creditable} /></td>
+                <td className="px-3 py-2 text-center"><BoolCell val={r.reinvest_taxable} /></td>
+                <td className="px-3 py-2 text-right"><PctCell val={r.income_tax_rate} /></td>
+                <td className="px-3 py-2 text-center"><BoolCell val={r.show_in_capital_gains ?? true} /></td>
+                <td className="px-3 py-2">
+                  <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline flex items-center gap-1">
+                    <Pencil size={11} /> Edit
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {editKey && (
+        <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3">
+          <p className="text-sm font-semibold text-slate-700">
+            {isNew ? 'New Tax Category' : <>Edit: <span className="text-blue-600">{String(form.display_name)}</span><span className="text-slate-400 font-normal ml-2 text-xs">({editKey})</span></>}
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {isNew && (
+              <div className="col-span-2">
+                <TaxRuleField label="Category Key (no spaces, e.g. My Category)">
+                  <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono"
+                    value={String(form.tax_category ?? '')} onChange={e => set('tax_category', e.target.value)}
+                    placeholder="e.g. REITs" />
+                </TaxRuleField>
+              </div>
+            )}
+            <div className="col-span-2">
+              <TaxRuleField label="Display Name">
+                <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={String(form.display_name ?? '')} onChange={e => set('display_name', e.target.value)} />
+              </TaxRuleField>
+            </div>
+            <TaxRuleField label="Gains Taxable">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.gains_taxable === true ? 'true' : form.gains_taxable === false ? 'false' : ''}
+                onChange={e => set('gains_taxable', e.target.value === '' ? null : e.target.value === 'true')}>
+                <option value="">— n/a —</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </TaxRuleField>
+            <TaxRuleField label="Gains Rate (%)">
+              <input type="number" step="0.01" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.gains_rate != null ? String(form.gains_rate) : ''}
+                onChange={e => set('gains_rate', e.target.value === '' ? null : e.target.value)}
+                placeholder="—" />
+            </TaxRuleField>
+            <TaxRuleField label="Gains Tax Code">
+              <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={String(form.gains_tax_code ?? '')} onChange={e => set('gains_tax_code', e.target.value)}
+                placeholder="e.g. 659-660" />
+            </TaxRuleField>
+            <TaxRuleField label="Dividend Local Tax (%)">
+              <input type="number" step="0.01" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.dividend_local_tax_rate != null ? String(form.dividend_local_tax_rate) : ''}
+                onChange={e => set('dividend_local_tax_rate', e.target.value === '' ? null : e.target.value)}
+                placeholder="—" />
+            </TaxRuleField>
+            <TaxRuleField label="WHT Creditable">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.dividend_wht_creditable === true ? 'true' : form.dividend_wht_creditable === false ? 'false' : ''}
+                onChange={e => set('dividend_wht_creditable', e.target.value === '' ? null : e.target.value === 'true')}>
+                <option value="">— n/a —</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </TaxRuleField>
+            <TaxRuleField label="Reinvest Taxable">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.reinvest_taxable === true ? 'true' : form.reinvest_taxable === false ? 'false' : ''}
+                onChange={e => set('reinvest_taxable', e.target.value === '' ? null : e.target.value === 'true')}>
+                <option value="">— n/a —</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </TaxRuleField>
+            <TaxRuleField label="Income Tax Rate (%)">
+              <input type="number" step="0.01" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.income_tax_rate != null ? String(form.income_tax_rate) : ''}
+                onChange={e => set('income_tax_rate', e.target.value === '' ? null : e.target.value)}
+                placeholder="—" />
+            </TaxRuleField>
+            <TaxRuleField label="Show in Capital Gains">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={(form.show_in_capital_gains ?? true) ? 'true' : 'false'}
+                onChange={e => set('show_in_capital_gains', e.target.value === 'true')}>
+                <option value="true">Yes</option>
+                <option value="false">No (e.g. CDs — principal return, not a gain event)</option>
+              </select>
+            </TaxRuleField>
+            <div className="col-span-2 md:col-span-4">
+              <TaxRuleField label="Notes">
+                <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" rows={2}
+                  value={String(form.notes ?? '')} onChange={e => set('notes', e.target.value)} />
+              </TaxRuleField>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button size="sm" disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
+              <Save size={13} /> {saveMut.isPending ? 'Saving…' : 'Save'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => { setEditKey(null); setSaveMsg(null) }}>
+              <X size={13} /> Cancel
+            </Button>
+            {saveMsg && (
+              <span className={`text-xs ${saveMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{saveMsg.text}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── Instrument Tax Override Tab ───────────────────────────────────────────────
+type InstrumentOverride = { instrument_type: string; tax_category_override: string | null; notes: string | null }
+
+function InstrumentTaxTab() {
+  const qc = useQueryClient()
+  const { data: overrides = [], isLoading } = useQuery<InstrumentOverride[]>({
+    queryKey: ['instrument-type-overrides'], queryFn: getInstrumentTypeOverrides,
+  })
+  const { data: taxRules = [] } = useQuery<TaxRule[]>({
+    queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules,
+  })
+  const [editKey, setEditKey] = useState<string | null>(null)
+  const [isNew, setIsNew] = useState(false)
+  const [form, setForm] = useState<InstrumentOverride>({ instrument_type: '', tax_category_override: null, notes: null })
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const openEdit = (r: InstrumentOverride) => {
+    setIsNew(false)
+    setEditKey(r.instrument_type)
+    setForm({ ...r })
+    setSaveMsg(null)
+  }
+
+  const openNew = () => {
+    setIsNew(true)
+    setEditKey('__new__')
+    setForm({ instrument_type: '', tax_category_override: null, notes: null })
+    setSaveMsg(null)
+  }
+
+  const saveMut = useMutation({
+    mutationFn: () => isNew
+      ? createInstrumentTypeOverride(form as Record<string, unknown>)
+      : updateInstrumentTypeOverride(String(editKey), form as Record<string, unknown>),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['instrument-type-overrides'] })
+      setSaveMsg({ ok: true, text: 'Saved.' })
+      if (isNew) { setIsNew(false); setEditKey(form.instrument_type) }
+    },
+    onError: (e: Error) => setSaveMsg({ ok: false, text: e.message }),
+  })
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">
+          When an investment's Instrument Type has an override set here, it takes precedence over the
+          underlying security's Tax Category in all reports. Leave override blank to use the security's category.
+        </p>
+        <Button size="sm" onClick={openNew}><Plus size={13} /> Add Override</Button>
+      </div>
+
+      <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide">
+              <th className="text-left px-3 py-2 border-b border-slate-200">Instrument Type</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200">Effective Tax Category</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200">Notes</th>
+              <th className="px-3 py-2 border-b border-slate-200 w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(overrides as InstrumentOverride[]).map(r => (
+              <tr key={r.instrument_type} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium font-mono">{r.instrument_type}</td>
+                <td className="px-3 py-2">
+                  {r.tax_category_override
+                    ? <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{r.tax_category_override}</span>
+                    : <span className="text-slate-400 italic">use security's category</span>}
+                </td>
+                <td className="px-3 py-2 text-slate-500 max-w-xs truncate">{r.notes ?? '—'}</td>
+                <td className="px-3 py-2">
+                  <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline flex items-center gap-1">
+                    <Pencil size={11} /> Edit
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {editKey && (
+        <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3">
+          <p className="text-sm font-semibold text-slate-700">
+            {isNew ? 'New Instrument Type Override' : <>Edit: <span className="font-mono text-blue-600">{editKey}</span></>}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {isNew && (
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Instrument Type</label>
+                <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono"
+                  value={form.instrument_type}
+                  onChange={e => setForm(f => ({ ...f, instrument_type: e.target.value }))}
+                  placeholder="e.g. CFDOnCrypto" />
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Tax Category Override</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.tax_category_override ?? ''}
+                onChange={e => setForm(f => ({ ...f, tax_category_override: e.target.value || null }))}>
+                <option value="">— use security's Tax Category —</option>
+                {(taxRules as TaxRule[]).map(r => (
+                  <option key={String(r.tax_category)} value={String(r.tax_category)}>
+                    {String(r.display_name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Notes</label>
+              <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={form.notes ?? ''}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value || null }))} />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button size="sm" disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
+              <Save size={13} /> {saveMut.isPending ? 'Saving…' : 'Save'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => { setEditKey(null); setSaveMsg(null) }}>
+              <X size={13} /> Cancel
+            </Button>
+            {saveMsg && (
+              <span className={`text-xs ${saveMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{saveMsg.text}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function StaticData() {
   const [tab, setTab] = usePersist('static_data_tab', 'Payees')
@@ -1152,6 +1515,8 @@ export default function StaticData() {
           {tab === 'Categories'   && <CategoriesTab search={search} />}
           {tab === 'Institutions' && <InstitutionsTab search={search} />}
           {tab === 'Accounts'     && <AccountsTab search={search} />}
+          {tab === 'Tax Rules'      && <TaxRulesTab />}
+          {tab === 'Instrument Tax' && <InstrumentTaxTab />}
         </Card>
       </div>
     </div>

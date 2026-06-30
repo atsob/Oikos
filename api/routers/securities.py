@@ -126,6 +126,8 @@ def get_corporate_actions(sec_id: int):
                    action_type AS type,
                    ratio_new,
                    ratio_old,
+                   gross_per_share,
+                   tax_rate,
                    description,
                    created_at::text AS recorded_at
             FROM corporate_actions
@@ -166,17 +168,54 @@ def update_corporate_action(sec_id: int, ca_id: int, data: dict):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        ca_type = data["type"]
+        gross_per_share = float(data["gross_per_share"]) if data.get("gross_per_share") not in (None, "", 0) else None
+        tax_rate = float(data["tax_rate"]) if data.get("tax_rate") not in (None, "") else None
+
         cur.execute("""
             UPDATE corporate_actions
-            SET action_type=%s, effective_date=%s, ratio_new=%s, ratio_old=%s, description=%s
+            SET action_type=%s, effective_date=%s, ratio_new=%s, ratio_old=%s,
+                gross_per_share=%s, tax_rate=%s, description=%s
             WHERE corporate_actions_id=%s AND securities_id=%s
         """, (
-            data["type"], data["date"],
+            ca_type, data["date"],
             data.get("ratio_new") or None,
             data.get("ratio_old") or None,
+            gross_per_share, tax_rate,
             data.get("description") or None,
             ca_id, sec_id,
         ))
+
+        # Cascade to linked investment transactions (Dividend / RtrnCap only)
+        if ca_type in ("Dividend", "Return of Capital") and gross_per_share:
+            tr = float(tax_rate or 0) / 100
+            cur.execute("""
+                SELECT investments_id, quantity, accounts_id, transactions_id
+                FROM investments
+                WHERE corporate_actions_id = %s
+            """, (ca_id,))
+            rows = cur.fetchall()
+            for inv_id, qty, acct_id, linked_tx_id in rows:
+                qty = float(qty)
+                gross_total = round(qty * gross_per_share, 6)
+                tax_amt = -round(gross_total * tr, 6) if tr else None
+                net_total = gross_total + (tax_amt or 0)
+                cur.execute("""
+                    UPDATE investments
+                    SET price_per_share=%s, total_amount_acccur=%s, total_amount_seccur=%s, tax_amount=%s
+                    WHERE investments_id=%s
+                """, (gross_per_share, gross_total, gross_total, tax_amt, inv_id))
+                # Update linked cash transaction amount to net
+                if linked_tx_id:
+                    cur.execute(
+                        "UPDATE transactions SET total_amount=%s WHERE transactions_id=%s",
+                        (net_total if net_total < 0 else net_total, linked_tx_id),
+                    )
+                    cur.execute("SELECT accounts_id FROM transactions WHERE transactions_id=%s", (linked_tx_id,))
+                    tx_row = cur.fetchone()
+                    if tx_row:
+                        _refresh_balance(cur, tx_row[0])
+
         conn.commit()
         return {"ok": True}
     except Exception as e:
@@ -206,16 +245,19 @@ def delete_corporate_action(sec_id: int, ca_id: int):
 
 # ── Corporate Action Preview & Execute ───────────────────────────────────────
 
-def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None):
-    """Return per-account current holdings != 0 for a security, optionally filtered by account name."""
+def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_date: str | None = None):
+    """Return per-account holdings as of a given date (or current if None)."""
     params: dict = {"sid": sec_id}
+    clauses = []
     if account_names:
         placeholders = ", ".join(f"%(an{i})s" for i in range(len(account_names)))
-        clause = f"AND a.accounts_name IN ({placeholders})"
+        clauses.append(f"a.accounts_name IN ({placeholders})")
         for i, name in enumerate(account_names):
             params[f"an{i}"] = name
-    else:
-        clause = ""
+    if as_of_date:
+        clauses.append("i.date <= %(as_of)s")
+        params["as_of"] = as_of_date
+    where_extra = ("AND " + " AND ".join(clauses)) if clauses else ""
     df = pd.read_sql(f"""
         SELECT a.accounts_id,
                a.accounts_name AS account,
@@ -227,7 +269,7 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None):
         FROM investments i
         JOIN accounts a ON a.accounts_id = i.accounts_id
         LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
-        WHERE i.securities_id = %(sid)s {clause}
+        WHERE i.securities_id = %(sid)s {where_extra}
         GROUP BY a.accounts_id, a.accounts_name, c.currencies_shortname
     """, conn, params=params)
     return df[df["qty_held"] != 0]
@@ -238,9 +280,10 @@ def preview_corporate_action(sec_id: int, data: dict):
     """Preview investment transactions that a corporate action would generate."""
     event_group = data.get("event_group")  # 'split' | 'default_delisting' | 'dividend' | 'return_of_capital'
     account_names = data.get("account_names") or None
+    as_of_date = data.get("date") or None
 
     with get_db() as conn:
-        df = _get_holdings_for_ca(conn, sec_id, account_names)
+        df = _get_holdings_for_ca(conn, sec_id, account_names, as_of_date)
 
     rows = []
     if event_group == "split":
@@ -335,14 +378,14 @@ def execute_corporate_action(sec_id: int, data: dict):
     try:
         cur = conn.cursor()
 
-        # 1. Get current holdings
+        # 1. Get holdings as of the event date
         if account_names:
             placeholders = ", ".join(["%s"] * len(account_names))
             name_clause = f"AND a.accounts_name IN ({placeholders})"
-            params_list = [sec_id] + list(account_names)
+            params_list = [sec_id] + list(account_names) + [date]
         else:
             name_clause = ""
-            params_list = [sec_id]
+            params_list = [sec_id, date]
         cur.execute(f"""
             SELECT a.accounts_id,
                    COALESCE(SUM(CASE
@@ -352,20 +395,25 @@ def execute_corporate_action(sec_id: int, data: dict):
             FROM investments i
             JOIN accounts a ON a.accounts_id = i.accounts_id
             WHERE i.securities_id = %s {name_clause}
+              AND i.date <= %s
             GROUP BY a.accounts_id
         """, params_list)
         holdings = [(row[0], float(row[1])) for row in cur.fetchall() if row[1] != 0]
 
         # 2. Insert corporate_action record
+        _gps = float(data["gross_per_share"]) if data.get("gross_per_share") not in (None, "", 0) else None
+        _tr  = float(data["tax_rate"]) if data.get("tax_rate") not in (None, "") else None
         cur.execute("""
             INSERT INTO corporate_actions
-                (securities_id, action_type, effective_date, ratio_new, ratio_old, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (securities_id, action_type, effective_date, ratio_new, ratio_old,
+                 gross_per_share, tax_rate, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING corporate_actions_id
         """, (
             sec_id, db_action_type, date,
             data.get("ratio_new") or None,
             data.get("ratio_old") or None,
+            _gps, _tr,
             description or None,
         ))
         ca_id = cur.fetchone()[0]
@@ -392,6 +440,7 @@ def execute_corporate_action(sec_id: int, data: dict):
 
         # 5. Insert investment transactions (and linked cash transactions where applicable)
         for accounts_id, qty in holdings:
+            tax_amount = None
             if event_group == "split":
                 ratio_new = float(data.get("ratio_new") or 1)
                 ratio_old = float(data.get("ratio_old") or 1)
@@ -411,11 +460,11 @@ def execute_corporate_action(sec_id: int, data: dict):
                     continue
                 gross_per_share = float(data.get("gross_per_share") or 0)
                 tax_rate = float(data.get("tax_rate") or 0) / 100
-                net_per_share = gross_per_share * (1 - tax_rate)
                 inv_action = "Dividend"
                 inv_qty = qty
-                price = net_per_share
-                total = round(qty * net_per_share, 6)
+                price = gross_per_share
+                total = round(qty * gross_per_share, 6)
+                tax_amount = -round(total * tax_rate, 6) if tax_rate else None
 
             elif event_group == "return_of_capital":
                 if qty <= 0:
@@ -425,6 +474,7 @@ def execute_corporate_action(sec_id: int, data: dict):
                 inv_qty = qty
                 price = amount_per_share
                 total = round(qty * amount_per_share, 6)
+                tax_amount = None
 
             else:
                 continue
@@ -433,10 +483,10 @@ def execute_corporate_action(sec_id: int, data: dict):
                 INSERT INTO investments
                     (accounts_id, securities_id, date, action, quantity,
                      price_per_share, commission, total_amount_acccur, total_amount_seccur,
-                     fx_rate, description)
-                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, 1.0, %s)
+                     fx_rate, description, tax_amount, corporate_actions_id)
+                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, 1.0, %s, %s, %s)
                 RETURNING Investments_Id
-            """, (accounts_id, sec_id, date, inv_action, inv_qty, price, total, total, description))
+            """, (accounts_id, sec_id, date, inv_action, inv_qty, price, total, total, description, tax_amount, ca_id))
             inv_id = cur.fetchone()[0]
 
             # Create linked cash transaction if the investment account has a linked cash account
@@ -446,6 +496,7 @@ def execute_corporate_action(sec_id: int, data: dict):
                 _upsert_cash_transaction(
                     cur, inv_id, cash_account_id, accounts_id,
                     date, inv_action, total, cash_desc, None, payee_id,
+                    tax_amount=tax_amount or 0.0,
                 )
                 _refresh_balance(cur, cash_account_id)
 

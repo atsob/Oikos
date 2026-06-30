@@ -17,6 +17,8 @@ export const INSTRUMENT_TYPES = [
 
 export const CASH_ACTIONS = new Set(['Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnCap', 'MiscExp', 'MiscInc', 'CashOut', 'CashIn'])
 
+const TAX_ACTIONS = new Set(['Dividend', 'IntInc', 'RtrnCap'])
+
 export interface InvFormData {
   accounts_id: string
   securities_id: string
@@ -28,6 +30,7 @@ export interface InvFormData {
   fx_rate: string
   total_amount_acccur: string
   total_amount_seccur: string
+  tax_amount: string
   instrument_type: string
   description: string
   cash_account_id: string
@@ -44,6 +47,7 @@ export const emptyInvForm = (): InvFormData => ({
   fx_rate: '1',
   total_amount_acccur: '',
   total_amount_seccur: '',
+  tax_amount: '',
   instrument_type: '',
   description: '',
   cash_account_id: '',
@@ -202,6 +206,25 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
               <Input type="number" step="any" value={form.fx_rate} onChange={e => autoCalc('fx_rate', e.target.value)} placeholder="1" />
             </div>
           </div>
+
+          {TAX_ACTIONS.has(form.action) && (
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">
+                Withholding Tax <span className="text-slate-400 font-normal">(acc. currency, negative — e.g. −15.00)</span>
+              </label>
+              <Input
+                type="number" step="any"
+                value={form.tax_amount}
+                onChange={e => set('tax_amount', e.target.value)}
+                placeholder="0.00"
+              />
+              {form.tax_amount && form.total_amount_acccur && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Net received: {(parseFloat(form.total_amount_acccur) + parseFloat(form.tax_amount || '0')).toFixed(2)}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

@@ -522,8 +522,18 @@ def get_securities_master(search: Optional[str] = Query(None)):
         df = pd.read_sql(f"""
             SELECT s.Securities_Id AS id, s.Ticker AS ticker,
                    s.Securities_Name AS name, s.Securities_Type AS type,
-                   s.Instrument_Type AS instrument_type,
                    c.Currencies_Id AS currency_id, c.Currencies_ShortName AS currency,
+                   s.ISIN AS isin, s.Sector AS sector, s.Industry AS industry,
+                   s.Is_Active AS is_active, s.Is_Tax_Exempt AS is_tax_exempt,
+                   s.Tax_Category AS tax_category,
+                   s.Yahoo_Ticker AS yahoo_ticker, s.TV_Symbol AS tv_symbol, s.TV_Exchange AS tv_exchange,
+                   s.Maturity_Date AS maturity_date, s.Coupon_Rate AS coupon_rate,
+                   s.Coupon_Frequency AS coupon_frequency, s.Face_Value AS face_value,
+                   s.Dividend_Yield AS dividend_yield, s.Dividend_Rate AS dividend_rate,
+                   s.Dividend_Frequency AS dividend_frequency,
+                   s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
+                   s.Payout_Ratio AS payout_ratio, s.Five_Year_Avg_Yield AS five_year_avg_yield,
+                   s.Analyst_Rating AS analyst_rating, s.Analyst_Target_Price AS analyst_target_price,
                    COALESCE((SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1), 0) AS latest_price,
                    COALESCE((SELECT Date::text FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1), NULL) AS price_date,
                    COUNT(DISTINCT h.Holdings_Id) FILTER (WHERE h.Quantity != 0) AS held_in_accounts
@@ -532,7 +542,14 @@ def get_securities_master(search: Optional[str] = Query(None)):
             LEFT JOIN Holdings h ON h.Securities_Id = s.Securities_Id
             WHERE 1=1 {clause}
             GROUP BY s.Securities_Id, s.Ticker, s.Securities_Name, s.Securities_Type,
-                     s.Instrument_Type, c.Currencies_Id, c.Currencies_ShortName
+                     c.Currencies_Id, c.Currencies_ShortName,
+                     s.ISIN, s.Sector, s.Industry, s.Is_Active, s.Is_Tax_Exempt, s.Tax_Category,
+                     s.Yahoo_Ticker, s.TV_Symbol, s.TV_Exchange,
+                     s.Maturity_Date, s.Coupon_Rate, s.Coupon_Frequency, s.Face_Value,
+                     s.Dividend_Yield, s.Dividend_Rate, s.Dividend_Frequency,
+                     s.Ex_Dividend_Date, s.Dividend_Pay_Date,
+                     s.Payout_Ratio, s.Five_Year_Avg_Yield,
+                     s.Analyst_Rating, s.Analyst_Target_Price
             ORDER BY s.Ticker ASC
         """, conn, params=params if params else None)
     return _df(df)
@@ -560,6 +577,7 @@ def upsert_security(data: dict):
             _s('ex_dividend_date'), _s('dividend_pay_date'),
             _n('payout_ratio'), _n('five_year_avg_yield'),
             _s('analyst_rating'), _n('analyst_target_price'),
+            _s('tax_category'),
         )
         cols = """Ticker, Securities_Name, Securities_Type, Currencies_Id,
                   Is_Active, Is_Tax_Exempt, ISIN, Sector, Industry,
@@ -568,7 +586,8 @@ def upsert_security(data: dict):
                   Dividend_Yield, Dividend_Rate, Dividend_Frequency,
                   Ex_Dividend_Date, Dividend_Pay_Date,
                   Payout_Ratio, Five_Year_Avg_Yield,
-                  Analyst_Rating, Analyst_Target_Price"""
+                  Analyst_Rating, Analyst_Target_Price,
+                  Tax_Category"""
         placeholders = ','.join(['%s'] * len(vals))
         if sid:
             set_clause = ', '.join(f"{c.strip()}=%s" for c in cols.split(','))
@@ -687,6 +706,145 @@ def delete_currency(cid: int):
     except HTTPException:
         conn.rollback()
         raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+# ── Tax Category Rules ────────────────────────────────────────────────────────
+
+@router.get("/tax-category-rules")
+def get_tax_category_rules():
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT tax_category, display_name,
+                   gains_taxable, gains_rate, gains_tax_code,
+                   dividend_local_tax_rate, dividend_wht_creditable, reinvest_taxable,
+                   income_tax_rate, show_in_capital_gains, notes
+            FROM Tax_Category_Rules
+            ORDER BY CASE tax_category
+                WHEN 'Local Listed'   THEN 1 WHEN 'Foreign Listed' THEN 2
+                WHEN 'UCITS'          THEN 3 WHEN 'Non-UCITS'      THEN 4
+                WHEN 'CD'             THEN 5 WHEN 'Bond'           THEN 6
+                WHEN 'Crypto'         THEN 7 WHEN 'Other'          THEN 8
+                ELSE 9 END
+        """, conn)
+    return _df(df)
+
+
+@router.post("/tax-category-rules")
+def create_tax_category_rule(data: dict):
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        def _n(k): v = data.get(k); return float(v) if v not in (None, '', 'None') else None
+        def _b(k): v = data.get(k); return bool(v) if v is not None else None
+        cur.execute("""
+            INSERT INTO Tax_Category_Rules
+                (tax_category, display_name, gains_taxable, gains_rate, gains_tax_code,
+                 dividend_local_tax_rate, dividend_wht_creditable, reinvest_taxable,
+                 income_tax_rate, show_in_capital_gains, notes)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            data.get('tax_category'), data.get('display_name'),
+            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None,
+            _n('dividend_local_tax_rate'), _b('dividend_wht_creditable'), _b('reinvest_taxable'),
+            _n('income_tax_rate'), data.get('show_in_capital_gains', True), data.get('notes') or None,
+        ))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.put("/tax-category-rules/{tax_category}")
+def update_tax_category_rule(tax_category: str, data: dict):
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        def _n(k): v = data.get(k); return float(v) if v not in (None, '', 'None') else None
+        def _b(k): v = data.get(k); return bool(v) if v is not None else None
+        cur.execute("""
+            UPDATE Tax_Category_Rules
+            SET display_name            = %s,
+                gains_taxable           = %s,
+                gains_rate              = %s,
+                gains_tax_code          = %s,
+                dividend_local_tax_rate = %s,
+                dividend_wht_creditable = %s,
+                reinvest_taxable        = %s,
+                income_tax_rate         = %s,
+                show_in_capital_gains   = %s,
+                notes                   = %s
+            WHERE tax_category = %s
+        """, (
+            data.get('display_name'),
+            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None,
+            _n('dividend_local_tax_rate'), _b('dividend_wht_creditable'), _b('reinvest_taxable'),
+            _n('income_tax_rate'), data.get('show_in_capital_gains', True), data.get('notes') or None,
+            tax_category,
+        ))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/instrument-type-overrides")
+def get_instrument_type_overrides():
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT instrument_type, tax_category_override, notes
+            FROM Instrument_Type_Tax_Override
+            ORDER BY instrument_type
+        """, conn)
+    return _df(df)
+
+
+@router.post("/instrument-type-overrides")
+def create_instrument_type_override(data: dict):
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Instrument_Type_Tax_Override (instrument_type, tax_category_override, notes)
+            VALUES (%s, %s, %s)
+        """, (data.get('instrument_type'), data.get('tax_category_override') or None, data.get('notes') or None))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.put("/instrument-type-overrides/{instrument_type}")
+def update_instrument_type_override(instrument_type: str, data: dict):
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        override = data.get('tax_category_override') or None
+        cur.execute("""
+            UPDATE Instrument_Type_Tax_Override
+            SET tax_category_override = %s,
+                notes                 = %s
+            WHERE instrument_type = %s
+        """, (override, data.get('notes') or None, instrument_type))
+        conn.commit()
+        return {"ok": True}
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))

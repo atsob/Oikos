@@ -53,6 +53,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
   { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
+  { field: 'tax_amount', headerName: 'W. Tax', width: 95, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—', cellStyle: p => p.value != null ? { color: '#dc2626' } : {} },
   { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
   { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtEur(Number(p.value)), cellStyle: { fontWeight: 600 } },
   { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? fmtNum(Number(p.value), 4) : '—' },
@@ -779,6 +780,7 @@ export default function Investments() {
       fx_rate: form.fx_rate ? parseFloat(form.fx_rate) : 1,
       total_amount_acccur: form.total_amount_acccur ? parseFloat(form.total_amount_acccur) : null,
       total_amount_seccur: form.total_amount_seccur ? parseFloat(form.total_amount_seccur) : null,
+      tax_amount: form.tax_amount ? parseFloat(form.tax_amount) : null,
       instrument_type: form.instrument_type || null,
       description: form.description || null,
       cash_account_id: form.cash_account_id ? Number(form.cash_account_id) : null,
@@ -821,6 +823,7 @@ export default function Investments() {
       fx_rate: row.fx_rate != null ? String(row.fx_rate) : '1',
       total_amount_acccur: row.total != null ? String(row.total) : '',
       total_amount_seccur: row.total_seccur != null ? String(row.total_seccur) : '',
+      tax_amount: row.tax_amount != null ? String(row.tax_amount) : '',
       instrument_type: String(row.instrument_type ?? ''),
       description: String(row.notes ?? ''),
       // Use the cash account from the existing linked transaction; fall back to the account's configured linked account

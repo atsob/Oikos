@@ -21,6 +21,7 @@ import {
   getSecurityPriceAnomalies, deleteSecurityPrice,
   downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
+  getTaxCategoryRules,
   getAccounts,
 } from '@/lib/api'
 import { InvTransactionModal, emptyInvForm, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
@@ -694,6 +695,15 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const qc = useQueryClient()
   const secName = String(security.name ?? '') + (security.currency ? ` (${security.currency})` : '')
 
+  const { data: taxRulesRaw = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })
+  const taxRules = taxRulesRaw as Record<string, unknown>[]
+  const secTaxCategory = String(security.tax_category ?? '')
+  const defaultTaxRate = useMemo(() => {
+    const rule = taxRules.find(r => String(r.tax_category) === secTaxCategory)
+    const rate = rule?.dividend_local_tax_rate
+    return rate != null ? String(rate) : '0'
+  }, [taxRules, secTaxCategory])
+
   // ── existing CA list ──────────────────────────────────────────────────────
   const [deleteId, setDeleteId] = useState('')
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
@@ -720,7 +730,15 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const [ddType, setDdType] = useState('Default')
   // dividend
   const [grossPerShare, setGrossPerShare] = useState('0')
-  const [taxRate, setTaxRate] = useState('15')
+  const [taxRate, setTaxRate] = useState(defaultTaxRate)
+
+  // Keep taxRate in sync when tax rules load or security changes
+  React.useEffect(() => { setTaxRate(defaultTaxRate) }, [defaultTaxRate])
+
+  const switchEventGroup = (eg: EventGroup) => {
+    setEventGroup(eg)
+    if (eg === 'dividend') setTaxRate(defaultTaxRate)
+  }
 
   const [preview, setPreview] = useState<Record<string, unknown>[] | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -833,14 +851,16 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                   { field: 'id', headerName: 'ID', width: 65 },
                   { field: 'date', headerName: 'Date', width: 120 },
                   { field: 'type', headerName: 'Type', width: 140 },
-                  { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => String(p.value ?? 'None') },
-                  { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => String(p.value ?? 'None') },
+                  { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
+                  { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
+                  { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn', valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
+                  { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn', valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
                   { field: 'description', headerName: 'Description', flex: 1 },
                   { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
                   {
                     headerName: '', width: 75, pinned: 'right' as const,
                     cellRenderer: (p: { data: Record<string, unknown> }) => (
-                      <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), description: String(p.data.description ?? '') }) }}
+                      <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }) }}
                         className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
                         <Pencil size={11} /> Edit
                       </button>
@@ -853,19 +873,39 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 
             {editRow && (
               <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3 mt-3">
-                <p className="text-sm font-semibold text-slate-700">Edit Corporate Action #{editRow.id}</p>
+                <p className="text-sm font-semibold text-slate-700">Edit Corporate Action #{editRow.id} — <span className="text-blue-600">{editRow.type as string}</span></p>
+                {['Dividend', 'Return of Capital'].includes(editForm.type) && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    Saving will update the gross amount, withholding tax, and totals on all linked investment transactions.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-3">
                   <div><label className="text-xs text-slate-500 block mb-1">Date</label>
                     <Input type="date" className="w-36" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} /></div>
-                  <div><label className="text-xs text-slate-500 block mb-1">Ratio New</label>
-                    <Input className="w-24" value={editForm.ratio_new} onChange={e => setEditForm(f => ({ ...f, ratio_new: e.target.value }))} /></div>
-                  <div><label className="text-xs text-slate-500 block mb-1">Ratio Old</label>
-                    <Input className="w-24" value={editForm.ratio_old} onChange={e => setEditForm(f => ({ ...f, ratio_old: e.target.value }))} /></div>
+                  {['Split', 'Reverse Split'].includes(editForm.type) && <>
+                    <div><label className="text-xs text-slate-500 block mb-1">Ratio New</label>
+                      <Input className="w-24" value={editForm.ratio_new} onChange={e => setEditForm(f => ({ ...f, ratio_new: e.target.value }))} /></div>
+                    <div><label className="text-xs text-slate-500 block mb-1">Ratio Old</label>
+                      <Input className="w-24" value={editForm.ratio_old} onChange={e => setEditForm(f => ({ ...f, ratio_old: e.target.value }))} /></div>
+                  </>}
+                  {['Dividend', 'Return of Capital'].includes(editForm.type) && <>
+                    <div><label className="text-xs text-slate-500 block mb-1">Gross/Share</label>
+                      <Input type="number" step="any" className="w-32" value={editForm.gross_per_share} onChange={e => setEditForm(f => ({ ...f, gross_per_share: e.target.value }))} placeholder="0.00" /></div>
+                    {editForm.type === 'Dividend' && (
+                      <div><label className="text-xs text-slate-500 block mb-1">Tax Rate (%)</label>
+                        <Input type="number" step="any" className="w-24" value={editForm.tax_rate} onChange={e => setEditForm(f => ({ ...f, tax_rate: e.target.value }))} placeholder="0" /></div>
+                    )}
+                    {editForm.gross_per_share && (
+                      <div className="self-end pb-1.5 text-xs text-slate-500">
+                        Net/Share: <strong>{(parseFloat(editForm.gross_per_share) * (1 - parseFloat(editForm.tax_rate || '0') / 100)).toFixed(8)}</strong>
+                      </div>
+                    )}
+                  </>}
                   <div className="flex-1 min-w-48"><label className="text-xs text-slate-500 block mb-1">Description</label>
                     <Input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" disabled={updateMut.isPending} onClick={() => updateMut.mutate({ id: Number(editRow.id), d: { type: editForm.type, date: editForm.date, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, description: editForm.description || null } })}>
+                  <Button size="sm" disabled={updateMut.isPending} onClick={() => updateMut.mutate({ id: Number(editRow.id), d: { type: editForm.type, date: editForm.date, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } })}>
                     <Save size={13} /> Save
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => setEditRow(null)}><X size={13} /> Cancel</Button>
@@ -900,7 +940,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
             {([['split', 'Stock Split / Reverse Split'], ['default_delisting', 'Default / Delisting'], ['dividend', 'Dividend'], ['return_of_capital', 'Return of Capital']] as [EventGroup, string][]).map(([v, label]) => (
               <label key={v} className="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="event-group" value={v} checked={eventGroup === v}
-                  onChange={() => { setEventGroup(v); setPreview(null); setExecuteMsg(null); setSelectedAccounts([]) }}
+                  onChange={() => { switchEventGroup(v); setPreview(null); setExecuteMsg(null); setSelectedAccounts([]) }}
                   className="accent-red-500 w-4 h-4" />
                 <span className={`text-sm ${eventGroup === v ? 'font-semibold text-blue-700' : 'text-slate-600'}`}>{label}</span>
               </label>
@@ -1021,7 +1061,10 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 </div>
               </div>
               <div className="flex-1 max-w-xs">
-                <label className="text-xs text-slate-500 block mb-1">Withholding tax rate (%)</label>
+                <label className="text-xs text-slate-500 block mb-1">
+                  Withholding tax rate (%)
+                  {secTaxCategory && <span className="ml-2 text-blue-500">← {secTaxCategory}</span>}
+                </label>
                 <div className="flex items-center border border-slate-300 rounded-md">
                   <input type="number" step="any" className="flex-1 px-3 py-2 text-sm rounded-l-md outline-none" value={taxRate} onChange={e => { setTaxRate(e.target.value); setPreview(null) }} />
                   <button className="px-3 py-2 text-slate-500 hover:bg-slate-100" onClick={() => setTaxRate(v => String(Math.max(0, Number(v) - 1)))}>−</button>
@@ -1096,6 +1139,7 @@ const EMPTY_SETUP = {
   dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
   dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
   analyst_rating: '', analyst_target_price: '',
+  tax_category: '',
 }
 
 function SetupField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -1130,6 +1174,7 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
   }, [security])
 
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+  const { data: taxRules = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -1177,6 +1222,16 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
         <SetupField label="ISIN"><Input value={form.isin} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" className="font-mono" /></SetupField>
         <BoolSelect k="is_active" label="Is Active" />
         <BoolSelect k="is_tax_exempt" label="Tax Exempt" />
+        <SetupField label="Tax Category">
+          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.tax_category} onChange={e => set('tax_category', e.target.value)}>
+            <option value="">— not set —</option>
+            {(taxRules as Record<string, unknown>[]).map(r => (
+              <option key={String(r.tax_category)} value={String(r.tax_category)}>
+                {String(r.display_name)}
+              </option>
+            ))}
+          </select>
+        </SetupField>
         <SetupField label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></SetupField>
         <SetupField label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></SetupField>
 

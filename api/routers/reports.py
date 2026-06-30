@@ -1667,11 +1667,20 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
             te.*,
             s.Securities_Name                  AS securities_name,
             a.Accounts_Name                    AS account_name,
-            COALESCE(s.Is_Tax_Exempt, FALSE)   AS is_tax_exempt,
-            s.Securities_Type                  AS securities_type
+            -- Instrument-type override takes precedence over security-level Is_Tax_Exempt
+            CASE WHEN ito.Tax_Category_Override IS NOT NULL THEN FALSE
+                 ELSE COALESCE(s.Is_Tax_Exempt, FALSE) END          AS is_tax_exempt,
+            s.Securities_Type                                        AS securities_type,
+            COALESCE(ito.Tax_Category_Override, s.Tax_Category)     AS tax_category,
+            tcr.Gains_Taxable                                        AS gains_taxable,
+            tcr.Gains_Rate                                           AS gains_rate,
+            tcr.Gains_Tax_Code                                       AS gains_tax_code
         FROM txn_with_eur te
         JOIN Securities s ON s.Securities_Id = te.Securities_Id
         JOIN Accounts   a ON a.Accounts_Id   = te.Accounts_Id
+        LEFT JOIN Instrument_Type_Tax_Override ito ON ito.Instrument_Type = te.Instrument_Type::text
+        LEFT JOIN Tax_Category_Rules           tcr ON tcr.Tax_Category = COALESCE(ito.Tax_Category_Override, s.Tax_Category)
+        WHERE COALESCE(tcr.Show_In_Capital_Gains, TRUE) = TRUE
         ORDER BY te.Securities_Id, te.Accounts_Id, te.Date, te.Investments_Id
     """
     df = pd.read_sql(query, conn)
@@ -1734,11 +1743,16 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                         'is_tax_exempt':   bool(row.get('is_tax_exempt', False)),
                         'instrument_type': row.get('instrument_type'),
                         'securities_type': row.get('securities_type'),
+                        'tax_category':    row.get('tax_category'),
+                        'gains_taxable':   bool(row['gains_taxable']) if pd.notna(row.get('gains_taxable')) else None,
+                        'gains_rate':      float(row['gains_rate']) if pd.notna(row.get('gains_rate')) else None,
+                        'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
                     })
 
     cols = ['securities_id','security','ticker','account','date','action','quantity',
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
-            'holding_type','is_tax_exempt','instrument_type','securities_type']
+            'holding_type','is_tax_exempt','instrument_type','securities_type',
+            'tax_category','gains_taxable','gains_rate','gains_tax_code']
     return pd.DataFrame(results, columns=cols) if results else pd.DataFrame(columns=cols)
 
 
@@ -1888,17 +1902,27 @@ def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
             THEN 'Short-term'
             ELSE 'Long-term'
         END                                                                    AS holding_type,
-        COALESCE(s.Is_Tax_Exempt, FALSE)                                       AS is_tax_exempt,
+        -- Instrument-type override takes precedence over security-level Is_Tax_Exempt
+        CASE WHEN ito.Tax_Category_Override IS NOT NULL THEN FALSE
+             ELSE COALESCE(s.Is_Tax_Exempt, FALSE) END                        AS is_tax_exempt,
         i.Instrument_Type                                                      AS instrument_type,
-        s.Securities_Type::text                                                AS securities_type
+        s.Securities_Type::text                                                AS securities_type,
+        -- Effective tax category: instrument-type override wins over security category
+        COALESCE(ito.Tax_Category_Override, s.Tax_Category)                   AS tax_category,
+        tcr.Gains_Taxable                                                      AS gains_taxable,
+        tcr.Gains_Rate                                                         AS gains_rate,
+        tcr.Gains_Tax_Code                                                     AS gains_tax_code
     FROM Investments i
     JOIN txn_with_eur        itf ON itf.Investments_Id = i.Investments_Id
     JOIN Securities          s   ON s.Securities_Id    = i.Securities_Id
     JOIN Accounts            a   ON a.Accounts_Id      = i.Accounts_Id
-    LEFT JOIN buy_basis_per_sell bb ON bb.sell_id = i.Investments_Id
-    LEFT JOIN last_buy_per_sell  lb ON lb.sell_id = i.Investments_Id
+    LEFT JOIN buy_basis_per_sell bb  ON bb.sell_id = i.Investments_Id
+    LEFT JOIN last_buy_per_sell  lb  ON lb.sell_id = i.Investments_Id
+    LEFT JOIN Instrument_Type_Tax_Override ito ON ito.Instrument_Type = i.Instrument_Type::text
+    LEFT JOIN Tax_Category_Rules           tcr ON tcr.Tax_Category = COALESCE(ito.Tax_Category_Override, s.Tax_Category)
     WHERE i.Action IN ('Sell','Expire')
       AND EXTRACT(year FROM i.Date) = %(year)s
+      AND COALESCE(tcr.Show_In_Capital_Gains, TRUE) = TRUE
     ORDER BY i.Date
     """
     with get_db() as conn:
@@ -3176,47 +3200,102 @@ def get_tax_loss_harvesting():
 @router.get("/dividend-income-tax")
 def get_dividend_income_tax(year: int = Query(None)):
     """Investment income (dividends, reinvested, interest, RtrnCap) for a tax year.
-    Mirrors Streamlit get_investment_income_report: uses linked EUR cash tx when available,
-    falls back to historical FX at the transaction date; respects is_tax_exempt flag.
+    Uses effective tax category (instrument-type override > security tax_category) to:
+    - Route CD/Bond IntInc to 'interest' section, others to 'dividend'
+    - Exclude Reinvest for tax-exempt categories (UCITS, Local Listed, Foreign Listed)
+    - Compute local_tax_liability = max(0, gross * local_rate% - abs(withholding))
     """
     from datetime import date as _date
     if year is None:
         year = _date.today().year
     query = """
+    WITH eff AS (
+        -- Effective tax category: instrument-type override wins over security's category
+        SELECT
+            i.Investments_Id,
+            COALESCE(ito.Tax_Category_Override, s.Tax_Category) AS eff_tax_cat
+        FROM Investments i
+        JOIN Securities s ON s.Securities_Id = i.Securities_Id
+        LEFT JOIN Instrument_Type_Tax_Override ito
+               ON ito.Instrument_Type = i.Instrument_Type::text
+        WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
+          AND EXTRACT(YEAR FROM i.Date) = %(year)s
+          AND i.Total_Amount_AccCur <> 0
+    )
     SELECT
-        i.Date::text                    AS date,
-        s.Securities_Id                 AS securities_id,
-        s.Securities_Name               AS securities_name,
-        a.Accounts_Name                 AS account_name,
-        i.Action                        AS action,
-        COALESCE(s.Is_Tax_Exempt, FALSE) AS is_tax_exempt,
+        i.Date::text                        AS date,
+        s.Securities_Id                     AS securities_id,
+        s.Securities_Name                   AS securities_name,
+        a.Accounts_Name                     AS account_name,
+        i.Action                            AS action,
+        eff.eff_tax_cat                     AS tax_category,
+        COALESCE(s.Is_Tax_Exempt, FALSE)    AS is_tax_exempt,
+        -- Section: CD/Bond IntInc → 'interest', everything else → 'dividend'
         CASE
-            WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
-                THEN t_cash.Total_Amount
-            WHEN c.Currencies_ShortName != 'EUR'
-                THEN i.Total_Amount_AccCur * COALESCE(
+            WHEN i.Action = 'IntInc'
+             AND eff.eff_tax_cat IN ('CD','Bond') THEN 'interest'
+            ELSE 'dividend'
+        END AS section,
+        -- Dividend local tax rate from the effective tax category rules
+        tcr.Dividend_Local_Tax_Rate         AS dividend_local_tax_rate,
+        -- amount_eur: convert Total_Amount_AccCur using the *account* currency
+        CASE
+            WHEN ca.Currencies_ShortName = 'EUR'
+                THEN i.Total_Amount_AccCur
+            ELSE i.Total_Amount_AccCur * COALESCE(
                     (SELECT fx.FX_Rate FROM Historical_FX fx
-                     WHERE fx.Currencies_Id_1 = c.Currencies_Id AND fx.Date <= i.Date
+                     WHERE fx.Currencies_Id_1 = ca.Currencies_Id AND fx.Date <= i.Date
                      ORDER BY fx.Date DESC LIMIT 1),
                     (SELECT fx.FX_Rate FROM Historical_FX fx
-                     WHERE fx.Currencies_Id_1 = c.Currencies_Id
+                     WHERE fx.Currencies_Id_1 = ca.Currencies_Id
                      ORDER BY fx.Date ASC LIMIT 1),
                     1.0)
-            ELSE i.Total_Amount_AccCur
-        END AS amount_eur
+        END AS amount_eur,
+        i.Tax_Amount AS tax_amount,
+        -- tax_amount_eur: same FX logic on Tax_Amount (stored in account currency)
+        CASE
+            WHEN i.Tax_Amount IS NULL THEN NULL
+            WHEN ca.Currencies_ShortName = 'EUR'
+                THEN i.Tax_Amount
+            ELSE i.Tax_Amount * COALESCE(
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = ca.Currencies_Id AND fx.Date <= i.Date
+                     ORDER BY fx.Date DESC LIMIT 1),
+                    (SELECT fx.FX_Rate FROM Historical_FX fx
+                     WHERE fx.Currencies_Id_1 = ca.Currencies_Id
+                     ORDER BY fx.Date ASC LIMIT 1),
+                    1.0)
+        END AS tax_amount_eur
     FROM Investments i
-    JOIN Securities   s      ON s.Securities_Id      = i.Securities_Id
-    JOIN Accounts     a      ON a.Accounts_Id        = i.Accounts_Id
-    JOIN Currencies   c      ON c.Currencies_Id      = s.Currencies_Id
-    LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
+    JOIN Securities   s   ON s.Securities_Id  = i.Securities_Id
+    JOIN Accounts     a   ON a.Accounts_Id    = i.Accounts_Id
+    JOIN Currencies   ca  ON ca.Currencies_Id = a.Currencies_Id
+    JOIN eff              ON eff.Investments_Id = i.Investments_Id
+    LEFT JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = eff.eff_tax_cat
     WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
       AND EXTRACT(YEAR FROM i.Date) = %(year)s
       AND i.Total_Amount_AccCur <> 0
+      -- Exclude Reinvest for categories where it is not taxable
+      AND NOT (
+          i.Action = 'Reinvest'
+          AND COALESCE(tcr.Reinvest_Taxable, FALSE) = FALSE
+      )
     ORDER BY i.Date DESC, s.Securities_Name
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"year": year})
-    return _df_to_list(df)
+    # Compute local_tax_liability in Python: max(0, gross_eur * rate/100 - abs(withholding_eur))
+    def _local_liability(row):
+        rate = row.get('dividend_local_tax_rate')
+        gross = row.get('amount_eur') or 0
+        wht = abs(row.get('tax_amount_eur') or 0)
+        if rate is None or gross <= 0:
+            return None
+        return max(0.0, round(gross * float(rate) / 100 - wht, 4))
+    records = _df_to_list(df)
+    for r in records:
+        r['local_tax_liability'] = _local_liability(r)
+    return records
 
 
 @router.get("/bank-interest-tax")
