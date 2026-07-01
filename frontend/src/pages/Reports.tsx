@@ -304,10 +304,37 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
   const totalLiab   = NW_LIAB_GROUPS.reduce((s, g)  => s + (latest[g] ?? 0), 0)
   const netWorth = totalAssets + totalLiab
   const xs = allPeriods.map(p => fmtPeriodLabel(p, grouping))
+
+  // The comparison baseline is always the first period of the selected reporting range
+  // (Start Date), so the KPI reflects the whole range rather than just the last bucket.
+  const basePeriod = allPeriods.length ? allPeriods[0] : null
+  const baseNetWorth = basePeriod != null
+    ? NW_ASSET_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0) + NW_LIAB_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0)
+    : null
+  const delta = baseNetWorth != null ? netWorth - baseNetWorth : null
+  const pctChange = delta != null && baseNetWorth ? (delta / Math.abs(baseNetWorth)) * 100 : null
+  // Periods are actual dates, and the range can span anywhere from a few weeks to decades,
+  // so derive the annualization factor from real elapsed days rather than assuming a fixed
+  // period length.
+  const daysElapsed = basePeriod != null && allPeriods.length && basePeriod !== allPeriods[allPeriods.length - 1]
+    ? (new Date(allPeriods[allPeriods.length - 1] + 'T00:00:00').getTime() - new Date(basePeriod + 'T00:00:00').getTime()) / 86400000
+    : null
+  const periodsPerYear = daysElapsed && daysElapsed > 0 ? 365.25 / daysElapsed : null
+  const annualizedPct = pctChange != null && periodsPerYear != null ? (Math.pow(1 + pctChange / 100, periodsPerYear) - 1) * 100 : null
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="Net Worth" value={fmtEur(netWorth)} color={netWorth >= 0 ? 'text-blue-700' : 'text-red-600'} />
+        <KpiCard label="Net Worth" value={fmtEur(netWorth)} color={netWorth >= 0 ? 'text-blue-700' : 'text-red-600'}
+          tooltip={basePeriod ? `Change since ${fmtPeriodHeader(basePeriod, grouping)}, and that rate of change annualised.` : undefined}
+          subtitleNode={delta != null ? (
+            <span className="flex gap-2 tabular-nums">
+              <span className={delta >= 0 ? 'text-green-700' : 'text-red-600'}>{delta >= 0 ? '+' : ''}{fmtEur(delta)}</span>
+              {annualizedPct != null && (
+                <span className={annualizedPct >= 0 ? 'text-green-700' : 'text-red-600'}>({annualizedPct >= 0 ? '+' : ''}{annualizedPct.toFixed(1)}% ann.)</span>
+              )}
+            </span>
+          ) : undefined} />
         {NW_ASSET_GROUPS.map(g => <KpiCard key={g} label={g} value={fmtEur(latest[g] ?? 0)} />)}
       </div>
       <Plot
@@ -323,7 +350,6 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
 }
 
 function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
-  const { isDark } = useTheme()
   const [accSortKey, setAccSortKey] = useState<'name' | 'latest'>('latest')
   const [accSortDir, setAccSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -355,25 +381,11 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
     return accSortDir === 'asc' ? av - bv : bv - av
   })
   const headers = allPeriods.map(p => fmtPeriodHeader(p, grouping))
-
-  // Stacked bar chart by account type group
-  const byPeriod: Record<string, Record<string, number>> = {}
-  for (const r of rows) {
-    const p = String(r.period), g = nwGroup(String(r.accounts_type)), v = Number(r.balance_eur ?? 0)
-    if (!byPeriod[p]) byPeriod[p] = {}
-    byPeriod[p][g] = (byPeriod[p][g] ?? 0) + v
-  }
-  const xs = allPeriods.map(p => fmtPeriodLabel(p, grouping))
+  const totalsByPeriod: Record<string, number> = {}
+  for (const p of allPeriods) totalsByPeriod[p] = accounts.reduce((s, a) => s + (lookup[a]?.[p] ?? 0), 0)
 
   return (
     <div className="space-y-4">
-      <Plot
-        data={[
-          ...NW_ALL_GROUPS.map(g => ({ x: xs, y: allPeriods.map(p => byPeriod[p]?.[g] ?? 0), name: g, type: 'bar' as const, marker: { color: NW_GROUP_COLORS[g] } })),
-          { x: xs, y: allPeriods.map(p => NW_ASSET_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0) + NW_LIAB_GROUPS.reduce((s,g) => s+(byPeriod[p]?.[g]??0),0)), name: 'Balance', type: 'scatter' as const, mode: 'lines+markers' as const, line: { color: '#e879f9', width: 2 }, marker: { size: 4, color: '#e879f9' } },
-        ]}
-        layout={{ barmode: 'relative' as const, height: 340, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.3 }, ...plotLayout(isDark), hovermode: 'x unified' as const }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
@@ -419,6 +431,16 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
               </React.Fragment>
             ))}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className="bg-slate-100 border-t-2 border-slate-300 font-semibold">
+              <td className="px-2 py-1.5 sticky left-0 bg-slate-100">TOTAL</td>
+              <td className="px-2 py-1.5 text-slate-400 sticky left-52 bg-slate-100 text-[10px]"></td>
+              {allPeriods.map(p => {
+                const v = totalsByPeriod[p]
+                return <td key={p} className={`text-right px-2 py-1.5 tabular-nums ${v < 0 ? 'text-red-600' : 'text-slate-700'}`}>{fmtEur(v)}</td>
+              })}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -563,7 +585,8 @@ function NetWorthSection() {
   const [showZeroBalance, setShowZeroBalance] = usePersist('nw_showZeroBalance', false)
   const [ytdMode, setYtdMode] = usePersist('nw_ytdMode', false)
 
-  const ytdStart = `${today.slice(0, 4)}-01-01`
+//  const ytdStart = `${today.slice(0, 4)}-01-01`
+  const ytdStart = `${parseInt(today.slice(0, 4)) - 1}-12-31`;
   const effStart   = ytdMode ? ytdStart : startDate
   const effEnd     = ytdMode ? today    : endDate
   const effGrouping: 'year'|'quarter'|'month' = ytdMode ? 'month' : grouping
