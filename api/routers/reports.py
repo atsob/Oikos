@@ -3236,8 +3236,9 @@ def get_dividend_income_tax(year: int = Query(None)):
              AND eff.eff_tax_cat IN ('CD','Bond') THEN 'interest'
             ELSE 'dividend'
         END AS section,
-        -- Dividend local tax rate from the effective tax category rules
+        -- Tax rates from the effective tax category rules
         tcr.Dividend_Local_Tax_Rate         AS dividend_local_tax_rate,
+        tcr.Income_Tax_Rate                 AS income_tax_rate,
         -- amount_eur: convert Total_Amount_AccCur using the *account* currency
         CASE
             WHEN ca.Currencies_ShortName = 'EUR'
@@ -3306,6 +3307,7 @@ def get_dividend_income_tax(year: int = Query(None)):
         COALESCE(s.Is_Tax_Exempt, FALSE)    AS is_tax_exempt,
         'interest'                          AS section,
         NULL::numeric                       AS dividend_local_tax_rate,
+        tcr.Income_Tax_Rate                 AS income_tax_rate,
         -- Interest = proceeds - cost basis
         ABS(i.Total_Amount_AccCur) - COALESCE(bc.total_cost, 0) AS amount_eur,
         NULL::numeric                       AS tax_amount,
@@ -3331,15 +3333,29 @@ def get_dividend_income_tax(year: int = Query(None)):
         df = df.sort_values('date', ascending=False)
     # Compute local_tax_liability in Python: max(0, gross_eur * rate/100 - abs(withholding_eur))
     def _local_liability(row):
+        if row.get('action') == 'RtrnCap':
+            return None  # not income; reduces cost basis — no tax liability
         rate = row.get('dividend_local_tax_rate')
         gross = row.get('amount_eur') or 0
         wht = abs(row.get('tax_amount_eur') or 0)
         if rate is None or gross <= 0:
             return None
         return max(0.0, round(gross * float(rate) / 100 - wht, 4))
+    def _income_tax_liability(row):
+        """For CD/Bond interest rows: max(0, gross * income_tax_rate% - abs(wht))."""
+        if row.get('section') != 'interest' or row.get('is_tax_exempt'):
+            return None
+        rate = row.get('income_tax_rate')
+        gross = row.get('amount_eur') or 0
+        wht = abs(row.get('tax_amount_eur') or 0)
+        if rate is None or gross <= 0:
+            return None
+        return max(0.0, round(gross * float(rate) / 100 - wht, 4))
+
     records = _df_to_list(df)
     for r in records:
         r['local_tax_liability'] = _local_liability(r)
+        r['income_tax_liability'] = _income_tax_liability(r)
     return records
 
 
@@ -3352,36 +3368,70 @@ def get_bank_interest_tax(year: int = Query(None)):
     if year is None:
         year = _date.today().year
     query = """
+    WITH interest_splits AS (
+        -- Interest income splits (positive amounts in Interest/income-interest categories)
+        SELECT
+            s.Splits_Id,
+            s.Transactions_Id,
+            s.Amount,
+            c.Categories_Name  AS category,
+            SUM(s.Amount) OVER (PARTITION BY s.Transactions_Id) AS total_interest_in_txn
+        FROM Splits s
+        JOIN Categories c ON c.Categories_Id = s.Categories_Id
+        WHERE s.Amount > 0
+          AND (
+              c.Categories_Type = 'Interest'
+              OR (c.Categories_Type IN ('Income','Dividend')
+                  AND LOWER(c.Categories_Name) LIKE '%%interest%%')
+          )
+    ),
+    tax_splits AS (
+        -- Total tax withheld per transaction (negative splits in Tax categories)
+        SELECT
+            s.Transactions_Id,
+            SUM(s.Amount) AS tax_amount
+        FROM Splits s
+        JOIN Categories c ON c.Categories_Id = s.Categories_Id
+        WHERE s.Amount < 0
+          AND (
+              c.Categories_Type = 'Tax'
+              OR LOWER(c.Categories_Name) LIKE '%%tax%%'
+          )
+        GROUP BY s.Transactions_Id
+    )
     SELECT
         t.Date::text                    AS date,
         a.Accounts_Name                 AS account_name,
         a.Accounts_Type                 AS account_type,
         COALESCE(p.Payees_Name, '—')    AS payee,
-        c.Categories_Name               AS category,
+        i.category                      AS category,
         cur.Currencies_ShortName        AS currency,
-        s.Amount * CASE
+        i.Amount * CASE
             WHEN cur.Currencies_ShortName = 'EUR' THEN 1.0
             ELSE COALESCE(
                 (SELECT hfx.FX_Rate FROM Historical_FX hfx
                  WHERE hfx.Currencies_Id_1 = cur.Currencies_Id AND hfx.Date <= t.Date
                  ORDER BY hfx.Date DESC LIMIT 1),
                 1.0)
-        END AS amount_eur
-    FROM Splits s
-    JOIN Transactions t   ON t.Transactions_Id = s.Transactions_Id
-    JOIN Categories   c   ON c.Categories_Id   = s.Categories_Id
+        END                             AS amount_eur,
+        -- Distribute tax proportionally: each split gets tax * (split / total_interest)
+        (ts.tax_amount * (i.Amount / NULLIF(i.total_interest_in_txn, 0))) * CASE
+            WHEN cur.Currencies_ShortName = 'EUR' THEN 1.0
+            ELSE COALESCE(
+                (SELECT hfx.FX_Rate FROM Historical_FX hfx
+                 WHERE hfx.Currencies_Id_1 = cur.Currencies_Id AND hfx.Date <= t.Date
+                 ORDER BY hfx.Date DESC LIMIT 1),
+                1.0)
+        END                             AS tax_amount_eur
+    FROM interest_splits i
+    JOIN Transactions t   ON t.Transactions_Id = i.Transactions_Id
     JOIN Accounts     a   ON a.Accounts_Id     = t.Accounts_Id
     JOIN Currencies   cur ON cur.Currencies_Id = a.Currencies_Id
     LEFT JOIN Payees  p   ON p.Payees_Id       = t.Payees_Id
+    LEFT JOIN tax_splits ts ON ts.Transactions_Id = t.Transactions_Id
     WHERE t.Transfers_Id IS NULL
-      AND (
-          c.Categories_Type = 'Interest'
-          OR (c.Categories_Type IN ('Income','Dividend')
-              AND LOWER(c.Categories_Name) LIKE '%%interest%%')
-      )
       AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin')
       AND EXTRACT(YEAR FROM t.Date) = %(year)s
-      AND s.Amount > 0
     ORDER BY t.Date DESC, a.Accounts_Name
     """
     with get_db() as conn:

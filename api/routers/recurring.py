@@ -213,7 +213,26 @@ def run_template(template_id: int):
             template_id,
         ))
         tx_id = cur.fetchone()[0]
-        # no last_run column in schema
+        # Copy splits from template
+        cur.execute("""
+            INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+            SELECT %s, rts.Categories_Id, rts.Amount, rts.Memo
+            FROM Recurring_Template_Splits rts WHERE rts.templates_id = %s
+        """, (tx_id, template_id))
+        # Advance next_due_date to the next occurrence
+        cur.execute("""
+            UPDATE Recurring_Templates SET next_due_date = CASE periodicity
+                WHEN 'Daily'        THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '1 day'
+                WHEN 'Weekly'       THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '1 week'
+                WHEN 'Bi-Weekly'    THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '2 weeks'
+                WHEN 'Monthly'      THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '1 month'
+                WHEN 'Bi-Monthly'   THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '2 months'
+                WHEN 'Quarterly'    THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '3 months'
+                WHEN 'Semi-Annual'  THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '6 months'
+                WHEN 'Annual'       THEN COALESCE(next_due_date, CURRENT_DATE) + INTERVAL '1 year'
+                ELSE next_due_date END
+            WHERE templates_id = %s
+        """, (template_id,))
         conn.commit()
         return {"transaction_id": tx_id, "message": "Draft transaction created"}
     except HTTPException:

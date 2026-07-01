@@ -554,6 +554,7 @@ export default function Register() {
           onSave={handleSave}
           onDelete={form.id ? async () => { if (confirm('Delete this transaction?')) { await handleDelete(form.id!); setModalOpen(false) } } : undefined}
           onClose={() => setModalOpen(false)}
+          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
           saving={saving}
           error={saveError}
           recurringEnabled={recurringEnabled}

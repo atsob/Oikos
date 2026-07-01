@@ -1308,7 +1308,15 @@ function PnlReport() {
   const [showFxSplit, setShowFxSplit] = usePersist('pnl_showFxSplit', false)
   const [showPct, setShowPct] = usePersist('pnl_showPct', true)
   const [showClosedPositions, setShowClosedPositions] = usePersist('pnl_showClosedPositions', false)
-  const [selectedAccount, setSelectedAccount] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedAccount = searchParams.get('pnl_account')
+  const setSelectedAccount = (acc: string | null) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      acc ? next.set('pnl_account', acc) : next.delete('pnl_account')
+      return next
+    }, { replace: false })
+  }
 
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
 
@@ -4437,6 +4445,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           onSave={handleModalSave}
           onDelete={handleModalDelete}
           onClose={() => setModalOpen(false)}
+          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
           saving={modalSaving}
           error={modalError}
           {...recurring}
@@ -5421,9 +5430,10 @@ function TaxLossHarvestingTab() {
   )
 }
 
-function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boolean }) {
+function IncomeDetailRows({ rows, showSecLink, showIncomeTax = false }: { rows: Row[]; showSecLink: boolean; showIncomeTax?: boolean }) {
   const hasTax = rows.some(r => r.tax_amount_eur != null)
   const hasLib = rows.some(r => r.local_tax_liability != null && Number(r.local_tax_liability) > 0)
+  const hasIntTax = showIncomeTax && rows.some(r => r.income_tax_liability != null && Number(r.income_tax_liability) > 0)
   return (
     <div className="overflow-x-auto text-xs ml-4 mt-1 mb-2">
       <table className="w-full border-collapse">
@@ -5439,6 +5449,7 @@ function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boo
           {hasTax && <th className="text-right px-2 py-1 border-b border-slate-200">WHT (€)</th>}
           {hasTax && <th className="text-right px-2 py-1 border-b border-slate-200">Net (€)</th>}
           {hasLib && <th className="text-right px-2 py-1 border-b border-slate-200 text-amber-600">Div Local Tax (€)</th>}
+          {hasIntTax && <th className="text-right px-2 py-1 border-b border-slate-200 text-amber-600">Int. Tax (€)</th>}
         </tr></thead>
         <tbody>
           {rows.map((r, i) => {
@@ -5446,6 +5457,7 @@ function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boo
             const tax = r.tax_amount_eur != null ? Number(r.tax_amount_eur) : null
             const net = tax != null ? gross + tax : null
             const lib = r.local_tax_liability != null ? Number(r.local_tax_liability) : null
+            const itax = r.income_tax_liability != null ? Number(r.income_tax_liability) : null
             return (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
@@ -5459,6 +5471,7 @@ function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boo
                 {hasTax && <td className="px-2 py-1 text-right tabular-nums text-red-600">{tax != null ? fmtEur(tax) : '—'}</td>}
                 {hasTax && <td className={`px-2 py-1 text-right tabular-nums font-semibold ${(net ?? gross) < 0 ? 'text-red-600' : 'text-green-700'}`}>{net != null ? fmtEur(net) : fmtEur(gross)}</td>}
                 {hasLib && <td className={`px-2 py-1 text-right tabular-nums ${lib != null && lib > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{lib != null && lib > 0 ? fmtEur(lib) : '—'}</td>}
+                {hasIntTax && <td className={`px-2 py-1 text-right tabular-nums ${itax != null && itax > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{itax != null && itax > 0 ? fmtEur(itax) : '—'}</td>}
               </tr>
             )
           })}
@@ -5468,11 +5481,11 @@ function IncomeDetailRows({ rows, showSecLink }: { rows: Row[]; showSecLink: boo
   )
 }
 
-function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: boolean }) {
+function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows: Row[]; showSecLink?: boolean; showIncomeTax?: boolean }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const toggle = (key: string) => setExpanded(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
 
-  type Group = { key: string; label: string; account: string; total: number; taxTotal: number | null; libTotal: number | null; rows: Row[] }
+  type Group = { key: string; label: string; account: string; total: number; taxTotal: number | null; libTotal: number | null; intTaxTotal: number | null; rows: Row[] }
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, Group>()
     for (const r of rows) {
@@ -5481,11 +5494,12 @@ function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: 
         : String(r.payee ?? r.category ?? '—')
       const account = String(r.account_name ?? '')
       const key = `${label}||${account}`
-      if (!map.has(key)) map.set(key, { key, label, account, total: 0, taxTotal: null, libTotal: null, rows: [] })
+      if (!map.has(key)) map.set(key, { key, label, account, total: 0, taxTotal: null, libTotal: null, intTaxTotal: null, rows: [] })
       const g = map.get(key)!
       g.total += Number(r.amount_eur ?? 0)
       if (r.tax_amount_eur != null) g.taxTotal = (g.taxTotal ?? 0) + Number(r.tax_amount_eur)
       if (r.local_tax_liability != null) g.libTotal = (g.libTotal ?? 0) + Number(r.local_tax_liability)
+      if (r.income_tax_liability != null) g.intTaxTotal = (g.intTaxTotal ?? 0) + Number(r.income_tax_liability)
       g.rows.push(r)
     }
     return [...map.values()].sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
@@ -5494,9 +5508,11 @@ function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: 
   const grandTotal = groups.reduce((s, g) => s + g.total, 0)
   const grandTax = groups.some(g => g.taxTotal != null) ? groups.reduce((s, g) => s + (g.taxTotal ?? 0), 0) : null
   const grandLib = groups.some(g => g.libTotal != null && g.libTotal > 0) ? groups.reduce((s, g) => s + (g.libTotal ?? 0), 0) : null
+  const grandIntTax = showIncomeTax && groups.some(g => g.intTaxTotal != null && g.intTaxTotal > 0) ? groups.reduce((s, g) => s + (g.intTaxTotal ?? 0), 0) : null
   const hasTax = grandTax != null
   const hasLib = grandLib != null && grandLib > 0
-  const colSpanTotal = 4 + (hasTax ? 2 : 0) + (hasLib ? 1 : 0)
+  const hasIntTax = grandIntTax != null && grandIntTax > 0
+  const colSpanTotal = 4 + (hasTax ? 2 : 0) + (hasLib ? 1 : 0) + (hasIntTax ? 1 : 0)
 
   return (
     <div className="text-xs border border-slate-200 rounded-lg overflow-hidden">
@@ -5510,6 +5526,7 @@ function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: 
           {hasTax && <th className="text-right px-3 py-2 border-b border-slate-200">WHT (€)</th>}
           {hasTax && <th className="text-right px-3 py-2 border-b border-slate-200">Net (€)</th>}
           {hasLib && <th className="text-right px-3 py-2 border-b border-slate-200 text-amber-600">Div Local Tax (€)</th>}
+          {hasIntTax && <th className="text-right px-3 py-2 border-b border-slate-200 text-amber-600">Int. Tax (€)</th>}
         </tr></thead>
         <tbody>
           {groups.map(g => {
@@ -5527,11 +5544,12 @@ function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: 
                   {hasTax && <td className="px-3 py-2 text-right tabular-nums text-red-600">{g.taxTotal != null ? fmtEur(g.taxTotal) : '—'}</td>}
                   {hasTax && <td className={`px-3 py-2 text-right tabular-nums font-semibold ${(net ?? g.total) < 0 ? 'text-red-600' : 'text-green-700'}`}>{net != null ? fmtEur(net) : fmtEur(g.total)}</td>}
                   {hasLib && <td className={`px-3 py-2 text-right tabular-nums ${(g.libTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.libTotal ?? 0) > 0 ? fmtEur(g.libTotal!) : '—'}</td>}
+                  {hasIntTax && <td className={`px-3 py-2 text-right tabular-nums ${(g.intTaxTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.intTaxTotal ?? 0) > 0 ? fmtEur(g.intTaxTotal!) : '—'}</td>}
                 </tr>
                 {expanded.has(g.key) && (
                   <tr key={g.key + '_detail'}>
                     <td colSpan={colSpanTotal + 1} className="bg-slate-50 border-b border-slate-200 p-0">
-                      <IncomeDetailRows rows={g.rows} showSecLink={showSecLink} />
+                      <IncomeDetailRows rows={g.rows} showSecLink={showSecLink} showIncomeTax={showIncomeTax} />
                     </td>
                   </tr>
                 )}
@@ -5544,6 +5562,7 @@ function IncomeTable({ rows, showSecLink = true }: { rows: Row[]; showSecLink?: 
             {hasTax && <td className="px-3 py-2 text-right tabular-nums text-red-600">{fmtEur(grandTax!)}</td>}
             {hasTax && <td className={`px-3 py-2 text-right tabular-nums ${(grandTotal + grandTax!) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(grandTotal + grandTax!)}</td>}
             {hasLib && <td className="px-3 py-2 text-right tabular-nums text-amber-700">{fmtEur(grandLib!)}</td>}
+            {hasIntTax && <td className="px-3 py-2 text-right tabular-nums text-amber-700">{fmtEur(grandIntTax!)}</td>}
           </tr>
         </tbody>
       </table>
@@ -5564,15 +5583,16 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
   const isExempt = (r: Row) => r.is_tax_exempt === true || r.is_tax_exempt === 'true' || r.is_tax_exempt === 1
 
   // Backend already filtered out non-taxable Reinvest; split by section + exempt flag
-  const divRows      = invRows.filter(r => r.section === 'dividend' && !isExempt(r))
-  const divExempt    = invRows.filter(r => r.section === 'dividend' &&  isExempt(r))
+  const divRows      = invRows.filter(r => r.section === 'dividend' && !isExempt(r) && r.action !== 'RtrnCap')
+  const divExempt    = invRows.filter(r => r.section === 'dividend' &&  isExempt(r) && r.action !== 'RtrnCap')
   const intInvRows   = invRows.filter(r => r.section === 'interest'  && !isExempt(r))
   const intExempt    = invRows.filter(r => r.section === 'interest'  &&  isExempt(r))  // T-bills & exempt bonds
   const invRoc       = invRows.filter(r => r.action  === 'RtrnCap')
 
-  const sum    = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
-  const sumTax = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.tax_amount_eur ?? 0), 0)
-  const sumLib = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.local_tax_liability ?? 0), 0)
+  const sum       = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.amount_eur ?? 0), 0)
+  const sumTax    = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.tax_amount_eur ?? 0), 0)
+  const sumLib    = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.local_tax_liability ?? 0), 0)
+  const sumIntTax = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.income_tax_liability ?? 0), 0)
 
   const totalDiv     = sum(divRows)
   const totalIntInv  = sum(intInvRows)
@@ -5580,8 +5600,9 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
   const totalRoc     = sum(invRoc)
   const totalBank    = sum(bankRows)
   const grandTotal   = totalDiv + totalIntInv + totalBank
-  const totalWithheld      = sumTax([...divRows, ...divExempt, ...invRoc])
-  const totalLocalLiability = sumLib([...divRows, ...intInvRows])
+  const totalWithheld        = sumTax([...divRows, ...divExempt])
+  const totalLocalLiability  = sumLib([...divRows, ...intInvRows])
+  const totalIntTaxLiability = sumIntTax(intInvRows)
 
   const fmt2 = (n: number) => `€ ${fmtNum(n, 2)}`
 
@@ -5632,6 +5653,13 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
               <div className="text-xs text-amber-500 mt-1">max(0, gross × local rate − WHT credited)</div>
             </div>
           )}
+          {totalIntTaxLiability > 0 && (
+            <div className="bg-amber-50 rounded-lg px-4 py-3">
+              <div className="text-xs text-amber-600 mb-1">CD / Bond Interest Tax (15%)</div>
+              <div className="text-xl font-bold tabular-nums text-amber-700">{fmt2(totalIntTaxLiability)}</div>
+              <div className="text-xs text-amber-500 mt-1">max(0, gross × 15% − WHT withheld)</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -5661,7 +5689,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       {(intInvRows.length > 0 || intExempt.length > 0) && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold text-slate-700">CD / Bond Interest Income</h3>
-          {intInvRows.length > 0 && <IncomeTable rows={intInvRows} />}
+          {intInvRows.length > 0 && <IncomeTable rows={intInvRows} showIncomeTax />}
           {intExempt.length > 0 && (
             <>
               <p className="text-xs text-green-700 font-medium mt-2">Tax-Exempt Interest (T-Bills, Exempt Bonds)</p>
@@ -5727,7 +5755,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
 
 function TaxSection() {
   const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
-  const [year, setYear] = useState(new Date().getFullYear() - 1)
+  const [year, setYear] = usePersist('tax_year', new Date().getFullYear() - 1)
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">

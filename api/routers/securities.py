@@ -189,27 +189,48 @@ def update_corporate_action(sec_id: int, ca_id: int, data: dict):
         # Cascade to linked investment transactions (Dividend / RtrnCap only)
         if ca_type in ("Dividend", "Return of Capital") and gross_per_share:
             tr = float(tax_rate or 0) / 100
+            # Look up security currency once
+            cur.execute("SELECT Currencies_Id FROM Securities WHERE Securities_Id = %s", (sec_id,))
+            sec_cur_row = cur.fetchone()
+            sec_cid = sec_cur_row[0] if sec_cur_row else None
             cur.execute("""
-                SELECT investments_id, quantity, accounts_id, transactions_id
-                FROM investments
-                WHERE corporate_actions_id = %s
+                SELECT i.investments_id, i.quantity, i.accounts_id, i.transactions_id,
+                       a.currencies_id AS acc_cid, i.date::text AS inv_date
+                FROM investments i
+                JOIN accounts a ON a.accounts_id = i.accounts_id
+                WHERE i.corporate_actions_id = %s
             """, (ca_id,))
             rows = cur.fetchall()
-            for inv_id, qty, acct_id, linked_tx_id in rows:
+            for inv_id, qty, acct_id, linked_tx_id, acc_cid, inv_date in rows:
                 qty = float(qty)
                 gross_total = round(qty * gross_per_share, 6)
                 tax_amt = -round(gross_total * tr, 6) if tr else None
                 net_total = gross_total + (tax_amt or 0)
+                # Resolve FX rate for this account
+                if sec_cid and acc_cid and sec_cid != acc_cid:
+                    cur.execute("""
+                        SELECT FX_Rate FROM Historical_FX
+                        WHERE Currencies_Id_1 = %s AND Date <= %s
+                        ORDER BY Date DESC LIMIT 1
+                    """, (sec_cid, inv_date or data["date"]))
+                    fx_row = cur.fetchone()
+                    fx = float(fx_row[0]) if fx_row else 1.0
+                else:
+                    fx = 1.0
+                gross_acccur = round(gross_total * fx, 6)
+                tax_acccur = round(tax_amt * fx, 6) if tax_amt is not None else None
+                net_acccur = gross_acccur + (tax_acccur or 0)
                 cur.execute("""
                     UPDATE investments
-                    SET price_per_share=%s, total_amount_acccur=%s, total_amount_seccur=%s, tax_amount=%s
+                    SET price_per_share=%s, total_amount_acccur=%s, total_amount_seccur=%s,
+                        fx_rate=%s, tax_amount=%s
                     WHERE investments_id=%s
-                """, (gross_per_share, gross_total, gross_total, tax_amt, inv_id))
-                # Update linked cash transaction amount to net
+                """, (gross_per_share, gross_acccur, gross_total, fx, tax_acccur, inv_id))
+                # Update linked cash transaction amount to net (in account currency)
                 if linked_tx_id:
                     cur.execute(
                         "UPDATE transactions SET total_amount=%s WHERE transactions_id=%s",
-                        (net_total if net_total < 0 else net_total, linked_tx_id),
+                        (net_acccur, linked_tx_id),
                     )
                     cur.execute("SELECT accounts_id FROM transactions WHERE transactions_id=%s", (linked_tx_id,))
                     tx_row = cur.fetchone()
@@ -262,6 +283,9 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_da
         SELECT a.accounts_id,
                a.accounts_name AS account,
                c.currencies_shortname AS currency,
+               a.currencies_id AS acc_currencies_id,
+               sc.currencies_shortname AS sec_currency,
+               s.currencies_id AS sec_currencies_id,
                COALESCE(SUM(CASE
                    WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
                    WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
@@ -269,8 +293,11 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_da
         FROM investments i
         JOIN accounts a ON a.accounts_id = i.accounts_id
         LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
+        JOIN securities s ON s.securities_id = i.securities_id
+        LEFT JOIN currencies sc ON sc.currencies_id = s.currencies_id
         WHERE i.securities_id = %(sid)s {where_extra}
-        GROUP BY a.accounts_id, a.accounts_name, c.currencies_shortname
+        GROUP BY a.accounts_id, a.accounts_name, c.currencies_shortname, a.currencies_id,
+                 sc.currencies_shortname, s.currencies_id
     """, conn, params=params)
     return df[df["qty_held"] != 0]
 
@@ -284,6 +311,22 @@ def preview_corporate_action(sec_id: int, data: dict):
 
     with get_db() as conn:
         df = _get_holdings_for_ca(conn, sec_id, account_names, as_of_date)
+
+        # Pre-fetch FX rate if security currency differs from any account currency
+        fx_cache: dict[int, float] = {}  # sec_currencies_id → fx_rate (to EUR or acc currency)
+        if event_group in ("dividend", "return_of_capital") and not df.empty:
+            for _, r in df.iterrows():
+                sec_cid = int(r["sec_currencies_id"]) if r.get("sec_currencies_id") is not None else None
+                acc_cid = int(r["acc_currencies_id"]) if r.get("acc_currencies_id") is not None else None
+                if sec_cid and acc_cid and sec_cid != acc_cid and sec_cid not in fx_cache:
+                    with conn.cursor() as _cur:
+                        _cur.execute("""
+                            SELECT FX_Rate FROM Historical_FX
+                            WHERE Currencies_Id_1 = %s AND Date <= %s
+                            ORDER BY Date DESC LIMIT 1
+                        """, (sec_cid, as_of_date or "9999-12-31"))
+                        fx_row = _cur.fetchone()
+                        fx_cache[sec_cid] = float(fx_row[0]) if fx_row else 1.0
 
     rows = []
     if event_group == "split":
@@ -327,9 +370,14 @@ def preview_corporate_action(sec_id: int, data: dict):
                 gross = round(qty * gross_per_share, 6)
                 tax_amt = round(gross * tax_rate, 6)
                 net = round(gross - tax_amt, 6)
+                sec_cid = int(r["sec_currencies_id"]) if r.get("sec_currencies_id") is not None else None
+                acc_cid = int(r["acc_currencies_id"]) if r.get("acc_currencies_id") is not None else None
+                fx = fx_cache.get(sec_cid, 1.0) if (sec_cid and acc_cid and sec_cid != acc_cid) else 1.0
                 rows.append({
                     "account": r["account"],
+                    "sec_currency": r.get("sec_currency"),
                     "currency": r.get("currency"),
+                    "fx_rate": fx,
                     "action": "Dividend",
                     "qty_held": qty,
                     "gross_per_share": gross_per_share,
@@ -337,6 +385,9 @@ def preview_corporate_action(sec_id: int, data: dict):
                     "gross_total": gross,
                     "tax": tax_amt,
                     "net_total": net,
+                    "gross_total_acccur": round(gross * fx, 6),
+                    "tax_acccur": round(tax_amt * fx, 6),
+                    "net_total_acccur": round(net * fx, 6),
                 })
 
     elif event_group == "return_of_capital":
@@ -345,13 +396,19 @@ def preview_corporate_action(sec_id: int, data: dict):
             qty = float(r["qty_held"])
             if qty > 0:
                 total = round(qty * amount_per_share, 6)
+                sec_cid = int(r["sec_currencies_id"]) if r.get("sec_currencies_id") is not None else None
+                acc_cid = int(r["acc_currencies_id"]) if r.get("acc_currencies_id") is not None else None
+                fx = fx_cache.get(sec_cid, 1.0) if (sec_cid and acc_cid and sec_cid != acc_cid) else 1.0
                 rows.append({
                     "account": r["account"],
+                    "sec_currency": r.get("sec_currency"),
                     "currency": r.get("currency"),
+                    "fx_rate": fx,
                     "action": "RtrnCap",
                     "qty_held": qty,
                     "amount_per_share": amount_per_share,
                     "total": total,
+                    "total_acccur": round(total * fx, 6),
                 })
 
     return rows
@@ -418,29 +475,34 @@ def execute_corporate_action(sec_id: int, data: dict):
         ))
         ca_id = cur.fetchone()[0]
 
-        # 3. Look up linked cash accounts for all investment accounts in one query
+        # 3. Look up linked cash accounts and account currencies in one query
         acct_ids = [a for a, _ in holdings]
         linked_map: dict[int, int] = {}
+        acc_currency_map: dict[int, int] = {}  # accounts_id → currencies_id
         if acct_ids:
             placeholders = ", ".join(["%s"] * len(acct_ids))
             cur.execute(
-                f"SELECT Accounts_Id, Accounts_Id_Linked FROM Accounts WHERE Accounts_Id IN ({placeholders})",
+                f"SELECT Accounts_Id, Accounts_Id_Linked, Currencies_Id FROM Accounts WHERE Accounts_Id IN ({placeholders})",
                 acct_ids,
             )
             for row in cur.fetchall():
                 if row[1]:
                     linked_map[row[0]] = row[1]
+                if row[2]:
+                    acc_currency_map[row[0]] = row[2]
 
-        # 4. Look up security name/ticker once for cash description; resolve/create payee
-        cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (sec_id,))
+        # 4. Look up security name/ticker/currency once; resolve/create payee
+        cur.execute("SELECT Securities_Name, Ticker, Currencies_Id FROM Securities WHERE Securities_Id = %s", (sec_id,))
         sec_row = cur.fetchone()
         sec_name = sec_row[0] if sec_row else None
         ticker = sec_row[1] if sec_row else None
+        sec_currency_id = sec_row[2] if sec_row else None
         payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
 
         # 5. Insert investment transactions (and linked cash transactions where applicable)
         for accounts_id, qty in holdings:
             tax_amount = None
+            _needs_fx = False
             if event_group == "split":
                 ratio_new = float(data.get("ratio_new") or 1)
                 ratio_old = float(data.get("ratio_old") or 1)
@@ -462,6 +524,7 @@ def execute_corporate_action(sec_id: int, data: dict):
                 tax_rate = float(data.get("tax_rate") or 0) / 100
                 inv_action = "Dividend"
                 inv_qty = qty
+                _needs_fx = True
                 price = gross_per_share
                 total = round(qty * gross_per_share, 6)
                 tax_amount = -round(total * tax_rate, 6) if tax_rate else None
@@ -475,28 +538,46 @@ def execute_corporate_action(sec_id: int, data: dict):
                 price = amount_per_share
                 total = round(qty * amount_per_share, 6)
                 tax_amount = None
+                _needs_fx = True
 
             else:
                 continue
+
+            # Resolve FX rate: convert security-currency total → account currency
+            acc_currency_id = acc_currency_map.get(accounts_id)
+            if _needs_fx and sec_currency_id and acc_currency_id and sec_currency_id != acc_currency_id:
+                cur.execute("""
+                    SELECT FX_Rate FROM Historical_FX
+                    WHERE Currencies_Id_1 = %s AND Date <= %s
+                    ORDER BY Date DESC LIMIT 1
+                """, (sec_currency_id, date))
+                fx_row = cur.fetchone()
+                fx_rate = float(fx_row[0]) if fx_row else 1.0
+                total_acccur = round(total * fx_rate, 6)
+                tax_acccur = round(tax_amount * fx_rate, 6) if tax_amount is not None else None
+            else:
+                fx_rate = 1.0
+                total_acccur = total
+                tax_acccur = tax_amount
 
             cur.execute("""
                 INSERT INTO investments
                     (accounts_id, securities_id, date, action, quantity,
                      price_per_share, commission, total_amount_acccur, total_amount_seccur,
                      fx_rate, description, tax_amount, corporate_actions_id)
-                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, 1.0, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s)
                 RETURNING Investments_Id
-            """, (accounts_id, sec_id, date, inv_action, inv_qty, price, total, total, description, tax_amount, ca_id))
+            """, (accounts_id, sec_id, date, inv_action, inv_qty, price, total_acccur, total, fx_rate, description, tax_acccur, ca_id))
             inv_id = cur.fetchone()[0]
 
             # Create linked cash transaction if the investment account has a linked cash account
             cash_account_id = linked_map.get(accounts_id)
-            if cash_account_id and total:
+            if cash_account_id and total_acccur:
                 cash_desc = _build_inv_description(inv_action, sec_name, ticker, inv_qty, price)
                 _upsert_cash_transaction(
                     cur, inv_id, cash_account_id, accounts_id,
-                    date, inv_action, total, cash_desc, None, payee_id,
-                    tax_amount=tax_amount or 0.0,
+                    date, inv_action, total_acccur, cash_desc, None, payee_id,
+                    tax_amount=tax_acccur or 0.0,
                 )
                 _refresh_balance(cur, cash_account_id)
 

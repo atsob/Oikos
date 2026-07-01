@@ -64,7 +64,7 @@ function fmtPctLocal(n: unknown, dec = 2) {
 function PricesTab({ secId }: { secId: number }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
-  const [period, setPeriod] = useState<ChartPeriod>('All')
+  const [period, setPeriod] = usePersist<ChartPeriod>('sec_chart_period', 'YTD')
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])

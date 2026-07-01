@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPayeeTopCategories } from '@/lib/api'
 import { Input, Button, SearchableSelect, useEscapeKey } from '@/components/ui'
 import { fmtEur } from '@/lib/utils'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
+import { api } from '@/lib/api'
 
 export const PERIODICITIES = ['Daily', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly', 'Semiannually', 'Annually']
 
@@ -57,6 +58,7 @@ interface ModalProps {
   onSave: () => void
   onDelete?: () => void
   onClose: () => void
+  onPayeeCreated: (p: { id: number; name: string }) => void
   saving: boolean
   error: string | null
   recurringEnabled: boolean
@@ -77,11 +79,100 @@ interface ModalProps {
 
 const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
+/** Payee selector with inline "＋ Add new payee" when no match is found. */
+function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {
+  value: string
+  onChange: (v: string) => void
+  payees: Record<string, unknown>[]
+  onPayeeCreated: (p: { id: number; name: string }) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [creating, setCreating] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selectedLabel = payees.find(p => String(p.id) === value)?.name as string ?? ''
+  const filtered = query
+    ? payees.filter(p => String(p.name).toLowerCase().includes(query.toLowerCase()))
+    : payees
+  const noMatch = query.trim() !== '' && filtered.length === 0
+
+  const handleOpen = () => { setOpen(true); setQuery(''); setTimeout(() => inputRef.current?.focus(), 0) }
+  const handleSelect = useCallback((val: string) => { onChange(val); setOpen(false); setQuery('') }, [onChange])
+
+  const handleCreate = async () => {
+    const name = query.trim()
+    if (!name) return
+    setCreating(true)
+    try {
+      const res = await api.post('/static-data/payees', { name })
+      const newPayee = { id: res.data.id, name }
+      onPayeeCreated(newPayee)
+      handleSelect(String(res.data.id))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { setOpen(false); setQuery('') }
+    if (e.key === 'Enter') {
+      if (noMatch) { handleCreate(); return }
+      if (filtered[0]) handleSelect(String(filtered[0].id))
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => { if (!containerRef.current?.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button type="button" onClick={handleOpen}
+        className="w-full flex items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-left focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <span className={selectedLabel ? 'text-slate-900' : 'text-slate-400'}>{selectedLabel || '— none —'}</span>
+        <svg className="w-4 h-4 text-slate-400 shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg">
+          <div className="p-2 border-b border-slate-100">
+            <input ref={inputRef} type="text" value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown} placeholder="Search or type new name…"
+              className="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <ul className="max-h-52 overflow-y-auto py-1">
+            <li className="px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50 cursor-pointer" onMouseDown={() => handleSelect('')}>— none —</li>
+            {filtered.map(p => (
+              <li key={String(p.id)} onMouseDown={() => handleSelect(String(p.id))}
+                className={`px-3 py-1.5 text-sm cursor-pointer hover:bg-blue-50 hover:text-blue-700 ${String(p.id) === value ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}>
+                {String(p.name)}
+              </li>
+            ))}
+            {noMatch && (
+              <li onMouseDown={handleCreate}
+                className="px-3 py-2 text-sm cursor-pointer text-blue-600 hover:bg-blue-50 flex items-center gap-1.5 border-t border-slate-100">
+                <Plus size={13} /> {creating ? 'Adding…' : `Add "${query.trim()}"`}
+              </li>
+            )}
+            {!noMatch && filtered.length === 0 && (
+              <li className="px-3 py-3 text-sm text-slate-400 text-center">No results</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function TxModal({
   form, splits, useSplits, setUseSplits,
   onFormChange, onSplitsChange,
   payees, categories, accounts,
-  onSave, onDelete, onClose, saving, error,
+  onSave, onDelete, onClose, onPayeeCreated, saving, error,
   recurringEnabled, setRecurringEnabled,
   recurringName, setRecurringName,
   recurringFreq, setRecurringFreq,
@@ -186,16 +277,16 @@ export function TxModal({
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
-                <SearchableSelect value={form.payees_id} onChange={v => set('payees_id', v)}
-                  options={payees.map(p => ({ value: String(p.id), label: String(p.name) }))} />
+                <PayeeSelect value={form.payees_id} onChange={v => set('payees_id', v)}
+                  payees={payees} onPayeeCreated={onPayeeCreated} />
               </div>
             </div>
           ) : (
             <>
               <div>
                 <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
-                <SearchableSelect value={form.payees_id} onChange={v => set('payees_id', v)}
-                  options={payees.map(p => ({ value: String(p.id), label: String(p.name) }))} />
+                <PayeeSelect value={form.payees_id} onChange={v => set('payees_id', v)}
+                  payees={payees} onPayeeCreated={onPayeeCreated} />
               </div>
 
               <div>
