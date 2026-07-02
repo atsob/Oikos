@@ -7,6 +7,12 @@ import path from 'path'
 import { execSync } from 'child_process'
 
 function gitInfo() {
+  // Docker builds exclude .git from the build context (see .dockerignore), so `git`
+  // isn't available inside the image — the host supplies the commit via build args
+  // (see Dockerfile / docker-compose.yml) instead of us shelling out here.
+  if (process.env.GIT_HASH) {
+    return { hash: process.env.GIT_HASH, date: process.env.GIT_DATE ?? '' }
+  }
   try {
     const run = (cmd: string) => execSync(cmd, { cwd: __dirname }).toString().trim()
     const hash = run('git rev-parse --short HEAD')
