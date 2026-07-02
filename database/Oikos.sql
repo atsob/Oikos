@@ -43,9 +43,11 @@ CREATE TYPE Investments_Action AS ENUM (
 );
 
 -- Migration 001: CREATE TYPE then ALTER TABLE (see database/migrations/001_instrument_type_enum.sql)
-CREATE TYPE Investments_Instrument_Type AS ENUM (
+-- Note: the live type is named "instrument_type" (not "Investments_Instrument_Type" as the
+-- migration file's older draft has it) — kept in sync here for a faithful fresh-install schema.
+CREATE TYPE instrument_type AS ENUM (
     'Stock', 'ETF', 'Bond', 'CFD', 'CEF', 'CFDOnETF', 'CFDOnStock',
-    'CFDOnIndex', 'CFDOnFutures', 'CFDOnFund', 'Fund', 'Option', 'FX Spot', 'Other'
+    'CFDOnIndex', 'CFDOnFutures', 'CFDOnFund', 'Fund', 'Option', 'Other', 'FX Spot'
 );
 
 CREATE SEQUENCE IF NOT EXISTS transfers_id_seq START 1 INCREMENT 1;
@@ -487,7 +489,7 @@ CREATE TABLE Investments (
     FX_Rate             NUMERIC(20, 8) DEFAULT 1.0,  -- rate used at booking: sec_cur → acc_cur
     Description      TEXT,
     Transactions_Id  INTEGER REFERENCES Transactions(Transactions_Id),  -- linked cash-side row (BuyX/SellX/DivX)
-    Instrument_Type  Investments_Instrument_Type,  -- optional: actual traded instrument (e.g. CFDOnETF, CFDOnStock)
+    Instrument_Type  instrument_type,  -- optional: actual traded instrument (e.g. CFDOnETF, CFDOnStock)
                                                   -- overrides Security.Is_Tax_Exempt for tax calculations when set
     Tax_Amount          NUMERIC(18, 6),              -- withholding tax (negative = tax withheld, in account currency)
     Corporate_Actions_Id INTEGER REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE SET NULL,
@@ -801,6 +803,15 @@ ON CONFLICT (Securities_Type) DO NOTHING;
 
 
 CREATE TABLE IF NOT EXISTS Benchmark_Presets (
+    Preset_Id   SERIAL PRIMARY KEY,
+    Preset_Name VARCHAR(100) UNIQUE NOT NULL,
+    Account_Ids INTEGER[] NOT NULL DEFAULT '{}',
+    Created_At  TIMESTAMP DEFAULT NOW(),
+    Updated_At  TIMESTAMP DEFAULT NOW()
+);
+
+-- Saved account-selection presets for Inv. Performance / Correlation reports
+CREATE TABLE IF NOT EXISTS Portfolio_Presets (
     Preset_Id   SERIAL PRIMARY KEY,
     Preset_Name VARCHAR(100) UNIQUE NOT NULL,
     Account_Ids INTEGER[] NOT NULL DEFAULT '{}',

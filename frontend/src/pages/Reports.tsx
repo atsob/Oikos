@@ -1378,6 +1378,12 @@ function PnlReport() {
   const totalReal  = accounts.reduce((s, a) => s + a.realized, 0)
   const totalMkt   = mktKey ? accounts.reduce((s, a) => s + (a.market ?? 0), 0) : null
   const totalFx    = fxKey  ? accounts.reduce((s, a) => s + (a.fx    ?? 0), 0) : null
+  // Same conventions already used per-row below: P&L% vs. current value, Unrealized% vs. cost basis.
+  // Realized P&L has no cost-basis denominator available (positions are already closed), so it's
+  // left without a percentage rather than showing a made-up figure.
+  const totalPnlPct    = totalValue !== 0 ? (totalPnl / totalValue) * 100 : null
+  const totalCostBasis = totalValue - totalUnreal
+  const totalUnrealPct = totalCostBasis !== 0 ? (totalUnreal / totalCostBasis) * 100 : null
 
   const drillRows = selectedAccount
     ? (accountMap.get(selectedAccount) ?? []).filter(r => showClosedPositions || !isClosedPosition(r))
@@ -1402,14 +1408,24 @@ function PnlReport() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
         <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`}
-          subtitleNode={showFxSplit && totalMkt != null && totalFx != null ? (
-            <span className="flex gap-2 tabular-nums">
-              <span>Mkt: <span className={totalMkt >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalMkt)}</span></span>
-              <span>FX: <span className={totalFx >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalFx)}</span></span>
+          subtitleNode={(showPct && totalPnlPct != null) || (showFxSplit && totalMkt != null && totalFx != null) ? (
+            <span className="flex gap-2 tabular-nums flex-wrap">
+              {showPct && totalPnlPct != null && (
+                <span className={totalPnlPct >= 0 ? 'text-green-700' : 'text-red-600'}>({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)</span>
+              )}
+              {showFxSplit && totalMkt != null && totalFx != null && (
+                <>
+                  <span>Mkt: <span className={totalMkt >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalMkt)}</span></span>
+                  <span>FX: <span className={totalFx >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalFx)}</span></span>
+                </>
+              )}
             </span>
           ) : undefined} />
-        <KpiCard label="Unrealized P&L" value={fmtEur(totalUnreal)} color={totalUnreal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Open position gain/loss: current market value minus the cost basis of all currently held securities." />
-        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed." />
+        <KpiCard label="Unrealized P&L" value={fmtEur(totalUnreal)} color={totalUnreal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Open position gain/loss: current market value minus the cost basis of all currently held securities."
+          subtitleNode={totalUnrealPct != null ? (
+            <span className={`tabular-nums ${totalUnrealPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>({totalUnrealPct >= 0 ? '+' : ''}{totalUnrealPct.toFixed(2)}%)</span>
+          ) : undefined} />
+        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed. No cost-basis percentage is shown here — the original cost basis of already-closed positions isn't tracked separately from unrealized P&L." />
       </div>
       <div className="flex gap-1">
         {PNL_WINDOWS.map(w => (

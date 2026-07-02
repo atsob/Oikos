@@ -6,7 +6,7 @@ services:
     container_name: oikos
     network_mode: host
     environment:
-      - DB_NAME=Finance
+      - DB_NAME=Oikos
       - DB_USER=admin
       - DB_PASSWORD=31.12.1969
       - DB_HOST=127.0.0.1
@@ -48,7 +48,7 @@ services:
     container_name: oikos_scheduler
     network_mode: host
     environment:
-      - DB_NAME=Finance
+      - DB_NAME=Oikos
       - DB_USER=admin
       - DB_PASSWORD=31.12.1969
       - DB_HOST=127.0.0.1

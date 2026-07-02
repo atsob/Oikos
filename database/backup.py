@@ -882,7 +882,7 @@ def render_backup_restore():
         fi
         
         # Create backup inside container
-        docker exec $CONTAINER pg_dump -U admin -F c -f /tmp/backup.dump Finance
+        docker exec $CONTAINER pg_dump -U admin -F c -f /tmp/backup.dump Oikos
         
         # Copy backup to host
         docker cp $CONTAINER:/tmp/backup.dump /backups/finance_backup_$(date +%Y%m%d_%H%M%S).dump
@@ -908,7 +908,7 @@ def render_backup_restore():
         st.markdown("""
         Then run backup:
         ```bash
-        docker exec finance_postgres pg_dump -U admin -F c -f /backups/backup.dump Finance
+        docker exec finance_postgres pg_dump -U admin -F c -f /backups/backup.dump Oikos
         """)    
                 
         st.markdown("""
@@ -916,7 +916,7 @@ def render_backup_restore():
 
         ```bash
         docker run --rm --network host -v $(pwd)/backups:/backups \\
-        postgres:16 pg_dump -h 192.168.4.20 -U admin -F c -f /backups/backup.dump Finance
+        postgres:16 pg_dump -h 192.168.4.20 -U admin -F c -f /backups/backup.dump Oikos
         """)
         st.markdown(r"""
         Setting up Scheduled Backups:
