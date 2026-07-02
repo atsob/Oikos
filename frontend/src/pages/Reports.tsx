@@ -3327,6 +3327,7 @@ function VolatilityTab() {
 
 // ── Investment Signals Tab ────────────────────────────────────────────────────
 function InvestmentSignalsTab() {
+  const { isDark } = useTheme()
   const { data = [], isLoading } = usePortfolioSignals()
   const [volCap, setVolCap] = usePersist('inv_sig_vol_cap', 95)
   const rows = data as Signal[]
