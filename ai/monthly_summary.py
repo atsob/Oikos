@@ -70,112 +70,135 @@ def ensure_summary_table(conn):
 # DATA GATHERING
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _net_worth_as_of(conn, as_of_date: str) -> dict | None:
+    """Reconstruct cash / investments / pension / assets / total as of *as_of_date*."""
+    df = _query(conn, """
+        WITH
+        -- FX rates on or before period end
+        fx AS (
+            SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+            FROM Historical_FX
+            WHERE Date <= %s::date
+            ORDER BY Currencies_Id_1, Date DESC
+        ),
+        -- Prices on or before period end
+        prices AS (
+            SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+            FROM Historical_Prices
+            WHERE Date <= %s::date
+            ORDER BY Securities_Id, Date DESC
+        ),
+        -- Cash / liability account balances reconstructed backwards to period_end
+        account_totals AS (
+            SELECT
+                SUM(CASE
+                    WHEN a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin',
+                                                 'Real Estate','Vehicle','Asset','Liability')
+                    THEN (a.Accounts_Balance - COALESCE((
+                            SELECT SUM(t.Total_Amount) FROM Transactions t
+                            WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                         ), 0)) * COALESCE(fx.FX_Rate, 1)
+                    ELSE 0
+                END) AS cash_eur,
+
+                SUM(CASE
+                    WHEN a.Accounts_Type IN ('Pension')
+                    THEN a.Accounts_Balance * COALESCE(fx.FX_Rate, 1)
+                    ELSE 0
+                END) AS pension_eur,
+
+                SUM(CASE
+                    WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset','Liability')
+                    THEN (CASE
+                            WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
+                            THEN GREATEST(0, a.Accounts_Balance - COALESCE((
+                                    SELECT SUM(t.Total_Amount) FROM Transactions t
+                                    WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                                 ), 0))
+                            ELSE a.Accounts_Balance - COALESCE((
+                                    SELECT SUM(t.Total_Amount) FROM Transactions t
+                                    WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                                 ), 0)
+                          END) * COALESCE(fx.FX_Rate, 1)
+                    ELSE 0
+                END) AS assets_eur
+            FROM Accounts a
+            LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE a.Is_Active = TRUE
+        ),
+        -- Investment positions at period_end (forward cumulative)
+        investment_universe AS (
+            SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments
+            WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')
+        ),
+        investment_totals AS (
+            SELECT
+                SUM(
+                    GREATEST(COALESCE((
+                        SELECT SUM(CASE
+                            WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                            WHEN Action IN ('Sell','ShrOut')          THEN -Quantity
+                            ELSE 0 END)
+                        FROM Investments i2
+                        WHERE i2.Securities_Id = iu.Securities_Id
+                          AND i2.Accounts_Id   = iu.Accounts_Id
+                          AND i2.Date <= %s::date
+                    ), 0), 0)
+                    * COALESCE(p.Close, 0)
+                    * COALESCE(fx.FX_Rate, 1)
+                ) AS investments_eur
+            FROM investment_universe iu
+            JOIN Securities s ON s.Securities_Id = iu.Securities_Id
+            LEFT JOIN prices p ON p.Securities_Id = iu.Securities_Id
+            LEFT JOIN fx      ON fx.Currencies_Id_1 = s.Currencies_Id
+        )
+        SELECT
+            at.cash_eur,
+            at.pension_eur,
+            at.assets_eur,
+            it.investments_eur
+        FROM account_totals at
+        CROSS JOIN investment_totals it
+    """, (as_of_date,) * 6)
+    if df.empty:
+        return None
+    r = df.iloc[0]
+    cash        = float(r.cash_eur or 0)
+    investments = float(r.investments_eur or 0)
+    pension     = float(r.pension_eur or 0)
+    assets      = float(r.assets_eur or 0)
+    return {
+        "cash": cash, "investments": investments, "pension": pension, "assets": assets,
+        "total": cash + investments + pension + assets,
+    }
+
+
 def _gather_context(conn, month_start: str, month_end: str) -> str:
     """Pull key metrics from the DB and format them as a compact text block."""
 
     blocks = []
 
-    # 1. Net worth snapshot — reconstructed as of month_end
+    # 1. Net worth snapshot as of month_end, plus the prior month-end for comparison
     try:
-        df = _query(conn, """
-            WITH
-            -- FX rates on or before period end
-            fx AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX
-                WHERE Date <= %s::date
-                ORDER BY Currencies_Id_1, Date DESC
-            ),
-            -- Prices on or before period end
-            prices AS (
-                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
-                FROM Historical_Prices
-                WHERE Date <= %s::date
-                ORDER BY Securities_Id, Date DESC
-            ),
-            -- Cash / liability account balances reconstructed backwards to period_end
-            account_totals AS (
-                SELECT
-                    SUM(CASE
-                        WHEN a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin',
-                                                     'Real Estate','Vehicle','Asset','Liability')
-                        THEN (a.Accounts_Balance - COALESCE((
-                                SELECT SUM(t.Total_Amount) FROM Transactions t
-                                WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
-                             ), 0)) * COALESCE(fx.FX_Rate, 1)
-                        ELSE 0
-                    END) AS cash_eur,
-
-                    SUM(CASE
-                        WHEN a.Accounts_Type IN ('Pension')
-                        THEN a.Accounts_Balance * COALESCE(fx.FX_Rate, 1)
-                        ELSE 0
-                    END) AS pension_eur,
-
-                    SUM(CASE
-                        WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset','Liability')
-                        THEN (CASE
-                                WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
-                                THEN GREATEST(0, a.Accounts_Balance - COALESCE((
-                                        SELECT SUM(t.Total_Amount) FROM Transactions t
-                                        WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
-                                     ), 0))
-                                ELSE a.Accounts_Balance - COALESCE((
-                                        SELECT SUM(t.Total_Amount) FROM Transactions t
-                                        WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
-                                     ), 0)
-                              END) * COALESCE(fx.FX_Rate, 1)
-                        ELSE 0
-                    END) AS assets_eur
-                FROM Accounts a
-                LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
-                WHERE a.Is_Active = TRUE
-            ),
-            -- Investment positions at period_end (forward cumulative)
-            investment_universe AS (
-                SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments
-                WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')
-            ),
-            investment_totals AS (
-                SELECT
-                    SUM(
-                        GREATEST(COALESCE((
-                            SELECT SUM(CASE
-                                WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
-                                WHEN Action IN ('Sell','ShrOut')          THEN -Quantity
-                                ELSE 0 END)
-                            FROM Investments i2
-                            WHERE i2.Securities_Id = iu.Securities_Id
-                              AND i2.Accounts_Id   = iu.Accounts_Id
-                              AND i2.Date <= %s::date
-                        ), 0), 0)
-                        * COALESCE(p.Close, 0)
-                        * COALESCE(fx.FX_Rate, 1)
-                    ) AS investments_eur
-                FROM investment_universe iu
-                JOIN Securities s ON s.Securities_Id = iu.Securities_Id
-                LEFT JOIN prices p ON p.Securities_Id = iu.Securities_Id
-                LEFT JOIN fx      ON fx.Currencies_Id_1 = s.Currencies_Id
-            )
-            SELECT
-                at.cash_eur,
-                at.pension_eur,
-                at.assets_eur,
-                it.investments_eur
-            FROM account_totals at
-            CROSS JOIN investment_totals it
-        """, (month_end,) * 6)
-        if not df.empty:
-            r = df.iloc[0]
-            total = sum(float(v or 0) for v in r)
-            blocks.append(
+        now_nw = _net_worth_as_of(conn, month_end)
+        prev_date = (pd.to_datetime(month_start) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        prev_nw = _net_worth_as_of(conn, prev_date)
+        if now_nw is not None:
+            text = (
                 f"NET WORTH SNAPSHOT (as of {month_end}):\n"
-                f"  Cash: €{float(r.cash_eur or 0):,.0f}  "
-                f"Investments: €{float(r.investments_eur or 0):,.0f}  "
-                f"Pension: €{float(r.pension_eur or 0):,.0f}  "
-                f"Assets: €{float(r.assets_eur or 0):,.0f}  "
-                f"TOTAL: €{total:,.0f}"
+                f"  Cash: €{now_nw['cash']:,.0f}  "
+                f"Investments: €{now_nw['investments']:,.0f}  "
+                f"Pension: €{now_nw['pension']:,.0f}  "
+                f"Assets: €{now_nw['assets']:,.0f}  "
+                f"TOTAL: €{now_nw['total']:,.0f}"
             )
+            if prev_nw is not None:
+                diff = now_nw["total"] - prev_nw["total"]
+                text += (
+                    f"\nPRIOR NET WORTH (as of {prev_date}): €{prev_nw['total']:,.0f}\n"
+                    f"CHANGE FROM PRIOR MONTH: {'+' if diff >= 0 else ''}€{diff:,.0f}"
+                )
+            blocks.append(text)
     except Exception as e:
         conn.rollback()
         logging.exception("NET WORTH query failed")
@@ -203,15 +226,24 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
             tax      = float(r.tax      or 0)
             interest = float(r.interest or 0)
             other    = float(r.other    or 0)
-            net        = income + expense + tax + interest + other
-            total_out  = abs(expense) + abs(tax) + abs(other if other < 0 else 0)
+            net = income + expense + tax + interest + other
+            # Build a plain-prose explanation that still reconciles to the net figure —
+            # a reader comparing income vs. expenses by hand won't match the net whenever
+            # tax/interest/other move money, so any non-trivial component gets named.
+            extra_flows = []
+            if abs(tax) > 1:
+                extra_flows.append(f"€{abs(tax):,.2f} in tax")
+            if abs(interest) > 1:
+                extra_flows.append(f"€{abs(interest):,.2f} in interest")
+            if abs(other) > 1:
+                extra_flows.append(f"€{abs(other):,.2f} in other cash movements (e.g. investment contributions or transfers)")
+            lead = f"On €{income:,.2f} of income against €{abs(expense):,.2f} of expenses"
+            if extra_flows:
+                lead += ", plus " + ", ".join(extra_flows)
             if net >= 0:
-                net_explanation = f"You saved €{net:,.2f} this month (income exceeded all outflows)."
+                net_explanation = f"{lead}, you ended the month with a net surplus of €{net:,.2f}."
             else:
-                net_explanation = (
-                    f"Total outflows (expenses + tax + other) of €{total_out:,.2f} "
-                    f"exceeded income of €{income:,.2f} by €{abs(net):,.2f}."
-                )
+                net_explanation = f"{lead}, you ended the month with a net shortfall of €{abs(net):,.2f}."
             blocks.append(
                 f"MONTHLY CASH FLOWS (last 30 days):\n"
                 f"  Income:   €{income:,.2f}\n"
@@ -358,20 +390,30 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a personal finance assistant. Write a short monthly summary in 4–5 paragraphs of plain prose.
-    Use "you" / "your". No greeting, no sign-off, no bullet lists, no markdown.
+    You are a personal finance assistant. Write a short, direct monthly summary in plain prose.
+    Use "you" / "your". No greeting, no sign-off, no markdown (no headers, no bold, no asterisks) —
+    this is displayed as raw plain text, so any markdown syntax would show up literally to the user.
 
-    Follow this structure exactly:
-    Paragraph 1 – Cash flows: state the month's income, total expenses, and net. Quote the net explanation from the context verbatim.
-    Paragraph 2 – Spending breakdown: mention the top spending categories and their amounts. Note anything unusual or large.
-    Paragraph 3 – Top payees: briefly mention the 2–3 largest individual payees and amounts.
-    Paragraph 4 – Investments: mention the investment P&L for the month and any notable movements.
-    Paragraph 5 – Net worth: state the net worth snapshot and how it compares to the month start if available.
+    Follow this structure exactly, in 4 short paragraphs:
+    Paragraph 1 – Cash flows: quote the NET line's explanation from the context verbatim as the
+        opening sentence — it already states income, expenses, and any tax/interest/other flows
+        needed to reconcile to the net figure. Do not state your own net figure or your own
+        "income minus expenses" framing; use only the quoted explanation for the net.
+    Paragraph 2 – Top payees: present the TOP 10 PAYEES as a simple numbered list ("1. Name: €X"),
+        one per line, largest first. A numbered list is fine here — it is not markdown. Skip this
+        paragraph if there is no payee data.
+    Paragraph 3 – Investments: state the investment P&L for the month plainly (gain or loss, and
+        the amount).
+    Paragraph 4 – Net worth: state the CHANGE FROM PRIOR MONTH from the context (if present) as
+        the opening sentence, then the current TOTAL broken down into its Cash / Investments /
+        Pension / Assets components, all as one flowing sentence, not a list.
 
     Rules:
-    - Only use numbers that appear in the DATA block. Never invent or calculate.
+    - Only use numbers that appear in the DATA block. Never invent, calculate, or estimate a number
+      that isn't explicitly present in the DATA block — this includes prior-period comparisons.
+    - Never state a net/savings figure that isn't exactly the NET value from the DATA block.
     - Never use placeholders like [X] or (insert value here).
-    - Keep the total length under 300 words.
+    - Keep the total length under 250 words.
 """)
 
 

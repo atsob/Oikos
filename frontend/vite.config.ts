@@ -4,8 +4,26 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import fs from 'fs'
 import path from 'path'
+import { execSync } from 'child_process'
+
+function gitInfo() {
+  try {
+    const run = (cmd: string) => execSync(cmd, { cwd: __dirname }).toString().trim()
+    const hash = run('git rev-parse --short HEAD')
+    const date = run('git log -1 --format=%cd --date=short')
+    const dirty = run('git status --porcelain').length > 0
+    return { hash: dirty ? `${hash}-dirty` : hash, date }
+  } catch {
+    return { hash: 'unknown', date: '' }
+  }
+}
+const GIT_INFO = gitInfo()
 
 export default defineConfig({
+  define: {
+    __GIT_HASH__: JSON.stringify(GIT_INFO.hash),
+    __GIT_DATE__: JSON.stringify(GIT_INFO.date),
+  },
   plugins: [
     react(),
     tailwindcss(),
