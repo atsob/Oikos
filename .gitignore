@@ -1,0 +1,20 @@
+# Αγνοήστε συγκεκριμένα αρχεία
+#secrets.txt
+#config.py
+settings.py
+
+# Αγνοήστε ολόκληρους φακέλους
+__pycache__/
+.venv/
+.vs/
+#.env
+
+# Αγνοήστε αρχεία με συγκεκριμένη κατάληξη
+#*.log
+#*.db
+#.DS_Store
+.*
+# .* above blocks every dotfile including .dockerignore, which needs to be
+# version-controlled since Docker builds (incl. on the deploy host) depend on it.
+!.dockerignore
+ssl/

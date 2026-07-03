@@ -1,0 +1,30 @@
+# Node dependencies — rebuilt inside the Docker stage
+frontend/node_modules
+
+# Python caches
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+
+# Frontend build output (gets rebuilt inside Docker)
+frontend/dist
+
+# Dev / editor
+.git
+.gitignore
+*.md
+# CHANGELOG.md is served at runtime by /api/changelog (Release Notes page in the UI),
+# so it needs to actually be in the image despite the *.md exclusion above.
+!CHANGELOG.md
+.env
+.env.*
+.vscode
+.idea
+
+# Streamlit legacy UI (not needed in the FastAPI image)
+ui/
+
+# Large data / backup dirs
+database_backups/
