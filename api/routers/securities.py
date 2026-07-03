@@ -51,6 +51,7 @@ def get_security_transactions(sec_id: int):
                    i.fx_rate,
                    i.total_amount_seccur AS total_sec_cur,
                    i.total_amount_acccur AS total_acc_cur,
+                   i.tax_amount,
                    i.instrument_type,
                    c.currencies_shortname AS currency,
                    i.description,

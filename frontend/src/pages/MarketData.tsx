@@ -12,8 +12,7 @@ import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortT
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtQty } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
-
-const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
+import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const extractError = (e: unknown) =>
@@ -77,20 +76,6 @@ const ANOMALY_COLS: ColDef[] = [
   { field: 'ratio_next', headerName: 'Ratio Next', width: 110, type: 'numericColumn' },
 ]
 
-const EMPTY_SECURITY = {
-  ticker: '', name: '', type: 'Stock', currencies_id: '', is_active: 'true', is_tax_exempt: 'false',
-  isin: '', sector: '', industry: '', yahoo_ticker: '', tv_symbol: '', tv_exchange: '',
-  maturity_date: '', coupon_rate: '', coupon_frequency: '', face_value: '',
-  dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
-  dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
-  analyst_rating: '', analyst_target_price: '',
-  tax_category: '',
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
-}
-
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
 
 // ── Securities CRUD tab ───────────────────────────────────────────────────────
@@ -98,7 +83,7 @@ function SecuritiesTab({ search }: { search: string }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
-  const [form, setForm] = useState<Record<string, string>>(EMPTY_SECURITY)
+  const [form, setForm] = useState<Record<string, string>>(EMPTY_SECURITY_FORM)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -119,11 +104,11 @@ function SecuritiesTab({ search }: { search: string }) {
 
   const resetLookup = () => { setLookupQuery(''); setLookupError(null); setLookupOk(false); setSearchResults([]) }
 
-  const openNew = () => { setEditRow({}); setForm(EMPTY_SECURITY); setError(null); resetLookup() }
+  const openNew = () => { setEditRow({}); setForm(EMPTY_SECURITY_FORM); setError(null); resetLookup() }
 
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
-    setForm({ ...EMPTY_SECURITY, ...Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])) })
+    setForm({ ...EMPTY_SECURITY_FORM, ...Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])) })
     setError(null)
     resetLookup()
   }
@@ -238,15 +223,6 @@ function SecuritiesTab({ search }: { search: string }) {
     },
   ]
 
-  const BoolField = ({ label, k }: { label: string; k: string }) => (
-    <Field label={label}>
-      <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form[k] ?? 'false'} onChange={e => set(k, e.target.value)}>
-        <option value="true">Yes</option>
-        <option value="false">No</option>
-      </select>
-    </Field>
-  )
-
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -307,66 +283,7 @@ function SecuritiesTab({ search }: { search: string }) {
           </div>
           {lookupError && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2 mb-1">{lookupError}</p>}
           {lookupOk && <p className="text-xs text-green-700 bg-green-50 rounded px-3 py-2 mb-1">Fields auto-filled — review and adjust before saving.</p>}
-          <div className="grid grid-cols-3 gap-3">
-            {/* Identity */}
-            <SectionLabel>Identity</SectionLabel>
-            <Field label="Ticker *"><Input value={form.ticker} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></Field>
-            <div className="col-span-2">
-              <Field label="Name *"><Input value={form.name} onChange={e => set('name', e.target.value)} /></Field>
-            </div>
-            <Field label="Type *">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type} onChange={e => set('type', e.target.value)}>
-                {SECURITY_TYPES.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </Field>
-            <Field label="Currency">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.currencies_id} onChange={e => set('currencies_id', e.target.value)}>
-                <option value="">— select —</option>
-                {(currencies as Record<string,unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>)}
-              </select>
-            </Field>
-            <Field label="ISIN"><Input value={form.isin} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" className="font-mono" /></Field>
-            <BoolField label="Is Active" k="is_active" />
-            <BoolField label="Tax Exempt" k="is_tax_exempt" />
-            <Field label="Tax Category">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.tax_category ?? ''} onChange={e => set('tax_category', e.target.value)}>
-                <option value="">— not set —</option>
-                {(taxRules as Record<string,unknown>[]).map(r => (
-                  <option key={String(r.tax_category)} value={String(r.tax_category)}>{String(r.display_name)}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></Field>
-            <Field label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></Field>
-
-            {/* Data sources */}
-            <SectionLabel>Data Sources</SectionLabel>
-            <Field label="Yahoo Ticker"><Input value={form.yahoo_ticker} onChange={e => set('yahoo_ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></Field>
-            <Field label="TV Symbol"><Input value={form.tv_symbol} onChange={e => set('tv_symbol', e.target.value)} placeholder="AAPL" className="font-mono" /></Field>
-            <Field label="TV Exchange"><Input value={form.tv_exchange} onChange={e => set('tv_exchange', e.target.value)} placeholder="NASDAQ" /></Field>
-
-            {/* Fixed income */}
-            <SectionLabel>Fixed Income</SectionLabel>
-            <Field label="Maturity Date"><Input type="date" value={form.maturity_date} onChange={e => set('maturity_date', e.target.value)} /></Field>
-            <Field label="Coupon Rate %"><Input type="number" step="0.001" value={form.coupon_rate} onChange={e => set('coupon_rate', e.target.value)} placeholder="0.000" /></Field>
-            <Field label="Coupon Frequency"><Input value={form.coupon_frequency} onChange={e => set('coupon_frequency', e.target.value)} placeholder="Annual" /></Field>
-            <Field label="Face Value"><Input type="number" step="0.01" value={form.face_value} onChange={e => set('face_value', e.target.value)} placeholder="1000.00" /></Field>
-
-            {/* Dividends */}
-            <SectionLabel>Dividends</SectionLabel>
-            <Field label="Dividend Yield %"><Input type="number" step="0.0001" value={form.dividend_yield} onChange={e => set('dividend_yield', e.target.value)} placeholder="0.0000" /></Field>
-            <Field label="Dividend Rate"><Input type="number" step="0.0001" value={form.dividend_rate} onChange={e => set('dividend_rate', e.target.value)} placeholder="0.0000" /></Field>
-            <Field label="Dividend Frequency"><Input value={form.dividend_frequency} onChange={e => set('dividend_frequency', e.target.value)} placeholder="Quarterly" /></Field>
-            <Field label="Ex-Dividend Date"><Input type="date" value={form.ex_dividend_date} onChange={e => set('ex_dividend_date', e.target.value)} /></Field>
-            <Field label="Dividend Pay Date"><Input type="date" value={form.dividend_pay_date} onChange={e => set('dividend_pay_date', e.target.value)} /></Field>
-            <Field label="Payout Ratio %"><Input type="number" step="0.01" value={form.payout_ratio} onChange={e => set('payout_ratio', e.target.value)} placeholder="0.00" /></Field>
-            <Field label="5Y Avg Yield %"><Input type="number" step="0.0001" value={form.five_year_avg_yield} onChange={e => set('five_year_avg_yield', e.target.value)} placeholder="0.0000" /></Field>
-
-            {/* Analyst */}
-            <SectionLabel>Analyst</SectionLabel>
-            <Field label="Rating"><Input value={form.analyst_rating} onChange={e => set('analyst_rating', e.target.value)} placeholder="Buy" /></Field>
-            <Field label="Target Price"><Input type="number" step="0.01" value={form.analyst_target_price} onChange={e => set('analyst_target_price', e.target.value)} placeholder="0.00" /></Field>
-          </div>
+          <SecurityFormFields form={form} set={set} currencies={currencies as Record<string, unknown>[]} taxRules={taxRules as Record<string, unknown>[]} />
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2 mt-2">{error}</p>}
         </Modal>
       )}

@@ -1221,7 +1221,7 @@ def get_dividends_tracker(
 def get_dividends_forecast():
     """Projected 12-month dividend income for currently-held dividend-paying securities."""
     import calendar as _cal
-    from datetime import date as _date
+    from datetime import date as _date, timedelta as _timedelta
 
     today = _date.today()
 
@@ -1346,14 +1346,25 @@ def get_dividends_forecast():
         raw_ex  = r.get("ex_dividend_date")
         raw_pay = r.get("dividend_pay_date")
 
-        ex_anchor  = raw_ex if pd.notna(raw_ex) else r.get("last_ex_date")
-        pay_anchor = raw_pay if pd.notna(raw_pay) else ex_anchor
+        ex_anchor = raw_ex if pd.notna(raw_ex) else r.get("last_ex_date")
+
+        # Dividend_Pay_Date is only trustworthy as its own forecast anchor when it's a
+        # plausible lag *after* the ex-date (a few weeks, typically) — some data sources
+        # return stale/garbage pay dates (seen: decades in the past) that would otherwise
+        # get projected forward independently of the ex-date and land on a completely
+        # unrelated month, out of sync with the (correct) ex-date projection.
+        _lag = None
+        if pd.notna(raw_ex) and pd.notna(raw_pay):
+            candidate_lag = (pd.Timestamp(raw_pay).date() - pd.Timestamp(raw_ex).date()).days
+            if 0 <= candidate_lag <= 90:
+                _lag = candidate_lag
+
+        pay_anchor = (
+            (pd.Timestamp(ex_anchor).date() + _timedelta(days=_lag))
+            if (_lag is not None and pd.notna(ex_anchor)) else ex_anchor
+        )
         ex_dates   = _next_dates(ex_anchor,  freq, horizon_months=13)
         pay_dates  = _next_dates(pay_anchor, freq, horizon_months=13)
-
-        _lag = 0
-        if pd.notna(raw_ex) and pd.notna(raw_pay):
-            _lag = max((pd.Timestamp(raw_pay).date() - pd.Timestamp(raw_ex).date()).days, 0)
 
         rows.append({
             "securities_id":            int(r["securities_id"]),

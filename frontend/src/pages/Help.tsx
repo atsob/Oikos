@@ -252,6 +252,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Market Data</H2>
         <P>Reference and price data, in eight tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, and Alerts.</P>
+        <P>
+          Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
+          page — Setup, Prices, Investment Transactions (with a <b>New Transaction</b> button and a Tax column
+          for withholding tax), Price Anomalies, Dividends, Corporate Actions, and Downloads, all for that one
+          security.
+        </P>
       </>
     ),
   },
@@ -294,7 +300,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
             referential integrity), SQL Interface (raw queries), Data Export, and several targeted "Fix …"
             tools for transfer mirrors, sign mismatches, and investment cash links.
           </li>
-          <li><b>⚙️ System</b> — App Settings and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly AI summaries).</li>
+          <li>
+            <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting
+            currency) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly AI summaries). App Settings —
+            and every other saved preference across the app (report filters, last-used tabs, account selections,
+            etc.) — are stored server-side, so they follow you across browsers, devices, and however you access
+            Oikos (LAN IP, hostname, or remotely), instead of being tied to one browser's local storage.
+          </li>
           <li><b>📊 Market Data &amp; Prices</b> — fill missing prices from transactions, price quality checks, normalize investment prices, investment data quality.</li>
           <li><b>📋 Logs</b> — application log viewer.</li>
         </Ul>

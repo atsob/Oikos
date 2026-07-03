@@ -5,6 +5,13 @@ export const api = axios.create({ baseURL: '/api' })
 export const getChangelog = (): Promise<{ content: string }> =>
   api.get('/changelog').then(r => r.data)
 
+// ── User Preferences ────────────────────────────────────────────────────────
+export const getPreferences = (): Promise<Record<string, unknown>> =>
+  api.get('/preferences').then(r => r.data)
+
+export const setPreference = (key: string, value: unknown) =>
+  api.put(`/preferences/${encodeURIComponent(key)}`, { value }).then(r => r.data)
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
 export const getNetWorth = (startDate = '2020-01-01', accountIds?: number[]) =>
   api.get('/dashboard/net-worth', {

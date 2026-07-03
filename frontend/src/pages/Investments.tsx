@@ -7,16 +7,16 @@ import type { ColDef } from 'ag-grid-community'
 import {
   getHoldings, getInvestments, getAccounts, getSecurities, getFxRates,
   updateHolding, stakingReinvest, getLinkedAccount,
-  getTransactions, createTransaction, updateTransaction, deleteTransaction,
-  getSplits, upsertSplits, createTransfer, getPayees, getCategories, getPayeeTopCategories,
+  getTransactions, getPayees, getCategories,
   syncBalances,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable, useEscapeKey, SyncBalancesButton } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
-import { Plus, X, Save, RefreshCw } from 'lucide-react'
+import { Plus, Save, RefreshCw } from 'lucide-react'
 import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
+import { TxModal, useTxModal } from '@/components/TxModal'
 
 const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
 
@@ -67,21 +67,6 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 120 },
 ]
 
-// ── Date offset helper for installments ──────────────────────────────────────
-function addPeriod(dateStr: string, freq: string, n: number): string {
-  const d = new Date(dateStr)
-  switch (freq) {
-    case 'Daily':        d.setDate(d.getDate() + n); break
-    case 'Weekly':       d.setDate(d.getDate() + 7 * n); break
-    case 'Biweekly':     d.setDate(d.getDate() + 14 * n); break
-    case 'Monthly':      d.setMonth(d.getMonth() + n); break
-    case 'Quarterly':    d.setMonth(d.getMonth() + 3 * n); break
-    case 'Semiannually': d.setMonth(d.getMonth() + 6 * n); break
-    case 'Annually':     d.setFullYear(d.getFullYear() + n); break
-  }
-  return d.toISOString().slice(0, 10)
-}
-
 // ── Cash tab columns (mirrors Register) ──────────────────────────────────────
 function CashAmountCell({ value }: { value: number }) {
   return <span className={`font-semibold tabular-nums ${value < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(value)}</span>
@@ -112,281 +97,6 @@ const CASH_COLS: ColDef[] = [
   { headerName: 'Status', width: 170, cellRenderer: CashStatusCell },
 ]
 
-const CASH_ACCOUNT_TYPES_FOR_TRANSFER = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
-const PERIODICITIES = ['Daily', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly', 'Semiannually', 'Annually']
-
-type CashTxForm = {
-  id?: number
-  accounts_id: number
-  date: string
-  description: string
-  total_amount: string
-  payees_id: string
-  categories_id: string
-  memo: string
-  is_draft: boolean
-  cleared: boolean
-  reconciled: boolean
-  is_transfer: boolean
-  transfer_account_id: string
-}
-type SplitRow = { categories_id: string; amount: string; memo: string }
-
-const emptyCashForm = (accountId: number): CashTxForm => ({
-  accounts_id: accountId,
-  date: today(),
-  description: '',
-  total_amount: '',
-  payees_id: '',
-  categories_id: '',
-  memo: '',
-  is_draft: false,
-  cleared: false,
-  reconciled: false,
-  is_transfer: false,
-  transfer_account_id: '',
-})
-
-function CashTxModal({
-  form, splits, useSplits, setUseSplits,
-  onFormChange, onSplitsChange,
-  payees, categories, allAccounts,
-  onSave, onDelete, onClose, saving, error,
-  recurringEnabled, setRecurringEnabled,
-  recurringName, setRecurringName,
-  recurringFreq, setRecurringFreq,
-  recurringNextDue, setRecurringNextDue,
-  installmentEnabled, setInstallmentEnabled,
-  installmentCount, setInstallmentCount,
-  installmentFreq, setInstallmentFreq,
-}: {
-  form: CashTxForm; splits: SplitRow[]; useSplits: boolean; setUseSplits: (v: boolean) => void
-  onFormChange: (f: CashTxForm) => void; onSplitsChange: (s: SplitRow[]) => void
-  payees: Record<string, unknown>[]; categories: Record<string, unknown>[]
-  allAccounts: Record<string, unknown>[]
-  onSave: () => void; onDelete?: () => void; onClose: () => void
-  saving: boolean; error: string | null
-  recurringEnabled: boolean; setRecurringEnabled: (v: boolean) => void
-  recurringName: string; setRecurringName: (v: string) => void
-  recurringFreq: string; setRecurringFreq: (v: string) => void
-  recurringNextDue: string; setRecurringNextDue: (v: string) => void
-  installmentEnabled: boolean; setInstallmentEnabled: (v: boolean) => void
-  installmentCount: string; setInstallmentCount: (v: string) => void
-  installmentFreq: string; setInstallmentFreq: (v: string) => void
-}) {
-  useEscapeKey(onClose)
-  const set = (k: keyof CashTxForm, v: unknown) => onFormChange({ ...form, [k]: v })
-  const addSplit = () => onSplitsChange([...splits, { categories_id: '', amount: '', memo: '' }])
-  const removeSplit = (i: number) => onSplitsChange(splits.filter((_, j) => j !== i))
-  const setSplit = (i: number, k: keyof SplitRow, v: string) =>
-    onSplitsChange(splits.map((s, j) => j === i ? { ...s, [k]: v } : s))
-  const transferAccounts = allAccounts.filter(a => a.id !== form.accounts_id && CASH_ACCOUNT_TYPES_FOR_TRANSFER.includes(String(a.type ?? '')))
-
-  const payeeId = form.payees_id ? Number(form.payees_id) : null
-  const { data: topCats = [] } = useQuery({
-    queryKey: ['payee-top-categories', payeeId],
-    queryFn: () => getPayeeTopCategories(payeeId!),
-    enabled: !!payeeId,
-    staleTime: 60_000,
-  })
-  const sortedCategories = useMemo(() => {
-    if (!payeeId || !(topCats as Record<string,unknown>[]).length) return categories
-    const topIds = new Set((topCats as Record<string,unknown>[]).map(c => String(c.id)))
-    const top = (topCats as Record<string,unknown>[]).map(tc =>
-      categories.find(c => String(c.id) === String(tc.id))
-    ).filter(Boolean) as Record<string,unknown>[]
-    const rest = categories.filter(c => !topIds.has(String(c.id)))
-    return top.length ? [
-      { id: '__sep__', full_path: '── Recent for this payee ──', _disabled: true },
-      ...top,
-      { id: '__sep2__', full_path: '── All categories ──', _disabled: true },
-      ...rest,
-    ] : categories
-  }, [categories, topCats, payeeId])
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-          <h2 className="text-base font-semibold">{form.id ? 'Edit Transaction' : 'New Transaction'}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          {/* Regular / Transfer toggle */}
-          <div className="flex gap-2">
-            <button type="button" onClick={() => set('is_transfer', false)}
-              className={`flex-1 py-1.5 text-sm rounded-md border transition-colors ${!form.is_transfer ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              Pay/Receive
-            </button>
-            <button type="button" onClick={() => set('is_transfer', true)}
-              className={`flex-1 py-1.5 text-sm rounded-md border transition-colors ${form.is_transfer ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              Transfer
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Date *</label>
-              <Input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
-              <label className="flex items-center gap-1.5 mt-1 cursor-pointer w-fit">
-                <input type="checkbox" className="rounded" checked={form.date === today()} onChange={e => { if (e.target.checked) set('date', today()) }} />
-                <span className="text-xs text-slate-500">Today</span>
-              </label>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Amount *</label>
-              <Input type="number" step="0.01" placeholder="0.00" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} />
-            </div>
-          </div>
-
-          {form.is_transfer ? (
-            <>
-              <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Transfer To Account *</label>
-                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.transfer_account_id} onChange={e => set('transfer_account_id', e.target.value)}>
-                  <option value="">— select target account —</option>
-                  {transferAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Description</label>
-                <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Description / note" />
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
-                <SearchableSelect value={form.payees_id} onChange={v => set('payees_id', v)}
-                  options={payees.map(p => ({ value: String(p.id), label: String(p.name) }))} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Description</label>
-                <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Description / note" />
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="cash-use-splits" checked={useSplits} onChange={e => setUseSplits(e.target.checked)} className="rounded" />
-                <label htmlFor="cash-use-splits" className="text-sm text-slate-600">Split categories</label>
-              </div>
-              {!useSplits ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium text-slate-500 block mb-1">Category</label>
-                    <SearchableSelect value={form.categories_id} onChange={v => set('categories_id', v)}
-                      options={sortedCategories.map(c => ({ value: String(c.id), label: String(c.full_path), disabled: !!c._disabled }))} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-slate-500 block mb-1">Memo</label>
-                    <Input value={form.memo} onChange={e => set('memo', e.target.value)} placeholder="Memo" />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2 border border-slate-200 rounded-lg p-3">
-                  <div className="text-xs font-medium text-slate-500 grid grid-cols-12 gap-2">
-                    <span className="col-span-5">Category</span>
-                    <span className="col-span-3">Amount</span>
-                    <span className="col-span-3">Memo</span>
-                  </div>
-                  {splits.map((sp, i) => (
-                    <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                      <SearchableSelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
-                        options={sortedCategories.map(c => ({ value: String(c.id), label: String(c.full_path), disabled: !!c._disabled }))} />
-                      <Input className="col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
-                      <Input className="col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
-                      <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>
-                    </div>
-                  ))}
-                  <Button size="sm" variant="secondary" onClick={addSplit} className="mt-1"><Plus size={12} /> Add split</Button>
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="flex items-center gap-5">
-            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-              <input type="checkbox" checked={form.is_draft} onChange={e => set('is_draft', e.target.checked)} className="rounded" />
-              Draft
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-              <input type="checkbox" checked={form.cleared} onChange={e => set('cleared', e.target.checked)} className="rounded" />
-              Cleared
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-              <input type="checkbox" checked={form.reconciled} onChange={e => set('reconciled', e.target.checked)} className="rounded" />
-              Reconciled
-            </label>
-          </div>
-
-          {!form.id && (
-            <div className="space-y-2">
-              <div className="border border-slate-200 rounded-lg">
-                <button type="button" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
-                  onClick={() => { setRecurringEnabled(!recurringEnabled); if (!recurringEnabled) setInstallmentEnabled(false) }}>
-                  <input type="checkbox" checked={recurringEnabled} onChange={() => {}} className="rounded pointer-events-none" />
-                  Save as recurring template
-                </button>
-                {recurringEnabled && (
-                  <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
-                    <div className="pt-2">
-                      <label className="text-xs font-medium text-slate-500 block mb-1">Template Name *</label>
-                      <Input value={recurringName} onChange={e => setRecurringName(e.target.value)} placeholder="e.g. Monthly Rent" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
-                        <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={recurringFreq} onChange={e => setRecurringFreq(e.target.value)}>
-                          {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Next Due Date</label>
-                        <Input type="date" value={recurringNextDue} onChange={e => setRecurringNextDue(e.target.value)} />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="border border-slate-200 rounded-lg">
-                <button type="button" className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
-                  onClick={() => { setInstallmentEnabled(!installmentEnabled); if (!installmentEnabled) setRecurringEnabled(false) }}>
-                  <input type="checkbox" checked={installmentEnabled} onChange={() => {}} className="rounded pointer-events-none" />
-                  Create installment series
-                </button>
-                {installmentEnabled && (
-                  <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
-                    <p className="pt-2 text-xs text-slate-500">Creates all transactions immediately. Description will be suffixed with (1/{installmentCount || 'N'}), (2/{installmentCount || 'N'}), …</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Number of installments *</label>
-                        <Input type="number" min="2" step="1" value={installmentCount} onChange={e => setInstallmentCount(e.target.value)} placeholder="e.g. 6" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
-                        <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={installmentFreq} onChange={e => setInstallmentFreq(e.target.value)}>
-                          {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
-        </div>
-        <div className="flex justify-between px-5 py-3 border-t border-slate-200">
-          <div>{form.id && onDelete && <Button variant="destructive" size="sm" onClick={onDelete} disabled={saving}>Delete</Button>}</div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button onClick={onSave} disabled={saving}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Holdings table (view + inline edit for qty & staking) ─────────────────────
 type HoldingEdit = { quantity: string; staking: boolean }
@@ -571,19 +281,9 @@ export default function Investments() {
   const [cashFromDate, setCashFromDate] = useState(monthsAgo(6))
   const [cashToDate, setCashToDate] = useState('2099-12-31')
   const [cashActivePeriod, setCashActivePeriod] = useState('6M')
-  const [cashModalOpen, setCashModalOpen] = useState(false)
-  const [cashForm, setCashForm] = useState<CashTxForm | null>(null)
-  const [cashSplits, setCashSplits] = useState<SplitRow[]>([{ categories_id: '', amount: '', memo: '' }])
-  const [cashUseSplits, setCashUseSplits] = useState(false)
-  const [cashSaving, setCashSaving] = useState(false)
-  const [cashSaveError, setCashSaveError] = useState<string | null>(null)
-  const [cashRecurringEnabled, setCashRecurringEnabled] = useState(false)
-  const [cashRecurringName, setCashRecurringName] = useState('')
-  const [cashRecurringFreq, setCashRecurringFreq] = useState('Monthly')
-  const [cashRecurringNextDue, setCashRecurringNextDue] = useState(today())
-  const [cashInstallmentEnabled, setCashInstallmentEnabled] = useState(false)
-  const [cashInstallmentCount, setCashInstallmentCount] = useState('')
-  const [cashInstallmentFreq, setCashInstallmentFreq] = useState('Monthly')
+  // Shared with Cash Register — same modal, same save/delete/transfer/installment/
+  // recurring-template logic, instead of a separately-maintained copy that can drift.
+  const cashTx = useTxModal({ onSaved: () => qc.invalidateQueries({ queryKey: ['inv-cash'] }) })
 
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
@@ -602,145 +302,6 @@ export default function Investments() {
     enabled: tab === 'cash' && accountId != null,
   })
   const cashRows = ((cashData as { transactions?: Record<string, unknown>[] } | null)?.transactions ?? []) as Record<string, unknown>[]
-
-  const handleCashSave = async () => {
-    if (!cashForm || !accountId) return
-    setCashSaving(true); setCashSaveError(null)
-    try {
-      const statusFields = { is_draft: cashForm.is_draft, cleared: cashForm.cleared, reconciled: cashForm.reconciled }
-      if (cashForm.is_transfer && !cashForm.id) {
-        if (!cashForm.transfer_account_id) throw new Error('Select a target account for the transfer')
-        await createTransfer({
-          from_account_id: cashForm.accounts_id,
-          to_account_id: Number(cashForm.transfer_account_id),
-          date: cashForm.date,
-          amount: parseFloat(cashForm.total_amount),
-          description: cashForm.description || null,
-          ...statusFields,
-        })
-      } else if (cashForm.is_transfer && cashForm.id) {
-        await updateTransaction(cashForm.id, {
-          date: cashForm.date,
-          description: cashForm.description || null,
-          total_amount: parseFloat(cashForm.total_amount),
-          accounts_id_target: cashForm.transfer_account_id ? Number(cashForm.transfer_account_id) : null,
-          ...statusFields,
-        })
-      } else if (!cashForm.id && cashInstallmentEnabled && parseInt(cashInstallmentCount) >= 2) {
-        const n = parseInt(cashInstallmentCount)
-        const baseDesc = cashForm.description || ''
-        const splitPayload = cashUseSplits
-          ? cashSplits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
-          : [{ categories_id: cashForm.categories_id ? Number(cashForm.categories_id) : null, amount: parseFloat(cashForm.total_amount), memo: cashForm.memo || null }]
-        for (let i = 0; i < n; i++) {
-          const instDate = addPeriod(cashForm.date, cashInstallmentFreq, i)
-          const instDesc = baseDesc ? `${baseDesc} (${i + 1}/${n})` : `(${i + 1}/${n})`
-          const res = await createTransaction({
-            accounts_id: cashForm.accounts_id,
-            date: instDate,
-            description: instDesc,
-            total_amount: parseFloat(cashForm.total_amount),
-            payees_id: cashForm.payees_id ? Number(cashForm.payees_id) : null,
-            accounts_id_target: null,
-            ...statusFields,
-          }) as { id: number }
-          if (splitPayload.length > 0) await upsertSplits(res.id, splitPayload)
-        }
-      } else {
-        const payload: Record<string, unknown> = {
-          accounts_id: cashForm.accounts_id,
-          date: cashForm.date,
-          description: cashForm.description || null,
-          total_amount: parseFloat(cashForm.total_amount),
-          payees_id: cashForm.payees_id ? Number(cashForm.payees_id) : null,
-          accounts_id_target: null,
-          ...statusFields,
-        }
-        let txId: number
-        if (cashForm.id) {
-          await updateTransaction(cashForm.id, payload)
-          txId = cashForm.id
-        } else {
-          const res = await createTransaction(payload) as { id: number }
-          txId = res.id
-        }
-        if (cashUseSplits) {
-          const validSplits = cashSplits
-            .filter(s => s.amount !== '' && s.amount !== '0')
-            .map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
-          if (validSplits.length > 0) await upsertSplits(txId, validSplits)
-        } else {
-          await upsertSplits(txId, [{
-            categories_id: cashForm.categories_id ? Number(cashForm.categories_id) : null,
-            amount: parseFloat(cashForm.total_amount),
-            memo: cashForm.memo || null,
-          }])
-        }
-        if (!cashForm.id && cashRecurringEnabled && cashRecurringName.trim()) {
-          const { createRecurringTemplate } = await import('@/lib/api')
-          await createRecurringTemplate({
-            name: cashRecurringName.trim(),
-            accounts_id: cashForm.accounts_id,
-            payees_id: cashForm.payees_id ? Number(cashForm.payees_id) : null,
-            description: cashForm.description || null,
-            total_amount: parseFloat(cashForm.total_amount),
-            periodicity: cashRecurringFreq,
-            next_due_date: cashRecurringNextDue,
-            accounts_id_target: null,
-          })
-        }
-      }
-      qc.invalidateQueries({ queryKey: ['inv-cash'] })
-      setCashModalOpen(false); setCashForm(null)
-    } catch (e) { setCashSaveError(e instanceof Error ? e.message : 'Save failed') }
-    finally { setCashSaving(false) }
-  }
-
-  const handleCashDelete = async () => {
-    if (!cashForm?.id) return
-    setCashSaving(true)
-    try {
-      await deleteTransaction(cashForm.id)
-      qc.invalidateQueries({ queryKey: ['inv-cash'] })
-      setCashModalOpen(false); setCashForm(null)
-    } catch (e) { setCashSaveError(e instanceof Error ? e.message : 'Delete failed') }
-    finally { setCashSaving(false) }
-  }
-
-  const openCashNew = () => {
-    if (!accountId) return
-    setCashForm(emptyCashForm(accountId))
-    setCashSplits([{ categories_id: '', amount: '', memo: '' }])
-    setCashUseSplits(false); setCashSaveError(null)
-    setCashRecurringEnabled(false); setCashRecurringName(''); setCashRecurringFreq('Monthly'); setCashRecurringNextDue(today())
-    setCashInstallmentEnabled(false); setCashInstallmentCount(''); setCashInstallmentFreq('Monthly')
-    setCashModalOpen(true)
-  }
-
-  const openCashEdit = useCallback(async (row: Record<string, unknown>) => {
-    const txSplits = await getSplits(Number(row.id))
-    const loadedSplits = Array.isArray(txSplits) && txSplits.length > 0
-      ? (txSplits as Record<string, unknown>[]).map(s => ({ categories_id: String(s.categories_id ?? ''), amount: String(s.amount ?? ''), memo: String(s.memo ?? '') }))
-      : [{ categories_id: '', amount: '', memo: '' }]
-    setCashForm({
-      id: Number(row.id),
-      accounts_id: accountId!,
-      date: String(row.date ?? '').slice(0, 10),
-      description: String(row.description ?? ''),
-      total_amount: row.amount != null ? String(row.amount) : '',
-      payees_id: String(row.payees_id ?? ''),
-      categories_id: String((txSplits as Record<string,unknown>[])?.[0]?.categories_id ?? ''),
-      memo: String(loadedSplits[0]?.memo ?? ''),
-      is_draft: Boolean(row.is_draft),
-      cleared: Boolean(row.cleared),
-      reconciled: Boolean(row.reconciled),
-      is_transfer: Boolean(row.accounts_id_target),
-      transfer_account_id: String(row.accounts_id_target ?? ''),
-    })
-    setCashSplits(loadedSplits)
-    setCashUseSplits(loadedSplits.length > 1)
-    setCashSaveError(null); setCashModalOpen(true)
-  }, [accountId])
 
   const totalValue = (holdings as Record<string, unknown>[]).reduce((s, h) => s + Number(h.value_eur ?? 0), 0)
   const totalGain = (holdings as Record<string, unknown>[]).reduce((s, h) =>
@@ -956,7 +517,7 @@ export default function Investments() {
                   <span className="text-xs text-slate-500">Today</span>
                 </label>
               </div>
-              <Button size="sm" onClick={openCashNew}>
+              <Button size="sm" onClick={() => cashTx.openNew(accountId!)} disabled={!accountId}>
                 <Plus size={14} /> New
               </Button>
             </>
@@ -1001,7 +562,7 @@ export default function Investments() {
                     rowData={cashRows}
                     columnDefs={CASH_COLS}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
-                    onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openCashEdit(e.data as Record<string, unknown>) }}
+                    onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
                     onGridReady={e => e.api.autoSizeAllColumns()}
                     onFirstDataRendered={e => e.api.autoSizeAllColumns()}
                     onRowDataUpdated={e => e.api.autoSizeAllColumns()}
@@ -1043,36 +604,37 @@ export default function Investments() {
         </Card>
       </div>
 
-      {cashModalOpen && cashForm && (
-        <CashTxModal
-          form={cashForm}
-          splits={cashSplits}
-          useSplits={cashUseSplits}
-          setUseSplits={setCashUseSplits}
-          onFormChange={setCashForm}
-          onSplitsChange={setCashSplits}
+      {cashTx.modalOpen && cashTx.form && (
+        <TxModal
+          form={cashTx.form}
+          splits={cashTx.splits}
+          useSplits={cashTx.useSplits}
+          setUseSplits={cashTx.setUseSplits}
+          onFormChange={cashTx.setForm}
+          onSplitsChange={cashTx.setSplits}
           payees={payees as Record<string, unknown>[]}
           categories={categories as Record<string, unknown>[]}
-          allAccounts={accounts as Record<string, unknown>[]}
-          onSave={handleCashSave}
-          onDelete={cashForm.id ? handleCashDelete : undefined}
-          onClose={() => { setCashModalOpen(false); setCashForm(null) }}
-          saving={cashSaving}
-          error={cashSaveError}
-          recurringEnabled={cashRecurringEnabled}
-          setRecurringEnabled={setCashRecurringEnabled}
-          recurringName={cashRecurringName}
-          setRecurringName={setCashRecurringName}
-          recurringFreq={cashRecurringFreq}
-          setRecurringFreq={setCashRecurringFreq}
-          recurringNextDue={cashRecurringNextDue}
-          setRecurringNextDue={setCashRecurringNextDue}
-          installmentEnabled={cashInstallmentEnabled}
-          setInstallmentEnabled={setCashInstallmentEnabled}
-          installmentCount={cashInstallmentCount}
-          setInstallmentCount={setCashInstallmentCount}
-          installmentFreq={cashInstallmentFreq}
-          setInstallmentFreq={setCashInstallmentFreq}
+          accounts={accounts as Record<string, unknown>[]}
+          onSave={cashTx.handleSave}
+          onDelete={cashTx.form.id ? cashTx.handleDelete : undefined}
+          onClose={cashTx.close}
+          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          saving={cashTx.saving}
+          error={cashTx.saveError}
+          recurringEnabled={cashTx.recurringEnabled}
+          setRecurringEnabled={cashTx.setRecurringEnabled}
+          recurringName={cashTx.recurringName}
+          setRecurringName={cashTx.setRecurringName}
+          recurringFreq={cashTx.recurringFreq}
+          setRecurringFreq={cashTx.setRecurringFreq}
+          recurringNextDue={cashTx.recurringNextDue}
+          setRecurringNextDue={cashTx.setRecurringNextDue}
+          installmentEnabled={cashTx.installmentEnabled}
+          setInstallmentEnabled={cashTx.setInstallmentEnabled}
+          installmentCount={cashTx.installmentCount}
+          setInstallmentCount={cashTx.setInstallmentCount}
+          installmentFreq={cashTx.installmentFreq}
+          setInstallmentFreq={cashTx.setInstallmentFreq}
         />
       )}
 

@@ -827,6 +827,15 @@ CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
 
+-- Server-side UI preferences (decimal/date format, saved report filters, last-used
+-- tabs, etc.) so they follow the user across browsers/devices/origins instead of
+-- being trapped in a single browser's localStorage.
+CREATE TABLE IF NOT EXISTS User_Preferences (
+    Pref_Key   VARCHAR(100) PRIMARY KEY,
+    Pref_Value JSONB NOT NULL,
+    Updated_At TIMESTAMP DEFAULT NOW()
+);
+
 
 -- =============================================================================
 -- IMPORT SUPPORT TABLES

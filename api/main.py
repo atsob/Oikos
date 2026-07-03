@@ -3,8 +3,6 @@ import sys
 import os
 import warnings
 
-# Suppress Streamlit cache warnings (crud.py / queries.py use @st.cache_data outside runtime)
-warnings.filterwarnings("ignore", message="No runtime found", category=UserWarning)
 # Suppress pandas "use SQLAlchemy" advisory — we intentionally use psycopg2 connections
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", category=UserWarning)
 
@@ -16,7 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from api.routers import dashboard, register, reports, static_data, market_data
 from api.routers import investments, recurring, ai_router, tools_router, importers_router
-from api.routers import securities, bank_router
+from api.routers import securities, bank_router, preferences
 
 app = FastAPI(title="Oikos API", version="2.0.0", docs_url="/api/docs", redoc_url="/api/redoc")
 
@@ -40,6 +38,7 @@ app.include_router(tools_router.router,        prefix="/api/tools",        tags=
 app.include_router(importers_router.router,    prefix="/api/importers",    tags=["importers"])
 app.include_router(securities.router,          prefix="/api/securities",   tags=["securities"])
 app.include_router(bank_router.router,         prefix="/api/bank",         tags=["bank"])
+app.include_router(preferences.router,         prefix="/api/preferences",  tags=["preferences"])
 
 
 @app.middleware("http")

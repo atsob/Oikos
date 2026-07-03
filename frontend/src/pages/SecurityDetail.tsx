@@ -24,8 +24,9 @@ import {
   getTaxCategoryRules,
   getAccounts,
 } from '@/lib/api'
-import { InvTransactionModal, emptyInvForm, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
+import { InvTransactionModal, emptyInvForm, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
+import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
 const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
@@ -327,6 +328,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
   const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: getSecurities })
 
+  const [modalOpen, setModalOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState<InvFormData>(emptyInvForm())
   const [saving, setSaving] = useState(false)
@@ -335,6 +337,14 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const accounts = accountsData as Record<string, unknown>[]
   const investmentAccounts = accounts.filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
   const securities = securitiesData as Record<string, unknown>[]
+
+  // Same modal used by the Investments register page — new transactions here start
+  // pre-filled with this security, matching what "New Transaction" does there.
+  const openNew = useCallback(() => {
+    setEditId(null)
+    setForm({ ...emptyInvForm(), securities_id: String(secId) })
+    setSaveError(null); setModalOpen(true)
+  }, [secId])
 
   const openEdit = useCallback((row: Record<string, unknown>) => {
     setForm({
@@ -346,6 +356,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       price_per_share: row.price_per_share != null ? String(row.price_per_share) : '',
       commission: row.commission != null ? String(row.commission) : '0',
       fx_rate: row.fx_rate != null ? String(row.fx_rate) : '1',
+      tax_amount: row.tax_amount != null ? String(row.tax_amount) : '',
       total_amount_acccur: row.total_acc_cur != null ? String(row.total_acc_cur) : '',
       total_amount_seccur: row.total_sec_cur != null ? String(row.total_sec_cur) : '',
       instrument_type: String(row.instrument_type ?? ''),
@@ -353,11 +364,10 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       cash_account_id: row.cash_account_id != null ? String(row.cash_account_id) : '',
     })
     setEditId(Number(row.id))
-    setSaveError(null)
+    setSaveError(null); setModalOpen(true)
   }, [secId])
 
   const handleSave = async () => {
-    if (!editId) return
     setSaving(true); setSaveError(null)
     const payload = {
       accounts_id: Number(form.accounts_id),
@@ -370,15 +380,16 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       fx_rate: form.fx_rate ? parseFloat(form.fx_rate) : 1,
       total_amount_acccur: form.total_amount_acccur ? parseFloat(form.total_amount_acccur) : null,
       total_amount_seccur: form.total_amount_seccur ? parseFloat(form.total_amount_seccur) : null,
+      tax_amount: form.tax_amount ? parseFloat(form.tax_amount) : null,
       instrument_type: form.instrument_type || null,
       description: form.description || null,
       cash_account_id: form.cash_account_id ? Number(form.cash_account_id) : null,
     }
     try {
-      await updateInvestment(editId, payload)
+      if (editId) { await updateInvestment(editId, payload) } else { await createInvestment(payload) }
       qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
       qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
-      setEditId(null)
+      setModalOpen(false); setEditId(null); setForm(emptyInvForm())
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Save failed')
     } finally { setSaving(false) }
@@ -391,7 +402,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       await deleteInvestment(editId)
       qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
       qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
-      setEditId(null)
+      setModalOpen(false); setEditId(null); setForm(emptyInvForm())
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Delete failed')
     } finally { setSaving(false) }
@@ -418,10 +429,10 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   }, [holdings.holdings])
 
   const copyTransactions = useCallback(() => {
-    const header = 'Account\tDate\tAction\tQuantity\tPrice/Share\tCommission\tTotal (Sec. Cur.)\tTotal (Acc. Cur.)\tCurrency\tDescription'
+    const header = 'Account\tDate\tAction\tQuantity\tPrice/Share\tCommission\tW. Tax\tTotal (Sec. Cur.)\tTotal (Acc. Cur.)\tCurrency\tDescription'
     const rows = transactions.map((r: Record<string, unknown>) =>
       [r.account, r.date, r.action, fmt(r.quantity), fmt(r.price_per_share), fmt(r.commission, 2),
-       fmt(r.total_sec_cur, 2), fmt(r.total_acc_cur, 2), r.currency, r.description ?? ''].join('\t')
+       r.tax_amount != null ? fmt(r.tax_amount, 2) : '', fmt(r.total_sec_cur, 2), fmt(r.total_acc_cur, 2), r.currency, r.description ?? ''].join('\t')
     ).join('\n')
     navigator.clipboard.writeText(header + '\n' + rows)
   }, [transactions])
@@ -493,7 +504,10 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold text-slate-700">All Transactions ({transactions.length})</p>
-          <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={openNew}><Plus size={14} /> New Transaction</Button>
+            <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
+          </div>
         </div>
         <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
           <AgGridReact
@@ -505,6 +519,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
               { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
               { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+              { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : {} },
               { field: 'total_sec_cur', headerName: 'Total (Sec. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               { field: 'total_acc_cur', headerName: 'Total (Acc. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               { field: 'currency', headerName: 'Currency', width: 90 },
@@ -517,7 +532,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
         </div>
       </div>
 
-      {editId !== null && (
+      {modalOpen && (
         <InvTransactionModal
           form={form}
           onChange={setForm}
@@ -525,8 +540,8 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
           allAccounts={accounts}
           securities={securities}
           onSave={handleSave}
-          onDelete={handleDelete}
-          onClose={() => { setEditId(null); setSaveError(null) }}
+          onDelete={editId ? handleDelete : undefined}
+          onClose={() => { setModalOpen(false); setEditId(null); setSaveError(null) }}
           saving={saving}
           error={saveError}
           editId={editId}
@@ -1130,34 +1145,10 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 }
 
 // ── Security Setup Tab ────────────────────────────────────────────────────────
-const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
-
-const EMPTY_SETUP = {
-  ticker: '', name: '', type: 'Stock', currencies_id: '', is_active: 'true', is_tax_exempt: 'false',
-  isin: '', sector: '', industry: '', yahoo_ticker: '', tv_symbol: '', tv_exchange: '',
-  maturity_date: '', coupon_rate: '', coupon_frequency: '', face_value: '',
-  dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
-  dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
-  analyst_rating: '', analyst_target_price: '',
-  tax_category: '',
-}
-
-function SetupField({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
-      {children}
-    </div>
-  )
-}
-function SetupSection({ children }: { children: React.ReactNode }) {
-  return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
-}
-
 function SecuritySetupTab({ security, onSaved }: { security: Record<string, unknown>; onSaved?: () => void }) {
   const qc = useQueryClient()
   const [form, setForm] = useState<Record<string, string>>(() => ({
-    ...EMPTY_SETUP,
+    ...EMPTY_SECURITY_FORM,
     ...Object.fromEntries(Object.entries(security).map(([k, v]) => [k, v != null ? String(v) : ''])),
   }))
   const [saving, setSaving] = useState(false)
@@ -1168,7 +1159,7 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
   React.useEffect(() => {
     if (security.id && security.id !== securityRef.current.id) {
       securityRef.current = security
-      setForm({ ...EMPTY_SETUP, ...Object.fromEntries(Object.entries(security).map(([k, v]) => [k, v != null ? String(v) : ''])) })
+      setForm({ ...EMPTY_SECURITY_FORM, ...Object.fromEntries(Object.entries(security).map(([k, v]) => [k, v != null ? String(v) : ''])) })
       setSaveMsg(null)
     }
   }, [security])
@@ -1191,74 +1182,9 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
     } finally { setSaving(false) }
   }
 
-  const BoolSelect = ({ k, label }: { k: string; label: string }) => (
-    <SetupField label={label}>
-      <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form[k] ?? 'false'} onChange={e => set(k, e.target.value)}>
-        <option value="true">Yes</option>
-        <option value="false">No</option>
-      </select>
-    </SetupField>
-  )
-
   return (
     <div className="p-5 max-w-4xl space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <SetupSection>Identity</SetupSection>
-        <SetupField label="Ticker *"><Input value={form.ticker} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
-        <div className="col-span-2">
-          <SetupField label="Name *"><Input value={form.name} onChange={e => set('name', e.target.value)} /></SetupField>
-        </div>
-        <SetupField label="Type *">
-          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type} onChange={e => set('type', e.target.value)}>
-            {SECURITY_TYPES.map(t => <option key={t}>{t}</option>)}
-          </select>
-        </SetupField>
-        <SetupField label="Currency">
-          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.currencies_id} onChange={e => set('currencies_id', e.target.value)}>
-            <option value="">— select —</option>
-            {(currencies as Record<string,unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>)}
-          </select>
-        </SetupField>
-        <SetupField label="ISIN"><Input value={form.isin} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" className="font-mono" /></SetupField>
-        <BoolSelect k="is_active" label="Is Active" />
-        <BoolSelect k="is_tax_exempt" label="Tax Exempt" />
-        <SetupField label="Tax Category">
-          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.tax_category} onChange={e => set('tax_category', e.target.value)}>
-            <option value="">— not set —</option>
-            {(taxRules as Record<string, unknown>[]).map(r => (
-              <option key={String(r.tax_category)} value={String(r.tax_category)}>
-                {String(r.display_name)}
-              </option>
-            ))}
-          </select>
-        </SetupField>
-        <SetupField label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></SetupField>
-        <SetupField label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></SetupField>
-
-        <SetupSection>Data Sources</SetupSection>
-        <SetupField label="Yahoo Ticker"><Input value={form.yahoo_ticker} onChange={e => set('yahoo_ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
-        <SetupField label="TV Symbol"><Input value={form.tv_symbol} onChange={e => set('tv_symbol', e.target.value)} placeholder="AAPL" className="font-mono" /></SetupField>
-        <SetupField label="TV Exchange"><Input value={form.tv_exchange} onChange={e => set('tv_exchange', e.target.value)} placeholder="NASDAQ" /></SetupField>
-
-        <SetupSection>Fixed Income</SetupSection>
-        <SetupField label="Maturity Date"><Input type="date" value={form.maturity_date} onChange={e => set('maturity_date', e.target.value)} /></SetupField>
-        <SetupField label="Coupon Rate %"><Input type="number" step="0.001" value={form.coupon_rate} onChange={e => set('coupon_rate', e.target.value)} placeholder="0.000" /></SetupField>
-        <SetupField label="Coupon Frequency"><Input value={form.coupon_frequency} onChange={e => set('coupon_frequency', e.target.value)} placeholder="Annual" /></SetupField>
-        <SetupField label="Face Value"><Input type="number" step="0.01" value={form.face_value} onChange={e => set('face_value', e.target.value)} placeholder="1000.00" /></SetupField>
-
-        <SetupSection>Dividends</SetupSection>
-        <SetupField label="Dividend Yield %"><Input type="number" step="0.0001" value={form.dividend_yield} onChange={e => set('dividend_yield', e.target.value)} placeholder="0.0000" /></SetupField>
-        <SetupField label="Dividend Rate"><Input type="number" step="0.0001" value={form.dividend_rate} onChange={e => set('dividend_rate', e.target.value)} placeholder="0.0000" /></SetupField>
-        <SetupField label="Dividend Frequency"><Input value={form.dividend_frequency} onChange={e => set('dividend_frequency', e.target.value)} placeholder="Quarterly" /></SetupField>
-        <SetupField label="Ex-Dividend Date"><Input type="date" value={form.ex_dividend_date} onChange={e => set('ex_dividend_date', e.target.value)} /></SetupField>
-        <SetupField label="Dividend Pay Date"><Input type="date" value={form.dividend_pay_date} onChange={e => set('dividend_pay_date', e.target.value)} /></SetupField>
-        <SetupField label="Payout Ratio %"><Input type="number" step="0.01" value={form.payout_ratio} onChange={e => set('payout_ratio', e.target.value)} placeholder="0.00" /></SetupField>
-        <SetupField label="5Y Avg Yield %"><Input type="number" step="0.0001" value={form.five_year_avg_yield} onChange={e => set('five_year_avg_yield', e.target.value)} placeholder="0.0000" /></SetupField>
-
-        <SetupSection>Analyst</SetupSection>
-        <SetupField label="Rating"><Input value={form.analyst_rating} onChange={e => set('analyst_rating', e.target.value)} placeholder="Buy" /></SetupField>
-        <SetupField label="Target Price"><Input type="number" step="0.01" value={form.analyst_target_price} onChange={e => set('analyst_target_price', e.target.value)} placeholder="0.00" /></SetupField>
-      </div>
+      <SecurityFormFields form={form} set={set} currencies={currencies as Record<string, unknown>[]} taxRules={taxRules as Record<string, unknown>[]} />
 
       <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
         <Button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.ticker?.trim()}>

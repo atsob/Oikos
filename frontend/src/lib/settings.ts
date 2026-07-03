@@ -1,3 +1,5 @@
+import { getPref, setPref, subscribePref } from './preferences'
+
 export interface AppSettings {
   decimalSep: string       // ',' | '.'
   thousandSep: string      // '.' | ',' | ' ' | ''
@@ -14,22 +16,46 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   reportingCurrency: 'EUR',
 }
 
-const KEY = 'oikos-settings'
+// Backed by lib/preferences.ts (server-side storage) instead of a standalone
+// localStorage key, so settings follow the user across devices/browsers/
+// origins. LEGACY_KEY is only read once, to migrate anyone upgrading from the
+// old localStorage-only version.
+const PREF_KEY = 'app-settings'
+const LEGACY_KEY = 'oikos-settings'
 
-let _current: AppSettings = { ...SETTINGS_DEFAULTS }
+let _current: AppSettings = { ...SETTINGS_DEFAULTS, ...getPref(PREF_KEY, SETTINGS_DEFAULTS) }
+
+type Listener = (s: AppSettings) => void
+const _listeners = new Set<Listener>()
+
+// Keep _current in sync whenever the underlying preference changes (e.g. once
+// the initial backend fetch resolves, possibly with a value saved from a
+// different device/browser).
+subscribePref(k => {
+  if (k === PREF_KEY || k === '*') {
+    _current = { ...SETTINGS_DEFAULTS, ...getPref(PREF_KEY, SETTINGS_DEFAULTS) }
+    _listeners.forEach(fn => fn(_current))
+  }
+})
 
 export function loadSettings(): AppSettings {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (raw) _current = { ...SETTINGS_DEFAULTS, ...JSON.parse(raw) }
-  } catch { /* ignore */ }
+  const hasMigrated = getPref<AppSettings | undefined>(PREF_KEY, undefined) !== undefined
+  if (!hasMigrated) {
+    try {
+      const legacyRaw = localStorage.getItem(LEGACY_KEY)
+      if (legacyRaw) {
+        setPref(PREF_KEY, { ...SETTINGS_DEFAULTS, ...JSON.parse(legacyRaw) })
+        localStorage.removeItem(LEGACY_KEY)
+      }
+    } catch { /* ignore */ }
+  }
+  _current = { ...SETTINGS_DEFAULTS, ...getPref(PREF_KEY, SETTINGS_DEFAULTS) }
   return _current
 }
 
 export function saveSettings(s: AppSettings): void {
   _current = { ...s }
-  localStorage.setItem(KEY, JSON.stringify(s))
-  // Notify subscribers
+  setPref(PREF_KEY, s)
   _listeners.forEach(fn => fn(_current))
 }
 
@@ -38,8 +64,6 @@ export function getSettings(): AppSettings {
 }
 
 // Simple pub/sub so React components can re-render when settings change
-type Listener = (s: AppSettings) => void
-const _listeners = new Set<Listener>()
 export function subscribeSettings(fn: Listener): () => void {
   _listeners.add(fn)
   return () => _listeners.delete(fn)

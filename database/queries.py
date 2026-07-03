@@ -1,10 +1,8 @@
 import pandas as pd
-import streamlit as st
 from database.connection import get_connection
 
 from datetime import datetime, timedelta
 
-@st.cache_data(ttl=3600)
 def get_category_hierarchy():
     """Get category hierarchy with full paths"""
     conn = get_connection()
@@ -41,7 +39,6 @@ def get_category_hierarchy():
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_hist_net_worth_data(start_date):
     """Get historical net worth data."""
     conn = get_connection()
@@ -198,7 +195,6 @@ def get_hist_net_worth_data(start_date):
     conn.close()
     return df
 
-@st.cache_data(ttl=3600)
 def get_hist_inv_positions_data(start_date):
     conn = get_connection()
     query = f"""
@@ -265,7 +261,6 @@ def get_hist_inv_positions_data(start_date):
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_net_worth_report_data(start_date: str, interval: str = 'Year', account_ids: tuple = None):
     """Per-account historical balances at each period-end for the Quicken-style Net Worth report."""
     conn = get_connection()
@@ -530,7 +525,6 @@ def get_investment_accounts():
     return df
 
 
-@st.cache_data(ttl=300)
 def get_price_anomalies(threshold_pct: float = 100.0, securities_ids: tuple = None):
     """
     Detect Historical_Prices rows that are outliers via two independent signals:
@@ -649,7 +643,6 @@ def get_price_anomalies(threshold_pct: float = 100.0, securities_ids: tuple = No
     return df
 
 
-@st.cache_data(ttl=60)
 def get_missing_tx_prices() -> pd.DataFrame:
     """Return investment transactions whose Price_Per_Share is not yet in Historical_Prices.
 
@@ -682,7 +675,6 @@ def get_missing_tx_prices() -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=60)
 def get_investments_with_dummy_prices(price_tolerance_pct: float = 1.0) -> pd.DataFrame:
     """Return Investments rows where Quantity or Price_Per_Share looks like a placeholder.
 
@@ -1017,7 +1009,6 @@ def get_nwr_account_selection(settings_key: str = 'nwr_account_ids'):
         conn.close()
 
 
-@st.cache_data(ttl=3600)
 def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
     """Security-level historical values for a single investment account (for NWR drilldown)."""
     conn = get_connection()
@@ -1106,7 +1097,6 @@ def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
     """Get signals for my investment portfolio."""
     conn = get_connection()
@@ -1297,7 +1287,6 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
 
 
 
-@st.cache_data(ttl=3600)
 def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
     """Get P&L report data.
 
@@ -1706,7 +1695,6 @@ def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_income_expense_data(start_date, end_date, category_id=None, cash_account_types=None, inv_account_types=None):
     """Get income and expense data for a period, optionally filtered by category.
     Includes both bank transactions, investment transactions (dividends, interest, etc.),
@@ -2190,7 +2178,6 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
 # CASH FLOW FORECAST
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_cash_flow_forecast(months_back: int = 3):
     """
     Returns two DataFrames:
@@ -2403,7 +2390,6 @@ def get_cash_flow_forecast(months_back: int = 3):
 # DIVIDEND INCOME TRACKER
 # ======================================================
 
-@st.cache_data(ttl=3600)
 def get_dividend_tracker_data(start_date: str, end_date: str):
     """Monthly dividend and interest income and FIFO YOC per security for the given date range."""
     conn = get_connection()
@@ -2505,7 +2491,6 @@ def get_dividend_tracker_data(start_date: str, end_date: str):
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_dividend_forecast_data() -> "pd.DataFrame":
     """Return one row per currently-held, dividend-paying security with enough
     metadata to build a 12-month forward income forecast.
@@ -2632,7 +2617,6 @@ def save_allocation_targets(targets: dict):
     conn.close()
 
 
-@st.cache_data(ttl=300)
 def get_sector_allocation_data():
     """Current allocation by Sector and Industry in EUR."""
     conn = get_connection()
@@ -2678,7 +2662,6 @@ def get_sector_allocation_data():
     return df
 
 
-@st.cache_data(ttl=300)
 def get_asset_allocation_data():
     """Current allocation by Securities_Type in EUR vs. targets from Allocation_Targets."""
     conn = get_connection()
@@ -2725,7 +2708,6 @@ def get_asset_allocation_data():
 # FX EXPOSURE
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_fx_exposure_data():
     """Net exposure per currency in EUR and sensitivity to a ±5 % FX move."""
     conn = get_connection()
@@ -2787,7 +2769,6 @@ def get_fx_exposure_data():
 # BOND SCHEDULE
 # ======================================================
 
-@st.cache_data(ttl=3600)
 def get_bond_schedule_data():
     """Upcoming maturities and coupon cash flows for bond holdings."""
     conn = get_connection()
@@ -2854,7 +2835,6 @@ def get_bond_schedule_data():
 # ANOMALY DETECTION
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_transaction_anomalies(z_threshold: float = 2.5, lookback_days: int = 365):
     """
     Returns recent transactions whose split amount is >= z_threshold standard
@@ -2941,7 +2921,6 @@ def get_transaction_anomalies(z_threshold: float = 2.5, lookback_days: int = 365
 # AI WEEKLY SUMMARIES
 # ======================================================
 
-@st.cache_data(ttl=3600)
 def get_weekly_summaries(limit: int = 12) -> "pd.DataFrame":
     """Return the most recent AI weekly summaries, newest first."""
     conn = get_connection()
@@ -2957,7 +2936,6 @@ def get_weekly_summaries(limit: int = 12) -> "pd.DataFrame":
         df['generated_at']  = pd.to_datetime(df['generated_at'])
     return df
 
-@st.cache_data(ttl=3600)
 def get_monthly_summaries(limit: int = 12) -> "pd.DataFrame":
     """Return the most recent AI monthly summaries, newest first."""
     conn = get_connection()
@@ -2977,7 +2955,6 @@ def get_monthly_summaries(limit: int = 12) -> "pd.DataFrame":
 # A1. SAVINGS RATE
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_savings_rate_data(months: int = 12):
     """Monthly savings rate: income, expenses, savings, savings_rate_pct."""
     conn = get_connection()
@@ -3073,7 +3050,6 @@ def delete_budget(year: int, categories_id: int):
     conn.close()
 
 
-@st.cache_data(ttl=300)
 def get_budget_vs_actual(year: int, ref_years: int = 2):
     """Annual budget vs actual for the selected year.
 
@@ -3203,7 +3179,6 @@ def get_budget_vs_actual(year: int, ref_years: int = 2):
     return df
 
 
-@st.cache_data(ttl=300)
 def get_annual_income(year: int) -> float:
     """Total income (Income + Dividend + Interest categories) for the given year, in EUR.
     Uses the latest available FX rate for non-EUR accounts."""
@@ -3232,7 +3207,6 @@ def get_annual_income(year: int) -> float:
     return float(df["total_income_eur"].iloc[0])
 
 
-@st.cache_data(ttl=300)
 def get_ytd_expense_transactions(year: int):
     """All expense-category transactions for the selected year, with full category path."""
     conn = get_connection()
@@ -3285,7 +3259,6 @@ def get_ytd_expense_transactions(year: int):
     return df
 
 
-@st.cache_data(ttl=600)
 def get_portfolio_weights(account_ids: tuple = None):
     """Position value and weight for each security in current holdings (ordered by value desc)."""
     conn = get_connection()
@@ -3329,7 +3302,6 @@ def get_portfolio_weights(account_ids: tuple = None):
     return df
 
 
-@st.cache_data(ttl=600)
 def get_investable_portfolio_value(account_ids: tuple = None) -> float:
     """Returns the total value in EUR of investable assets: holdings + pension + other investment cash.
     When account_ids is provided only those accounts are included."""
@@ -3391,7 +3363,6 @@ def get_investable_portfolio_value(account_ids: tuple = None) -> float:
 # A3. SPENDING TRENDS
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_spending_trends(months: int = 24):
     """Monthly spending per top-level expense category."""
     conn = get_connection()
@@ -3437,7 +3408,6 @@ def get_spending_trends(months: int = 24):
 # A3b. INVESTMENT INCOME REPORT (Dividend / Interest)
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_investment_income_report(tax_year: int):
     """Per-transaction dividend and interest income for a tax year, converted to EUR.
     Uses the linked EUR cash transaction when available, else historical FX."""
@@ -3488,7 +3458,6 @@ def get_investment_income_report(tax_year: int):
 # A3c. BANK INTEREST REPORT
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_bank_interest_report(tax_year: int):
     """Per-transaction interest income from non-investment accounts (Checking, Savings, Cash, etc.)
     for a given tax year, converted to EUR using the closest historical FX rate on or before
@@ -3538,7 +3507,6 @@ def get_bank_interest_report(tax_year: int):
 # A4. CAPITAL GAINS REPORT
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_capital_gains_report(tax_year: int):
     """Capital gains report for a given tax year.
 
@@ -3711,7 +3679,6 @@ def get_capital_gains_report(tax_year: int):
 # A5. TAX-LOSS HARVESTING
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_tax_loss_opportunities():
     """Current positions with unrealized losses (tax-loss harvesting candidates)."""
     conn = get_connection()
@@ -3848,7 +3815,6 @@ def delete_goal(goal_id: int):
 # A7. PRICE RETURNS (CORRELATION MATRIX)
 # ======================================================
 
-@st.cache_data(ttl=3600)
 def get_price_returns(lookback_days: int = 252, account_ids: tuple = None):
     """Wide DataFrame of daily close prices for current holdings."""
     conn = get_connection()
@@ -3892,7 +3858,6 @@ def get_price_returns(lookback_days: int = 252, account_ids: tuple = None):
 # A8. BENCHMARK RETURNS
 # ======================================================
 
-@st.cache_data(ttl=3600)
 def get_benchmark_candidates(min_days: int = 30):
     """Market Index securities with enough price history to serve as a benchmark."""
     conn = get_connection()
@@ -3910,7 +3875,6 @@ def get_benchmark_candidates(min_days: int = 30):
     return df
 
 
-@st.cache_data(ttl=3600)
 def get_benchmark_returns(securities_id: int, lookback_days: int = 252):
     """Daily close prices for a benchmark security as a date-indexed Series."""
     conn = get_connection()
@@ -3944,7 +3908,6 @@ def _ensure_benchmark_presets_table(conn):
     conn.commit()
 
 
-@st.cache_data(ttl=3600)
 def get_benchmark_presets():
     """Fetch all saved benchmark presets ordered by name."""
     conn = get_connection()
@@ -3988,7 +3951,6 @@ def delete_benchmark_preset(preset_id: int):
 # A9. SPENDING PAYEE DRILL-DOWN
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_spending_by_payee(category: str, months: int = 24):
     """Top payees within a given expense category for the last N complete months."""
     conn = get_connection()
@@ -4098,7 +4060,6 @@ def update_split(split_id: int, category_id: int, memo: str = None):
     conn.close()
 
 
-@st.cache_data(ttl=3600)
 def get_expense_categories():
     """All expense/non-income categories with IDs and full paths for the category dropdown."""
     conn = get_connection()
@@ -4129,7 +4090,6 @@ def get_expense_categories():
 # A11. CUSTOM REPORT PRESETS
 # ======================================================
 
-@st.cache_data(ttl=600)
 def get_all_securities_for_filter() -> pd.DataFrame:
     """Return all securities (Id + Name) for the Custom Reports securities filter."""
     conn = get_connection()
@@ -4140,6 +4100,49 @@ def get_all_securities_for_filter() -> pd.DataFrame:
     )
     conn.close()
     return df
+
+
+def _ensure_user_preferences_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS User_Preferences (
+                Pref_Key   VARCHAR(100) PRIMARY KEY,
+                Pref_Value JSONB NOT NULL,
+                Updated_At TIMESTAMP DEFAULT NOW()
+            )
+        """)
+    conn.commit()
+
+
+def get_user_preferences() -> dict:
+    """Fetch all persisted UI preferences as a single {key: value} dict."""
+    conn = get_connection()
+    try:
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Key, Pref_Value FROM User_Preferences")
+            rows = cur.fetchall()
+        return {r[0]: r[1] for r in rows}
+    finally:
+        conn.close()
+
+
+def set_user_preference(key: str, value) -> None:
+    """Insert or update a single UI preference (upsert on key)."""
+    import json
+    conn = get_connection()
+    try:
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO User_Preferences (Pref_Key, Pref_Value, Updated_At)
+                VALUES (%s, %s::jsonb, NOW())
+                ON CONFLICT (Pref_Key) DO UPDATE
+                    SET Pref_Value = EXCLUDED.Pref_Value, Updated_At = NOW()
+            """, (key, json.dumps(value)))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _ensure_custom_reports_table(conn):
@@ -4156,7 +4159,6 @@ def _ensure_custom_reports_table(conn):
     conn.commit()
 
 
-@st.cache_data(ttl=300)
 def get_custom_report_presets():
     """Fetch all saved custom report presets ordered by name."""
     conn = get_connection()
@@ -4194,7 +4196,6 @@ def delete_custom_report_preset(preset_id: int):
     conn.close()
 
 
-@st.cache_data(ttl=3600)
 def get_all_payees():
     """All payees for use in the custom report filter."""
     conn = get_connection()
@@ -4775,7 +4776,6 @@ def get_custom_report_drill_down(date_from, date_to, category_path=None,
 # A12. CAPITAL GAINS — ALL TRANSACTIONS (for FIFO)
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_all_inv_txns_for_gains():
     """All buy/sell investment transactions with EUR amounts for client-side FIFO computation."""
     conn = get_connection()
@@ -4829,7 +4829,6 @@ def get_all_inv_txns_for_gains():
 # A11. PORTFOLIO CASH FLOWS (for MWR / XIRR)
 # ======================================================
 
-@st.cache_data(ttl=300)
 def get_investment_cashflows(account_ids: tuple = None):
     """All investment cash flows for MWR/XIRR computation.
 
@@ -4966,7 +4965,6 @@ def _ensure_import_tables(conn):
     conn.commit()
 
 
-@st.cache_data(ttl=60)
 def get_import_profiles():
     conn = get_connection()
     _ensure_import_tables(conn)
@@ -4989,7 +4987,6 @@ def get_import_profiles():
     return df
 
 
-@st.cache_data(ttl=300)
 def get_top_categories_for_payee(payee_id: int, limit: int = 5) -> list:
     """Return full-path category names ordered by frequency of use with the given payee.
 
@@ -5076,7 +5073,6 @@ def save_import_profile(p: dict):
         })
     conn.commit()
     conn.close()
-    get_import_profiles.clear()
 
 
 def delete_import_profile(profile_id: int):
@@ -5085,10 +5081,8 @@ def delete_import_profile(profile_id: int):
         cur.execute("DELETE FROM Import_Profiles WHERE Profile_Id = %s", (profile_id,))
     conn.commit()
     conn.close()
-    get_import_profiles.clear()
 
 
-@st.cache_data(ttl=60)
 def get_payee_rules():
     conn = get_connection()
     _ensure_import_tables(conn)
@@ -5126,7 +5120,6 @@ def save_payee_rule(pattern: str, match_type: str = 'contains',
         """, (pattern, match_type, payees_id, categories_id, priority))
     conn.commit()
     conn.close()
-    get_payee_rules.clear()
 
 
 def update_payee_rule(rule_id: int, pattern: str, match_type: str = 'contains',
@@ -5141,7 +5134,6 @@ def update_payee_rule(rule_id: int, pattern: str, match_type: str = 'contains',
         """, (pattern, match_type, payees_id, categories_id, priority, int(rule_id)))
     conn.commit()
     conn.close()
-    get_payee_rules.clear()
 
 
 def delete_payee_rule(rule_id: int):
@@ -5150,7 +5142,6 @@ def delete_payee_rule(rule_id: int):
         cur.execute("DELETE FROM Payee_Rules WHERE Rule_Id = %s", (rule_id,))
     conn.commit()
     conn.close()
-    get_payee_rules.clear()
 
 
 def apply_payee_rules(description: str, rules_df: pd.DataFrame):
@@ -5333,10 +5324,8 @@ def mark_transactions_reconciled(tx_ids: list, session_id: int):
         """, (session_id, list(tx_ids)))
     conn.commit()
     conn.close()
-    st.cache_data.clear()
 
 
-@st.cache_data(ttl=60)
 def get_reconciliation_history(accounts_id: int):
     conn = get_connection()
     _ensure_import_tables(conn)

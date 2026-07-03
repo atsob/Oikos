@@ -1,6 +1,10 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getPayeeTopCategories } from '@/lib/api'
+import {
+  getPayeeTopCategories, getSplits, upsertSplits,
+  createTransaction, updateTransaction, deleteTransaction,
+  createTransfer, createRecurringTemplate,
+} from '@/lib/api'
 import { Input, Button, SearchableSelect, useEscapeKey } from '@/components/ui'
 import { fmtEur } from '@/lib/utils'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
@@ -9,6 +13,21 @@ import { api } from '@/lib/api'
 export const PERIODICITIES = ['Daily', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly', 'Semiannually', 'Annually']
 
 export function today() { return new Date().toISOString().slice(0, 10) }
+
+/** Offsets dateStr by n periods of freq — shared by installment-series creation. */
+export function addPeriod(dateStr: string, freq: string, n: number): string {
+  const d = new Date(dateStr)
+  switch (freq) {
+    case 'Daily':        d.setDate(d.getDate() + n); break
+    case 'Weekly':       d.setDate(d.getDate() + 7 * n); break
+    case 'Biweekly':     d.setDate(d.getDate() + 14 * n); break
+    case 'Monthly':      d.setMonth(d.getMonth() + n); break
+    case 'Quarterly':    d.setMonth(d.getMonth() + 3 * n); break
+    case 'Semiannually': d.setMonth(d.getMonth() + 6 * n); break
+    case 'Annually':     d.setFullYear(d.getFullYear() + n); break
+  }
+  return d.toISOString().slice(0, 10)
+}
 
 export type TxForm = {
   id?: number
@@ -467,5 +486,216 @@ export function useNoOpRecurring() {
     installmentEnabled, setInstallmentEnabled,
     installmentCount, setInstallmentCount,
     installmentFreq, setInstallmentFreq,
+  }
+}
+
+// ── Shared create/edit/save/delete logic for a cash Transaction ────────────────
+// Single source of truth for the full TxModal workflow (transfers, split categories,
+// installment series, "save as recurring template") — used by both the Cash Register
+// and the Investments page's Cash tab so the two never drift apart on which fields or
+// transaction types are supported (previously Investments.tsx had its own ~250-line
+// copy of this modal + save logic that had already drifted, e.g. missing the inline
+// "add new payee" feature and the tax_amount field on the investment-transaction side).
+export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDeleted?: () => void }) {
+  const [modalOpen, setModalOpen] = useState(false)
+  const [form, setForm] = useState<TxForm | null>(null)
+  const [splits, setSplits] = useState<SplitRow[]>([])
+  const [useSplits, setUseSplits] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const [recurringEnabled, setRecurringEnabled] = useState(false)
+  const [recurringName, setRecurringName] = useState('')
+  const [recurringFreq, setRecurringFreq] = useState('Monthly')
+  const [recurringNextDue, setRecurringNextDue] = useState(today())
+
+  const [installmentEnabled, setInstallmentEnabled] = useState(false)
+  const [installmentCount, setInstallmentCount] = useState('')
+  const [installmentFreq, setInstallmentFreq] = useState('Monthly')
+
+  const resetExtras = () => {
+    setRecurringEnabled(false); setRecurringName(''); setRecurringFreq('Monthly'); setRecurringNextDue(today())
+    setInstallmentEnabled(false); setInstallmentCount(''); setInstallmentFreq('Monthly')
+  }
+
+  const openNew = useCallback((accountId: number) => {
+    setForm(emptyForm(accountId))
+    setSplits([{ categories_id: '', amount: '', memo: '' }])
+    setUseSplits(false)
+    setSaveError(null)
+    resetExtras()
+    setModalOpen(true)
+  }, [])
+
+  const openEdit = useCallback(async (row: Record<string, unknown>, accountId: number) => {
+    const txSplits = await getSplits(Number(row.id))
+    setForm({
+      id: Number(row.id),
+      accounts_id: accountId,
+      date: String(row.date ?? '').slice(0, 10),
+      description: String(row.description ?? ''),
+      total_amount: String(row.amount ?? row.total_amount ?? ''),
+      payees_id: String(row.payees_id ?? ''),
+      categories_id: String((txSplits as Record<string, unknown>[])?.[0]?.categories_id ?? ''),
+      memo: String((txSplits as Record<string, unknown>[])?.[0]?.memo ?? ''),
+      is_draft: Boolean(row.is_draft),
+      cleared: Boolean(row.cleared),
+      reconciled: Boolean(row.reconciled),
+      is_transfer: Boolean(row.accounts_id_target),
+      transfer_account_id: String(row.accounts_id_target ?? ''),
+    })
+    const loadedSplits = Array.isArray(txSplits) && txSplits.length > 0
+      ? (txSplits as Record<string, unknown>[]).map(s => ({
+          categories_id: String(s.categories_id ?? ''),
+          amount: String(s.amount ?? ''),
+          memo: String(s.memo ?? ''),
+        }))
+      : [{ categories_id: '', amount: '', memo: '' }]
+    setSplits(loadedSplits)
+    setUseSplits(loadedSplits.length > 1)
+    setSaveError(null)
+    setModalOpen(true)
+  }, [])
+
+  const close = useCallback(() => setModalOpen(false), [])
+
+  const handleSave = useCallback(async () => {
+    if (!form) return
+
+    if (useSplits && !form.is_transfer) {
+      const validSplits = splits.filter(s => s.amount !== '' && s.amount !== '0')
+      const splitsTotal = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+      const txTotal = parseFloat(form.total_amount)
+      if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) {
+        setSaveError(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        return
+      }
+    }
+
+    setSaving(true); setSaveError(null)
+    try {
+      const statusFields = { is_draft: form.is_draft, cleared: form.cleared, reconciled: form.reconciled }
+
+      if (form.is_transfer && !form.id) {
+        if (!form.transfer_account_id) throw new Error('Select a target account for the transfer')
+        await createTransfer({
+          from_account_id: form.accounts_id,
+          to_account_id: Number(form.transfer_account_id),
+          date: form.date,
+          amount: parseFloat(form.total_amount),
+          description: form.description || null,
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
+          ...statusFields,
+        })
+      } else if (form.is_transfer && form.id) {
+        await updateTransaction(form.id, {
+          date: form.date,
+          description: form.description || null,
+          total_amount: parseFloat(form.total_amount),
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
+          accounts_id_target: form.transfer_account_id ? Number(form.transfer_account_id) : null,
+          ...statusFields,
+        })
+      } else if (!form.id && installmentEnabled && parseInt(installmentCount) >= 2) {
+        const n = parseInt(installmentCount)
+        const baseDesc = form.description || ''
+        const splitPayload = useSplits
+          ? splits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
+          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || null }]
+        if (useSplits) {
+          const splitsTotal = splitPayload.reduce((sum, s) => sum + s.amount, 0)
+          const txTotal = parseFloat(form.total_amount)
+          if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        }
+        for (let i = 0; i < n; i++) {
+          const instDate = addPeriod(form.date, installmentFreq, i)
+          const instDesc = baseDesc ? `${baseDesc} (${i + 1}/${n})` : `(${i + 1}/${n})`
+          const res = await createTransaction({
+            accounts_id: form.accounts_id,
+            date: instDate,
+            description: instDesc,
+            total_amount: parseFloat(form.total_amount),
+            payees_id: form.payees_id ? Number(form.payees_id) : null,
+            accounts_id_target: null,
+            ...statusFields,
+          }) as { id: number }
+          if (splitPayload.length > 0) await upsertSplits(res.id, splitPayload)
+        }
+      } else {
+        const payload: Record<string, unknown> = {
+          accounts_id: form.accounts_id,
+          date: form.date,
+          description: form.description || null,
+          total_amount: parseFloat(form.total_amount),
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
+          accounts_id_target: null,
+          ...statusFields,
+        }
+
+        let txId: number
+        if (form.id) {
+          await updateTransaction(form.id, payload)
+          txId = form.id
+        } else {
+          const res = await createTransaction(payload) as { id: number }
+          txId = res.id
+        }
+
+        if (useSplits) {
+          const validSplits = splits
+            .filter(s => s.amount !== '' && s.amount !== '0')
+            .map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
+          if (validSplits.length > 0) await upsertSplits(txId, validSplits)
+        } else {
+          await upsertSplits(txId, [{
+            categories_id: form.categories_id ? Number(form.categories_id) : null,
+            amount: parseFloat(form.total_amount),
+            memo: form.memo || null,
+          }])
+        }
+
+        if (!form.id && recurringEnabled && recurringName.trim()) {
+          await createRecurringTemplate({
+            name: recurringName.trim(),
+            accounts_id: form.accounts_id,
+            payees_id: form.payees_id ? Number(form.payees_id) : null,
+            description: form.description || null,
+            total_amount: parseFloat(form.total_amount),
+            periodicity: recurringFreq,
+            next_due_date: recurringNextDue,
+            accounts_id_target: null,
+          })
+        }
+      }
+
+      onSaved()
+      setModalOpen(false)
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }, [form, splits, useSplits, installmentEnabled, installmentCount, installmentFreq, recurringEnabled, recurringName, recurringFreq, recurringNextDue, onSaved])
+
+  const handleDelete = useCallback(async () => {
+    if (!form?.id || !confirm('Delete this transaction?')) return
+    setSaving(true)
+    try {
+      await deleteTransaction(form.id)
+      ;(onDeleted ?? onSaved)()
+      setModalOpen(false)
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setSaving(false)
+    }
+  }, [form, onDeleted, onSaved])
+
+  return {
+    modalOpen, form, setForm, splits, setSplits, useSplits, setUseSplits, saving, saveError,
+    recurringEnabled, setRecurringEnabled, recurringName, setRecurringName,
+    recurringFreq, setRecurringFreq, recurringNextDue, setRecurringNextDue,
+    installmentEnabled, setInstallmentEnabled, installmentCount, setInstallmentCount, installmentFreq, setInstallmentFreq,
+    openNew, openEdit, close, handleSave, handleDelete,
   }
 }
