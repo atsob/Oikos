@@ -87,15 +87,15 @@ function GroupingPicker({ value, onChange }: { value: string; onChange: (v: stri
 }
 
 
-function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip }: { label: string; value: string; color?: string; subtitle?: string; subtitleNode?: React.ReactNode; tooltip?: string }) {
+function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip, compact }: { label: string; value: string; color?: string; subtitle?: string; subtitleNode?: React.ReactNode; tooltip?: string; compact?: boolean }) {
   return (
-    <div className="bg-slate-50 rounded-lg p-3">
-      <p className="text-xs text-slate-500 mb-1">
+    <div className={`bg-slate-50 rounded-lg ${compact ? 'p-2.5' : 'p-3'}`}>
+      <p className="text-slate-500 mb-1 text-xs">
         {tooltip ? <Tooltip text={tooltip}>{label}</Tooltip> : label}
       </p>
-      <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
-      {subtitle && <p className="text-xs text-slate-400 mt-0.5 truncate">{subtitle}</p>}
-      {subtitleNode && <div className="text-xs mt-0.5">{subtitleNode}</div>}
+      <p className={`font-bold tabular-nums ${compact ? 'text-sm' : 'text-sm'} ${color}`}>{value}</p>
+      {subtitle && <p className="text-slate-400 mt-0.5 truncate text-xs">{subtitle}</p>}
+      {subtitleNode && <div className="mt-0.5 text-xs">{subtitleNode}</div>}
     </div>
   )
 }
@@ -324,7 +324,9 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Net Worth gets extra width as the "hero" card; the rest stay compact so all
+          five fit on one line instead of wrapping. */}
+      <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
         <KpiCard label="Net Worth" value={fmtEur(netWorth)} color={netWorth >= 0 ? 'text-blue-700' : 'text-red-600'}
           tooltip={basePeriod ? `Change since ${fmtPeriodHeader(basePeriod, grouping)}, and that rate of change annualised.` : undefined}
           subtitleNode={delta != null ? (
@@ -335,7 +337,7 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
               )}
             </span>
           ) : undefined} />
-        {NW_ASSET_GROUPS.map(g => <KpiCard key={g} label={g} value={fmtEur(latest[g] ?? 0)} />)}
+        {NW_ASSET_GROUPS.map(g => <KpiCard key={g} label={g} value={fmtEur(latest[g] ?? 0)} compact />)}
       </div>
       <Plot
         data={[
@@ -583,6 +585,10 @@ function NetWorthSection() {
   const [endDate, setEndDate] = usePersist('nw_endDate', today)
   const [grouping, setGrouping] = usePersist<'year'|'quarter'|'month'>('nw_grouping', 'year')
   const [showZeroBalance, setShowZeroBalance] = usePersist('nw_showZeroBalance', false)
+  // Unlike Dashboard's own "Show Disabled" toggle (which defaults off, since it's a current-
+  // snapshot view), this report is historical — closed/inactive accounts still had real
+  // balances in the past, so excluding them by default would silently understate history.
+  const [showInactive, setShowInactive] = usePersist('nw_showInactive', true)
   const [ytdMode, setYtdMode] = usePersist('nw_ytdMode', false)
 
 //  const ytdStart = `${today.slice(0, 4)}-01-01`
@@ -605,6 +611,11 @@ function NetWorthSection() {
     for (const r of allRows) m[String(r.accounts_name)] = String(r.accounts_type)
     return m
   }, [allRows])
+  const accountActive = useMemo(() => {
+    const m: Record<string, boolean> = {}
+    for (const r of allRows) m[String(r.accounts_name)] = r.is_active !== false
+    return m
+  }, [allRows])
   const allAccountNames = useMemo(() => Object.keys(accountMeta).sort(), [accountMeta])
   const allPeriods = useMemo(() => [...new Set(allRows.map(r => String(r.period)))].sort(), [allRows])
 
@@ -621,12 +632,16 @@ function NetWorthSection() {
   const filteredRows = useMemo(() =>
     allRows.filter(r => {
       const n = String(r.accounts_name)
-      return isIncluded(n, savedSelection) && (showZeroBalance || !isZero(n))
-    }), [allRows, savedSelection, showZeroBalance])
+      return isIncluded(n, savedSelection) && (showZeroBalance || !isZero(n)) && (showInactive || accountActive[n] !== false)
+    }), [allRows, savedSelection, showZeroBalance, showInactive, accountActive])
 
   const hiddenZeroCount = useMemo(() =>
-    allAccountNames.filter(n => isIncluded(n, savedSelection) && isZero(n)).length,
-    [allAccountNames, savedSelection, showZeroBalance])
+    allAccountNames.filter(n => isIncluded(n, savedSelection) && isZero(n) && (showInactive || accountActive[n] !== false)).length,
+    [allAccountNames, savedSelection, showZeroBalance, showInactive, accountActive])
+
+  const hiddenInactiveCount = useMemo(() =>
+    allAccountNames.filter(n => isIncluded(n, savedSelection) && accountActive[n] === false).length,
+    [allAccountNames, savedSelection, accountActive])
 
   const openSel = () => { setDraftSelection({ ...savedSelection }); setSelOpen(true) }
   const saveSel = () => { setSavedSelection(draftSelection ?? {}); setSelOpen(false) }
@@ -653,6 +668,7 @@ function NetWorthSection() {
           ))}
         </div>
         <ChkBox label="Show zero-balance accounts" checked={showZeroBalance} onChange={setShowZeroBalance} />
+        <ChkBox label="Show inactive accounts" checked={showInactive} onChange={setShowInactive} />
       </div>
 
       {/* Account Selection */}
@@ -685,7 +701,7 @@ function NetWorthSection() {
                           checked={draftSelection[name] === undefined ? true : draftSelection[name]}
                           onChange={e => setDraftSelection(prev => ({ ...prev!, [name]: e.target.checked }))} />
                       </td>
-                      <td className="px-3 py-1.5">{name}</td>
+                      <td className="px-3 py-1.5">{name}{accountActive[name] === false && <span className="ml-1.5 text-slate-400">(inactive)</span>}</td>
                       <td className="px-3 py-1.5 text-slate-500">{accountMeta[name]}</td>
                     </tr>
                   ))}
@@ -706,6 +722,13 @@ function NetWorthSection() {
           <span>⚠️ {hiddenZeroCount} selected account(s) have zero balance and might be hidden (enable 'Show zero-balance accounts' or click </span>
           <button onClick={() => setShowZeroBalance(true)} className="text-blue-600 hover:underline whitespace-nowrap">🔄 Refresh Data</button>
           <span>)</span>
+        </div>
+      )}
+
+      {/* Inactive-accounts warning */}
+      {!showInactive && hiddenInactiveCount > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-base text-amber-800">
+          <span>⚠️ {hiddenInactiveCount} selected account(s) are inactive and excluded — this may not match Dashboard, which has its own separate "Show Disabled" toggle (enable 'Show inactive accounts' here to include them).</span>
         </div>
       )}
 

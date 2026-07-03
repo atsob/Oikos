@@ -34,6 +34,8 @@ import AIAssistant from '@/pages/AIAssistant'
 import Recurring from '@/pages/Recurring'
 import Investments from '@/pages/Investments'
 import SecurityDetail from '@/pages/SecurityDetail'
+import Help from '@/pages/Help'
+import Releases from '@/pages/Releases'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -76,6 +78,8 @@ export default function App() {
             <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
             <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
             <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
+            <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
+            <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
           </Route>
         </Routes>
       </BrowserRouter>

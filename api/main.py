@@ -55,6 +55,22 @@ def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
+@app.get("/api/changelog")
+def changelog():
+    """Raw CHANGELOG.md content, rendered by the in-app Release Notes page.
+
+    Single source of truth: the same file is what's browsed on GitHub, so the two
+    never drift apart the way a duplicated in-app copy would.
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    path = os.path.join(repo_root, "CHANGELOG.md")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return {"content": fh.read()}
+    except FileNotFoundError:
+        return {"content": "# Changelog\n\nNo changelog found."}
+
+
 # ── Serve React build (production) ────────────────────────────────────────────
 # Only active when frontend/dist exists (i.e. inside Docker). In dev the Vite
 # dev server runs separately and proxies /api to this process.

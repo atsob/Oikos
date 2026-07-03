@@ -9,9 +9,10 @@ import {
   updateHolding, stakingReinvest, getLinkedAccount,
   getTransactions, createTransaction, updateTransaction, deleteTransaction,
   getSplits, upsertSplits, createTransfer, getPayees, getCategories, getPayeeTopCategories,
+  syncBalances,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, SearchableSelect, ColHeader, useSortTable, useEscapeKey, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, X, Save, RefreshCw } from 'lucide-react'
 import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
@@ -853,17 +854,33 @@ export default function Investments() {
           return 'Investment transaction history'
         })()}
         actions={
-          <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
-            onClick={() => {
-              setEditId(null)
-              setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
-              setSaveError(null); setModalOpen(true)
-              getLinkedAccount(accountId!).then(r => {
-                setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
-              }).catch(() => {})
-            }}>
-            <Plus size={14} /> New Transaction
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
+              onClick={() => {
+                setEditId(null)
+                setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
+                setSaveError(null); setModalOpen(true)
+                getLinkedAccount(accountId!).then(r => {
+                  setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
+                }).catch(() => {})
+              }}>
+              <Plus size={14} /> New Transaction
+            </Button>
+            <SyncBalancesButton
+              options={[
+                { label: '📈 Investments', target: 'investment' },
+                { label: '🏛️ Pension', target: 'pension' },
+                { label: '📊 Holdings', target: 'holdings' },
+              ]}
+              onSync={async target => {
+                await syncBalances(target)
+                await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+                await qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+                await qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+                await qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
+              }}
+            />
+          </div>
         }
       />
 

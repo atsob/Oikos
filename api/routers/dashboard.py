@@ -22,8 +22,18 @@ def _df_to_list(df: pd.DataFrame) -> list:
 
 
 @router.get("/net-worth")
-def get_net_worth(start_date: str = Query("2020-01-01")):
-    """Historical monthly net worth (cash, invested, pension, assets)."""
+def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[str] = Query(None)):
+    """Historical monthly net worth (cash, invested, pension, assets).
+
+    account_ids: optional comma-separated list of Accounts_Id to restrict the calculation
+    to — must mirror the Dashboard's own account-selection filter (applied to the "now"
+    totals client-side) so the historical baseline used for "vs prev month"/"YTD" deltas
+    is computed over the same set of accounts as the current total, not always every
+    account regardless of what's selected.
+    """
+    ids = [int(x) for x in account_ids.split(',') if x.strip()] if account_ids else None
+    acct_filter = "AND a.Accounts_Id = ANY(%(ids)s)" if ids else ""
+    holdings_filter = "WHERE h.Accounts_Id = ANY(%(ids)s)" if ids else ""
     query = f"""
     WITH RECURSIVE
     months AS (
@@ -45,6 +55,7 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type IN ('Real Estate', 'Vehicle', 'Asset', 'Liability')
+        {acct_filter}
     ),
     historical_cash AS (
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
@@ -54,6 +65,7 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+        {acct_filter}
         UNION ALL
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
             a.Accounts_Balance - COALESCE((
@@ -62,6 +74,7 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type IN ('Other Investment')
+        {acct_filter}
     ),
     historical_pension AS (
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
@@ -73,14 +86,24 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type IN ('Pension')
+        {acct_filter}
     ),
     historical_inv AS (
-        SELECT dt.d AS date, h.Securities_Id,
+        -- Scoped to (Accounts_Id, Securities_Id), not just Securities_Id: a security held
+        -- in multiple accounts must have its trade history reversed out per-account, or the
+        -- combined correction gets wrongly applied to every account's holdings row. Also
+        -- reverses Reinvest/ShrIn/ShrOut (not just Buy/Sell), matching the quantity-affecting
+        -- actions used everywhere else (e.g. reports.py's net-worth-by-account query).
+        SELECT dt.d AS date, h.Accounts_Id, h.Securities_Id,
             h.Quantity - COALESCE((
-                SELECT SUM(CASE WHEN Action='Buy' THEN Quantity WHEN Action='Sell' THEN -Quantity ELSE 0 END)
-                FROM Investments WHERE Securities_Id = h.Securities_Id AND Date > dt.d
+                SELECT SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                                 WHEN Action IN ('Sell','ShrOut') THEN -Quantity
+                                 ELSE 0 END)
+                FROM Investments
+                WHERE Securities_Id = h.Securities_Id AND Accounts_Id = h.Accounts_Id AND Date > dt.d
             ), 0) AS qty_at_date
         FROM dates dt CROSS JOIN Holdings h
+        {holdings_filter}
     ),
     daily_fx AS (
         SELECT dt.d AS date, c.Currencies_Id,
@@ -131,8 +154,11 @@ def get_net_worth(start_date: str = Query("2020-01-01")):
     FROM final_calculation
     ORDER BY date ASC
     """
+    params = {"sd": start_date}
+    if ids:
+        params["ids"] = ids
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"sd": start_date})
+        df = pd.read_sql(query, conn, params=params)
     return _df_to_list(df)
 
 

@@ -6,7 +6,7 @@ import { usePersist } from '@/lib/hooks'
 import {
   LayoutDashboard, BookOpen, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart,
-  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen,
+  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History,
 } from 'lucide-react'
 
 const THEME_OPTIONS: { value: Theme; icon: React.ReactNode; label: string }[] = [
@@ -26,6 +26,8 @@ const nav = [
   { to: '/importers', label: 'Importers', icon: Upload },
   { to: '/tools', label: 'Tools', icon: Wrench },
   { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
+  { to: '/help', label: 'Help', icon: HelpCircle },
+  { to: '/releases', label: 'Release Notes', icon: History },
 ]
 
 export default function Layout() {

@@ -7,13 +7,13 @@ import {
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
-import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner } from '@/components/ui'
+import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
   CheckCheck, Check, Trash2, AlertTriangle, AlertCircle, Info, TrendingUp,
   ChevronDown, ChevronUp, RefreshCw, Calendar, SlidersHorizontal,
-  RefreshCcw, CalendarClock, Zap,
+  CalendarClock, Zap,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -569,14 +569,25 @@ export default function Dashboard() {
     'All': '2000-01-01',
   }
 
-  const { data: netWorth = [], isLoading: nwLoading } = useQuery({
-    queryKey: ['net-worth', nwPeriod],
-    queryFn: () => getNetWorth(NW_PERIODS[nwPeriod] ?? '2000-01-01'),
-  })
-
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts', opts.includeFuture],
     queryFn: () => getAccounts(opts.includeFuture),
+  })
+
+  // Must mirror the "now" totals' account filtering below (showDisabled + includedAccounts),
+  // otherwise the historical baseline used for "vs prev month"/"YTD" deltas is computed over
+  // a different set of accounts than the current total, producing a mismatched delta.
+  const accsForNw = accounts as Record<string, unknown>[]
+  const visibleAccsForNw = opts.showDisabled ? accsForNw : accsForNw.filter(a => a.is_active !== false)
+  const nwAccountIds = (opts.includedAccounts === 'all'
+    ? visibleAccsForNw
+    : visibleAccsForNw.filter(a => (opts.includedAccounts as number[]).includes(Number(a.id)))
+  ).map(a => Number(a.id)).sort((a, b) => a - b)
+
+  const { data: netWorth = [], isLoading: nwLoading } = useQuery({
+    queryKey: ['net-worth', nwPeriod, nwAccountIds.join(',')],
+    queryFn: () => getNetWorth(NW_PERIODS[nwPeriod] ?? '2000-01-01', nwAccountIds),
+    enabled: nwAccountIds.length > 0,
   })
 
   const { data: monthlySummaries = [] } = useQuery({
@@ -619,26 +630,16 @@ export default function Dashboard() {
   })
 
   // Balance sync
-  const [syncing, setSyncing] = React.useState<string | null>(null)
-  const [syncMsg, setSyncMsg] = React.useState<string | null>(null)
-
   const handleSync = async (target: string) => {
-    setSyncing(target); setSyncMsg(null)
-    try {
-      await syncBalances(target)
-      setSyncMsg(`${target === 'all' ? 'All balances' : target} synced`)
-      await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-      await qc.invalidateQueries({ queryKey: ['net-worth'], exact: false })
-    } catch { setSyncMsg('Sync failed') }
-    finally { setSyncing(null) }
+    await syncBalances(target)
+    await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    await qc.invalidateQueries({ queryKey: ['net-worth'], exact: false })
   }
 
-  // Filtered accounts based on options
-  const accs = accounts as Record<string, unknown>[]
-  const visibleAccs = opts.showDisabled ? accs : accs.filter(a => a.is_active !== false)
-  const included = opts.includedAccounts === 'all'
-    ? visibleAccs
-    : visibleAccs.filter(a => (opts.includedAccounts as number[]).includes(Number(a.id)))
+  // Filtered accounts based on options — same selection used for nwAccountIds above, so the
+  // "now" totals and the historical baseline always agree on which accounts count.
+  const included = visibleAccsForNw.filter(a =>
+    opts.includedAccounts === 'all' || (opts.includedAccounts as number[]).includes(Number(a.id)))
 
   // Aggregate KPIs from included accounts (grouped by type)
   const CASH_TYPES = new Set(['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Other'])
@@ -687,6 +688,10 @@ export default function Dashboard() {
   const deltaPenPrevMonth = prevMonthPoint != null ? totalPension - Number(prevMonthPoint.total_pension) : null
   const deltaPenYTD       = ytdPoint       != null ? totalPension - Number(ytdPoint.total_pension)       : null
 
+  // Assets deltas
+  const deltaAssetsPrevMonth = prevMonthPoint != null ? totalAssets - Number(prevMonthPoint.total_assets) : null
+  const deltaAssetsYTD       = ytdPoint       != null ? totalAssets - Number(ytdPoint.total_assets)       : null
+
   // Build period lists for AI summaries
   const monthPeriods: string[] = []
   for (let i = 0; i < 13; i++) {
@@ -717,39 +722,23 @@ export default function Dashboard() {
         title="Dashboard"
         subtitle="Net worth overview"
         actions={
-          <div className="flex items-center gap-2">
-            {syncMsg && <span className="text-xs text-slate-500">{syncMsg}</span>}
-            <div className="relative group">
-              <Button variant="secondary" size="sm" disabled={!!syncing}>
-                <RefreshCcw size={13} className={syncing ? 'animate-spin' : ''} />
-                {syncing ? 'Syncing…' : 'Sync Balances'}
-                <ChevronDown size={12} />
-              </Button>
-              <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg z-20 hidden group-hover:block">
-                {[
-                  { label: '🏦 Bank & Cash', target: 'cash' },
-                  { label: '📈 Investments', target: 'investment' },
-                  { label: '🏛️ Pension', target: 'pension' },
-                  { label: '📊 Holdings', target: 'holdings' },
-                  { label: '🚀 Run Full Sync', target: 'all' },
-                ].map(o => (
-                  <button
-                    key={o.target}
-                    onClick={() => handleSync(o.target)}
-                    className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 first:rounded-t-lg last:rounded-b-lg ${o.target === 'all' ? 'font-semibold text-blue-600 border-t border-slate-100' : 'text-slate-700'}`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          <SyncBalancesButton
+            options={[
+              { label: '🏦 Bank & Cash', target: 'cash' },
+              { label: '📈 Investments', target: 'investment' },
+              { label: '🏛️ Pension', target: 'pension' },
+              { label: '📊 Holdings', target: 'holdings' },
+              { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
+            ]}
+            onSync={handleSync}
+          />
         }
       />
 
       <div className="p-6 space-y-4">
-        {/* KPI row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* KPI row — Net Worth gets extra width as the "hero" card; the rest stay compact
+            so all five fit on one line instead of wrapping. */}
+        <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
           <StatCard
             label="Net Worth"
             value={fmtEur(totalNetWorth)}
@@ -759,6 +748,7 @@ export default function Dashboard() {
             ]}
           />
           <StatCard
+            compact
             label="Cash & Savings"
             value={fmtEur(totalCash)}
             subs={[
@@ -767,6 +757,7 @@ export default function Dashboard() {
             ]}
           />
           <StatCard
+            compact
             label="Investments"
             value={fmtEur(totalInv)}
             subs={[
@@ -775,11 +766,21 @@ export default function Dashboard() {
             ]}
           />
           <StatCard
+            compact
             label="Pension"
             value={fmtEur(totalPension)}
             subs={[
               deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
               deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
+            ]}
+          />
+          <StatCard
+            compact
+            label="Assets"
+            value={fmtEur(totalAssets)}
+            subs={[
+              deltaAssetsPrevMonth != null ? { text: `${fmtDelta(deltaAssetsPrevMonth)} vs prev month`, color: deltaColor(deltaAssetsPrevMonth) } : { text: '— vs prev month' },
+              deltaAssetsYTD != null ? { text: `${fmtDelta(deltaAssetsYTD)} YTD`, color: deltaColor(deltaAssetsYTD) } : { text: '— YTD' },
             ]}
           />
         </div>
@@ -916,10 +917,10 @@ export default function Dashboard() {
         )}
 
         {/* Options & Account selection */}
-        <OptionsPanel accounts={visibleAccs} opts={opts} onChange={setOpts} />
+        <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />
 
         {/* Accounts (collapsible, folded by default) */}
-        <AccountsPanel accounts={accs} opts={opts} />
+        <AccountsPanel accounts={accsForNw} opts={opts} />
 
         {/* Upcoming Bills + Unusual Transactions */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

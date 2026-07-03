@@ -2,9 +2,14 @@ import axios from 'axios'
 
 export const api = axios.create({ baseURL: '/api' })
 
+export const getChangelog = (): Promise<{ content: string }> =>
+  api.get('/changelog').then(r => r.data)
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
-export const getNetWorth = (startDate = '2020-01-01') =>
-  api.get('/dashboard/net-worth', { params: { start_date: startDate } }).then(r => r.data)
+export const getNetWorth = (startDate = '2020-01-01', accountIds?: number[]) =>
+  api.get('/dashboard/net-worth', {
+    params: { start_date: startDate, ...(accountIds ? { account_ids: accountIds.join(',') } : {}) },
+  }).then(r => r.data)
 
 export const getAccounts = (includeFuture = false) =>
   api.get('/dashboard/accounts', { params: { include_future: includeFuture } }).then(r => r.data)

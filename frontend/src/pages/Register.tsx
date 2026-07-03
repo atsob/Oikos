@@ -8,8 +8,9 @@ import {
   createTransaction, updateTransaction, deleteTransaction,
   getSplits, upsertSplits, clearAccount, reconcileAccount,
   createTransfer, createRecurringTemplate, searchAllTransactions,
+  syncBalances,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, PERIODICITIES, emptyForm, today } from '@/components/TxModal'
@@ -390,6 +391,14 @@ export default function Register() {
               <CheckCheck size={14} /> Reconcile
             </Button>
             <Button size="sm" onClick={openNew} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
+            <SyncBalancesButton
+              options={[{ label: '🏦 Bank & Cash', target: 'cash' }]}
+              onSync={async target => {
+                await syncBalances(target)
+                await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+                await qc.invalidateQueries({ queryKey: ['transactions'], exact: false })
+              }}
+            />
           </div>
         }
       />

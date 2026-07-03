@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { RefreshCcw, ChevronDown } from 'lucide-react'
 
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
 export function useEscapeKey(onClose: () => void) {
@@ -58,6 +59,54 @@ export function Button({ variant = 'primary', size = 'md', className, children, 
     >
       {children}
     </button>
+  )
+}
+
+// ── Sync balances dropdown ──────────────────────────────────────────────────────
+// Data-fetching stays with the caller (via onSync) so this component has no dependency
+// on the API layer — each page passes only the sync targets relevant to its own accounts.
+export interface SyncOption { label: string; target: string; emphasize?: boolean }
+export function SyncBalancesButton({ options, onSync }: {
+  options: SyncOption[]
+  onSync: (target: string) => Promise<unknown>
+}) {
+  const [syncing, setSyncing] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const handleClick = async (target: string, label: string) => {
+    setSyncing(target); setMsg(null)
+    try {
+      await onSync(target)
+      setMsg(`${label.replace(/^\S+\s/, '')} synced`)
+    } catch { setMsg('Sync failed') }
+    finally { setSyncing(null) }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {msg && <span className="text-xs text-slate-500">{msg}</span>}
+      <div className="relative group">
+        <Button variant="secondary" size="sm" disabled={!!syncing}>
+          <RefreshCcw size={13} className={syncing ? 'animate-spin' : ''} />
+          {syncing ? 'Syncing…' : 'Sync Balances'}
+          <ChevronDown size={12} />
+        </Button>
+        <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg z-20 hidden group-hover:block">
+          {options.map(o => (
+            <button
+              key={o.target}
+              onClick={() => handleClick(o.target, o.label)}
+              className={cn(
+                'w-full text-left px-4 py-2 text-sm hover:bg-slate-50 first:rounded-t-lg last:rounded-b-lg',
+                o.emphasize ? 'font-semibold text-blue-600 border-t border-slate-100' : 'text-slate-700',
+              )}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -213,16 +262,16 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
-export function StatCard({ label, value, sub, color, subs }: {
+export function StatCard({ label, value, sub, color, subs, compact }: {
   label: string; value: string; sub?: string; color?: string
-  subs?: { text: string; color?: string }[]
+  subs?: { text: string; color?: string }[]; compact?: boolean
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
-      <p className={cn('text-2xl font-bold mt-1', color ?? 'text-slate-900')}>{value}</p>
-      {subs?.map((s, i) => <p key={i} className={cn('text-xs mt-0.5', s.color ?? 'text-slate-400')}>{s.text}</p>)}
-      {!subs && sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    <div className={cn('bg-white rounded-xl border border-slate-200 shadow-sm', compact ? 'p-2.5' : 'p-4')}>
+      <p className={cn('font-medium text-slate-500 uppercase tracking-wide', compact ? 'text-xs' : 'text-xs')}>{label}</p>
+      <p className={cn('font-bold mt-1', compact ? 'text-lg' : 'text-2xl', color ?? 'text-slate-900')}>{value}</p>
+      {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs truncate' : 'text-xs', s.color ?? 'text-slate-400')}>{s.text}</p>)}
+      {!subs && sub && <p className={cn('mt-0.5 text-slate-400 text-xs')}>{sub}</p>}
     </div>
   )
 }

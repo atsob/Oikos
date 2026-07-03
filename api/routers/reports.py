@@ -2527,7 +2527,7 @@ def get_net_worth_by_account(
         FROM period_dates p CROSS JOIN Currencies cur WHERE cur.Currencies_ShortName != 'EUR'
     ),
     cash_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type,
+        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             CASE WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
                  THEN GREATEST(0, a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0))
                  ELSE a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0)
@@ -2538,7 +2538,7 @@ def get_net_worth_by_account(
     inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
     inv_accounts AS (SELECT DISTINCT Accounts_Id FROM inv_universe),
     inv_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type,
+        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             SUM(GREATEST(COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
                 FROM Investments i2 WHERE i2.Securities_Id=iu.Securities_Id AND i2.Accounts_Id=iu.Accounts_Id AND i2.Date<=p.period_end
@@ -2548,10 +2548,10 @@ def get_net_worth_by_account(
         JOIN Accounts a ON iu.Accounts_Id=a.Accounts_Id
         JOIN Securities s ON iu.Securities_Id=s.Securities_Id
         WHERE a.Accounts_Type IN ('Brokerage','Margin','Pension','Other Investment')
-        GROUP BY p.period_end, a.Accounts_Name, a.Accounts_Type
+        GROUP BY p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active
     ),
     pension_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type,
+        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             GREATEST(0, a.Accounts_Balance - COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur WHEN Action='CashOut' THEN -Total_Amount_AccCur ELSE 0 END)
                 FROM Investments WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end
@@ -2560,7 +2560,7 @@ def get_net_worth_by_account(
         WHERE a.Accounts_Type IN ('Pension','Other Investment')
           AND a.Accounts_Id NOT IN (SELECT Accounts_Id FROM inv_accounts)
     )
-    SELECT period_end::text AS period, accounts_name, accounts_type,
+    SELECT period_end::text AS period, accounts_name, accounts_type, is_active,
            ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur
     FROM (SELECT * FROM cash_bal UNION ALL SELECT * FROM inv_bal UNION ALL SELECT * FROM pension_bal) combined
     WHERE balance_eur IS NOT NULL
