@@ -3,6 +3,7 @@ Database Backup and Restore Module for Personal Finance
 Handles backing up and restoring PostgreSQL database in Docker
 """
 
+import logging
 import os
 import subprocess
 import streamlit as st
@@ -11,6 +12,8 @@ from datetime import datetime
 import psycopg2
 from config.settings import ENV_CONFIG
 from database.connection import get_connection
+
+log = logging.getLogger(__name__)
 
 class DatabaseBackup:
     """Handles database backup and restore operations for Docker environment"""
@@ -277,8 +280,8 @@ class DatabaseBackup:
                     'message': "Could not find PostgreSQL container. Please ensure it's running and has 'postgres' in its name."
                 }
             
-            st.info(f"📦 Using PostgreSQL container: {container_name}")
-            
+            log.info("Using PostgreSQL container: %s", container_name)
+
             # Build pg_dump command inside container
             dump_cmd = [
                 'docker', 'exec', container_name,
@@ -423,8 +426,8 @@ class DatabaseBackup:
                 'message': "Could not find PostgreSQL container"
             }
         
-        st.info(f"📦 Using PostgreSQL container: {container_name}")
-        
+        log.info("Using PostgreSQL container: %s", container_name)
+
         try:
             # Copy backup file to container
             copy_cmd = [

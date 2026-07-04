@@ -2,6 +2,18 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-04
+
+### Fixed
+- **Mobile usability**: the app is now genuinely usable from a phone browser, not just technically reachable. Specifically:
+  - The main sidebar now hides behind a hamburger button below tablet width and slides in as an overlay, instead of permanently eating 15–25% of a phone screen's width on every page.
+  - Reports' and Help's report-list side rail — previously a *second* fixed-width sidebar stacked next to the main nav — now becomes a horizontally-scrollable tab strip on narrow screens.
+  - Page headers (shared across nearly every page) now wrap their action buttons onto new rows instead of forcing them onto one unbreakable row that ran off-screen; Cash Register's and Recurring's own toolbars were fixed the same way.
+  - Static Data's and Market Data's tab bars (Payees/Categories/Institutions/… and Currencies/Securities/…) no longer get squeezed down to near-nothing by a fixed-width search box next to them — several tabs were genuinely unreachable on a phone with no indication they existed. Search now sits below the tabs on narrow screens, and the tabs scroll horizontally with a visible scrollbar.
+  - **Sync Balances** (Dashboard, Cash Register, Investments) opened its options via CSS hover only, which never triggers on a touchscreen — the feature was silently unusable on mobile. Now opens on tap, closes on tapping elsewhere, desktop click/hover unaffected.
+  - The "ⓘ" info tooltips throughout Reports (Sharpe Ratio, VaR, Max Drawdown, etc. — over 100 of them) had the same hover-only problem. Now open on tap too.
+- Fixed a silent-failure bug affecting **Sync Balances** and **Backup/Restore**: several backend functions caught their own errors and tried to display them via a leftover Streamlit call (dead code since the move to FastAPI), which either threw an unrelated error or silently no-op'd — either way, a real failure (e.g. a bad balance calculation) could be reported back as "ok" with nothing actually changed. These now log properly and let the error surface to the API response as intended.
+
 ## 2026-07-03
 
 ### Fixed

@@ -1,8 +1,11 @@
+import logging
 import math
 import pandas as pd
 import streamlit as st
 from psycopg2.extras import execute_values
 from database.connection import get_connection
+
+log = logging.getLogger(__name__)
 
 def _safe_val(val):
     """Convert a DataFrame cell value to a Python-native type safe for psycopg2."""
@@ -515,7 +518,8 @@ def update_accounts_balances(target_acc_id=None):
             cur.execute(sql)
         conn.commit()
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        log.exception("update_accounts_balances failed")
+        raise
     finally:
         cur.close()
         conn.close()
@@ -539,7 +543,8 @@ def update_pension_balances():
         """)
         conn.commit()
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        log.exception("update_pension_balances failed")
+        raise
     finally:
         cur.close()
         conn.close()
@@ -568,7 +573,8 @@ def update_investment_balances():
         """)
         conn.commit()
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        log.exception("update_investment_balances failed")
+        raise
     finally:
         cur.close()
         conn.close()
@@ -841,11 +847,12 @@ def update_holdings():
         """)
         conn.commit()
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        log.exception("update_holdings failed")
+        raise
     finally:
         cur.close()
         conn.close()
-        
+
 
 def _lookup_hist_price(cur, securities_id, date):
     """Return the most recent closing price for a security on or before date."""

@@ -6847,12 +6847,15 @@ export default function Reports() {
   const switchTab = (key: string) => { setActiveTab(key); setSearchParams({ tab: key }, { replace: true }) }
 
   return (
-    <div className="flex h-full">
-      <nav className="w-48 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col py-4">
-        <p className="px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reports</p>
+    <div className="flex flex-col md:flex-row h-full">
+      {/* Vertical rail on desktop; a horizontally-scrollable tab strip on mobile,
+          so the report list doesn't permanently eat a third sidebar's worth of
+          width alongside the app nav on small screens. */}
+      <nav className="shrink-0 md:w-48 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex flex-row md:flex-col overflow-x-auto md:overflow-visible py-1 md:py-4">
+        <p className="hidden md:block px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reports</p>
         {REPORT_TABS.map(t => (
           <button key={t.key} onClick={() => switchTab(t.key)}
-            className={`text-left px-4 py-2 text-sm transition-colors ${activeTab === t.key ? 'bg-blue-50 text-blue-700 font-semibold border-r-2 border-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}>
+            className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${activeTab === t.key ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
             {t.label}
           </button>
         ))}

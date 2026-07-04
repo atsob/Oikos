@@ -346,7 +346,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>Sidebar</H3>
         <P>
           Click the panel icon at the top of the sidebar (next to "Oikos") to collapse it to icon-only and
-          reclaim horizontal space — the collapsed state is remembered across visits.
+          reclaim horizontal space — the collapsed state is remembered across visits. On a phone or narrow
+          window, the sidebar hides behind a hamburger button (top-left) and slides in as an overlay when tapped,
+          instead of a permanent icon-only rail.
         </P>
         <H3>Theme</H3>
         <P>Light / System / Dark, switchable at the bottom of the sidebar.</P>
@@ -354,8 +356,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>All figures are converted to a single reporting currency (EUR by default) using historical FX rates as of each date, so historical comparisons stay meaningful even if you hold multi-currency accounts.</P>
         <H3>Persisted filters</H3>
         <P>
-          Most report filters (date range, grouping, account selection, tab choice) are remembered per-browser
-          via local storage, so returning to a report picks up where you left off.
+          Most report filters (date range, grouping, account selection, tab choice) are remembered server-side,
+          so returning to a report picks up where you left off — on any browser, device, or however you access
+          Oikos (LAN IP, hostname, or remotely).
         </P>
         <H3>Version info</H3>
         <P>
@@ -380,12 +383,12 @@ export default function Help() {
   const current = SECTIONS.find(s => s.id === active) ?? SECTIONS[0]
 
   return (
-    <div className="flex h-full">
-      <nav className="w-52 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col py-4 overflow-y-auto">
-        <p className="px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">User Guide</p>
+    <div className="flex flex-col md:flex-row h-full">
+      <nav className="shrink-0 md:w-52 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto py-1 md:py-4">
+        <p className="hidden md:block px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">User Guide</p>
         {SECTIONS.map(s => (
           <button key={s.id} onClick={() => setActive(s.id)}
-            className={`text-left px-4 py-2 text-sm transition-colors ${active === s.id ? 'bg-blue-50 text-blue-700 font-semibold border-r-2 border-blue-600' : 'text-slate-600 hover:bg-slate-100'}`}>
+            className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${active === s.id ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
             {s.label}
           </button>
         ))}

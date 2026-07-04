@@ -738,7 +738,7 @@ export default function Recurring() {
         subtitle="Templates for scheduled recurring entries"
         actions={
           tab === 'templates' ? (
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button size="sm" variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['recurring-templates'] })}>
                 <RefreshCw size={13} /> Refresh
               </Button>

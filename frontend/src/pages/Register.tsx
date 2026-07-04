@@ -149,11 +149,11 @@ export default function Register() {
         title="Cash Register"
         subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtEur(Number(selectedAccount.balance))}` : 'Select an account'}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
-                className="pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-300 w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-300 w-40 sm:w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="Payee, description, category…"
                 value={globalSearch}
                 onChange={e => setGlobalSearch(e.target.value)}

@@ -1495,8 +1495,8 @@ export default function StaticData() {
     <div>
       <PageHeader title="Static Data" subtitle="Master reference data" />
       <div className="px-6 py-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1 border-b border-slate-200 flex-1 overflow-x-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
             {TABS.map(t => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -1504,9 +1504,9 @@ export default function StaticData() {
               </button>
             ))}
           </div>
-          <div className="relative ml-4 shrink-0">
+          <div className="relative sm:ml-4 shrink-0">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-8 w-52" placeholder="Filter…" value={search} onChange={e => setSearch(e.target.value)} />
+            <Input className="pl-8 w-full sm:w-52" placeholder="Filter…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
 

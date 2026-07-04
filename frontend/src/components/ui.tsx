@@ -72,8 +72,22 @@ export function SyncBalancesButton({ options, onSync }: {
 }) {
   const [syncing, setSyncing] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  // Click-to-toggle (not CSS :hover) so this works on touch devices too — a hover-only
+  // dropdown never opens on mobile, since taps don't produce a hover state.
+  useEffect(() => {
+    if (!open) return
+    const onOutside = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [open])
 
   const handleClick = async (target: string, label: string) => {
+    setOpen(false)
     setSyncing(target); setMsg(null)
     try {
       await onSync(target)
@@ -85,26 +99,28 @@ export function SyncBalancesButton({ options, onSync }: {
   return (
     <div className="flex items-center gap-2">
       {msg && <span className="text-xs text-slate-500">{msg}</span>}
-      <div className="relative group">
-        <Button variant="secondary" size="sm" disabled={!!syncing}>
+      <div className="relative" ref={wrapRef}>
+        <Button variant="secondary" size="sm" disabled={!!syncing} onClick={() => setOpen(o => !o)}>
           <RefreshCcw size={13} className={syncing ? 'animate-spin' : ''} />
           {syncing ? 'Syncing…' : 'Sync Balances'}
           <ChevronDown size={12} />
         </Button>
-        <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg z-20 hidden group-hover:block">
-          {options.map(o => (
-            <button
-              key={o.target}
-              onClick={() => handleClick(o.target, o.label)}
-              className={cn(
-                'w-full text-left px-4 py-2 text-sm hover:bg-slate-50 first:rounded-t-lg last:rounded-b-lg',
-                o.emphasize ? 'font-semibold text-blue-600 border-t border-slate-100' : 'text-slate-700',
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        {open && (
+          <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg z-20">
+            {options.map(o => (
+              <button
+                key={o.target}
+                onClick={() => handleClick(o.target, o.label)}
+                className={cn(
+                  'w-full text-left px-4 py-2 text-sm hover:bg-slate-50 first:rounded-t-lg last:rounded-b-lg',
+                  o.emphasize ? 'font-semibold text-blue-600 border-t border-slate-100' : 'text-slate-700',
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -251,12 +267,12 @@ export function Spinner({ size = 20 }: { size?: number }) {
 // ── PageHeader ────────────────────────────────────────────────────────────────
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
+    <div className="flex items-center justify-between gap-3 flex-wrap px-4 sm:px-6 py-4 border-b border-slate-200 bg-white">
       <div>
         <h1 className="text-lg font-semibold text-slate-900">{title}</h1>
         {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
   )
 }
@@ -278,16 +294,33 @@ export function StatCard({ label, value, sub, color, subs, compact }: {
 
 // ── Tooltip ────────────────────────────────────────────────────────────────────
 // Portal-based so it isn't clipped by table overflow or sticky headers.
+// Also opens on tap (not just hover), since touch devices never produce a hover
+// state — without this, none of these info hints would ever be reachable on mobile.
 export function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
   const [pos, setPos] = useState<{ x: number; top: number; bottom: number } | null>(null)
+  const ref = useRef<HTMLSpanElement>(null)
+
+  const show = (e: React.SyntheticEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setPos({ x: r.left + r.width / 2, top: r.top, bottom: r.bottom })
+  }
+
+  useEffect(() => {
+    if (!pos) return
+    const onOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setPos(null)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [pos])
+
   return (
     <span
+      ref={ref}
       className="inline-flex items-center gap-0.5 cursor-help"
-      onMouseEnter={e => {
-        const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-        setPos({ x: r.left + r.width / 2, top: r.top, bottom: r.bottom })
-      }}
+      onMouseEnter={show}
       onMouseLeave={() => setPos(null)}
+      onClick={e => { e.stopPropagation(); show(e) }}
     >
       {children}
       <span className="ml-0.5 text-slate-400 text-[10px] leading-none">ⓘ</span>
