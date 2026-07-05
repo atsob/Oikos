@@ -94,6 +94,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <H3>Net Worth Breakdown &amp; Trend</H3>
         <P>A donut chart of current composition, and a historical line/area chart over 1/3/5 years or all time.</P>
+        <Note>
+          The <b>Kondratieff wave phases</b> checkbox on the Trend chart shades one commonly-cited framework for
+          long secular market "seasons" (Spring/Summer/Autumn/Winter, ~40-60 years each) onto the chart, purely
+          as historical/educational context. It's off by default and comes with an on-screen disclaimer — this
+          is a contested, non-consensus theory with no rigorous way to predict phase changes, so treat it as a
+          talking point, not a signal.
+        </Note>
         <H3>Sync Balances</H3>
         <P>
           The button in the top-right refreshes account balances from their linked data sources — run a full
@@ -123,6 +130,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Sync Balances</b> (top-right) refreshes Bank &amp; Cash balances only — the account types this
           page manages.
         </P>
+        <Note>
+          Amounts and balances are always shown in <b>that account's own currency</b> — a USD account shows
+          "$", a EUR account shows "€", regardless of your reporting-currency setting elsewhere in the app.
+        </Note>
+        <Note>
+          When choosing a payee or category, typing a name with no match shows an inline <b>"+ Add"</b> option.
+          Categories can be nested by typing a path like <code>Vacation : Skiing</code> — this reuses whichever
+          part of the path already exists and creates only the missing segment(s), rather than requiring you to
+          create each level separately.
+        </Note>
       </>
     ),
   },
@@ -142,6 +159,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Sync Balances</b> (top-right) refreshes Investments, Pension, and Holdings — the account types this
           page manages (not Bank &amp; Cash).
         </P>
+        <Note>
+          Holdings shows two cost-basis figures: <b>Simple Avg</b>, a running average cost that blends on every
+          buy and resets to zero whenever a position is fully closed out (so units sold long ago never drag down
+          today's average), and <b>FIFO Avg</b>, the weighted cost of the specific lots still held assuming
+          oldest-purchased-first. They usually match — they only diverge when a position was partially sold and
+          later topped up at a different price <i>before</i> fully closing out, since FIFO and a blended average
+          then disagree on which cost basis remains. Click a ticker or security name to open its full detail
+          page (price history, all transactions, corporate actions).
+        </Note>
+        <Note>
+          Price, Commission and Total (sec) are shown in the <b>security's own currency</b> (see the Curr
+          column) — e.g. a USD stock inside a EUR-denominated account still shows its price in USD. W. Tax and
+          Total (acc) are in the account's currency instead, since that's what was actually withheld/settled.
+        </Note>
         <P>
           For deeper analysis — performance, risk, tax, dividend income, benchmarking — see the <b>Reports</b>{' '}
           section, which has several dedicated investment reports.
@@ -191,6 +222,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Income vs. expense by category and period, with drill-down to the underlying transactions. Filter by
           date range and cash/investment category types.
         </P>
+        <Note>
+          The Details table is hierarchical — a parent category (e.g. "Vacation") shows the combined total of
+          all its subcategories, with an arrow to expand/collapse them. Clicking a period cell on a parent row
+          drills into every transaction across all its subcategories, not just ones posted directly to the
+          parent.
+        </Note>
+        <Note>
+          <b>Realized Investment P&amp;L</b> (gains/losses from closed trades) is shown as its own KPI figure,
+          separate from Net Savings and Savings Rate above it — those stay purely cash-flow-based (salary,
+          bills, dividends, interest) since capital gains are lumpy, one-off amounts that would otherwise
+          distort a savings rate.
+        </Note>
 
         <H3>🔄 Cash Flow Forecast</H3>
         <P>Projects future cash flow from recurring templates and scheduled transactions.</P>
@@ -215,6 +258,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Capital gains (by method), dividend income tax, and tax-loss harvesting candidates — based on the tax
           category rules configured in Static Data.
         </P>
+        <Note>
+          All three cost-basis methods — <b>WAC</b>, <b>FIFO</b>, and <b>LIFO</b> — correctly handle margin/short
+          positions and positions that were fully closed and later reopened: cost basis is tracked per lot
+          (FIFO/LIFO) or as a running average that resets at zero (WAC), so units sold off long ago never blend
+          into the cost basis of a position rebuilt from scratch.
+        </Note>
 
         <H3>🔍 Securities Analysis</H3>
         <P>Four sub-tabs: Price Changes, Volatility, Investment Signals (risk/reward, Sharpe ratio), and Portfolio Action Signals.</P>

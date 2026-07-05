@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { getSettings, getReportingFx } from './settings'
+import { getSettings, getReportingFx, getCurrencySymbol } from './settings'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -41,6 +41,16 @@ export function fmtEur(value: number | null | undefined) {
 
 export function fmtNum(value: number | null | undefined, decimals = 2): string {
   return fmt(value, decimals)
+}
+
+// fmtCur: format a value that is already denominated in a specific currency
+// (e.g. a security's native price, or a non-EUR account's own transaction
+// amount) — no FX conversion, just the right symbol. Unlike fmtEur, which
+// assumes its input is a EUR amount and converts it into the user's chosen
+// reporting currency, this is for values that were never in EUR to begin with.
+export function fmtCur(value: number | null | undefined, currencyCode: string | null | undefined): string {
+  if (value == null) return '—'
+  return fmt(value, 2, getCurrencySymbol(currencyCode || 'EUR'))
 }
 
 export function fmtPct(value: number | null | undefined, decimals = 1): string {

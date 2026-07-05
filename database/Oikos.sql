@@ -509,80 +509,46 @@ CREATE        INDEX IF NOT EXISTS idx_investments_corporate_actions_id
 
 
 -- =============================================================================
--- HOLDINGS TRIGGER (FIFO / Simple Average)
+-- HOLDINGS TRIGGER (Quantity safety net — cost basis is Python's job)
 -- =============================================================================
 
+-- This trigger only guarantees Holdings.Quantity stays correct immediately after
+-- any INSERT/UPDATE on Investments — a plain signed net sum, which needs no lot
+-- matching and is always right regardless of long/short history. It deliberately
+-- does NOT attempt Simple_Avg_Price / Fifo_Avg_Price / Fifo_Avg_Cost_EUR: those
+-- require proper signed-lot FIFO matching (to handle short positions and
+-- negative-quantity adjustment rows correctly), which is done authoritatively by
+-- database.crud.update_holdings() (Python), called by every code path that
+-- writes to Investments. The previous version of this trigger tried to
+-- approximate FIFO here by comparing aggregate total-buys-vs-total-sells sign
+-- for the whole account/security history, which broke silently whenever a
+-- position went both long and short over its lifetime, or had negative-quantity
+-- Reinvest rows (e.g. daily interest-accrual reversals on cash-fund holdings) —
+-- in one observed case making a real ~2.8-unit holding vanish (Quantity came out
+-- as exactly 0 and the Holdings row got deleted).
 CREATE OR REPLACE FUNCTION public.update_holdings_from_investments()
     RETURNS trigger
     LANGUAGE plpgsql
 AS $$
 BEGIN
-    WITH TransactionFlow AS (
-        SELECT
-            Accounts_Id,
-            Securities_Id,
-            Date,
-            Investments_Id,
-            Action,
-            Quantity,
-            Price_Per_Share,
-            AVG(Price_Per_Share) FILTER (WHERE Action IN ('Buy', 'Reinvest', 'ShrIn'))
-                OVER (PARTITION BY Accounts_Id, Securities_Id) AS simple_avg_cost,
-            SUM(CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN Quantity ELSE 0 END)
-                OVER (PARTITION BY Accounts_Id, Securities_Id ORDER BY Date, Investments_Id) AS running_buys,
-            SUM(CASE WHEN Action IN ('Sell', 'ShrOut') THEN Quantity ELSE 0 END)
-                OVER (PARTITION BY Accounts_Id, Securities_Id ORDER BY Date, Investments_Id) AS running_sells,
-            SUM(CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN Quantity ELSE 0 END)
-                OVER (PARTITION BY Accounts_Id, Securities_Id) AS total_buys,
-            SUM(CASE WHEN Action IN ('Sell', 'ShrOut') THEN Quantity ELSE 0 END)
-                OVER (PARTITION BY Accounts_Id, Securities_Id) AS total_sells
-        FROM Investments
-        WHERE Accounts_Id = NEW.Accounts_Id AND Securities_Id = NEW.Securities_Id
-          AND Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
-    ),
-    FIFO_Positions AS (
-        SELECT
-            Accounts_Id, Securities_Id, simple_avg_cost, Price_Per_Share,
-            CASE
-                WHEN total_buys >= total_sells THEN
-                    CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN
-                        CASE WHEN running_buys <= total_sells THEN 0
-                             WHEN running_buys - Quantity < total_sells THEN running_buys - total_sells
-                             ELSE Quantity END
-                    ELSE 0 END
-                ELSE  -- short position
-                    CASE WHEN Action IN ('Sell', 'ShrOut') THEN
-                        CASE WHEN running_sells <= total_buys THEN 0
-                             WHEN running_sells - Quantity < total_buys THEN -(running_sells - total_buys)
-                             ELSE -Quantity END
-                    ELSE 0 END
-            END AS remaining_qty
-        FROM TransactionFlow
-    )
-    INSERT INTO Holdings (Accounts_Id, Securities_Id, Quantity, Simple_Avg_Price, Fifo_Avg_Price, Last_Update)
+    INSERT INTO Holdings (Accounts_Id, Securities_Id, Quantity, Last_Update)
     SELECT
-        Accounts_Id,
-        Securities_Id,
-        SUM(remaining_qty),
-        MAX(simple_avg_cost),
-        CASE WHEN ABS(SUM(remaining_qty)) > 0
-             THEN SUM(ABS(remaining_qty) * Price_Per_Share) / SUM(ABS(remaining_qty))
-             ELSE 0 END,
+        NEW.Accounts_Id,
+        NEW.Securities_Id,
+        COALESCE(SUM(
+            CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN Quantity
+                 WHEN Action IN ('Sell', 'ShrOut')           THEN -Quantity
+                 ELSE 0 END
+        ), 0),
         CURRENT_TIMESTAMP
-    FROM FIFO_Positions
-    GROUP BY Accounts_Id, Securities_Id
+    FROM Investments
+    WHERE Accounts_Id  = NEW.Accounts_Id
+      AND Securities_Id = NEW.Securities_Id
+      AND Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
     ON CONFLICT (Accounts_Id, Securities_Id)
     DO UPDATE SET
-        Quantity         = EXCLUDED.Quantity,
-        Simple_Avg_Price = EXCLUDED.Simple_Avg_Price,
-        Fifo_Avg_Price   = EXCLUDED.Fifo_Avg_Price,
-        Last_Update      = EXCLUDED.Last_Update;
-
-    -- Clean up closed positions
-    DELETE FROM Holdings
-     WHERE Accounts_Id  = NEW.Accounts_Id
-       AND Securities_Id = NEW.Securities_Id
-       AND Quantity = 0;
+        Quantity    = EXCLUDED.Quantity,
+        Last_Update = EXCLUDED.Last_Update;
 
     RETURN NEW;
 END;

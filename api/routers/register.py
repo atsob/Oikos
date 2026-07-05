@@ -500,10 +500,12 @@ def search_all_transactions(
             t.date::text AS date,
             t.description,
             t.total_amount AS amount,
+            cur.currencies_shortname AS currency,
             p.payees_name AS payee,
             ct.full_path AS category
         FROM Transactions t
         JOIN Accounts a ON a.accounts_id = t.accounts_id
+        LEFT JOIN Currencies cur ON a.currencies_id = cur.currencies_id
         LEFT JOIN Payees p ON t.payees_id = p.payees_id
         LEFT JOIN first_split fs ON fs.transactions_id = t.transactions_id
         LEFT JOIN cat_tree ct ON ct.categories_id = fs.categories_id

@@ -2,6 +2,31 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-05
+
+### Fixed
+- **Income & Expense report — Realized Investment P&L was wildly wrong**: the old figure could be inflated by hundreds of thousands of euros for accounts that ever sold before a matching buy existed (margin/CFD accounts opening a short position) — the calculation matched sells only against earlier buy lots and silently treated any unmatched portion as free profit. Realized P&L is now computed with a proper signed-lot FIFO simulation that tracks both long and short lots, correctly deferring recognition until a position is actually closed. The same bug, and the same fix, applied to the Investment Tax report's FIFO and LIFO methods.
+- **Investment Tax report — WAC (Weighted Average Cost) overstated cost basis**: it recomputed an average from every buy since the position was last fully closed, which double-counted buy value/quantity already consumed by an earlier partial sell within the same still-open position. Now uses a proper running average that blends on every buy and correctly shrinks (without recomputing) as the position is drawn down.
+- **Holdings — Simple Avg and FIFO Avg cost per share could be badly wrong**:
+  - The database trigger that maintains Holdings guessed "long" vs "short" once from the aggregate lifetime total-buys-vs-total-sells sign, which broke for accounts with negative-quantity adjustment rows (e.g. daily interest-accrual reversals on cash-fund holdings) or any position that went both long and short over its history — in one case making a real holding disappear entirely (quantity computed as zero).
+  - Staking-reward entries and corporate-action execution (splits, delistings) never triggered the accurate cost-basis recompute, leaving Holdings with stale figures after those actions.
+  - **Simple Avg** was an unweighted mean of purchase prices (so a 0.001-unit buy counted as much as a 100-unit buy), then — after an initial fix — still wrong for any position fully sold and later rebought, since it kept blending in cost basis from units no longer held. It's now a running average that resets to zero whenever a position closes out exactly, matching FIFO Avg except where lot order genuinely matters (observed: a Bitcoin holding sold off entirely in 2017 and 2020 and rebought from 2025 onward now correctly shows ~€86,470 instead of ~€55,000 or ~€2,100 from the two earlier, still-wrong versions).
+- **Income & Expense KPIs didn't reconcile**: "Savings by Investments" silently included realized trading P&L while "Net Savings" excluded it, so the two could disagree by tens of thousands of euros with no visible explanation. Realized P&L is now excluded from both and shown as its own clearly-labeled "Realized Investment P&L" figure instead.
+- **Recurring transfer templates could silently drop the mirrored transaction**: three of four code paths that generate/confirm template-driven transfers never created the destination-account leg or linked the two rows via a shared transfer ID. All four now share the same logic; the one real affected transaction found in the data was repaired.
+- **Investments → Holdings**: clicking a ticker or security name silently did nothing (a scoping bug meant the click handler called an undefined function). Now correctly opens the security's detail page.
+- **Investments → Transactions**: editing a transaction linked to an inactive account showed a blank Account field, since the edit form's account dropdown excluded inactive accounts — could look like an orphaned/unlinked record. The dropdown now always includes the transaction's actual account, active or not.
+- **Multi-currency amounts showed the wrong currency symbol**: Price/Commission/Total and account balances in Investments and Cash Register always showed the reporting-currency symbol (typically €) regardless of the security's or account's real currency — e.g. a USD stock's price, or a USD account's balance, both displayed with "€". These now show the correct native currency throughout (grids, page subtitles, the credit-card summary bar, and cross-account search results).
+- Fixed a pandas `FutureWarning` about DataFrame concatenation dtype handling in the realized-P&L calculation (cosmetic — no behavior change).
+
+### Added
+- **Dashboard → Net Worth Trend**: optional Kondratieff wave phase overlay — a clearly-labeled reference/educational shading of long secular market "seasons," off by default, with editable phase boundaries.
+- **Income & Expense report**: the Details table is now hierarchical — a parent category (e.g. "Vacation") shows the combined total of all its subcategories, collapsible, with drill-down across the whole subtree.
+- Categories can now be created inline when entering a cash transaction, the same way payees already could — including creating a new subcategory under an existing one by typing a path like "Vacation : Skiing".
+- **Security Detail**: quantity fields (holdings, transactions, corporate-action previews, and their Copy-to-clipboard exports) now show 8 decimal places instead of 4, matching how fractional crypto/share quantities are actually stored.
+
+### Changed
+- Consolidated the two categories `_RlzdGain`/`_RlzdLoss` into a single `_RlzdPnL` category for realized investment gains and losses.
+
 ## 2026-07-04
 
 ### Fixed

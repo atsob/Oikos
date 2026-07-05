@@ -84,9 +84,13 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 let _reportingRate = 1.0
 let _reportingSymbol = '€'
 
+export function getCurrencySymbol(currencyCode: string): string {
+  return CURRENCY_SYMBOLS[currencyCode] ?? currencyCode
+}
+
 export function setReportingFx(rate: number, currencyCode: string): void {
   _reportingRate = rate
-  _reportingSymbol = CURRENCY_SYMBOLS[currencyCode] ?? currencyCode
+  _reportingSymbol = getCurrencySymbol(currencyCode)
   _listeners.forEach(fn => fn(_current))
 }
 

@@ -708,7 +708,25 @@ def get_linked_account_id(acc_id: int) -> "int | None":
 
 
 def update_holdings():
-    """Update holdings based on investment transactions."""
+    """Update holdings based on investment transactions.
+
+    Runs a signed-lot FIFO simulation per (account, security) to find the
+    currently open position and its cost basis. The previous implementation
+    guessed "long mode" vs "short mode" once from the aggregate
+    total-buys-vs-total-sells sign for the account's entire history, which
+    silently broke in two ways: (1) any account that went both long and
+    short over its lifetime (round-trip through a short position) could be
+    mis-costed for the currently-open lots, and (2) negative-quantity
+    Reinvest rows (e.g. daily interest-accrual reversals on cash-fund
+    holdings) skewed the aggregate sign check enough to misclassify the
+    whole position, in one observed case making a real ~2.8-unit holding
+    disappear entirely (Quantity computed as 0). Simulating the lot queue
+    transaction-by-transaction (as already done for realized P&L in
+    database.queries and api.routers.reports) sidesteps both problems.
+    """
+    from collections import deque
+    BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn'}
+    SELL_ACTIONS = {'Sell', 'ShrOut'}
     conn = get_connection()
     cur = conn.cursor()
     try:
@@ -720,121 +738,146 @@ def update_holdings():
                 WHERE i.Accounts_Id  = Holdings.Accounts_Id
                   AND i.Securities_Id = Holdings.Securities_Id
                   AND i.Securities_Id IS NOT NULL
-            );
-
-            WITH TransactionFlow AS (
-                SELECT
-                    i.Accounts_Id,
-                    i.Securities_Id,
-                    i.Date,
-                    i.Investments_Id,
-                    i.Action,
-                    i.Quantity,
-                    -- EUR cost per share: use Total_Amount_AccCur when available (includes commission),
-                    -- fall back to Price_Per_Share * FX_Rate when amount is zero/null (e.g. transfers)
-                    CASE
-                        WHEN COALESCE(i.Total_Amount_AccCur, 0) <> 0
-                        THEN COALESCE(i.Total_Amount_AccCur, 0) / NULLIF(i.Quantity, 0)
-                        ELSE i.Price_Per_Share * COALESCE(i.FX_Rate, 1)
-                    END AS price_eur,
-                    -- Effective cost per share in security currency; fall back to Price_Per_Share
-                    CASE
-                        WHEN COALESCE(i.Total_Amount_AccCur, 0) <> 0
-                        THEN COALESCE(i.Total_Amount_AccCur, 0)
-                             / NULLIF(COALESCE(i.FX_Rate, 1) * i.Quantity, 0)
-                        ELSE i.Price_Per_Share
-                    END AS effective_price_sec,
-                    -- Quantity-weighted average cost per share in sec currency (commission-inclusive)
-                    SUM(
-                        CASE
-                            WHEN COALESCE(i.Total_Amount_AccCur, 0) <> 0
-                            THEN COALESCE(i.Total_Amount_AccCur, 0) / NULLIF(COALESCE(i.FX_Rate, 1), 0)
-                            ELSE i.Price_Per_Share * COALESCE(i.Quantity, 0)
-                        END
-                    ) FILTER (WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn'))
-                      OVER (PARTITION BY i.Accounts_Id, i.Securities_Id)
-                    / NULLIF(
-                        SUM(i.Quantity) FILTER (WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn'))
-                        OVER (PARTITION BY i.Accounts_Id, i.Securities_Id),
-                        0
-                    ) as simple_avg_cost,
-                    -- Cumulative Purchases & Sales
-                    SUM(CASE WHEN i.Action IN ('Buy', 'Reinvest', 'ShrIn') THEN i.Quantity ELSE 0 END)
-                        OVER (PARTITION BY i.Accounts_Id, i.Securities_Id ORDER BY i.Date, i.Investments_Id) as running_buys,
-                    SUM(CASE WHEN i.Action IN ('Sell', 'ShrOut') THEN i.Quantity ELSE 0 END)
-                        OVER (PARTITION BY i.Accounts_Id, i.Securities_Id ORDER BY i.Date, i.Investments_Id) as running_sells,
-                    -- Total Amounts
-                    SUM(CASE WHEN i.Action IN ('Buy', 'Reinvest', 'ShrIn') THEN i.Quantity ELSE 0 END)
-                        OVER (PARTITION BY i.Accounts_Id, i.Securities_Id) as total_buys,
-                    SUM(CASE WHEN i.Action IN ('Sell', 'ShrOut') THEN i.Quantity ELSE 0 END)
-                        OVER (PARTITION BY i.Accounts_Id, i.Securities_Id) as total_sells
-                FROM Investments i
-                WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
-            ),
-            FIFO_Positions AS (
-                SELECT
-                    Accounts_Id,
-                    Securities_Id,
-                    simple_avg_cost,
-                    CASE
-                        WHEN total_buys >= total_sells THEN
-                            CASE
-                                WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN
-                                    CASE
-                                        WHEN running_buys <= total_sells THEN 0
-                                        WHEN running_buys - Quantity < total_sells THEN running_buys - total_sells
-                                        ELSE Quantity
-                                    END
-                                ELSE 0
-                            END
-                        ELSE -- SHORT CASE
-                            CASE
-                                WHEN Action IN ('Sell', 'ShrOut') THEN
-                                    CASE
-                                        WHEN running_sells <= total_buys THEN 0
-                                        WHEN running_sells - Quantity < total_buys THEN -(running_sells - total_buys)
-                                        ELSE -Quantity
-                                    END
-                                ELSE 0
-                            END
-                    END as remaining_qty,
-                    effective_price_sec,
-                    price_eur
-                FROM TransactionFlow
             )
-            INSERT INTO Holdings (Accounts_Id, Securities_Id, Quantity, Simple_Avg_Price, Fifo_Avg_Price, Fifo_Avg_Cost_EUR)
-            SELECT
-                Accounts_Id,
-                Securities_Id,
-                SUM(remaining_qty) as Current_Quantity,
-                MAX(simple_avg_cost) as Simple_Avg_Price,
-                -- FIFO average cost per share in security currency (commission-inclusive)
-                CASE
-                    WHEN ABS(SUM(remaining_qty)) > 0
-                    THEN SUM(ABS(remaining_qty) * effective_price_sec) / SUM(ABS(remaining_qty))
-                    ELSE 0
-                END as FIFO_Avg_Price,
-                -- FIFO average EUR cost per share using historical FX at each purchase date
-                CASE
-                    WHEN ABS(SUM(remaining_qty)) > 0
-                    THEN SUM(ABS(remaining_qty) * price_eur) / SUM(ABS(remaining_qty))
-                    ELSE 0
-                END as Fifo_Avg_Cost_EUR
-            FROM FIFO_Positions
-            GROUP BY Accounts_Id, Securities_Id
-        --    HAVING SUM(remaining_qty) <> 0        -- Excluding closed positions has impact on the Total P&L calculation, so we keep them with zero quantity
-            ON CONFLICT (Accounts_Id, Securities_Id)
-            DO UPDATE SET
-                Quantity = EXCLUDED.Quantity,
-                Simple_Avg_Price = EXCLUDED.Simple_Avg_Price,
-                Fifo_Avg_Price = EXCLUDED.Fifo_Avg_Price,
-                Fifo_Avg_Cost_EUR = EXCLUDED.Fifo_Avg_Cost_EUR,
-                Last_Update = CURRENT_TIMESTAMP;
+        """)
 
-            -- Remove zero-quantity Holdings rows that have no remaining investments
-            -- (e.g. after all transactions for a security have been moved or deleted).
-            -- Holdings with Quantity=0 that still have Investments rows are kept
-            -- intentionally for closed-position P&L history.
+        df = pd.read_sql("""
+            SELECT i.Accounts_Id AS accounts_id, i.Securities_Id AS securities_id,
+                   i.Date AS date, i.Investments_Id AS investments_id,
+                   i.Action AS action, i.Quantity AS quantity,
+                   i.Price_Per_Share AS price_per_share,
+                   i.Total_Amount_AccCur AS total_amount_acccur,
+                   i.FX_Rate AS fx_rate
+            FROM Investments i
+            WHERE i.Securities_Id IS NOT NULL
+              AND i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
+            ORDER BY i.Accounts_Id, i.Securities_Id, i.Date, i.Investments_Id
+        """, conn)
+
+        rows_to_upsert = []
+        for (acc_id, sec_id), grp in df.groupby(['accounts_id', 'securities_id'], sort=False):
+            long_lots: deque = deque()
+            short_lots: deque = deque()
+            # Simple Avg = a running weighted-average cost, blended on every buy and left
+            # unchanged (only qty shrinks) on every sell — RESETTING to zero whenever the
+            # position closes out exactly, so a fully-sold-and-later-rebought position
+            # starts its average fresh rather than dragging in cost basis from units that
+            # aren't held anymore. This mirrors _compute_wac_gains in api/routers/reports.py.
+            # Two earlier versions were both wrong: an unweighted mean of Price_Per_Share
+            # across buy *rows* (one 0.001-unit buy counted as much as a 100-unit buy), and
+            # then a quantity-weighted mean across *every* buy ever with no reset (still
+            # blending in cost basis from units sold off long ago). Observed on a Bitcoin
+            # holding bought in 2016-2017 at €374-846, fully sold twice (2017, 2020), then
+            # rebought entirely from 2025 onward at ~€70k-103k: both prior versions
+            # produced numbers nowhere near the true current cost basis of ~€86,470/unit.
+            wac_long_qty, wac_long_avg = 0.0, 0.0
+            wac_short_qty, wac_short_avg = 0.0, 0.0
+
+            for row in grp.itertuples():
+                qty = float(row.quantity) if pd.notna(row.quantity) else 0.0
+                if abs(qty) <= 1e-12:
+                    continue
+
+                total_acccur = float(row.total_amount_acccur) if pd.notna(row.total_amount_acccur) else 0.0
+                fx    = float(row.fx_rate) if pd.notna(row.fx_rate) else 1.0
+                price = float(row.price_per_share) if pd.notna(row.price_per_share) else 0.0
+                if total_acccur != 0:
+                    price_sec = total_acccur / (fx * qty) if fx else price
+                    price_eur = total_acccur / qty
+                else:
+                    price_sec = price
+                    price_eur = price * fx
+
+                # A "buy-type" action can still carry a negative quantity (interest-accrual
+                # reversal rows), which must behave like a small sell — so classify by the
+                # signed delta, not by the action label alone.
+                delta = qty if row.action in BUY_ACTIONS else -qty
+
+                if delta > 1e-12:
+                    remaining = delta
+                    while remaining > 1e-12 and short_lots:
+                        lot = short_lots[0]
+                        consumed = min(lot['qty'], remaining)
+                        lot['qty'] -= consumed
+                        remaining -= consumed
+                        if lot['qty'] < 1e-12:
+                            short_lots.popleft()
+                    if remaining > 1e-12:
+                        long_lots.append({'qty': remaining, 'price_sec': price_sec, 'price_eur': price_eur})
+
+                    wac_remaining = delta
+                    if wac_short_qty > 1e-9:
+                        cover = min(wac_short_qty, wac_remaining)
+                        wac_short_qty -= cover
+                        wac_remaining -= cover
+                        if wac_short_qty < 1e-9:
+                            wac_short_qty, wac_short_avg = 0.0, 0.0
+                    if wac_remaining > 1e-9:
+                        new_qty = wac_long_qty + wac_remaining
+                        wac_long_avg = (wac_long_qty * wac_long_avg + wac_remaining * price_sec) / new_qty
+                        wac_long_qty = new_qty
+                elif delta < -1e-12:
+                    remaining = -delta
+                    while remaining > 1e-12 and long_lots:
+                        lot = long_lots[0]
+                        consumed = min(lot['qty'], remaining)
+                        lot['qty'] -= consumed
+                        remaining -= consumed
+                        if lot['qty'] < 1e-12:
+                            long_lots.popleft()
+                    if remaining > 1e-12:
+                        short_lots.append({'qty': remaining, 'price_sec': price_sec, 'price_eur': price_eur})
+
+                    wac_remaining = -delta
+                    if wac_long_qty > 1e-9:
+                        close = min(wac_long_qty, wac_remaining)
+                        wac_long_qty -= close
+                        wac_remaining -= close
+                        if wac_long_qty < 1e-9:
+                            wac_long_qty, wac_long_avg = 0.0, 0.0
+                    if wac_remaining > 1e-9:
+                        new_qty = wac_short_qty + wac_remaining
+                        wac_short_avg = (wac_short_qty * wac_short_avg + wac_remaining * price_sec) / new_qty
+                        wac_short_qty = new_qty
+
+            long_qty  = sum(l['qty'] for l in long_lots)
+            short_qty = sum(l['qty'] for l in short_lots)
+            if long_qty > 1e-9:
+                net_qty       = long_qty
+                fifo_price_sec = sum(l['qty'] * l['price_sec'] for l in long_lots) / long_qty
+                fifo_price_eur = sum(l['qty'] * l['price_eur'] for l in long_lots) / long_qty
+            elif short_qty > 1e-9:
+                net_qty       = -short_qty
+                fifo_price_sec = sum(l['qty'] * l['price_sec'] for l in short_lots) / short_qty
+                fifo_price_eur = sum(l['qty'] * l['price_eur'] for l in short_lots) / short_qty
+            else:
+                net_qty, fifo_price_sec, fifo_price_eur = 0.0, 0.0, 0.0
+
+            if wac_long_qty > 1e-9:
+                simple_avg = wac_long_avg
+            elif wac_short_qty > 1e-9:
+                simple_avg = wac_short_avg
+            else:
+                simple_avg = 0.0
+            rows_to_upsert.append((int(acc_id), int(sec_id), net_qty, simple_avg, fifo_price_sec, fifo_price_eur))
+
+        if rows_to_upsert:
+            execute_values(cur, """
+                INSERT INTO Holdings (Accounts_Id, Securities_Id, Quantity, Simple_Avg_Price, Fifo_Avg_Price, Fifo_Avg_Cost_EUR)
+                VALUES %s
+                ON CONFLICT (Accounts_Id, Securities_Id) DO UPDATE SET
+                    Quantity          = EXCLUDED.Quantity,
+                    Simple_Avg_Price  = EXCLUDED.Simple_Avg_Price,
+                    Fifo_Avg_Price    = EXCLUDED.Fifo_Avg_Price,
+                    Fifo_Avg_Cost_EUR = EXCLUDED.Fifo_Avg_Cost_EUR,
+                    Last_Update       = CURRENT_TIMESTAMP
+            """, rows_to_upsert)
+
+        # Remove zero-quantity Holdings rows that have no remaining investments
+        # (e.g. after all transactions for a security have been moved or deleted).
+        # Holdings with Quantity=0 that still have Investments rows are kept
+        # intentionally for closed-position P&L history.
+        cur.execute("""
             DELETE FROM Holdings
             WHERE ABS(Quantity) = 0
               AND NOT EXISTS (
@@ -843,10 +886,11 @@ def update_holdings():
                 WHERE i.Accounts_Id   = Holdings.Accounts_Id
                   AND i.Securities_Id  = Holdings.Securities_Id
                   AND i.Securities_Id IS NOT NULL
-              );
+              )
         """)
         conn.commit()
-    except Exception as e:
+    except Exception:
+        conn.rollback()
         log.exception("update_holdings failed")
         raise
     finally:
@@ -920,6 +964,7 @@ def insert_staking_reinvest(entries):
     finally:
         cur.close()
         conn.close()
+    update_holdings()
 
 
 def update_payee_default_category():

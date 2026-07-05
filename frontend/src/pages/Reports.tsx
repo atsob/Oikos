@@ -29,7 +29,7 @@ import {
 import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, fmtQty, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Trash2, Plus, Check, X, Pencil, RefreshCw } from 'lucide-react'
+import { Trash2, Plus, Check, X, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
 
@@ -3741,6 +3741,56 @@ function IEMultiSelect({ label, options, value, onChange }: {
 
 type IEDrillCell = { category: string; period: string } | null
 
+type CatTreeRow = {
+  path: string
+  name: string
+  depth: number
+  cat_type: string
+  periods: Record<string, number>
+  total: number
+  direct: number
+  hasChildren: boolean
+}
+
+type CatTree = { roots: string[]; nodes: Record<string, CatTreeRow>; childrenOf: Record<string, string[]> }
+
+// Builds a rollup tree from flat "A : B : C" category paths — each ancestor level
+// accumulates the totals of every descendant so a parent row (e.g. "Vacation")
+// shows the sum of all its subcategories, not just amounts posted directly to it.
+function buildCategoryTree(pivotMap: { category: string; cat_type: string; periods: Record<string, number>; total: number }[]): CatTree {
+  const nodes: Record<string, CatTreeRow> = {}
+  const childrenOf: Record<string, string[]> = {}
+  const rootSet = new Set<string>()
+
+  for (const r of pivotMap) {
+    const segs = r.category.split(' : ')
+    let path = ''
+    for (let d = 0; d < segs.length; d++) {
+      const parentPath = path
+      path = path ? `${path} : ${segs[d]}` : segs[d]
+      if (!nodes[path]) {
+        nodes[path] = { path, name: segs[d], depth: d, cat_type: r.cat_type, periods: {}, total: 0, direct: 0, hasChildren: false }
+        if (d === 0) rootSet.add(path)
+        else {
+          if (!childrenOf[parentPath]) childrenOf[parentPath] = []
+          if (!childrenOf[parentPath].includes(path)) childrenOf[parentPath].push(path)
+          nodes[parentPath].hasChildren = true
+        }
+      }
+      for (const [pk, amt] of Object.entries(r.periods)) nodes[path].periods[pk] = (nodes[path].periods[pk] ?? 0) + amt
+      nodes[path].total += r.total
+    }
+    nodes[path].direct += r.total
+  }
+  return { roots: [...rootSet], nodes, childrenOf }
+}
+
+// A category cell matches either the exact leaf path, or is a descendant of a
+// selected parent path (so drilling into a rollup row shows all its subcategories' transactions).
+function categoryMatches(fullPath: string, selected: string): boolean {
+  return fullPath === selected || fullPath.startsWith(selected + ' : ')
+}
+
 function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { startDate: string; endDate: string }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
@@ -3895,7 +3945,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const savingsRate = overallIncome > 0 ? (netSavings / overallIncome) * 100 : 0
 
   const bankTotal = allRows.filter(r => r.source_type === 'Bank').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
-  const invTotal = allRows.filter(r => r.source_type === 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  // Excludes realized investment P&L (categories_type 'Trading') so this reconciles
+  // exactly with Net Savings (bankTotal + invTotal === netSavings) — realized gains/
+  // losses are shown separately below instead, since they're lumpy one-off amounts
+  // rather than recurring cash flow and would otherwise distort the savings rate.
+  const invTotal = allRows.filter(r => r.source_type === 'Investment' && r.categories_type !== 'Trading').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const realizedPnl = allRows.filter(r => r.categories_type === 'Trading').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
   // Pivot rows by period
   type PivotRow = { category: string; cat_type: string; periods: Record<string, number>; total: number }
   const pivotMap = useMemo<PivotRow[]>(() => {
@@ -3911,6 +3966,26 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
     }
     return Object.values(map).sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
   }, [rows, periodType])
+
+  // Category-hierarchy rollup for the Details table (e.g. a "Vacation" row summing all its subcategories)
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const catTree = useMemo(() => buildCategoryTree(pivotMap), [pivotMap])
+  const treeRows = useMemo(() => {
+    const out: CatTreeRow[] = []
+    const visit = (path: string) => {
+      const node = catTree.nodes[path]
+      if (!node) return
+      out.push(node)
+      if (node.hasChildren && !collapsedCats.has(path)) {
+        const kids = [...(catTree.childrenOf[path] ?? [])]
+          .sort((a, b) => Math.abs(catTree.nodes[b].total) - Math.abs(catTree.nodes[a].total))
+        kids.forEach(visit)
+      }
+    }
+    const sortedRoots = [...catTree.roots].sort((a, b) => Math.abs(catTree.nodes[b].total) - Math.abs(catTree.nodes[a].total))
+    sortedRoots.forEach(visit)
+    return out
+  }, [catTree, collapsedCats])
 
   const allPeriods = useMemo(() => {
     const s = new Set<string>()
@@ -4056,7 +4131,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
       </div>
 
       {/* Sub-breakdown row */}
-      <div className="grid grid-cols-3 gap-3 text-xs">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <div className="bg-slate-50 rounded p-2 text-center">
           <p className="text-slate-400 mb-0.5">Earned & Reimbursed / Investments</p>
           <p className="font-semibold">
@@ -4082,6 +4157,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             {' / '}
             <span className={invTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invTotal)}</span>
           </p>
+        </div>
+        <div className="bg-slate-50 rounded p-2 text-center">
+          <Tooltip text="Realized gains/losses from closed investment trades (FIFO). Shown separately — excluded from Net Savings and Savings Rate above since it's a lumpy, one-off amount rather than recurring cash flow.">
+            <p className="text-slate-400 mb-0.5">Realized Investment P&L</p>
+          </Tooltip>
+          <p className={`font-semibold ${realizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(realizedPnl)}</p>
         </div>
       </div>
 
@@ -4155,16 +4236,32 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                 </tr>
               </thead>
               <tbody>
-                {pivotMap.map((r, i) => (
-                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="px-2 py-1 sticky left-0 bg-white font-medium">{r.category}</td>
+                {treeRows.map((r) => (
+                  <tr key={r.path} className={`border-b border-slate-100 hover:bg-slate-50 ${r.hasChildren ? 'bg-slate-50/70 font-semibold' : ''}`}>
+                    <td className="px-2 py-1 sticky left-0 bg-white font-medium" style={{ background: r.hasChildren ? 'rgba(248,250,252,0.9)' : undefined }}>
+                      <span style={{ paddingLeft: r.depth * 16 }} className="inline-flex items-center gap-1">
+                        {r.hasChildren ? (
+                          <button
+                            onClick={() => setCollapsedCats(prev => {
+                              const next = new Set(prev)
+                              if (next.has(r.path)) next.delete(r.path); else next.add(r.path)
+                              return next
+                            })}
+                            className="text-slate-400 hover:text-slate-600"
+                          >
+                            {collapsedCats.has(r.path) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                          </button>
+                        ) : <span className="inline-block w-3" />}
+                        {r.name}
+                      </span>
+                    </td>
                     <td className="px-2 py-1 text-slate-500">{r.cat_type}</td>
                     {allPeriods.map(p => {
                       const val = r.periods[p] ?? 0
-                      const isActive = drillCell?.category === r.category && drillCell?.period === p
+                      const isActive = drillCell?.category === r.path && drillCell?.period === p
                       return (
                         <td key={p}
-                          onClick={() => setDrillCell(isActive ? null : { category: r.category, period: p })}
+                          onClick={() => setDrillCell(isActive ? null : { category: r.path, period: p })}
                           className={`px-2 py-1 text-right tabular-nums cursor-pointer rounded transition-colors ${isActive ? 'bg-blue-100 ring-1 ring-blue-400' : 'hover:bg-blue-50'} ${val >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                           {val !== 0 ? fmtEur(val) : ''}
                         </td>
@@ -4180,7 +4277,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
 
           {/* Drill-down panel */}
           {drillCell && (() => {
-            const drillRows = rows.filter(r => String(r.category_full_path ?? '') === drillCell.category && getPeriodKey(String(r.date ?? ''), periodType) === drillCell.period)
+            const drillRows = rows.filter(r => categoryMatches(String(r.category_full_path ?? ''), drillCell.category) && getPeriodKey(String(r.date ?? ''), periodType) === drillCell.period)
             const drillTotal = drillRows.reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
             return (
               <div className="border border-blue-200 rounded-lg bg-blue-50">
@@ -4509,6 +4606,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           onDelete={handleModalDelete}
           onClose={() => setModalOpen(false)}
           onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string,unknown>[]) => [...(old ?? []), c])}
           saving={modalSaving}
           error={modalError}
           {...recurring}

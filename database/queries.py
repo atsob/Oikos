@@ -1,6 +1,7 @@
 import pandas as pd
 from database.connection import get_connection
 
+from collections import deque
 from datetime import datetime, timedelta
 
 def get_category_hierarchy():
@@ -1695,6 +1696,183 @@ def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
     return df
 
 
+_REALIZED_PNL_COLUMNS = [
+    'date', 'month_date', 'year', 'month', 'split_amount', 'split_amount_original',
+    'original_currency', 'categories_id', 'description', 'accounts_id', 'accounts_name',
+    'accounts_type', 'payees_name', 'source_type', 'category_full_path', 'category_name',
+    'categories_type', 'category_level', 'transaction_id', 'split_id', 'payees_id',
+    'total_amount', 'is_draft', 'cleared', 'reconciled',
+]
+
+# Categories_Id for the single top-level "Trading" category all realized P&L is
+# booked under (gains and losses together — one net trading P&L line, not split
+# by sign). Top-level (no parent), so its hierarchy info is fixed/known rather
+# than needing a join: Full_Path == Name == the category name, Level 0.
+_RLZD_PNL_CATEGORY = {'id': 724, 'name': '_RlzdPnL'}
+
+
+def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.DataFrame":
+    """Realized investment P&L via FIFO lot matching — including short positions.
+
+    The previous implementation (pure SQL) only matched sells against *earlier*
+    buy lots. That's correct for ordinary long-only investing, but margin/CFD
+    accounts routinely sell before any matching buy exists (opening a short
+    position). When a sale had no prior buy lot to match, the old query simply
+    left that portion out of the cost-basis sum while still counting its full
+    sale proceeds as "gain" — silently inflating realized gains (e.g. one
+    margin account alone added ~€441k of phantom "gain" in 2020).
+
+    This version tracks two FIFO queues per (account, security): open long lots
+    and open short lots. A sell first closes long lots (recognising P&L now)
+    and only *opens/extends a short* for any quantity left over — which is not
+    recognised as realized P&L until a later buy actually covers it. A buy
+    mirrors this: it first covers outstanding short lots (recognising P&L now)
+    before any leftover opens a new long lot. This matches how short positions
+    actually realize P&L in real trading, and leaves ordinary long-only
+    accounts (no shorting) numerically unaffected.
+
+    Per-share value is taken from Total_Amount_AccCur / Quantity (already in
+    the account's own currency and commission-inclusive — see the identical
+    convention in update_holdings/crud.py), falling back to Price_Per_Share *
+    FX_Rate only when Total_Amount_AccCur is zero/null (e.g. transfers). The
+    old SQL used Price_Per_Share (the security's *native* currency) for the
+    buy side but Total_Amount_AccCur (account currency) for the sell side —
+    mixing currencies whenever a security's currency differs from its
+    account's, which this fixes as a side effect. Because Total_Amount_AccCur
+    is already commission-inclusive, commission is not subtracted separately
+    (the old code's separate subtraction double-counted it).
+    """
+    # Explicit lowercase aliases throughout: unquoted Postgres identifiers fold
+    # to lowercase regardless of how they're written in the SQL, so alias
+    # everything explicitly rather than relying on that implicitly.
+    tx = pd.read_sql("""
+        SELECT i.Investments_Id AS investments_id, i.Accounts_Id AS accounts_id,
+               i.Securities_Id AS securities_id, i.Date AS tx_date,
+               i.Action AS action, i.Quantity AS quantity,
+               i.Price_Per_Share AS price_per_share,
+               i.Total_Amount_AccCur AS total_amount_acccur, i.FX_Rate AS fx_rate,
+               a.Currencies_Id AS account_currency_id,
+               curr_acc.Currencies_ShortName AS account_currency,
+               a.Accounts_Name AS accounts_name, a.Accounts_Type AS accounts_type,
+               s.Securities_Name AS securities_name
+        FROM Investments i
+        JOIN Securities s  ON i.Securities_Id = s.Securities_Id
+        JOIN Accounts a    ON i.Accounts_Id   = a.Accounts_Id
+        JOIN Currencies curr_acc ON a.Currencies_Id = curr_acc.Currencies_Id
+        WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
+          AND i.Date <= %(end_date)s
+        ORDER BY i.Accounts_Id, i.Securities_Id, i.Date, i.Investments_Id
+    """, conn, params={"end_date": end_date})
+
+    if tx.empty:
+        return pd.DataFrame(columns=_REALIZED_PNL_COLUMNS)
+
+    # Per-currency sorted (date, rate-to-EUR) history, for "latest rate on or
+    # before X" lookups — mirrors the old FX_Rates / DefaultFX_Rates CTEs. This
+    # is only for the *account currency -> EUR* leg; the per-lot P&L itself is
+    # already in account currency via total_amount_acccur, so no separate FX
+    # lookup is needed for that part.
+    fx_hist = pd.read_sql("""
+        SELECT Currencies_Id_1 AS ccy_id, Date AS fx_date, FX_Rate AS fx_rate FROM Historical_FX
+        WHERE Currencies_Id_2 = (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+        ORDER BY Currencies_Id_1, Date
+    """, conn)
+    fx_hist['fx_date'] = pd.to_datetime(fx_hist['fx_date'])
+    fx_by_ccy = {ccy: grp[['fx_date', 'fx_rate']].reset_index(drop=True) for ccy, grp in fx_hist.groupby('ccy_id')}
+    end_date_ts = pd.Timestamp(end_date)
+
+    def fx_rate_on(ccy_id, on_date):
+        g = fx_by_ccy.get(ccy_id)
+        if g is None or g.empty:
+            return 1.0
+        sub = g[g['fx_date'] <= on_date]
+        if not sub.empty:
+            return float(sub['fx_rate'].iloc[-1])
+        sub2 = g[g['fx_date'] <= end_date_ts]
+        return float(sub2['fx_rate'].iloc[-1]) if not sub2.empty else 1.0
+
+    tx['tx_date'] = pd.to_datetime(tx['tx_date'])
+    start_ts, end_ts = pd.Timestamp(start_date), pd.Timestamp(end_date)
+    BUY_ACTIONS, SELL_ACTIONS = {'Buy', 'Reinvest', 'ShrIn'}, {'Sell', 'ShrOut'}
+
+    results = []
+    for (acc_id, _sec_id), grp in tx.groupby(['accounts_id', 'securities_id'], sort=False):
+        long_lots, short_lots = deque(), deque()  # each: {'qty': float, 'value': float} (value = per-share, account currency)
+        acc_name = grp['accounts_name'].iloc[0]
+        acc_type = grp['accounts_type'].iloc[0]
+        acc_ccy = grp['account_currency'].iloc[0]
+        acc_ccy_id = grp['account_currency_id'].iloc[0]
+        sec_name = grp['securities_name'].iloc[0]
+
+        def emit(date, pnl_original):
+            if pd.isna(pnl_original) or not (start_ts <= date <= end_ts) or abs(pnl_original) < 1e-9:
+                return
+            rate = 1.0 if acc_ccy == 'EUR' else fx_rate_on(acc_ccy_id, date)
+            pnl_eur = pnl_original * rate
+            cat = _RLZD_PNL_CATEGORY
+            results.append({
+                'date': date, 'month_date': date.replace(day=1), 'year': date.year, 'month': date.month,
+                'split_amount': pnl_eur, 'split_amount_original': pnl_original, 'original_currency': acc_ccy,
+                'categories_id': cat['id'], 'description': sec_name, 'accounts_id': acc_id,
+                'accounts_name': acc_name, 'accounts_type': acc_type, 'payees_name': None,
+                'source_type': 'Investment', 'category_full_path': cat['name'], 'category_name': cat['name'],
+                'categories_type': 'Trading', 'category_level': 0, 'transaction_id': None, 'split_id': None,
+                'payees_id': None, 'total_amount': None, 'is_draft': None, 'cleared': None, 'reconciled': None,
+            })
+
+        for row in grp.itertuples():
+            qty = float(row.quantity) if pd.notna(row.quantity) else 0.0
+            date = row.tx_date
+            if qty <= 0:
+                continue
+            # `x or default` is wrong here: pandas represents SQL NULL as NaN, and
+            # `float('nan') or 0` evaluates to NaN (NaN is truthy in Python), not 0 —
+            # silently NaN-poisoning every lot downstream of one null/zero row. Use
+            # pd.notna() to actually detect missing values.
+            raw_total = row.total_amount_acccur
+            total_acccur = float(raw_total) if pd.notna(raw_total) else 0.0
+            if total_acccur != 0:
+                value = total_acccur / qty
+            else:
+                fx = float(row.fx_rate) if pd.notna(row.fx_rate) else 1.0
+                value = float(row.price_per_share) * fx
+
+            recognised_qty = 0.0
+            pnl_original = 0.0
+
+            if row.action in BUY_ACTIONS:
+                remaining = qty
+                while remaining > 1e-9 and short_lots:
+                    lot = short_lots[0]
+                    covered = min(remaining, lot['qty'])
+                    pnl_original += (lot['value'] - value) * covered
+                    recognised_qty += covered
+                    lot['qty'] -= covered
+                    remaining -= covered
+                    if lot['qty'] <= 1e-9:
+                        short_lots.popleft()
+                if remaining > 1e-9:
+                    long_lots.append({'qty': remaining, 'value': value})
+            elif row.action in SELL_ACTIONS:
+                remaining = qty
+                while remaining > 1e-9 and long_lots:
+                    lot = long_lots[0]
+                    closed = min(remaining, lot['qty'])
+                    pnl_original += (value - lot['value']) * closed
+                    recognised_qty += closed
+                    lot['qty'] -= closed
+                    remaining -= closed
+                    if lot['qty'] <= 1e-9:
+                        long_lots.popleft()
+                if remaining > 1e-9:
+                    short_lots.append({'qty': remaining, 'value': value})
+
+            if recognised_qty > 1e-9:
+                emit(date, pnl_original)
+
+    return pd.DataFrame(results, columns=_REALIZED_PNL_COLUMNS) if results else pd.DataFrame(columns=_REALIZED_PNL_COLUMNS)
+
+
 def get_income_expense_data(start_date, end_date, category_id=None, cash_account_types=None, inv_account_types=None):
     """Get income and expense data for a period, optionally filtered by category.
     Includes both bank transactions, investment transactions (dividends, interest, etc.),
@@ -1774,192 +1952,6 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
             AND hf.date <= (SELECT end_date FROM DateRange)
         WHERE c.currencies_shortname != 'EUR'
         ORDER BY c.currencies_id, hf.date DESC
-    ),
-    -- Calculate Realized P&L using FIFO method
-    FIFO_Inventory AS (
-        SELECT 
-            t.Accounts_Id,
-            t.Securities_Id,
-            t.Date,
-            t.Investments_Id,
-            t.Action,
-            t.Quantity,
-            t.Price_Per_Share,
-            t.Total_Amount_AccCur,
-            t.Commission,
-            -- Running total of shares bought
-            SUM(CASE WHEN t.Action IN ('Buy', 'Reinvest', 'ShrIn') THEN t.Quantity ELSE 0 END) 
-                OVER (PARTITION BY t.Accounts_Id, t.Securities_Id ORDER BY t.Date, t.Investments_Id) as running_bought,
-            -- Running total of shares sold
-            SUM(CASE WHEN t.Action IN ('Sell', 'ShrOut') THEN t.Quantity ELSE 0 END) 
-                OVER (PARTITION BY t.Accounts_Id, t.Securities_Id ORDER BY t.Date, t.Investments_Id) as running_sold,
-            -- Total bought for FIFO calculation
-            SUM(CASE WHEN t.Action IN ('Buy', 'Reinvest', 'ShrIn') THEN t.Quantity ELSE 0 END) 
-                OVER (PARTITION BY t.Accounts_Id, t.Securities_Id) as total_bought,
-            -- Get the security currency
-            s.Currencies_Id as security_currency_id,
-            cur_s.Currencies_ShortName as security_currency
-        FROM Investments t
-        JOIN Securities s ON t.Securities_Id = s.Securities_Id
-        JOIN Currencies cur_s ON s.Currencies_Id = cur_s.Currencies_Id
-        WHERE t.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
-          AND t.Date <= (SELECT end_date FROM DateRange)
-    ),
-    -- Step 1: Materialise cumulative_bought_before for each sale row.
-    -- This intermediate CTE is necessary because PostgreSQL does not allow a
-    -- SELECT-list alias (cumulative_bought_before) to be referenced by another
-    -- expression in the same SELECT list (the purchase_lots subquery).
-    FIFO_Sales AS (
-        SELECT 
-            f.Accounts_Id,
-            f.Securities_Id,
-            f.Date as sale_date,
-            f.Investments_Id as sale_id,
-            f.Quantity as sold_quantity,
-            f.Price_Per_Share as sale_price,
-            f.Total_Amount_AccCur as sale_amount,
-            f.Commission as sale_commission,
-            f.security_currency_id,
-            f.security_currency,
-            -- How many shares have already been consumed by prior sales (FIFO offset).
-            -- We sum prior SELL quantities, NOT prior buy quantities.
-            -- Using prior buys was the bug: it pushed the sale window past the buy lots entirely.
-            (SELECT COALESCE(SUM(f2.Quantity), 0) 
-             FROM FIFO_Inventory f2 
-             WHERE f2.Accounts_Id = f.Accounts_Id 
-               AND f2.Securities_Id = f.Securities_Id 
-               AND f2.Action IN ('Sell', 'ShrOut')
-               AND (f2.Date < f.Date OR (f2.Date = f.Date AND f2.Investments_Id < f.Investments_Id))
-            ) as cumulative_bought_before
-        FROM FIFO_Inventory f
-        WHERE f.Action IN ('Sell', 'ShrOut')
-          AND f.Date BETWEEN (SELECT start_date FROM DateRange) AND (SELECT end_date FROM DateRange)
-    ),
-    -- Step 2: Now that cumulative_bought_before is a real column we can reference
-    -- it freely inside the purchase_lots correlated subquery.
-    FIFO_CostBasis AS (
-        SELECT 
-            fs.Accounts_Id,
-            fs.Securities_Id,
-            fs.sale_date,
-            fs.sale_id,
-            fs.sold_quantity,
-            fs.sale_price,
-            fs.sale_amount,
-            fs.sale_commission,
-            fs.security_currency_id,
-            fs.security_currency,
-            (
-                SELECT json_agg(json_build_object(
-                    'purchase_date', purchase_date,
-                    'quantity', quantity,
-                    'price', price,
-                    'cost', cost
-                ))
-                FROM (
-                    SELECT 
-                        p.Date as purchase_date,
-                        -- Correct FIFO overlap formula:
-                        --   lot covers  [lot_start, lot_end)  where lot_start = running_bought - Quantity
-                        --   sale covers [sale_start, sale_end) where sale_start = cumulative_bought_before
-                        --   allocated qty = LEAST(lot_end, sale_end) - GREATEST(lot_start, sale_start)
-                        GREATEST(0,
-                            LEAST(p.running_bought,
-                                  fs.cumulative_bought_before + fs.sold_quantity)
-                            - GREATEST(p.running_bought - p.Quantity,
-                                       fs.cumulative_bought_before)
-                        ) as quantity,
-                        p.Price_Per_Share as price,
-                        p.Price_Per_Share * GREATEST(0,
-                            LEAST(p.running_bought,
-                                  fs.cumulative_bought_before + fs.sold_quantity)
-                            - GREATEST(p.running_bought - p.Quantity,
-                                       fs.cumulative_bought_before)
-                        ) as cost
-                    FROM FIFO_Inventory p
-                    WHERE p.Accounts_Id = fs.Accounts_Id 
-                      AND p.Securities_Id = fs.Securities_Id
-                      AND p.Action IN ('Buy', 'Reinvest', 'ShrIn')
-                      AND p.Date <= fs.sale_date
-                      -- Only lots that overlap with the sale range
-                      AND p.running_bought > fs.cumulative_bought_before
-                      AND p.running_bought - p.Quantity < fs.cumulative_bought_before + fs.sold_quantity
-                    ORDER BY p.Date, p.Investments_Id
-                ) lots
-                WHERE quantity > 0
-            ) as purchase_lots
-        FROM FIFO_Sales fs
-    ),
-    -- Calculate the realized P&L for each sale
-    RealizedPNL AS (
-        SELECT 
-            fc.sale_date as date,
-            DATE_TRUNC('month', fc.sale_date)::timestamp without time zone as month_date,
-            EXTRACT(YEAR FROM fc.sale_date) as year,
-            EXTRACT(MONTH FROM fc.sale_date) as month,
-            fc.Accounts_Id,
-            fc.Securities_Id,
-            -- Calculate cost basis in original currency
-            (SELECT COALESCE(SUM((lot->>'cost')::numeric), 0) FROM json_array_elements(fc.purchase_lots) as lot) as cost_basis_original,
-            fc.sale_amount as sale_proceeds_original,
-            fc.sale_commission as commission_original,
-            -- Calculate realized P&L in original currency
-            (fc.sale_amount - COALESCE((SELECT COALESCE(SUM((lot->>'cost')::numeric), 0) FROM json_array_elements(fc.purchase_lots) as lot), 0) - fc.sale_commission) as realized_pnl_original,
-            -- Get account currency for FX conversion
-            a.Currencies_Id as account_currency_id,
-            curr_acc.Currencies_ShortName as account_currency,
-            fc.security_currency,
-            -- Description for the transaction
-            (SELECT Securities_Name FROM Securities WHERE Securities_Id = fc.Securities_Id) as description,
-            -- Map to category
-            (SELECT Categories_Id FROM Categories WHERE Categories_Name = '_RealizedGain' LIMIT 1) as gain_category_id,
-            (SELECT Categories_Id FROM Categories WHERE Categories_Name = '_RealizedLoss' LIMIT 1) as loss_category_id
-        FROM FIFO_CostBasis fc
-        JOIN Accounts a ON fc.Accounts_Id = a.Accounts_Id
-        JOIN Currencies curr_acc ON a.Currencies_Id = curr_acc.Currencies_Id
-        WHERE fc.sold_quantity > 0
-    ),
-    -- Convert realized P&L to EUR
-    RealizedPNL_EUR AS (
-        SELECT 
-            rp.date,
-            rp.month_date,
-            rp.year,
-            rp.month,
-            -- Convert realized P&L to EUR using FX rate on sale date
-            CASE 
-                WHEN rp.account_currency = 'EUR' THEN rp.realized_pnl_original
-                ELSE rp.realized_pnl_original * COALESCE(
-                    (SELECT fx_rate FROM FX_Rates 
-                     WHERE currencies_id_1 = rp.account_currency_id 
-                       AND date <= rp.date 
-                     ORDER BY date DESC LIMIT 1),
-                    (SELECT fx_rate FROM DefaultFX_Rates WHERE currencies_id_1 = rp.account_currency_id),
-                    1
-                )
-            END as split_amount_eur,
-            rp.realized_pnl_original as split_amount_original,
-            rp.account_currency as original_currency,
-            -- Use gain or loss category based on P&L sign
-            CASE 
-                WHEN rp.realized_pnl_original > 0 THEN rp.gain_category_id
-                ELSE rp.loss_category_id
-            END as categories_id,
-            rp.description,
-            rp.Accounts_id,
-            a.accounts_name,
-            a.accounts_type,
-            NULL as payees_name,
-            'Realized P&L' as source_type,
-            NULL::integer as transaction_id,
-            NULL::integer as split_id,
-            NULL::integer as payees_id,
-            NULL::numeric as total_amount,
-            NULL::boolean as is_draft,
-            NULL::boolean as cleared,
-            NULL::boolean as reconciled
-        FROM RealizedPNL rp
-        JOIN Accounts a ON rp.Accounts_Id = a.Accounts_Id
     ),
     BankTransactionData AS (
         SELECT 
@@ -2080,10 +2072,12 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
         SELECT * FROM BankTransactionData
         UNION ALL
         SELECT * FROM InvestmentTransactionData
-        UNION ALL
-        SELECT * FROM RealizedPNL_EUR
+        -- Realized P&L (FIFO, incl. short positions) is computed in Python —
+        -- see _compute_realized_pnl_fifo — and concatenated onto this query's
+        -- result below, since it needs sequential lot-matching that isn't a
+        -- good fit for a single SQL pass.
     )
-    SELECT 
+    SELECT
         td.date,
         td.month_date,
         td.year,
@@ -2097,26 +2091,13 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
         td.accounts_name,
         td.accounts_type,
         td.payees_name,
-        CASE WHEN td.source_type = 'Realized P&L' THEN 'Investment' ELSE td.source_type END as source_type,
-        COALESCE(c.Full_Path, 
-            CASE 
-                WHEN td.source_type = 'Realized P&L' AND td.split_amount_eur > 0 THEN '_RlzdGain' --'Investment: Realized Gains'
-                WHEN td.source_type = 'Realized P&L' AND td.split_amount_eur < 0 THEN '_RlzdGain' --'Investment: Realized Losses'
-                ELSE 'Uncategorized'
-            END
-        ) as category_full_path,
-        COALESCE(c.Name,
-            CASE 
-                WHEN td.source_type = 'Realized P&L' AND td.split_amount_eur > 0 THEN '_RlzdGain' --'Realized Gains'
-                WHEN td.source_type = 'Realized P&L' AND td.split_amount_eur < 0 THEN '_RlzdGain' --'Realized Losses'
-                ELSE 'Uncategorized'
-            END
-        ) as category_name,
-        COALESCE(c.Categories_Type, 
-            CASE 
-            --    WHEN td.split_amount_eur > 0 THEN 'Income'::text 
-                WHEN td.split_amount_eur != 0 THEN 'Income'::text 
-                ELSE 'Expense'::text 
+        td.source_type,
+        COALESCE(c.Full_Path, 'Uncategorized') as category_full_path,
+        COALESCE(c.Name, 'Uncategorized') as category_name,
+        COALESCE(c.Categories_Type,
+            CASE
+                WHEN td.split_amount_eur != 0 THEN 'Income'::text
+                ELSE 'Expense'::text
             END
         ) as Categories_Type,
         COALESCE(c.Level, 0) as category_level,
@@ -2132,8 +2113,9 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
     """
     
     params = [start_date, end_date, cash_account_types_tuple, inv_account_types_tuple]
-    
+
     # Add category filter if specified
+    category_path = None
     if category_id:
         cursor = conn.cursor()
         cursor.execute("""
@@ -2149,29 +2131,139 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
         """, (category_id, category_id))
         result = cursor.fetchone()
         cursor.close()
-        
+
         if result:
             category_path = result[0]
             base_query += " AND c.Full_Path LIKE %s || '%%'"
             params.append(category_path)
-    
+
     base_query += " ORDER BY td.date DESC, c.Full_Path"
-    
+
     df = pd.read_sql(base_query, conn, params=params)
+
+    # Realized P&L (FIFO incl. short positions) — computed in Python, then
+    # concatenated on. Reuses the same connection, so do this before closing it.
+    pnl_df = _compute_realized_pnl_fifo(conn, start_date, end_date)
     conn.close()
-    
+    if category_path is not None:
+        pnl_df = pnl_df[pnl_df['category_full_path'].astype(str).str.startswith(category_path)]
+    if not pnl_df.empty:
+        # Bank/register-only columns (transaction_id, payees_id, is_draft, cleared,
+        # reconciled, total_amount, payees_name) are always None on P&L rows — an
+        # "all-NA column" on one side of the concat. Cast them to df's dtype first
+        # so pandas doesn't have to guess how to combine an all-NA column with a
+        # typed one; this is exactly the workaround pandas' own FutureWarning
+        # suggests ("exclude the relevant entries before the concat operation"),
+        # and keeps today's dtypes stable once the deprecation takes effect.
+        if not df.empty:
+            for col in pnl_df.columns:
+                if col in df.columns and pnl_df[col].isna().all():
+                    try:
+                        pnl_df[col] = pnl_df[col].astype(df[col].dtype)
+                    except (TypeError, ValueError):
+                        pass
+        df = pd.concat([df, pnl_df], ignore_index=True)
+
     # Convert datetime columns to naive datetime
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
         if hasattr(df['date'].dt, 'tz') and df['date'].dt.tz is not None:
             df['date'] = df['date'].dt.tz_localize(None)
-    
+
     if 'month_date' in df.columns:
         df['month_date'] = pd.to_datetime(df['month_date'], errors='coerce')
         if hasattr(df['month_date'].dt, 'tz') and df['month_date'].dt.tz is not None:
             df['month_date'] = df['month_date'].dt.tz_localize(None)
 
+    if 'date' in df.columns:
+        df = df.sort_values('date', ascending=False).reset_index(drop=True)
+
     return df
+
+
+# ======================================================
+# DRAFT CONFIRMATION (shared by Dashboard and Recurring)
+# ======================================================
+# There were previously three separate places that could confirm a draft
+# transaction (Dashboard's confirm-draft/confirm-all-drafts, Recurring's
+# drafts/confirm, and recurring-template auto-confirm) and only one of them
+# actually created the mirror leg for transfer-type drafts — the other two
+# silently left the target account's inflow missing. Centralising the logic
+# here means there's only one place to get this right.
+
+def _confirm_draft_row(cur, tx_id: int) -> None:
+    """Confirm one draft transaction, creating its transfer mirror leg if needed."""
+    cur.execute("""
+        SELECT Accounts_Id, Date, Description, Total_Amount, Payees_Id, Accounts_Id_Target, Transfers_Id
+        FROM Transactions WHERE Transactions_Id = %s AND Is_Draft = TRUE
+    """, (tx_id,))
+    row = cur.fetchone()
+    if row is None:
+        return
+    src_account, date, description, amount, payees_id, target_account, existing_transfers_id = row
+
+    cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
+
+    def _refresh(acc_id):
+        if acc_id:
+            cur.execute("""
+                UPDATE Accounts
+                   SET Accounts_Balance = COALESCE((
+                       SELECT SUM(Total_Amount) FROM Transactions
+                       WHERE Accounts_Id = %s AND Is_Draft = FALSE
+                   ), 0)
+                 WHERE Accounts_Id = %s
+            """, (acc_id, acc_id))
+
+    _refresh(src_account)
+
+    if target_account and not existing_transfers_id:
+        cur.execute("SELECT nextval('transfers_id_seq')")
+        shared_tid = cur.fetchone()[0]
+        mirror_amount = -float(amount or 0)
+        cur.execute("""
+            INSERT INTO Transactions
+                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
+            VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
+        """, (target_account, date, description, mirror_amount, payees_id, src_account, shared_tid))
+        cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
+        _refresh(target_account)
+
+
+def confirm_draft_transaction(tx_id: int) -> bool:
+    """Confirm a single draft by id. Returns False if it wasn't a pending draft."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM Transactions WHERE Transactions_Id = %s AND Is_Draft = TRUE", (tx_id,))
+        if cur.fetchone() is None:
+            return False
+        _confirm_draft_row(cur, tx_id)
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def confirm_all_draft_transactions() -> int:
+    """Confirm every pending draft, creating transfer mirror legs as needed."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE ORDER BY Transactions_Id")
+        tx_ids = [r[0] for r in cur.fetchall()]
+        for tx_id in tx_ids:
+            _confirm_draft_row(cur, tx_id)
+        conn.commit()
+        return len(tx_ids)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ======================================================

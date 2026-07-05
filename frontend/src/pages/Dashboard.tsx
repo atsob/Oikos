@@ -10,10 +10,13 @@ import {
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
+import { usePersist } from '@/lib/hooks'
+import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
+import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
 import {
   CheckCheck, Check, Trash2, AlertTriangle, AlertCircle, Info, TrendingUp,
   ChevronDown, ChevronUp, RefreshCw, Calendar, SlidersHorizontal,
-  CalendarClock, Zap,
+  CalendarClock, Zap, Pencil, Plus, X,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -549,6 +552,62 @@ function AnomaliesPanel() {
   )
 }
 
+// ── Kondratieff wave phase editor ─────────────────────────────────────────────
+// Phases are stored server-side (usePersist → User_Preferences), not hardcoded,
+// so the boundaries can be kept up to date as views on where we are in the cycle
+// change, without needing a code change/redeploy.
+const SEASONS: KWaveSeason[] = ['Spring', 'Summer', 'Autumn', 'Winter']
+
+function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChange: (p: KWavePhase[]) => void }) {
+  const [open, setOpen] = React.useState(false)
+
+  const update = (i: number, patch: Partial<KWavePhase>) =>
+    onChange(phases.map((p, idx) => idx === i ? { ...p, ...patch } : p))
+  const remove = (i: number) => onChange(phases.filter((_, idx) => idx !== i))
+  const add = () => onChange([...phases, {
+    label: 'New phase', season: 'Spring', start: new Date().toISOString().slice(0, 10), end: null, description: '',
+  }])
+  const resetToDefaults = () => onChange(DEFAULT_KWAVE_PHASES)
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1" title="Edit phase boundaries">
+        <Pencil size={11} /> Edit phases
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-full mt-2 border border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Phase boundaries</p>
+        <div className="flex items-center gap-2">
+          <button onClick={resetToDefaults} className="text-xs text-slate-400 hover:text-slate-600">Reset to defaults</button>
+          <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={13} /></button>
+        </div>
+      </div>
+      {phases.map((p, i) => (
+        <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-1.5 items-center">
+          <input value={p.label} onChange={e => update(i, { label: e.target.value })}
+            className="text-xs rounded border border-slate-300 px-2 py-1" placeholder="Label" />
+          <select value={p.season} onChange={e => update(i, { season: e.target.value as KWaveSeason })}
+            className="text-xs rounded border border-slate-300 px-1.5 py-1">
+            {SEASONS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input type="date" value={p.start} onChange={e => update(i, { start: e.target.value })}
+            className="text-xs rounded border border-slate-300 px-1.5 py-1 w-32" />
+          <input type="date" value={p.end ?? ''} onChange={e => update(i, { end: e.target.value || null })}
+            className="text-xs rounded border border-slate-300 px-1.5 py-1 w-32" placeholder="Ongoing" title="Leave blank if still ongoing" />
+          <button onClick={() => remove(i)} className="text-slate-400 hover:text-red-500 p-1" title="Remove phase"><X size={13} /></button>
+        </div>
+      ))}
+      <button onClick={add} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+        <Plus size={12} /> Add phase
+      </button>
+    </div>
+  )
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { isDark } = useTheme()
@@ -561,6 +620,8 @@ export default function Dashboard() {
     localStorage.getItem('oikos-nw-period') ?? '3Y'
   )
   const setNwPeriodSaved = (v: string) => { setNwPeriod(v); localStorage.setItem('oikos-nw-period', v) }
+  const [showKWave, setShowKWave] = usePersist('nw_show_kwave', false)
+  const [kwPhases, setKwPhases] = usePersist<KWavePhase[]>('kwave_phases', DEFAULT_KWAVE_PHASES)
 
   const NW_PERIODS: Record<string, string> = {
     '1Y': new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10),
@@ -875,22 +936,32 @@ export default function Dashboard() {
         </Card>
 
         {/* Net Worth Trend */}
-        {!nwLoading && nwData.length > 1 && (
+        {!nwLoading && nwData.length > 1 && (() => {
+          const kwFrom = nwData[0]?.date ? String(nwData[0].date).slice(0, 10) : undefined
+          const kwTo = nwData[nwData.length - 1]?.date ? String(nwData[nwData.length - 1].date).slice(0, 10) : undefined
+          const kwOverlay = showKWave && kwFrom && kwTo ? getKWaveOverlay(kwPhases, kwFrom, kwTo) : null
+          return (
           <Card>
-            <CardHeader className="flex items-center justify-between">
+            <CardHeader className="flex items-center justify-between flex-wrap gap-2">
               <CardTitle>Net Worth Trend</CardTitle>
-              <div className="flex gap-1">
-                {['1Y', '3Y', '5Y', 'All'].map(p => (
-                  <button
-                    key={p}
-                    onClick={() => setNwPeriodSaved(p)}
-                    className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${
-                      nwPeriod === p ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none" title="Reference overlay only — not a forecast">
+                  <input type="checkbox" checked={showKWave} onChange={e => setShowKWave(e.target.checked)} className="rounded" />
+                  Kondratieff wave phases
+                </label>
+                <div className="flex gap-1">
+                  {['1Y', '3Y', '5Y', 'All'].map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setNwPeriodSaved(p)}
+                      className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${
+                        nwPeriod === p ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
               </div>
             </CardHeader>
             <CardBody className="p-0">
@@ -907,14 +978,22 @@ export default function Dashboard() {
                   yaxis: plotAxis(isDark, { tickformat: ',.0f', tickprefix: '€' }),
                   legend: { orientation: 'h', y: -0.28, x: 0.5, xanchor: 'center' },
                   hovermode: 'x unified',
+                  ...(kwOverlay ? { shapes: kwOverlay.shapes, annotations: kwOverlay.annotations } : {}),
                   ...plotLayout(isDark),
                 }}
                 config={{ displayModeBar: false, responsive: true }}
                 style={{ width: '100%' }}
               />
             </CardBody>
+            {showKWave && (
+              <div className="px-4 py-2.5 border-t border-slate-100 space-y-1">
+                <p className="text-xs text-slate-400">{KWAVE_DISCLAIMER}</p>
+                <KWavePhasesEditor phases={kwPhases} onChange={setKwPhases} />
+              </div>
+            )}
           </Card>
-        )}
+          )
+        })()}
 
         {/* Options & Account selection */}
         <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />

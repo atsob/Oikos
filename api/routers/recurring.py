@@ -199,11 +199,16 @@ def run_template(template_id: int):
         cols = [d[0].lower() for d in cur.description]
         tmpl = dict(zip(cols, row))
 
-        # Insert draft transaction (no categories_id on Transactions — goes in Splits if needed)
+        # Insert draft transaction (no categories_id on Transactions — goes in Splits if needed).
+        # accounts_id_target is carried over so that confirming this draft later
+        # (via confirm_draft_transaction) correctly creates the transfer mirror leg —
+        # previously this column was dropped here entirely, silently turning every
+        # "Run Now" on a transfer template into a one-legged, unbalanced transaction.
+        target_account = tmpl.get("accounts_id_target")
         cur.execute("""
             INSERT INTO Transactions
-                (accounts_id, date, description, total_amount, payees_id, templates_id, is_draft, cleared)
-            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, TRUE, FALSE)
+                (accounts_id, date, description, total_amount, payees_id, templates_id, is_draft, cleared, accounts_id_target)
+            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, TRUE, FALSE, %s)
             RETURNING transactions_id
         """, (
             tmpl["accounts_id"],
@@ -211,14 +216,17 @@ def run_template(template_id: int):
             tmpl.get("total_amount"),
             tmpl.get("payees_id"),
             template_id,
+            target_account,
         ))
         tx_id = cur.fetchone()[0]
-        # Copy splits from template
-        cur.execute("""
-            INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
-            SELECT %s, rts.Categories_Id, rts.Amount, rts.Memo
-            FROM Recurring_Template_Splits rts WHERE rts.templates_id = %s
-        """, (tx_id, template_id))
+        # Transfers aren't categorised, so skip copying splits for them (matches
+        # generate_drafts and create_transfer's convention).
+        if not target_account:
+            cur.execute("""
+                INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+                SELECT %s, rts.Categories_Id, rts.Amount, rts.Memo
+                FROM Recurring_Template_Splits rts WHERE rts.templates_id = %s
+            """, (tx_id, template_id))
         # Advance next_due_date to the next occurrence
         cur.execute("""
             UPDATE Recurring_Templates SET next_due_date = CASE periodicity
@@ -292,29 +300,70 @@ def generate_drafts():
             tmpl = dict(zip(cols, row))
             tid = tmpl["templates_id"]
             is_auto = bool(tmpl.get("auto_confirm"))
-            # Insert draft (or confirmed if auto_confirm)
-            cur.execute("""
-                INSERT INTO Transactions
-                    (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
-                     Cleared, Is_Draft, templates_id, Accounts_Id_Target)
-                VALUES (%s, CURRENT_DATE, %s, %s, %s, FALSE, %s, %s, %s)
-                RETURNING Transactions_Id
-            """, (
-                tmpl["accounts_id"],
-                tmpl.get("payees_id"),
-                tmpl.get("description") or tmpl.get("name"),
-                tmpl.get("total_amount"),
-                not is_auto,
-                tid,
-                tmpl.get("accounts_id_target"),
-            ))
-            tx_id = cur.fetchone()[0]
-            # Copy splits from template
-            cur.execute("""
-                INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
-                SELECT %s, rts.Categories_Id, rts.Amount, rts.Memo
-                FROM Recurring_Template_Splits rts WHERE rts.templates_id = %s
-            """, (tx_id, tid))
+            target_account = tmpl.get("accounts_id_target")
+
+            if target_account:
+                # Transfer template: create the paired two-row transfer (source
+                # outflow + target inflow, linked by a shared Transfers_Id) the
+                # same way api.routers.register.create_transfer does — a plain
+                # single row with just an Accounts_Id_Target column (the old
+                # behaviour here) has no mirror leg at all, so the target
+                # account's balance never sees the incoming transfer.
+                cur.execute("SELECT nextval('transfers_id_seq')")
+                shared_tid = cur.fetchone()[0]
+                amount = float(tmpl.get("total_amount") or 0)
+
+                cur.execute("""
+                    INSERT INTO Transactions
+                        (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
+                         Cleared, Is_Draft, templates_id, Accounts_Id_Target, Transfers_Id)
+                    VALUES (%s, CURRENT_DATE, %s, %s, %s, FALSE, %s, %s, %s, %s)
+                    RETURNING Transactions_Id
+                """, (
+                    tmpl["accounts_id"], tmpl.get("payees_id"),
+                    tmpl.get("description") or tmpl.get("name"), -abs(amount),
+                    not is_auto, tid, target_account, shared_tid,
+                ))
+                tx_id = cur.fetchone()[0]
+
+                cur.execute("""
+                    INSERT INTO Transactions
+                        (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
+                         Cleared, Is_Draft, templates_id, Accounts_Id_Target, Transfers_Id)
+                    VALUES (%s, CURRENT_DATE, %s, %s, %s, FALSE, %s, %s, %s, %s)
+                    RETURNING Transactions_Id
+                """, (
+                    target_account, tmpl.get("payees_id"),
+                    tmpl.get("description") or tmpl.get("name"), abs(amount),
+                    not is_auto, tid, tmpl["accounts_id"], shared_tid,
+                ))
+                # Transfers aren't categorised (matches create_transfer, and
+                # Splits are excluded from category reports for transfer rows
+                # anyway), so no Splits are copied for either leg.
+            else:
+                # Insert draft (or confirmed if auto_confirm)
+                cur.execute("""
+                    INSERT INTO Transactions
+                        (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
+                         Cleared, Is_Draft, templates_id, Accounts_Id_Target)
+                    VALUES (%s, CURRENT_DATE, %s, %s, %s, FALSE, %s, %s, %s)
+                    RETURNING Transactions_Id
+                """, (
+                    tmpl["accounts_id"],
+                    tmpl.get("payees_id"),
+                    tmpl.get("description") or tmpl.get("name"),
+                    tmpl.get("total_amount"),
+                    not is_auto,
+                    tid,
+                    None,
+                ))
+                tx_id = cur.fetchone()[0]
+                # Copy splits from template
+                cur.execute("""
+                    INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+                    SELECT %s, rts.Categories_Id, rts.Amount, rts.Memo
+                    FROM Recurring_Template_Splits rts WHERE rts.templates_id = %s
+                """, (tx_id, tid))
             # Advance next_due_date
             cur.execute("""
                 UPDATE Recurring_Templates SET next_due_date = CASE periodicity
@@ -382,57 +431,15 @@ def update_draft(tx_id: int, data: dict):
 @router.post("/drafts/{tx_id}/confirm")
 def confirm_draft(tx_id: int):
     """Confirm a single draft transaction. For transfers, creates the mirror leg."""
-    conn = get_connection()
+    from database.queries import confirm_draft_transaction
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT Accounts_Id, Date, Description, Total_Amount, Payees_Id, Accounts_Id_Target, Transfers_Id
-            FROM Transactions WHERE Transactions_Id = %s AND Is_Draft = TRUE
-        """, (tx_id,))
-        row = cur.fetchone()
-        if row is None:
+        if not confirm_draft_transaction(tx_id):
             raise HTTPException(404, "Draft not found")
-        src_account, date, description, amount, payees_id, target_account, existing_transfers_id = row
-
-        cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
-
-        # Refresh balance for source (and target if transfer)
-        def _refresh(acc_id):
-            if acc_id:
-                cur.execute("""
-                    UPDATE Accounts
-                       SET Accounts_Balance = COALESCE((
-                           SELECT SUM(Total_Amount)
-                           FROM Transactions
-                           WHERE Accounts_Id = %s AND Is_Draft = FALSE
-                       ), 0)
-                     WHERE Accounts_Id = %s
-                """, (acc_id, acc_id))
-
-        _refresh(src_account)
-
-        if target_account and not existing_transfers_id:
-            cur.execute("SELECT nextval('transfers_id_seq')")
-            shared_tid = cur.fetchone()[0]
-            mirror_amount = -float(amount or 0)
-            # Create the mirror leg in the target account
-            cur.execute("""
-                INSERT INTO Transactions
-                    (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
-                VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
-            """, (target_account, date, description, mirror_amount, payees_id, src_account, shared_tid))
-            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
-            _refresh(target_account)
-
-        conn.commit()
         return {"confirmed": tx_id}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
-    finally:
-        conn.close()
 
 
 @router.delete("/drafts/{tx_id}")

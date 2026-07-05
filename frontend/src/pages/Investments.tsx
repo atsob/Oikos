@@ -12,7 +12,7 @@ import {
 } from '@/lib/api'
 import { api } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
-import { fmtEur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
+import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw } from 'lucide-react'
 import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -52,11 +52,15 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
         : <span>{p.value}</span>
   },
   { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
-  { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
-  { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
-  { field: 'tax_amount', headerName: 'W. Tax', width: 95, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—', cellStyle: p => p.value != null ? { color: '#dc2626' } : {} },
-  { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtEur(Number(p.value)) : '—' },
-  { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtEur(Number(p.value)), cellStyle: { fontWeight: 600 } },
+  // Price, Commission and Total (sec) are all in the security's own native currency
+  // (row.currency) — never the account's currency, so they must NOT go through the
+  // reporting-currency FX conversion that fmtEur applies.
+  { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
+  { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
+  // Tax_Amount and Total_Amount_AccCur are both stored in the account's own currency.
+  { field: 'tax_amount', headerName: 'W. Tax', width: 95, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.account_currency) : '—', cellStyle: p => p.value != null ? { color: '#dc2626' } : {} },
+  { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
+  { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtCur(Number(p.value), p.data?.account_currency), cellStyle: { fontWeight: 600 } },
   { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'currency', headerName: 'Curr', width: 65 },
   { field: 'instrument_type', headerName: 'Instrument', width: 110 },
@@ -68,11 +72,12 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
 ]
 
 // ── Cash tab columns (mirrors Register) ──────────────────────────────────────
-function CashAmountCell({ value }: { value: number }) {
-  return <span className={`font-semibold tabular-nums ${value < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(value)}</span>
+// Amounts are in the linked cash account's own native currency, not always EUR.
+function CashAmountCell({ value, currency }: { value: number; currency?: string }) {
+  return <span className={`font-semibold tabular-nums ${value < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtCur(value, currency)}</span>
 }
-function CashBalanceCell({ value }: { value: number }) {
-  return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtEur(value)}</span>
+function CashBalanceCell({ value, currency }: { value: number; currency?: string }) {
+  return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtCur(value, currency)}</span>
 }
 function CashStatusCell({ data }: { data: Record<string, unknown> }) {
   if (data.is_draft) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">Draft</span>
@@ -85,15 +90,15 @@ function CashStatusCell({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-const CASH_COLS: ColDef[] = [
+const makeCashCols = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 100, sort: 'desc', valueFormatter: p => fmtDate(p.value) },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180 },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
   { field: 'target_account', headerName: 'Transfer To', width: 130 },
   { field: 'memo', headerName: 'Memo', width: 140 },
-  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: CashAmountCell, type: 'numericColumn' },
-  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: CashBalanceCell, type: 'numericColumn' },
+  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: CashAmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
+  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: CashBalanceCell, cellRendererParams: { currency }, type: 'numericColumn' },
   { headerName: 'Status', width: 170, cellRenderer: CashStatusCell },
 ]
 
@@ -102,6 +107,7 @@ const CASH_COLS: ColDef[] = [
 type HoldingEdit = { quantity: string; staking: boolean }
 
 function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown>[]; onSaved: () => void }) {
+  const navigate = useNavigate()
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -147,7 +153,9 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   }
 
   const fmt6 = (v: unknown) => v != null ? fmtQty(Number(v), 6) : '—'
-  const fmtP = (v: unknown) => v != null ? fmtEur(Number(v)) : '—'
+  // Simple/FIFO avg cost and last price are all in the security's own native
+  // currency (row.currency), not EUR — only "Value (EUR)"/"Gain-Loss" below are.
+  const fmtP = (v: unknown, currency?: unknown) => v != null ? fmtCur(Number(v), String(currency ?? 'EUR')) : '—'
   const gain = (row: Record<string, unknown>) =>
     Number(row.quantity) * (Number(row.last_price ?? 0) - Number(row.fifo_avg_price ?? row.simple_avg_price ?? 0)) * Number(row.fx_rate ?? 1)
 
@@ -212,9 +220,9 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
                       onChange={e => setField(id, row, 'staking', e.target.checked)}
                     />
                   </td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.simple_avg_price)}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.fifo_avg_price)}</td>
-                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.last_price)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.simple_avg_price, row.currency)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.fifo_avg_price, row.currency)}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.last_price, row.currency)}</td>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.currency)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums font-semibold">{fmtEur(Number(row.value_eur ?? 0))}</td>
                   <td className={`py-1.5 pr-3 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(gl)}</td>
@@ -265,6 +273,16 @@ export default function Investments() {
     .filter(a => INVESTMENT_ACCOUNT_TYPES.includes(String(a.type ?? '')))
     .filter(a => showInactive || Boolean(a.is_active))
 
+  // The transaction being edited may belong to an inactive account that's
+  // filtered out of investmentAccounts above — without this, the modal's
+  // account <select> would have no matching <option>, silently showing no
+  // account selected even though form.accounts_id is set correctly.
+  const modalAccounts = useMemo(() => {
+    if (!form.accounts_id || investmentAccounts.some(a => String(a.id) === form.accounts_id)) return investmentAccounts
+    const current = (accounts as Record<string, unknown>[]).find(a => String(a.id) === form.accounts_id)
+    return current ? [...investmentAccounts, current] : investmentAccounts
+  }, [investmentAccounts, accounts, form.accounts_id])
+
   const { data: holdings = [], isLoading: holdingsLoading } = useQuery({
     queryKey: ['holdings', accountId, includeClosed],
     queryFn: () => getHoldings(accountId ?? undefined, includeClosed),
@@ -308,6 +326,7 @@ export default function Investments() {
     s + Number(h.quantity) * (Number(h.last_price ?? 0) - Number(h.fifo_avg_price ?? h.simple_avg_price ?? 0)) * Number(h.fx_rate ?? 1), 0)
 
   const selectedAccount = investmentAccounts.find(a => Number(a.id) === accountId)
+  const cashColDefs = useMemo(() => makeCashCols(String(selectedAccount?.currency ?? 'EUR')), [selectedAccount])
 
   const CASH_OUT_ACTIONS = new Set(['Buy', 'MiscExp', 'CashOut'])
   const CASH_IN_ACTIONS = new Set(['Sell', 'Dividend', 'IntInc', 'CashIn', 'RtrnCap', 'MiscInc'])
@@ -409,9 +428,10 @@ export default function Investments() {
         subtitle={(() => {
           const accName = selectedAccount ? String(selectedAccount.name) + ' · ' : ''
           const runningBalance = invWithBalance.length > 0 ? Number((invWithBalance[0] as Record<string, unknown>).running_balance ?? 0) : 0
-          const displayValue = totalValue !== 0 ? totalValue : runningBalance
           if (tab === 'holdings') return `${accName}Portfolio: ${fmtEur(totalValue)} · Unrealized: ${fmtEur(totalGain)}`
-          if (selectedAccount) return `${accName}Balance: ${fmtEur(displayValue)}`
+          // totalValue (EUR, summed across holdings) takes priority; the running-balance
+          // fallback is the account's own ledger balance, in the account's native currency.
+          if (selectedAccount) return `${accName}Balance: ${totalValue !== 0 ? fmtEur(totalValue) : fmtCur(runningBalance, String(selectedAccount.currency ?? 'EUR'))}`
           return 'Investment transaction history'
         })()}
         actions={
@@ -560,7 +580,7 @@ export default function Investments() {
                 <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
                   <AgGridReact
                     rowData={cashRows}
-                    columnDefs={CASH_COLS}
+                    columnDefs={cashColDefs}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
                     onGridReady={e => e.api.autoSizeAllColumns()}
@@ -619,6 +639,7 @@ export default function Investments() {
           onDelete={cashTx.form.id ? cashTx.handleDelete : undefined}
           onClose={cashTx.close}
           onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string, unknown>[]) => [...(old ?? []), c])}
           saving={cashTx.saving}
           error={cashTx.saveError}
           recurringEnabled={cashTx.recurringEnabled}
@@ -642,7 +663,7 @@ export default function Investments() {
         <InvTransactionModal
           form={form}
           onChange={setForm}
-          accounts={investmentAccounts}
+          accounts={modalAccounts}
           allAccounts={accounts as Record<string, unknown>[]}
           securities={securities as Record<string,unknown>[]}
           onSave={handleSave}

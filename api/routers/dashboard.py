@@ -521,24 +521,15 @@ def get_draft_transactions():
 
 @router.post("/confirm-draft/{transaction_id}")
 def confirm_draft(transaction_id: int):
-    conn = get_connection()
+    from database.queries import confirm_draft_transaction
     try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s AND Is_Draft = TRUE",
-            (transaction_id,)
-        )
-        if cur.rowcount == 0:
+        if not confirm_draft_transaction(transaction_id):
             raise HTTPException(404, "Draft not found")
-        conn.commit()
         return {"message": "Confirmed"}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
-    finally:
-        conn.close()
 
 
 @router.delete("/delete-draft/{transaction_id}")
@@ -563,18 +554,12 @@ def delete_draft(transaction_id: int):
 
 @router.post("/confirm-all-drafts")
 def confirm_all_drafts():
-    conn = get_connection()
+    from database.queries import confirm_all_draft_transactions
     try:
-        cur = conn.cursor()
-        cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Is_Draft = TRUE")
-        count = cur.rowcount
-        conn.commit()
+        count = confirm_all_draft_transactions()
         return {"confirmed": count}
     except Exception as e:
-        conn.rollback()
         raise HTTPException(500, str(e))
-    finally:
-        conn.close()
 
 @router.post("/monthly-summaries/generate")
 def generate_monthly_summary(data: dict):

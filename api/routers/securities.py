@@ -583,12 +583,15 @@ def execute_corporate_action(sec_id: int, data: dict):
                 _refresh_balance(cur, cash_account_id)
 
         conn.commit()
-        return {"ok": True, "corporate_action_id": ca_id, "transactions_inserted": len(holdings)}
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
     finally:
         conn.close()
+
+    from database.crud import update_holdings
+    update_holdings()
+    return {"ok": True, "corporate_action_id": ca_id, "transactions_inserted": len(holdings)}
 
 
 # ── Price Anomalies ───────────────────────────────────────────────────────────

@@ -423,7 +423,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       const pnl = Number(r.unrealised_pnl ?? 0)
       const costPerShare = qty ? cost / qty : null
       const pnlPct = cost ? pnl / cost * 100 : null
-      return `${r.account}\t${fmt(r.qty_held)}\t${fmt(r.cost_basis, 2)}\t${fmt(costPerShare, 4)}\t${fmt(r.current_value, 2)}\t${fmt(r.unrealised_pnl, 2)}\t${pnlPct != null ? pnlPct.toFixed(2) + '%' : '—'}`
+      return `${r.account}\t${fmt(r.qty_held, 8)}\t${fmt(r.cost_basis, 2)}\t${fmt(costPerShare, 4)}\t${fmt(r.current_value, 2)}\t${fmt(r.unrealised_pnl, 2)}\t${pnlPct != null ? pnlPct.toFixed(2) + '%' : '—'}`
     }).join('\n')
     navigator.clipboard.writeText(header + '\n' + rows)
   }, [holdings.holdings])
@@ -431,7 +431,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const copyTransactions = useCallback(() => {
     const header = 'Account\tDate\tAction\tQuantity\tPrice/Share\tCommission\tW. Tax\tTotal (Sec. Cur.)\tTotal (Acc. Cur.)\tCurrency\tDescription'
     const rows = transactions.map((r: Record<string, unknown>) =>
-      [r.account, r.date, r.action, fmt(r.quantity), fmt(r.price_per_share), fmt(r.commission, 2),
+      [r.account, r.date, r.action, fmt(r.quantity, 8), fmt(r.price_per_share), fmt(r.commission, 2),
        r.tax_amount != null ? fmt(r.tax_amount, 2) : '', fmt(r.total_sec_cur, 2), fmt(r.total_acc_cur, 2), r.currency, r.description ?? ''].join('\t')
     ).join('\n')
     navigator.clipboard.writeText(header + '\n' + rows)
@@ -444,7 +444,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Transactions" value={String(transactions.length)} />
-        <StatCard label="Total Qty Held" value={fmt(totalQty)} />
+        <StatCard label="Total Qty Held" value={fmt(totalQty, 8)} />
         <StatCard
           label={holdings.latest_price != null ? `Price (${holdings.price_date})` : 'Price'}
           value={holdings.latest_price != null ? fmt(holdings.latest_price, 4) : '—'}
@@ -467,7 +467,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
             rowData={holdings.holdings}
             columnDefs={[
               { field: 'account', headerName: 'Account', flex: 2 },
-              { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+              { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
               { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               {
                 headerName: 'Cost/Share', flex: 1,
@@ -516,7 +516,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'account', headerName: 'Account', width: 180 },
               { field: 'date', headerName: 'Date', width: 120 },
               { field: 'action', headerName: 'Action', width: 100 },
-              { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+              { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
               { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
               { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : {} },
@@ -824,20 +824,20 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     if (eventGroup === 'split' || eventGroup === 'default_delisting') return [
       { field: 'account', headerName: 'Account', flex: 2 },
       { field: 'action', headerName: 'Action', width: 90 },
-      { field: 'qty_before', headerName: 'Qty Before', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-      { field: 'delta', headerName: 'Delta', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-      { field: 'qty_after', headerName: 'Qty After', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'qty_before', headerName: 'Qty Before', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+      { field: 'delta', headerName: 'Delta', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+      { field: 'qty_after', headerName: 'Qty After', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
     ]
     if (eventGroup === 'return_of_capital') return [
       { field: 'account', headerName: 'Account', flex: 2 },
-      { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'amount_per_share', headerName: 'Amount/Share', width: 130, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
       { field: 'total', headerName: 'Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'currency', headerName: 'Ccy', width: 70 },
     ]
     return [
       { field: 'account', headerName: 'Account', flex: 2 },
-      { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'gross_per_share', headerName: 'Gross/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
       { field: 'gross_total', headerName: 'Gross Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'tax', headerName: 'Tax', width: 100, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },

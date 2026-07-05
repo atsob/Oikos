@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -9,7 +9,7 @@ import {
   syncBalances,
 } from '@/lib/api'
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton } from '@/components/ui'
-import { fmtEur, fmtDate } from '@/lib/utils'
+import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 
@@ -26,11 +26,13 @@ function monthsAgo(n: number) {
 function ytdStart() { return `${new Date().getFullYear()}-01-01` }
 
 // ── Cell renderers ────────────────────────────────────────────────────────────
-function AmountCell({ value }: { value: number }) {
-  return <span className={`font-semibold tabular-nums ${value < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(value)}</span>
+// Transaction amounts/balances are in the account's own native currency, not
+// always EUR — currency is passed in via cellRendererParams (see makeColDefs).
+function AmountCell({ value, currency }: { value: number; currency?: string }) {
+  return <span className={`font-semibold tabular-nums ${value < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtCur(value, currency)}</span>
 }
-function BalanceCell({ value }: { value: number }) {
-  return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtEur(value)}</span>
+function BalanceCell({ value, currency }: { value: number; currency?: string }) {
+  return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtCur(value, currency)}</span>
 }
 function ClearedCell({ data }: { data: Record<string, unknown> }) {
   if (data.is_draft) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">Draft</span>
@@ -43,15 +45,15 @@ function ClearedCell({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-const COL_DEFS: ColDef[] = [
+const makeColDefs = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
   { field: 'target_account', headerName: 'Transfer To', width: 130 },
   { field: 'memo', headerName: 'Memo', width: 140 },
-  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, type: 'numericColumn' },
-  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, type: 'numericColumn' },
+  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
+  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, cellRendererParams: { currency }, type: 'numericColumn' },
   { headerName: 'Status', width: 170, cellRenderer: ClearedCell },
 ]
 
@@ -142,12 +144,14 @@ export default function Register() {
   const selectedAccount = (accounts as Record<string, unknown>[]).find(a => a.id === accountId)
   const selectedAccountFuture = (accountsFuture as Record<string, unknown>[]).find(a => a.id === accountId)
   const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
+  const accountCurrency = String(selectedAccount?.currency ?? 'EUR')
+  const colDefs = useMemo(() => makeColDefs(accountCurrency), [accountCurrency])
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
         title="Cash Register"
-        subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtEur(Number(selectedAccount.balance))}` : 'Select an account'}
+        subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}` : 'Select an account'}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
@@ -258,21 +262,21 @@ export default function Register() {
               <>
                 <div>
                   <p className="text-xs text-slate-500 mb-0.5">Balance to Date</p>
-                  <p className={`text-sm font-bold tabular-nums ${balToDate < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(balToDate)}</p>
+                  <p className={`text-sm font-bold tabular-nums ${balToDate < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtCur(balToDate, accountCurrency)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 mb-0.5">Balance incl. Future Transactions</p>
-                  <p className={`text-sm font-bold tabular-nums ${balWithFuture < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(balWithFuture)}</p>
+                  <p className={`text-sm font-bold tabular-nums ${balWithFuture < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtCur(balWithFuture, accountCurrency)}</p>
                 </div>
                 {creditLimit > 0 && (
                   <>
                     <div>
                       <p className="text-xs text-slate-500 mb-0.5">Available Credit</p>
-                      <p className={`text-sm font-bold tabular-nums ${(availCredit ?? 0) < creditLimit * 0.1 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(availCredit ?? 0)}</p>
+                      <p className={`text-sm font-bold tabular-nums ${(availCredit ?? 0) < creditLimit * 0.1 ? 'text-red-600' : 'text-green-700'}`}>{fmtCur(availCredit ?? 0, accountCurrency)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500 mb-0.5">Credit Limit</p>
-                      <p className="text-sm font-bold tabular-nums text-slate-700">{fmtEur(creditLimit)}</p>
+                      <p className="text-sm font-bold tabular-nums text-slate-700">{fmtCur(creditLimit, accountCurrency)}</p>
                     </div>
                     <div className="flex-1 min-w-48">
                       <p className="text-xs text-slate-500 mb-1">Credit Used</p>
@@ -284,7 +288,7 @@ export default function Register() {
                           })()}
                         </div>
                         <span className="text-xs tabular-nums text-slate-600 whitespace-nowrap">
-                          {fmtEur(Math.abs(balToDate))} / {fmtEur(creditLimit)}
+                          {fmtCur(Math.abs(balToDate), accountCurrency)} / {fmtCur(creditLimit, accountCurrency)}
                         </span>
                       </div>
                     </div>
@@ -308,7 +312,7 @@ export default function Register() {
               <AgGridReact
                 ref={gridRef}
                 rowData={txQuery.data?.transactions ?? []}
-                columnDefs={COL_DEFS}
+                columnDefs={colDefs}
                 onGridReady={onGridReady}
                 onRowClicked={onRowClicked}
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
@@ -347,6 +351,7 @@ export default function Register() {
           onDelete={tx.form.id ? tx.handleDelete : undefined}
           onClose={tx.close}
           onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string,unknown>[]) => [...(old ?? []), c])}
           saving={tx.saving}
           error={tx.saveError}
           recurringEnabled={tx.recurringEnabled}
@@ -408,7 +413,7 @@ export default function Register() {
                     </div>
                   </div>
                   <span className={`text-sm font-semibold tabular-nums shrink-0 ${Number(row.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
-                    {fmtEur(Number(row.amount))}
+                    {fmtCur(Number(row.amount), row.currency as string)}
                   </span>
                 </button>
               ))}

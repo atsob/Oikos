@@ -5,12 +5,14 @@ import {
   createTransaction, updateTransaction, deleteTransaction,
   createTransfer, createRecurringTemplate,
 } from '@/lib/api'
-import { Input, Button, SearchableSelect, useEscapeKey } from '@/components/ui'
-import { fmtEur } from '@/lib/utils'
+import { Input, Button, useEscapeKey } from '@/components/ui'
+import { fmtEur, cn } from '@/lib/utils'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
 import { api } from '@/lib/api'
 
 export const PERIODICITIES = ['Daily', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly', 'Semiannually', 'Annually']
+
+export const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 
 export function today() { return new Date().toISOString().slice(0, 10) }
 
@@ -78,6 +80,7 @@ interface ModalProps {
   onDelete?: () => void
   onClose: () => void
   onPayeeCreated: (p: { id: number; name: string }) => void
+  onCategoryCreated?: (c: { id: number; full_path: string; type: string }) => void
   saving: boolean
   error: string | null
   recurringEnabled: boolean
@@ -187,11 +190,138 @@ function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {
   )
 }
 
+/**
+ * Category selector with inline "＋ Add" when no match is found — like PayeeSelect,
+ * but categories are hierarchical (full_path uses " : " as a separator) and require
+ * a Categories_Type, so creating one is a small two-step affair: pick/confirm a
+ * type, then create. Typing "Vacation : Skiing" walks each " : "-separated segment,
+ * reusing any that already exist as an exact full_path match and only creating the
+ * missing tail — so nesting a new category under an existing parent needs no
+ * separate "choose parent" step.
+ */
+function CategorySelect({ value, onChange, categories, onCategoryCreated, className }: {
+  value: string
+  onChange: (v: string) => void
+  categories: Record<string, unknown>[]
+  onCategoryCreated?: (c: { id: number; full_path: string; type: string }) => void
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [newType, setNewType] = useState('Expense')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selectable = categories.filter(c => !c._disabled)
+  const selectedLabel = selectable.find(c => String(c.id) === value)?.full_path as string ?? ''
+  const filtered = query
+    ? categories.filter(c => c._disabled || String(c.full_path).toLowerCase().includes(query.toLowerCase()))
+    : categories
+  const trimmedQuery = query.trim()
+  const exactMatch = selectable.some(c => String(c.full_path).toLowerCase() === trimmedQuery.toLowerCase())
+  const noMatch = trimmedQuery !== '' && !exactMatch
+
+  const handleOpen = () => { setOpen(true); setQuery(''); setTimeout(() => inputRef.current?.focus(), 0) }
+  const handleClose = () => { setOpen(false); setQuery('') }
+  const handleSelect = useCallback((val: string) => { onChange(val); handleClose() }, [onChange])
+
+  const handleCreate = async () => {
+    const segments = trimmedQuery.split(':').map(s => s.trim()).filter(Boolean)
+    if (!segments.length) return
+    setCreating(true)
+    try {
+      let parentId: number | null = null
+      let pathSoFar = ''
+      let leafId = ''
+      let known = selectable
+      for (const seg of segments) {
+        pathSoFar = pathSoFar ? `${pathSoFar} : ${seg}` : seg
+        const existing = known.find(c => String(c.full_path).toLowerCase() === pathSoFar.toLowerCase())
+        if (existing) {
+          parentId = Number(existing.id)
+          leafId = String(existing.id)
+          continue
+        }
+        const res = await api.post('/static-data/categories', { name: seg, parent_id: parentId, type: newType })
+        const newCat = { id: res.data.id, full_path: pathSoFar, type: newType }
+        onCategoryCreated?.(newCat)
+        known = [...known, newCat]
+        parentId = res.data.id
+        leafId = String(res.data.id)
+      }
+      handleSelect(leafId)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') handleClose()
+    if (e.key === 'Enter') {
+      if (noMatch) { handleCreate(); return }
+      const first = filtered.find(c => !c._disabled)
+      if (first) handleSelect(String(first.id))
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => { if (!containerRef.current?.contains(e.target as Node)) handleClose() }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={containerRef} className={cn('relative', className)}>
+      <button type="button" onClick={handleOpen}
+        className="w-full flex items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-left focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <span className={selectedLabel ? 'text-slate-900' : 'text-slate-400'}>{selectedLabel || '— none —'}</span>
+        <svg className="w-4 h-4 text-slate-400 shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg">
+          <div className="p-2 border-b border-slate-100">
+            <input ref={inputRef} type="text" value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown} placeholder="Search, or type new (e.g. Vacation : Skiing)…"
+              className="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          </div>
+          <ul className="max-h-52 overflow-y-auto py-1">
+            <li className="px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-50 cursor-pointer" onMouseDown={() => handleSelect('')}>— none —</li>
+            {filtered.map((c, i) => c._disabled
+              ? <li key={i} className="px-3 py-1 text-xs text-slate-400 italic select-none">{String(c.full_path)}</li>
+              : <li key={String(c.id)} onMouseDown={() => handleSelect(String(c.id))}
+                  className={`px-3 py-1.5 text-sm cursor-pointer hover:bg-blue-50 hover:text-blue-700 ${String(c.id) === value ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}>
+                  {String(c.full_path)}
+                </li>
+            )}
+            {!noMatch && filtered.filter(c => !c._disabled).length === 0 && (
+              <li className="px-3 py-3 text-sm text-slate-400 text-center">No results</li>
+            )}
+            {noMatch && (
+              <li className="border-t border-slate-100 p-2 flex items-center gap-1.5" onMouseDown={e => e.preventDefault()}>
+                <select value={newType} onChange={e => setNewType(e.target.value)}
+                  className="rounded border border-slate-300 px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  {CATEGORY_TYPES.map(t => <option key={t}>{t}</option>)}
+                </select>
+                <button onClick={handleCreate} disabled={creating}
+                  className="flex-1 flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50">
+                  <Plus size={13} /> {creating ? 'Adding…' : `Add "${trimmedQuery}"`}
+                </button>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function TxModal({
   form, splits, useSplits, setUseSplits,
   onFormChange, onSplitsChange,
   payees, categories, accounts,
-  onSave, onDelete, onClose, onPayeeCreated, saving, error,
+  onSave, onDelete, onClose, onPayeeCreated, onCategoryCreated, saving, error,
   recurringEnabled, setRecurringEnabled,
   recurringName, setRecurringName,
   recurringFreq, setRecurringFreq,
@@ -325,8 +455,8 @@ export function TxModal({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-slate-500 block mb-1">Category</label>
-                    <SearchableSelect value={form.categories_id} onChange={v => set('categories_id', v)}
-                      options={sortedCategories.map(c => ({ value: String(c.id), label: String(c.full_path), disabled: !!c._disabled }))} />
+                    <CategorySelect value={form.categories_id} onChange={v => set('categories_id', v)}
+                      categories={sortedCategories} onCategoryCreated={onCategoryCreated} />
                   </div>
                   <div>
                     <label className="text-xs font-medium text-slate-500 block mb-1">Memo</label>
@@ -342,8 +472,8 @@ export function TxModal({
                   </div>
                   {splits.map((sp, i) => (
                     <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                      <SearchableSelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
-                        options={sortedCategories.map(c => ({ value: String(c.id), label: String(c.full_path), disabled: !!c._disabled }))} />
+                      <CategorySelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
+                        categories={sortedCategories} onCategoryCreated={onCategoryCreated} />
                       <Input className="col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
                       <Input className="col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
                       <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>

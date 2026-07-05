@@ -1659,20 +1659,26 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
                 CASE
                     WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
                         THEN ABS(t_cash.Total_Amount)
-                    WHEN c.Currencies_ShortName != 'EUR'
-                        THEN ABS(i.Total_Amount_AccCur) * COALESCE(
-                            (SELECT fx.FX_Rate FROM Historical_FX fx
-                             WHERE fx.Currencies_Id_1 = c.Currencies_Id
-                               AND fx.Date <= i.Date
-                             ORDER BY fx.Date DESC LIMIT 1), 1.0)
-                    ELSE ABS(i.Total_Amount_AccCur)
+                    WHEN i.Total_Amount_AccCur IS NOT NULL AND i.Total_Amount_AccCur != 0
+                        THEN CASE WHEN c.Currencies_ShortName != 'EUR'
+                            THEN ABS(i.Total_Amount_AccCur) * COALESCE(
+                                (SELECT fx.FX_Rate FROM Historical_FX fx
+                                 WHERE fx.Currencies_Id_1 = c.Currencies_Id
+                                   AND fx.Date <= i.Date
+                                 ORDER BY fx.Date DESC LIMIT 1), 1.0)
+                            ELSE ABS(i.Total_Amount_AccCur)
+                        END
+                    -- Total_Amount_AccCur missing/zero (e.g. a same-day sell+rebuy cost-basis
+                    -- reset with no recorded cash amount) — fall back to price*qty*FX_Rate
+                    -- rather than dropping the row, which would silently distort later lot
+                    -- matching (a skipped buy/sell shifts which lots later sells consume).
+                    ELSE ABS(i.Price_Per_Share) * ABS(COALESCE(i.Quantity, 0)) * COALESCE(i.FX_Rate, 1.0)
                 END AS amount_eur
             FROM Investments i
             JOIN Securities s   ON s.Securities_Id = i.Securities_Id
             JOIN Currencies c   ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
             WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut','Expire','CashIn','CashOut')
-              AND i.Total_Amount_AccCur IS NOT NULL
         )
         SELECT
             te.*,
@@ -1701,7 +1707,19 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
 
 
 def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO') -> pd.DataFrame:
-    """FIFO or LIFO lot matching — port of Streamlit _compute_lot_gains."""
+    """FIFO or LIFO lot matching.
+
+    Tracks both long lots and short lots per (security, account). A sell first
+    closes long lots (recognised now); any quantity left over opens/extends a
+    short position instead of being treated as free profit — the previous
+    version simply stopped once the lot queue ran dry, but still used the
+    *full* sale amount as proceeds against only the partially-matched cost
+    basis, silently inflating gains for any account that ever sold short (e.g.
+    margin/CFD accounts). A buy mirrors this: it first covers outstanding
+    short lots (recognised now, gain = the original short-sale proceeds minus
+    this cover's cost) before any leftover opens a new long lot. Ordinary
+    long-only accounts are numerically unaffected.
+    """
     from collections import deque
     BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn', 'CashIn'}
     SELL_ACTIONS = {'Sell', 'Expire', 'ShrOut', 'CashOut'}
@@ -1709,56 +1727,186 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
     results = []
 
     for (sec_id, acc_id), grp in df_all.groupby(['securities_id', 'accounts_id'], sort=False):
-        lot_q: deque = deque()
+        long_lots: deque = deque()
+        short_lots: deque = deque()
+
+        def make_row(row, date, action, qty, proceeds, cost, first_date):
+            days_held = (date - first_date).days if first_date else 0
+            results.append({
+                'securities_id':   sec_id,
+                'security':        row['securities_name'],
+                'ticker':          None,
+                'account':         row['account_name'],
+                'date':            date.date().isoformat(),
+                'action':          action,
+                'quantity':        qty,
+                'sell_price':      row.get('price_per_share'),
+                'avg_cost':        cost / qty if qty > 1e-9 else None,
+                'proceeds_eur':    proceeds,
+                'cost_eur':        cost,
+                'gain_loss_eur':   proceeds - cost,
+                'holding_type':    'Long-term' if days_held >= 365 else 'Short-term',
+                'is_tax_exempt':   bool(row.get('is_tax_exempt', False)),
+                'instrument_type': row.get('instrument_type'),
+                'securities_type': row.get('securities_type'),
+                'tax_category':    row.get('tax_category'),
+                'gains_taxable':   bool(row['gains_taxable']) if pd.notna(row.get('gains_taxable')) else None,
+                'gains_rate':      float(row['gains_rate']) if pd.notna(row.get('gains_rate')) else None,
+                'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
+            })
+
         for _, row in grp.sort_values(['date', 'investments_id']).iterrows():
             action = row['action']
             qty    = float(row['quantity'])   if pd.notna(row['quantity'])   else 0.0
             amount = float(row['amount_eur']) if pd.notna(row['amount_eur']) else 0.0
+            date = row['date']
+            if qty <= 1e-9:
+                continue
+            cost_ps = amount / qty
 
-            if action in BUY_ACTIONS and qty > 1e-9:
-                lot_q.append({'date': row['date'], 'qty': qty, 'cost_ps': amount / qty})
-            elif action in SELL_ACTIONS and qty > 1e-9:
-                sell_date = row['date']
-                qty_left  = qty
-                cost_basis = 0.0
-                first_buy_date = None
-                while qty_left > 1e-9 and lot_q:
-                    lot = lot_q[-1] if is_lifo else lot_q[0]
+            if action in BUY_ACTIONS:
+                remaining = qty
+                cover_cost, cover_proceeds, cover_qty, first_short_date = 0.0, 0.0, 0.0, None
+                while remaining > 1e-9 and short_lots:
+                    lot = short_lots[-1] if is_lifo else short_lots[0]
+                    if first_short_date is None:
+                        first_short_date = lot['date']
+                    consumed = min(lot['qty'], remaining)
+                    cover_proceeds += consumed * lot['cost_ps']  # what the short sale originally received
+                    cover_cost     += consumed * cost_ps         # what covering it now costs
+                    cover_qty      += consumed
+                    lot['qty']     -= consumed
+                    remaining      -= consumed
+                    if lot['qty'] < 1e-9:
+                        (short_lots.pop() if is_lifo else short_lots.popleft())
+                if cover_qty > 1e-9 and date.year == tax_year:
+                    make_row(row, date, action, cover_qty, cover_proceeds, cover_cost, first_short_date)
+                if remaining > 1e-9:
+                    long_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
+
+            elif action in SELL_ACTIONS:
+                remaining = qty
+                close_cost, close_proceeds, close_qty, first_buy_date = 0.0, 0.0, 0.0, None
+                while remaining > 1e-9 and long_lots:
+                    lot = long_lots[-1] if is_lifo else long_lots[0]
                     if first_buy_date is None:
                         first_buy_date = lot['date']
-                    consumed = min(lot['qty'], qty_left)
-                    cost_basis += consumed * lot['cost_ps']
-                    lot['qty']  -= consumed
-                    qty_left    -= consumed
+                    consumed = min(lot['qty'], remaining)
+                    close_cost     += consumed * lot['cost_ps']
+                    close_proceeds += consumed * cost_ps
+                    close_qty      += consumed
+                    lot['qty']     -= consumed
+                    remaining      -= consumed
                     if lot['qty'] < 1e-9:
-                        if is_lifo:
-                            lot_q.pop()
-                        else:
-                            lot_q.popleft()
-                if sell_date.year == tax_year:
-                    days_held = (sell_date - first_buy_date).days if first_buy_date else 0
-                    results.append({
-                        'securities_id':   sec_id,
-                        'security':        row['securities_name'],
-                        'ticker':          None,
-                        'account':         row['account_name'],
-                        'date':            sell_date.date().isoformat(),
-                        'action':          action,
-                        'quantity':        qty,
-                        'sell_price':      row.get('price_per_share'),
-                        'avg_cost':        cost_basis / qty if qty > 1e-9 else None,
-                        'proceeds_eur':    amount,
-                        'cost_eur':        cost_basis,
-                        'gain_loss_eur':   amount - cost_basis,
-                        'holding_type':    'Long-term' if days_held >= 365 else 'Short-term',
-                        'is_tax_exempt':   bool(row.get('is_tax_exempt', False)),
-                        'instrument_type': row.get('instrument_type'),
-                        'securities_type': row.get('securities_type'),
-                        'tax_category':    row.get('tax_category'),
-                        'gains_taxable':   bool(row['gains_taxable']) if pd.notna(row.get('gains_taxable')) else None,
-                        'gains_rate':      float(row['gains_rate']) if pd.notna(row.get('gains_rate')) else None,
-                        'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
-                    })
+                        (long_lots.pop() if is_lifo else long_lots.popleft())
+                if close_qty > 1e-9 and date.year == tax_year:
+                    make_row(row, date, action, close_qty, close_proceeds, close_cost, first_buy_date)
+                if remaining > 1e-9:
+                    short_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
+
+    cols = ['securities_id','security','ticker','account','date','action','quantity',
+            'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
+            'holding_type','is_tax_exempt','instrument_type','securities_type',
+            'tax_category','gains_taxable','gains_rate','gains_tax_code']
+    return pd.DataFrame(results, columns=cols) if results else pd.DataFrame(columns=cols)
+
+
+def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
+    """Weighted-Average-Cost gains, using a single running average per position.
+
+    Maintains one (qty, avg_cost) pair per (security, account) for the long
+    side and one for the short side. A buy blends into the long average (or
+    first covers any outstanding short at that short's own average cost); a
+    sell is costed at the current long average — which does NOT change as a
+    result of the sell, only the quantity shrinks — (or opens/extends a short
+    position at the sale's own average price if oversold). The average resets
+    only when the corresponding quantity hits exactly zero.
+
+    The previous implementation recomputed an average from every buy since
+    the last time the position was fully flat, which double-counted buy
+    quantity/value already consumed by an earlier partial sell within the
+    same still-open episode, overstating cost basis on later sells in that
+    episode. This version tracks the position continuously instead.
+    """
+    BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn', 'CashIn'}
+    SELL_ACTIONS = {'Sell', 'Expire', 'ShrOut', 'CashOut'}
+    results = []
+
+    for (sec_id, acc_id), grp in df_all.groupby(['securities_id', 'accounts_id'], sort=False):
+        long_qty, long_avg_cost, long_open_date = 0.0, 0.0, None
+        short_qty, short_avg_cost, short_open_date = 0.0, 0.0, None
+
+        def make_row(row, date, action, qty, proceeds, cost, open_date):
+            days_held = (date - open_date).days if open_date else 0
+            results.append({
+                'securities_id':   sec_id,
+                'security':        row['securities_name'],
+                'ticker':          None,
+                'account':         row['account_name'],
+                'date':            date.date().isoformat(),
+                'action':          action,
+                'quantity':        qty,
+                'sell_price':      row.get('price_per_share'),
+                'avg_cost':        cost / qty if qty > 1e-9 else None,
+                'proceeds_eur':    proceeds,
+                'cost_eur':        cost,
+                'gain_loss_eur':   proceeds - cost,
+                'holding_type':    'Long-term' if days_held >= 365 else 'Short-term',
+                'is_tax_exempt':   bool(row.get('is_tax_exempt', False)),
+                'instrument_type': row.get('instrument_type'),
+                'securities_type': row.get('securities_type'),
+                'tax_category':    row.get('tax_category'),
+                'gains_taxable':   bool(row['gains_taxable']) if pd.notna(row.get('gains_taxable')) else None,
+                'gains_rate':      float(row['gains_rate']) if pd.notna(row.get('gains_rate')) else None,
+                'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
+            })
+
+        for _, row in grp.sort_values(['date', 'investments_id']).iterrows():
+            action = row['action']
+            qty    = float(row['quantity'])   if pd.notna(row['quantity'])   else 0.0
+            amount = float(row['amount_eur']) if pd.notna(row['amount_eur']) else 0.0
+            date = row['date']
+            if qty <= 1e-9:
+                continue
+            cost_ps = amount / qty
+
+            if action in BUY_ACTIONS:
+                remaining = qty
+                if short_qty > 1e-9:
+                    cover_qty = min(short_qty, remaining)
+                    cover_proceeds = cover_qty * short_avg_cost  # the short sale's original proceeds/share
+                    cover_cost     = cover_qty * cost_ps         # cost to cover now
+                    if date.year == tax_year:
+                        make_row(row, date, action, cover_qty, cover_proceeds, cover_cost, short_open_date)
+                    short_qty -= cover_qty
+                    remaining -= cover_qty
+                    if short_qty < 1e-9:
+                        short_qty, short_avg_cost, short_open_date = 0.0, 0.0, None
+                if remaining > 1e-9:
+                    if long_qty < 1e-9:
+                        long_open_date = date
+                    new_qty = long_qty + remaining
+                    long_avg_cost = (long_qty * long_avg_cost + remaining * cost_ps) / new_qty
+                    long_qty = new_qty
+
+            elif action in SELL_ACTIONS:
+                remaining = qty
+                if long_qty > 1e-9:
+                    close_qty = min(long_qty, remaining)
+                    close_cost     = close_qty * long_avg_cost   # fixed average — unaffected by this sell
+                    close_proceeds = close_qty * cost_ps
+                    if date.year == tax_year:
+                        make_row(row, date, action, close_qty, close_proceeds, close_cost, long_open_date)
+                    long_qty -= close_qty
+                    remaining -= close_qty
+                    if long_qty < 1e-9:
+                        long_qty, long_avg_cost, long_open_date = 0.0, 0.0, None
+                if remaining > 1e-9:
+                    if short_qty < 1e-9:
+                        short_open_date = date
+                    new_qty = short_qty + remaining
+                    short_avg_cost = (short_qty * short_avg_cost + remaining * cost_ps) / new_qty
+                    short_qty = new_qty
 
     cols = ['securities_id','security','ticker','account','date','action','quantity',
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
@@ -1785,159 +1933,14 @@ def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
             )
         year = int(yr_df.iloc[0]["yr"]) if not yr_df.empty else _date.today().year
 
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+
     if method.upper() in ('FIFO', 'LIFO'):
-        with get_db() as conn:
-            df_all = _get_all_inv_txns_for_gains(conn)
         df = _compute_lot_gains(df_all, year, method=method.upper())
         return _df_to_list(df)
 
-    query = """
-    WITH
-    txn_with_eur AS (
-        SELECT
-            i.Investments_Id,
-            i.Securities_Id,
-            i.Accounts_Id,
-            i.Date,
-            i.Action,
-            i.Quantity,
-            i.Total_Amount_AccCur,
-            i.Price_Per_Share,
-            i.Transactions_Id,
-            CASE
-                WHEN i.Transactions_Id IS NOT NULL AND t_cash.Total_Amount IS NOT NULL
-                THEN ABS(t_cash.Total_Amount)
-                WHEN c.Currencies_ShortName != 'EUR'
-                THEN ABS(i.Total_Amount_AccCur) * COALESCE(
-                    (SELECT fx.FX_Rate FROM Historical_FX fx
-                     WHERE fx.Currencies_Id_1 = c.Currencies_Id AND fx.Date <= i.Date
-                     ORDER BY fx.Date DESC LIMIT 1),
-                    (SELECT fx.FX_Rate FROM Historical_FX fx
-                     WHERE fx.Currencies_Id_1 = c.Currencies_Id
-                     ORDER BY fx.Date ASC LIMIT 1),
-                    1.0)
-                ELSE ABS(i.Total_Amount_AccCur)
-            END AS amount_eur
-        FROM Investments i
-        JOIN Securities   s      ON s.Securities_Id = i.Securities_Id
-        JOIN Currencies   c      ON c.Currencies_Id = s.Currencies_Id
-        LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
-    ),
-    txn_running_pos AS (
-        SELECT
-            tf.*,
-            SUM(
-                CASE
-                    WHEN tf.Action IN ('Buy','ShrIn','Reinvest','Vest','Grant','Exercise','CashIn')
-                         THEN  ABS(tf.Quantity)
-                    WHEN tf.Action IN ('Sell','ShrOut','Expire')
-                         THEN -ABS(tf.Quantity)
-                    ELSE 0
-                END
-            ) OVER (
-                PARTITION BY tf.Securities_Id, tf.Accounts_Id
-                ORDER BY tf.Date, tf.Investments_Id
-                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-            ) AS running_qty
-        FROM txn_with_eur tf
-    ),
-    last_full_close AS (
-        SELECT
-            s.Investments_Id AS sell_id,
-            MAX(b.Date)      AS last_close_date
-        FROM txn_running_pos s
-        JOIN txn_running_pos b
-            ON  b.Securities_Id = s.Securities_Id
-            AND b.Accounts_Id   = s.Accounts_Id
-            AND b.Date          < s.Date
-            AND b.running_qty   = 0
-        WHERE s.Action IN ('Sell','Expire')
-          AND EXTRACT(year FROM s.Date) = %(year)s
-        GROUP BY s.Investments_Id
-    ),
-    buy_basis_per_sell AS (
-        SELECT
-            sell.Investments_Id                                    AS sell_id,
-            SUM(buy.amount_eur) / NULLIF(SUM(ABS(buy.Quantity)),0) AS wac_per_share_eur
-        FROM txn_running_pos sell
-        LEFT JOIN last_full_close lfc ON lfc.sell_id = sell.Investments_Id
-        JOIN txn_running_pos buy
-            ON  buy.Securities_Id = sell.Securities_Id
-            AND buy.Accounts_Id   = sell.Accounts_Id
-            AND buy.Date         <= sell.Date
-            AND buy.Date          > COALESCE(lfc.last_close_date, '1900-01-01'::date)
-            AND buy.Action        IN ('Buy','Reinvest','ShrIn','CashIn')
-            AND buy.Quantity       > 0
-        WHERE sell.Action IN ('Sell','Expire')
-          AND EXTRACT(year FROM sell.Date) = %(year)s
-        GROUP BY sell.Investments_Id
-    ),
-    last_buy_per_sell AS (
-        SELECT
-            sell.Investments_Id AS sell_id,
-            MAX(buy.Date)       AS last_buy_date
-        FROM txn_running_pos sell
-        LEFT JOIN last_full_close lfc ON lfc.sell_id = sell.Investments_Id
-        JOIN txn_running_pos buy
-            ON  buy.Securities_Id = sell.Securities_Id
-            AND buy.Accounts_Id   = sell.Accounts_Id
-            AND buy.Date         <= sell.Date
-            AND buy.Date          > COALESCE(lfc.last_close_date, '1900-01-01'::date)
-            AND buy.Action        IN ('Buy','Reinvest','ShrIn','CashIn')
-        WHERE sell.Action IN ('Sell','Expire')
-          AND EXTRACT(year FROM sell.Date) = %(year)s
-        GROUP BY sell.Investments_Id
-    )
-    SELECT
-        s.Securities_Id                                                        AS securities_id,
-        s.Securities_Name                                                      AS security,
-        s.Ticker                                                               AS ticker,
-        a.Accounts_Name                                                        AS account,
-        i.Date::text                                                           AS date,
-        i.Action                                                               AS action,
-        ABS(i.Quantity)                                                        AS quantity,
-        i.Price_Per_Share                                                      AS sell_price,
-        COALESCE(bb.wac_per_share_eur,
-                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
-                                                                               AS avg_cost,
-        itf.amount_eur                                                         AS proceeds_eur,
-        ABS(i.Quantity) * COALESCE(bb.wac_per_share_eur,
-                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
-                                                                               AS cost_eur,
-        itf.amount_eur
-          - ABS(i.Quantity) * COALESCE(bb.wac_per_share_eur,
-                 i.Price_Per_Share * (itf.amount_eur / NULLIF(ABS(i.Total_Amount_AccCur),0)))
-                                                                               AS gain_loss_eur,
-        CASE
-            WHEN lb.last_buy_date IS NULL OR (i.Date - lb.last_buy_date) < 365
-            THEN 'Short-term'
-            ELSE 'Long-term'
-        END                                                                    AS holding_type,
-        -- Instrument-type override takes precedence over security-level Is_Tax_Exempt
-        CASE WHEN ito.Tax_Category_Override IS NOT NULL THEN FALSE
-             ELSE COALESCE(s.Is_Tax_Exempt, FALSE) END                        AS is_tax_exempt,
-        i.Instrument_Type                                                      AS instrument_type,
-        s.Securities_Type::text                                                AS securities_type,
-        -- Effective tax category: instrument-type override wins over security category
-        COALESCE(ito.Tax_Category_Override, s.Tax_Category)                   AS tax_category,
-        tcr.Gains_Taxable                                                      AS gains_taxable,
-        tcr.Gains_Rate                                                         AS gains_rate,
-        tcr.Gains_Tax_Code                                                     AS gains_tax_code
-    FROM Investments i
-    JOIN txn_with_eur        itf ON itf.Investments_Id = i.Investments_Id
-    JOIN Securities          s   ON s.Securities_Id    = i.Securities_Id
-    JOIN Accounts            a   ON a.Accounts_Id      = i.Accounts_Id
-    LEFT JOIN buy_basis_per_sell bb  ON bb.sell_id = i.Investments_Id
-    LEFT JOIN last_buy_per_sell  lb  ON lb.sell_id = i.Investments_Id
-    LEFT JOIN Instrument_Type_Tax_Override ito ON ito.Instrument_Type = i.Instrument_Type::text
-    LEFT JOIN Tax_Category_Rules           tcr ON tcr.Tax_Category = COALESCE(ito.Tax_Category_Override, s.Tax_Category)
-    WHERE i.Action IN ('Sell','Expire')
-      AND EXTRACT(year FROM i.Date) = %(year)s
-      AND COALESCE(tcr.Show_In_Capital_Gains, TRUE) = TRUE
-    ORDER BY i.Date
-    """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"year": year})
+    df = _compute_wac_gains(df_all, year)
     return _df_to_list(df)
 
 

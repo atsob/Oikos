@@ -114,6 +114,7 @@ def get_investments(
             i.instrument_type AS instrument_type,
             a.accounts_name AS account,
             c.currencies_shortname AS currency,
+            ac.currencies_shortname AS account_currency,
             s.securities_type AS security_type,
             i.description AS notes,
             i.transactions_id AS transactions_id,
@@ -123,6 +124,7 @@ def get_investments(
         LEFT JOIN Securities s ON i.securities_id = s.securities_id
         JOIN Accounts a ON i.accounts_id = a.accounts_id
         LEFT JOIN Currencies c ON s.currencies_id = c.currencies_id
+        LEFT JOIN Currencies ac ON a.currencies_id = ac.currencies_id
         LEFT JOIN Transactions tx ON i.transactions_id = tx.transactions_id
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
