@@ -220,12 +220,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a
           holding from one account to another: the <b>same security</b> — a pure custody transfer, cost basis
-          carried over, no gain or loss — or a <b>different security</b>, which realizes gain/loss on the source
-          at its market price and establishes a fresh cost basis on the destination. An optional fee can be taken
-          in the source security, the destination security, or cash from any account. Because it's a transfer
-          rather than a trade, it's excluded from P&amp;L calculations everywhere in Reports — moving a position
-          between your own accounts never shows up as investment performance.
+          carried over — or a <b>different security</b>, a conversion/swap. An optional fee can be taken in the
+          source security, the destination security, or cash from any account.
         </P>
+        <Note>
+          A same-security transfer with <b>no fee</b> has zero P&amp;L impact — it never shows up as investment
+          performance, just a quantity moving between accounts. A <b>fee taken in the security itself</b> (either
+          side), or converting to a <b>different security</b>, is a genuine disposal at market price and does
+          realize a real gain or loss, exactly like an ordinary sale — only the fee-free custody-transfer portion
+          is excluded from P&amp;L.
+        </Note>
         <Note>
           Holdings shows two cost-basis figures: <b>Simple Avg</b>, a running average cost that blends on every
           buy and resets to zero whenever a position is fully closed out (so units sold long ago never drag down
@@ -321,9 +325,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
-          account and security level, available for every window (D/W/M/Q/YTD/All). Custody transfers and
-          conversions between your own accounts (see Investments → Transfer) are excluded from every P&amp;L
-          figure here, so moving a holding never inflates or deflates a period's performance.
+          account and security level, available for every window (D/W/M/Q/YTD/All). A fee-free, same-security
+          transfer between your own accounts (see Investments → Transfer) never shows up here as performance —
+          but a transfer fee or a cross-security conversion does, since those realize a genuine gain or loss.
         </Note>
 
         <H3>🧾 Investment Tax</H3>
