@@ -574,13 +574,19 @@ def _plan_transfer(cur, p: dict) -> dict:
         if market_price_to <= 0:
             raise ValueError(f"No price data available for {to_sec['name']} on {date}")
 
-        pnl = (market_price_from - cost_basis_from) * qty_sent
-        add_row(from_acc, from_sec, "Sell", qty_sent, market_price_from, description,
-                pnl * _fx_rate_only(cur, from_acc["currencies_id"], from_sec["currencies_id"], date), from_acc["currency"])
-
         net_qty = qty_sent - fee_qty if fee_type == "source" else qty_sent
         if net_qty <= 0:
             raise ValueError("Fee quantity must be less than the quantity sent")
+
+        # Source leg: split into the converting portion and the fee portion (when the fee
+        # is taken from the source) so the fee shows as its own labeled row instead of
+        # being silently folded into a single lump-sum Sell.
+        pnl_rate_from = market_price_from - cost_basis_from
+        add_row(from_acc, from_sec, "Sell", net_qty, market_price_from, description,
+                pnl_rate_from * net_qty * _fx_rate_only(cur, from_acc["currencies_id"], from_sec["currencies_id"], date), from_acc["currency"])
+        if fee_type == "source":
+            add_row(from_acc, from_sec, "Sell", fee_qty, market_price_from, f"{description} — transfer fee",
+                    pnl_rate_from * fee_qty * _fx_rate_only(cur, from_acc["currencies_id"], from_sec["currencies_id"], date), from_acc["currency"])
 
         # Bridge value: from-security ccy -> from-account ccy -> to-account ccy -> to-security ccy
         value = net_qty * market_price_from
@@ -590,11 +596,15 @@ def _plan_transfer(cur, p: dict) -> dict:
         buy_qty = value / market_price_to
 
         if fee_type == "destination":
-            buy_qty -= fee_qty
-            if buy_qty <= 0:
+            if fee_qty >= buy_qty:
                 raise ValueError("Fee quantity must be less than the converted amount")
-
-        add_row(to_acc, to_sec, "Buy", buy_qty, market_price_to, description)
+            # Destination leg: record the full converted amount, then an explicit fee
+            # disposal at the same (just-established) market price, instead of silently
+            # buying a smaller quantity with no record of why.
+            add_row(to_acc, to_sec, "Buy", buy_qty, market_price_to, description)
+            add_row(to_acc, to_sec, "Sell", fee_qty, market_price_to, f"{description} — transfer fee", 0.0, to_acc["currency"])
+        else:
+            add_row(to_acc, to_sec, "Buy", buy_qty, market_price_to, description)
 
     cash_fee = None
     if fee_type == "cash":
