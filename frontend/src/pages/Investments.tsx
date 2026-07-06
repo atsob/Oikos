@@ -13,12 +13,13 @@ import {
 import { api } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
-import { Plus, Save, RefreshCw } from 'lucide-react'
+import { Plus, Save, RefreshCw, ArrowLeftRight } from 'lucide-react'
+import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
 
-const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
+export const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
 
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -265,6 +266,7 @@ export default function Investments() {
   const [form, setForm] = useState<InvFormData>(emptyInvForm())
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [transferOpen, setTransferOpen] = useState(false)
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => import('@/lib/api').then(m => m.getAccounts()) })
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => import('@/lib/api').then(m => m.getSecurities()) })
@@ -446,6 +448,9 @@ export default function Investments() {
                 }).catch(() => {})
               }}>
               <Plus size={14} /> New Transaction
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
+              <ArrowLeftRight size={14} /> Transfer
             </Button>
             <SyncBalancesButton
               options={[
@@ -672,6 +677,17 @@ export default function Investments() {
           saving={saving}
           error={saveError}
           editId={editId}
+        />
+      )}
+
+      {transferOpen && (
+        <InvTransferModal
+          accounts={accounts as Record<string, unknown>[]}
+          onClose={() => setTransferOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+            qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+          }}
         />
       )}
 

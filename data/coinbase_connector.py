@@ -30,8 +30,7 @@ staking_reward                 Investment            Reinvest  (income as new un
 interest                       Investment            Dividend
 inflation_reward               Investment            Dividend
 retail_simple_price_improvement Investment           Dividend  (price-improvement rebate)
-send   (crypto wallet)         Investment            ShrOut  (crypto left Coinbase — reduces qty)
-receive (crypto wallet)        Investment            ShrIn   (crypto arrived at Coinbase — adds qty)
+send / receive (crypto wallet) Investment            ShrIn (raw_amt > 0) or ShrOut (raw_amt < 0)
 staking_transfer               ──                    SKIP (internal lock/unlock, no qty change)
 fiat_deposit                   Transaction           +amount
 fiat_withdrawal                Transaction           -amount
@@ -41,12 +40,15 @@ exchange_withdrawal            Transaction           -amount
 
 Design note — send / receive
 -----------------------------
-Coinbase records a ``send`` any time crypto leaves the account (withdrawal to
-hardware wallet, payment, etc.) and a ``receive`` any time it arrives.  These
-directly change the on-chain quantity and must be investment records so the
-holdings calculation stays correct.  If you also track the *destination* wallet
-separately you will see the same transfer as both a ShrOut (Coinbase) and a ShrIn
-(destination), which is intentional double-entry bookkeeping.
+These directly change the on-chain quantity and must be investment records so
+the holdings calculation stays correct. Direction is determined by the sign of
+the amount, not the ``type`` string: Coinbase has been observed reporting
+``type: "send"`` with a *positive* amount for crypto arriving at the account
+(e.g. on-chain transfers via Base and other L2s), so trusting ``send`` to always
+mean outflow silently misclassified real incoming transfers as ShrOut. If you
+also track the *destination* wallet separately you will see the same transfer
+as both a ShrOut (source) and a ShrIn (destination), which is intentional
+double-entry bookkeeping.
 
 Dedup prefix: CB|
 """
@@ -718,37 +720,28 @@ def build_coinbase_records(
             })
             _action_counter["Dividend"] += 1
 
-        elif tx_type == "send":
-            # Crypto left Coinbase (to hardware wallet, payment, etc.) → ShrOut
+        elif tx_type in ("send", "receive"):
+            # Direction is determined by the sign of raw_amt, not the type string —
+            # Coinbase has been observed reporting type="send" with a POSITIVE amount
+            # for crypto ARRIVING at the account (e.g. on-chain transfers via Base and
+            # other L2s), contradicting the naive send=outflow/receive=inflow mapping
+            # this used to assume unconditionally. A negative amount always means the
+            # crypto left; a positive amount always means it arrived — mirroring the
+            # same sign-based disambiguation already used for advanced_trade_fill above.
             qty     = abs(raw_amt)
             eur_val = abs(nat_amt)
             unit_px = eur_val / qty if qty > 0 else 0.0
+            action  = "ShrIn" if raw_amt > 0 else "ShrOut"
             inv_records.append({
                 **_base_inv,
-                "action":     "ShrOut",
+                "action":     action,
                 "quantity":   round(qty, 8),
                 "price":      round(unit_px, 6),
                 "commission": 0.0,
                 "total_eur":  round(eur_val, 4),
             })
-            _action_counter["ShrOut"] += 1
-            print(f"  [CB-DIAG] send→ShrOut  {ccy_code}  qty={abs(raw_amt)}  key={key}")
-
-        elif tx_type == "receive":
-            # Crypto arrived at Coinbase (from hardware wallet, airdrop, etc.) → ShrIn
-            qty     = abs(raw_amt)
-            eur_val = abs(nat_amt)
-            unit_px = eur_val / qty if qty > 0 else 0.0
-            inv_records.append({
-                **_base_inv,
-                "action":     "ShrIn",
-                "quantity":   round(qty, 8),
-                "price":      round(unit_px, 6),
-                "commission": 0.0,
-                "total_eur":  round(eur_val, 4),
-            })
-            _action_counter["ShrIn"] += 1
-            print(f"  [CB-DIAG] receive→ShrIn  {ccy_code}  qty={abs(raw_amt)}  key={key}")
+            _action_counter[action] += 1
+            print(f"  [CB-DIAG] {tx_type}(amt={raw_amt})→{action}  {ccy_code}  qty={abs(raw_amt)}  key={key}")
 
         elif tx_type == "trade":
             # Coinbase Convert / crypto-to-crypto swap.

@@ -91,6 +91,11 @@ export const updateHolding = (id: number, data: Record<string, unknown>) =>
 export const getLinkedAccount = (accountId: number) =>
   api.get(`/investments/linked-account/${accountId}`).then(r => r.data)
 
+export const previewInvestmentTransfer = (data: Record<string, unknown>) =>
+  api.post('/investments/transfer/preview', data).then(r => r.data)
+export const executeInvestmentTransfer = (data: Record<string, unknown>) =>
+  api.post('/investments/transfer/execute', data).then(r => r.data)
+
 export const stakingReinvest = (entries: Record<string, unknown>[]) =>
   api.post('/investments/staking-reinvest', entries).then(r => r.data)
 

@@ -1237,13 +1237,13 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 ROUND((((sig.price_today / NULLIF(r3.high_3y, 0)) - 1) * 100)::numeric, 2) as pct_from_high_3y,
                 ROUND((((sig.price_today / NULLIF(r3.low_3y,  0)) - 1) * 100)::numeric, 2) as pct_from_low_3y,
                 ROUND(sec.Dividend_Yield::numeric, 2) as fwd_yield_pct,
-                CASE 
+                CASE
                     WHEN current_qty > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
                     WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
                     WHEN sharpe_ratio > 0.7 OR quality_score > 8 THEN '🟢 BUY'
                     WHEN sharpe_ratio > 0.3 OR quality_score > 0 THEN '🟡 HOLD'
                     WHEN current_qty = 0 AND sharpe_ratio > 0.5 THEN '👀 WATCHLIST'
-                    ELSE '⚪ NEUTRAL'
+                    ELSE '🟡 HOLD'
                 END as recommendation_signal
             FROM portfolio_status sig
             JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
@@ -1267,9 +1267,6 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 -- ── Math HOLD + Analyst view ────────────────────────────────────
                 WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('sell', 'underperform') THEN '⚠️ ANALYST CAUTION'
                 WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('buy', 'strong_buy')  THEN '📈 ANALYST UPGRADE'
-                -- ── Math NEUTRAL + Analyst view ─────────────────────────────────
-                WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('sell', 'underperform') THEN '🔻 ANALYST UNDERPERFORM'
-                WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('buy', 'strong_buy')  THEN '📊 ANALYST BUY'
                 -- ── Watchlist + Analyst view ────────────────────────────────────
                 WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('buy', 'strong_buy')  THEN '🔬 WATCH: ANALYST BUY'
                 WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell', 'underperform') THEN '🔬 WATCH: ANALYST SELL'
@@ -5938,7 +5935,7 @@ def _compute_current_signals() -> pd.DataFrame:
                         WHEN sharpe_ratio > 0.7 OR quality_score > 8  THEN '🟢 BUY'
                         WHEN sharpe_ratio > 0.3 OR quality_score > 0  THEN '🟡 HOLD'
                         WHEN COALESCE(ha.current_qty, 0) = 0 AND sharpe_ratio > 0.5 THEN '👀 WATCHLIST'
-                        ELSE '⚪ NEUTRAL'
+                        ELSE '🟡 HOLD'
                     END AS recommendation_signal
                 FROM investment_signals sig
                 JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
@@ -5960,8 +5957,6 @@ def _compute_current_signals() -> pd.DataFrame:
                     WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IS NULL                 THEN '⚙️ ALGO SELL'
                     WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ ANALYST CAUTION'
                     WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('buy','strong_buy') THEN '📈 ANALYST UPGRADE'
-                    WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('sell','underperform') THEN '🔻 ANALYST UNDERPERFORM'
-                    WHEN recommendation_signal LIKE '⚪%%' AND wall_street_view IN ('buy','strong_buy') THEN '📊 ANALYST BUY'
                     WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('buy','strong_buy') THEN '🔬 WATCH: ANALYST BUY'
                     WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell','underperform') THEN '🔬 WATCH: ANALYST SELL'
                     ELSE recommendation_signal

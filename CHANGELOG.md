@@ -2,6 +2,20 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-06
+
+### Fixed
+- **Inv. Performance P&L report — same-security transfers between your own accounts were misattributed as investment performance**: the period P&L cash-flow adjustment (DTD/WTD/MTD/QTD/YTD) and the All-Time/YTD invested-capital figures both omitted `ShrIn`/`ShrOut` (custody-transfer) rows from their cash-flow calculations, while the all-time P&L figure already correctly included them. Caught in real data: an Ethereum position on Coinbase showed a one-day P&L of +€309 (+53.9%) immediately after receiving a transfer from Crypto.com — the true figure, once the transferred value is correctly excluded, was -€307 (-53.5%), just that day's actual price move. The same omission also affected the "All" column's realized/unrealized split and the TWR/MWR report's MWR/XIRR calculation when scoped to a subset of accounts (a transfer crossing the scope boundary wasn't recognized as a contribution/withdrawal for that scope). Fixing this also surfaced a pre-existing, unrelated data gap: a handful of historical share transfers predating this feature (e.g. a 2021 Reuters Group → Thomson Reuters Corp conversion) have no cost basis recorded at all, so their position still shows an inflated all-time gain — left as-is rather than inventing a cost basis, since a genuine one can't be reconstructed from the data on hand.
+- **Coinbase importer — on-chain transfers arriving could import as an outgoing transfer (`ShrOut`) instead of incoming (`ShrIn`)**: Coinbase can report `type: "send"` with a *positive* amount for crypto arriving via certain transfer paths (e.g. L2/Base transfers), which the importer previously took at face value. It now derives direction from the amount's sign instead, confirmed against live Coinbase API data.
+
+### Added
+- **Investment Transfer / Convert**: a new **Transfer** action (Investments page, and Security Detail → Investment Transactions) that moves a holding from one account to another — same security (a pure custody transfer, cost basis carried over, no gain/loss) or a different security (a conversion/swap that realizes gain/loss on the source at its market price and establishes a fresh cost basis on the destination). Supports an optional fee taken in the source security, the destination security, or cash from any account, and respects "Show inactive accounts" filtering in its account dropdowns.
+- **Inv. Performance P&L report**: **P&L %** and **Unrealized %** are now separate, independently sortable columns at both the account and security level (previously shown inline next to the € amount and not sortable). P&L % now also shows for every window — D/W/M/Q/YTD/All — instead of only DTD/YTD/All.
+- Help page: new "Why Oikos vs. other personal finance apps?" section, and coverage of the new Transfer feature.
+
+### Changed
+- **Portfolio Action Signals** (Reports → Securities Analysis): merged the "⚪ NEUTRAL" signal into "🟡 HOLD", and "📊 ANALYST BUY"/"🔻 ANALYST UNDERPERFORM" into "📈 ANALYST UPGRADE"/"⚠️ ANALYST CAUTION". These were adjacent bands of the same continuous quant score split at zero, so a security sitting near that boundary would flip labels — and fire a "Signal Change" Dashboard alert — from trivial day-to-day score movement with no real change in outlook.
+
 ## 2026-07-05
 
 ### Fixed

@@ -35,6 +35,64 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <P>It's built as a React frontend talking to a FastAPI backend backed by PostgreSQL.</P>
 
+        <H2>Why Oikos?</H2>
+        <P>
+          Oikos (Ancient Greek: οἶκος, plural: οἶκοι) is the ancient Greek word for three intertwined concepts: 
+          a house, the family living inside it, and the family's property or estate. In ancient Greece, 
+          the oikos was the fundamental, self-sufficient unit of society and the economy.
+        </P>          
+
+        <P>
+          Most personal finance tools force a choice: a budgeting app (YNAB, Mint/Credit Karma, EveryDollar,
+          Monarch) with little to no investment analytics, or an investment tracker (Personal Capital/Empower,
+          Portfolio Performance, Kubera) with little to no cash-flow budgeting — and almost none handle
+          multi-currency accounts, non-US tax rules, or manually-tracked assets (crypto wallets, private
+          holdings, real estate) well. Oikos covers all of it in one self-hosted place:
+        </P>
+        <Ul>
+          <li>
+            <b>You own the data.</b> Everything lives in your own PostgreSQL database, not a vendor's servers —
+            no subscription, no "we're shutting down" (Mint's fate in 2024), and no handing your actual bank
+            login to a third-party aggregator the way Plaid-based apps require.
+          </li>
+          <li>
+            <b>Multi-currency is a first-class citizen, not an afterthought.</b> Every account and security
+            tracks its own native currency; reports convert through actual historical FX rates to whichever
+            reporting currency you choose. Most US-built apps barely tolerate a second currency.
+          </li>
+          <li>
+            <b>Investment depth most budgeting apps don't have</b>, in the same app as everyday expense
+            tracking: FIFO/LIFO/WAC cost basis (correctly handling short positions and partial-sell episodes),
+            realized/unrealized P&amp;L, dividend tracking, corporate actions, TWR/MWR, benchmarking, Monte
+            Carlo projections, and risk metrics (Sharpe, VaR, correlation) — the kind of analysis usually
+            reserved for a dedicated portfolio tool.
+          </li>
+          <li>
+            <b>Tax rules you configure</b>, not a US-only black box — capital-gains categories, rates, and
+            holding-period rules are defined per instrument type in Static Data, built around specifics
+            mainstream commercial apps don't support, but general enough to adapt to other jurisdictions.
+          </li>
+          <li>
+            <b>Tracks everything a bank-aggregator can't see</b> — real estate, vehicles, pensions, and
+            manually-entered or exchange-imported crypto holdings sit alongside bank/brokerage accounts in the
+            same net-worth model.
+          </li>
+          <li>
+            An <b>AI Assistant</b> that answers questions about <i>your actual data</i>, not a generic chatbot
+            bolted onto marketing copy — see the AI Assistant section.
+          </li>
+          <li>
+            <b>No product roadmap to wait on.</b> It's your own FastAPI + React + PostgreSQL stack, so a bug or
+            a missing report is something you can fix, not a feature request in a vendor's backlog.
+          </li>
+        </Ul>
+        <Note>
+          The trade-off is real: you're responsible for hosting, backups, and updates yourself, there's no
+          official support line, and a bank-aggregator app will always have a slicker "connect your bank in 10
+          seconds" onboarding than manual/CSV/API imports. Oikos is for people who want full control and depth
+          and are willing to run their own server for it.
+        </Note>
+
         <H2>Core concepts</H2>
         <H3>Accounts</H3>
         <P>
@@ -159,6 +217,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Sync Balances</b> (top-right) refreshes Investments, Pension, and Holdings — the account types this
           page manages (not Bank &amp; Cash).
         </P>
+        <P>
+          <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a
+          holding from one account to another: the <b>same security</b> — a pure custody transfer, cost basis
+          carried over, no gain or loss — or a <b>different security</b>, which realizes gain/loss on the source
+          at its market price and establishes a fresh cost basis on the destination. An optional fee can be taken
+          in the source security, the destination security, or cash from any account. Because it's a transfer
+          rather than a trade, it's excluded from P&amp;L calculations everywhere in Reports — moving a position
+          between your own accounts never shows up as investment performance.
+        </P>
         <Note>
           Holdings shows two cost-basis figures: <b>Simple Avg</b>, a running average cost that blends on every
           buy and resets to zero whenever a position is fully closed out (so units sold long ago never drag down
@@ -252,6 +319,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and money-weighted
           return).
         </P>
+        <Note>
+          In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
+          account and security level, available for every window (D/W/M/Q/YTD/All). Custody transfers and
+          conversions between your own accounts (see Investments → Transfer) are excluded from every P&amp;L
+          figure here, so moving a holding never inflates or deflates a period's performance.
+        </Note>
 
         <H3>🧾 Investment Tax</H3>
         <P>

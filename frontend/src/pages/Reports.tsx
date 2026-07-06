@@ -1328,7 +1328,6 @@ const PNL_WINDOWS = [
   { k: 'ytd' as PnlWindow, label: 'YTD' }, { k: 'all' as PnlWindow, label: 'All' },
 ]
 function pnlKey(w: PnlWindow) { return w === 'all' ? 'pnl_net_all_time_eur' : `pnl_${w}_eur` }
-function pctKey(w: PnlWindow) { return w === 'dtd' ? 'pnl_dtd_percent' : w === 'ytd' ? 'pnl_ytd_percent' : w === 'all' ? 'pnl_net_all_time_percent' : null }
 
 function PnlCell({ val, pct }: { val: number; pct?: number | null }) {
   const color = val >= 0 ? 'text-green-700' : 'text-red-600'
@@ -1384,16 +1383,24 @@ function PnlReport() {
 
   const accounts = Array.from(accountMap.entries())
     .filter(([, acRows]) => showClosedAccounts || !isClosedAccount(acRows))
-    .map(([name, acRows]) => ({
-      name,
-      closed: isClosedAccount(acRows),
-      value: acRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0),
-      pnl: acRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0),
-      unrealized: acRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0),
-      realized: acRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0),
-      market: mktKey ? acRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null,
-      fx: fxKey ? acRows.reduce((s, r) => s + Number(r[fxKey] ?? 0), 0) : null,
-    }))
+    .map(([name, acRows]) => {
+      const value = acRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
+      const pnl = acRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
+      const unrealized = acRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
+      const cost = value - unrealized
+      return {
+        name,
+        closed: isClosedAccount(acRows),
+        value,
+        pnl,
+        pnl_pct: value !== 0 ? (pnl / value) * 100 : null,
+        unrealized,
+        unrealized_pct: cost !== 0 ? (unrealized / cost) * 100 : null,
+        realized: acRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0),
+        market: mktKey ? acRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null,
+        fx: fxKey ? acRows.reduce((s, r) => s + Number(r[fxKey] ?? 0), 0) : null,
+      }
+    })
 
   const totalValue = accounts.reduce((s, a) => s + a.value, 0)
   const totalPnl   = accounts.reduce((s, a) => s + a.pnl, 0)
@@ -1409,7 +1416,19 @@ function PnlReport() {
   const totalUnrealPct = totalCostBasis !== 0 ? (totalUnreal / totalCostBasis) * 100 : null
 
   const drillRows = selectedAccount
-    ? (accountMap.get(selectedAccount) ?? []).filter(r => showClosedPositions || !isClosedPosition(r))
+    ? (accountMap.get(selectedAccount) ?? [])
+        .filter(r => showClosedPositions || !isClosedPosition(r))
+        .map((r): Row => {
+          const unreal = Number(r.unrealized_pnl_eur ?? 0)
+          const value = Number(r.current_value_eur ?? 0)
+          const cost = value - unreal
+          const pnl = Number(r[pk] ?? 0)
+          return {
+            ...r,
+            unrealized_pnl_pct: cost !== 0 ? (unreal / cost) * 100 : null,
+            pnl_pct: value !== 0 ? (pnl / value) * 100 : null,
+          }
+        })
     : null
 
   const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTable(accounts, 'value', 'desc')
@@ -1491,8 +1510,10 @@ function PnlReport() {
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
                   <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current market value of the position in EUR." />
                   <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey={pk} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains.`} />
+                  {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window as a percentage of current value.`} />}
                   {showFxSplit && mktKey && <><ColHeader label="Market" sortKey={mktKey} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to the security's price movement in its local currency." /><ColHeader label="FX" sortKey={fxKey ?? ''} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to currency (FX) rate movements when converting to EUR." /></>}
                   <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for still-open positions." />
+                  <ColHeader label="Unreal. %" sortKey="unrealized_pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss as a percentage of cost basis." />
                   <ColHeader label="Realized" sortKey="realized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Realized gain/loss from already-closed (sold) positions in this security." />
                   <ColHeader label="YOC %" sortKey="dividend_yoc_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Dividend Yield on Cost: annual dividends received divided by your cost basis, as a percentage." />
                 </tr></thead>
@@ -1503,17 +1524,28 @@ function PnlReport() {
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? `${fmtNum(Number(r.price_today), 4)} ${r.currency ?? ''}` : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
-                      <PnlCell val={Number(r[pk] ?? 0)} pct={showPct && pctKey(win) ? Number(r[pctKey(win)!] ?? 0) : null} />
+                      <PnlCell val={Number(r[pk] ?? 0)} />
+                      {showPct && (() => {
+                        const pct = r.pnl_pct != null ? Number(r.pnl_pct) : null
+                        return (
+                          <td className={`px-3 py-2 text-right tabular-nums ${pct == null ? 'text-slate-400' : pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {pct != null ? fmtPct(pct) : '—'}
+                          </td>
+                        )
+                      })()}
                       {showFxSplit && mktKey && <><PnlCell val={Number(r[mktKey] ?? 0)} /><PnlCell val={fxKey ? Number(r[fxKey] ?? 0) : 0} /></>}
                       {(() => {
                         const unreal = Number(r.unrealized_pnl_eur ?? 0)
-                        const cost = Number(r.current_value_eur ?? 0) - unreal
-                        const pct = cost !== 0 ? (unreal / cost) * 100 : null
+                        const pct = r.unrealized_pnl_pct != null ? Number(r.unrealized_pnl_pct) : null
                         return (
-                          <td className={`px-3 py-2 text-right tabular-nums ${unreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {fmtEur(unreal)}
-                            {pct != null && <span className="ml-1 text-xs opacity-70">({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</span>}
-                          </td>
+                          <>
+                            <td className={`px-3 py-2 text-right tabular-nums ${unreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                              {fmtEur(unreal)}
+                            </td>
+                            <td className={`px-3 py-2 text-right tabular-nums ${pct == null ? 'text-slate-400' : pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                              {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}
+                            </td>
+                          </>
                         )
                       })()}
                       <PnlCell val={Number(r.realized_pnl_eur ?? 0)} />
@@ -1535,9 +1567,10 @@ function PnlReport() {
                 <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
                 <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
                 <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey="pnl" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`} />
-                {showPct && <th className="px-3 py-2 text-right text-xs text-slate-500 uppercase"><Tooltip text="P&L as a percentage of the account's current market value.">P&L %</Tooltip></th>}
+                {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L as a percentage of the account's current market value." />}
                 {showFxSplit && mktKey && <><ColHeader label="Market" sortKey="market" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from price moves in local currency, excluding FX effects." /><ColHeader label="FX" sortKey="fx" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from EUR/foreign-currency exchange rate movements." /></>}
                 <ColHeader label="Unrealized" sortKey="unrealized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for open positions." />
+                <ColHeader label="Unrealized %" sortKey="unrealized_pct" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss as a percentage of cost basis." />
                 <ColHeader label="Realized" sortKey="realized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Realized gain/loss from closed positions in this account." />
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
@@ -1546,11 +1579,13 @@ function PnlReport() {
                     <td className="px-3 py-2 font-medium text-blue-700 hover:underline">{a.name}{a.closed && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{fmtEur(a.value)}</td>
                     <PnlCell val={a.pnl} />
-                    {showPct && <td className={`px-3 py-2 text-right tabular-nums text-xs ${a.value !== 0 ? (a.pnl >= 0 ? 'text-green-700' : 'text-red-600') : 'text-slate-400'}`}>{a.value !== 0 ? `${(a.pnl / a.value * 100).toFixed(2)}%` : '—'}</td>}
+                    {showPct && <td className={`px-3 py-2 text-right tabular-nums text-xs ${a.pnl_pct == null ? 'text-slate-400' : a.pnl_pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{a.pnl_pct != null ? fmtPct(a.pnl_pct) : '—'}</td>}
                     {showFxSplit && mktKey && <><PnlCell val={a.market ?? 0} /><PnlCell val={a.fx ?? 0} /></>}
                     <td className={`px-3 py-2 text-right tabular-nums ${a.unrealized >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {fmtEur(a.unrealized)}
-                      {(() => { const cost = a.value - a.unrealized; return cost !== 0 ? <span className="ml-1 text-xs opacity-70">({a.unrealized >= 0 ? '+' : ''}{(a.unrealized / cost * 100).toFixed(2)}%)</span> : null })()}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${a.unrealized_pct == null ? 'text-slate-400' : a.unrealized_pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {a.unrealized_pct != null ? `${a.unrealized_pct >= 0 ? '+' : ''}${a.unrealized_pct.toFixed(2)}%` : '—'}
                     </td>
                     <PnlCell val={a.realized} />
                   </tr>
@@ -3518,12 +3553,11 @@ function InvestmentSignalsTab() {
 // ── Portfolio Action Signals Tab ──────────────────────────────────────────────
 function PortfolioActionSignalsTab() {
   const { data = [], isLoading } = usePortfolioSignals()
-  const [view, setView] = usePersist<'all' | 'hide_neutral' | 'open_only'>('sig_view', 'all')
+  const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
   const rows = data as Signal[]
 
   const filtered = rows.filter(r => {
-    if (view === 'hide_neutral') return r.recommendation_signal !== '⚪ NEUTRAL'
-    if (view === 'open_only')    return Number(r.current_value_eur ?? 0) > 0
+    if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
     return true
   })
 
@@ -3564,9 +3598,8 @@ function PortfolioActionSignalsTab() {
       {/* Filter + Search */}
       <div className="flex flex-wrap items-center gap-1.5">
         {([
-          ['all',          'Show All'],
-          ['hide_neutral', 'Hide Neutral'],
-          ['open_only',    'Open Positions Only'],
+          ['all',       'Show All'],
+          ['open_only', 'Open Positions Only'],
         ] as const).map(([v, label]) => (
           <button key={v} onClick={() => setView(v)}
             className={`px-3 py-1.5 text-xs rounded border font-medium ${view === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>

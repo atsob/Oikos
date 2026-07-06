@@ -6,7 +6,7 @@ import { AgGridReact } from 'ag-grid-react'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy, ArrowLeftRight } from 'lucide-react'
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard,
 } from '@/components/ui'
@@ -26,6 +26,7 @@ import {
 } from '@/lib/api'
 import { InvTransactionModal, emptyInvForm, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
+import { InvTransferModal } from '@/components/InvTransferModal'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
@@ -333,6 +334,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const [form, setForm] = useState<InvFormData>(emptyInvForm())
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [transferOpen, setTransferOpen] = useState(false)
 
   const accounts = accountsData as Record<string, unknown>[]
   const investmentAccounts = accounts.filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
@@ -506,6 +508,9 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
           <p className="text-sm font-semibold text-slate-700">All Transactions ({transactions.length})</p>
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openNew}><Plus size={14} /> New Transaction</Button>
+            <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
+              <ArrowLeftRight size={14} /> Transfer
+            </Button>
             <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
           </div>
         </div>
@@ -545,6 +550,19 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
           saving={saving}
           error={saveError}
           editId={editId}
+        />
+      )}
+
+      {transferOpen && (
+        <InvTransferModal
+          accounts={accounts}
+          onClose={() => setTransferOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+            qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
+            qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+            qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+          }}
         />
       )}
     </div>

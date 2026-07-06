@@ -493,12 +493,14 @@ CREATE TABLE Investments (
                                                   -- overrides Security.Is_Tax_Exempt for tax calculations when set
     Tax_Amount          NUMERIC(18, 6),              -- withholding tax (negative = tax withheld, in account currency)
     Corporate_Actions_Id INTEGER REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE SET NULL,
+    Transfers_Id     INTEGER,                        -- shared value links the legs of an inter-account transfer/conversion
     embedding        vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_investments_id          ON Investments(Investments_Id);
 CREATE        INDEX IF NOT EXISTS idx_investments_linked_tx   ON Investments(Transactions_Id) WHERE Transactions_Id IS NOT NULL;
 CREATE        INDEX IF NOT EXISTS idx_investments_accsec_date ON Investments(Accounts_Id, Securities_Id, Date DESC);
 CREATE        INDEX IF NOT EXISTS idx_investments_action      ON Investments(Action);
+CREATE        INDEX IF NOT EXISTS idx_investments_transfers_id ON Investments(Transfers_Id) WHERE Transfers_Id IS NOT NULL;
 CREATE        INDEX IF NOT EXISTS idx_investments_date        ON Investments(Date);
 -- Covering index for P&L reconstruction — eliminates heap fetches for common columns
 CREATE        INDEX IF NOT EXISTS idx_investments_accsec_covering
