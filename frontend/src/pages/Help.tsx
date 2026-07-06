@@ -224,11 +224,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           source security, the destination security, or cash from any account.
         </P>
         <Note>
-          A same-security transfer with <b>no fee</b> has zero P&amp;L impact — it never shows up as investment
-          performance, just a quantity moving between accounts. A <b>fee taken in the security itself</b> (either
-          side), or converting to a <b>different security</b>, is a genuine disposal at market price and does
-          realize a real gain or loss, exactly like an ordinary sale — only the fee-free custody-transfer portion
-          is excluded from P&amp;L.
+          A same-security transfer with <b>no fee</b> creates zero P&amp;L <i>overall</i> — nothing is gained or
+          lost just by moving a position. But it does change each <b>individual account's own</b> figures: the
+          source account's contribution drops to zero, while the destination immediately shows the position's
+          full accrued Unrealized P&amp;L — inherited from its history, not newly created, but real for that
+          account's own numbers. Day/period P&amp;L (DTD, WTD, etc.) stays flat for both accounts on the transfer
+          date itself. A <b>fee taken in the security itself</b> (either side), or converting to a{' '}
+          <b>different security</b>, is a genuine disposal at market price and does create a real, new gain or
+          loss, exactly like an ordinary sale.
         </Note>
         <Note>
           Holdings shows two cost-basis figures: <b>Simple Avg</b>, a running average cost that blends on every
@@ -326,8 +329,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
           account and security level, available for every window (D/W/M/Q/YTD/All). A fee-free, same-security
-          transfer between your own accounts (see Investments → Transfer) never shows up here as performance —
-          but a transfer fee or a cross-security conversion does, since those realize a genuine gain or loss.
+          transfer between your own accounts (see Investments → Transfer) keeps <b>P&amp;L %</b> flat for both
+          accounts on the transfer date — but <b>Unrealized %</b> relocates: it drops to zero for the source
+          account and appears in the destination, reflecting the position's whole accrued history rather than
+          new gain or loss. A transfer fee or a cross-security conversion, by contrast, does create real, new
+          gain or loss.
         </Note>
 
         <H3>🧾 Investment Tax</H3>
