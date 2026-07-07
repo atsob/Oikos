@@ -2191,15 +2191,25 @@ def get_cash_flow_forecast_full(
     months_back: int = Query(2),
 ):
     """
-    Full cash-flow forecast replicating the Streamlit view:
+    Full cash-flow forecast replicating the Streamlit view, plus recurring templates:
     - Explicitly scheduled future transactions (Date > today, within horizon)
+    - Active Recurring Templates, projected forward from their own next_due_date/periodicity
     - Recurring patterns detected from last N complete months, projected forward
-    Returns: { scheduled, recurring, metrics }
+      (payees already covered by a scheduled transaction OR an active template are excluded,
+      to avoid the same bill being counted twice)
+    Returns: { scheduled, templates, recurring, metrics }
     """
     import datetime as _dt
+    from dateutil.relativedelta import relativedelta
 
     today = _dt.date.today()
     cutoff = today + _dt.timedelta(days=days)
+    _PERIOD_STEP = {
+        'Daily': relativedelta(days=1), 'Weekly': relativedelta(weeks=1),
+        'Bi-Weekly': relativedelta(weeks=2), 'Monthly': relativedelta(months=1),
+        'Bi-Monthly': relativedelta(months=2), 'Quarterly': relativedelta(months=3),
+        'Semi-Annual': relativedelta(months=6), 'Annual': relativedelta(years=1),
+    }
     mb = max(2, min(6, int(months_back)))
 
     with get_db() as conn:
@@ -2226,6 +2236,39 @@ def get_cash_flow_forecast_full(
             WHERE t.Date > CURRENT_DATE
               AND t.Transfers_Id IS NULL
             ORDER BY t.Date ASC
+        """, conn)
+
+        df_templates = pd.read_sql("""
+            WITH LatestFX AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            ),
+            tmpl_categories AS (
+                SELECT rts.templates_id, STRING_AGG(DISTINCT c.Categories_Name, ', ') AS category
+                FROM Recurring_Template_Splits rts
+                LEFT JOIN Categories c ON c.Categories_Id = rts.Categories_Id
+                GROUP BY rts.templates_id
+            )
+            SELECT
+                rt.templates_id AS template_id,
+                COALESCE(py.Payees_Name, rt.name) AS payees_name,
+                a.Accounts_Name AS accounts_name,
+                tc.category,
+                rt.total_amount AS amount,
+                CASE WHEN cur.Currencies_ShortName = 'EUR' THEN rt.total_amount
+                     ELSE rt.total_amount * COALESCE(fx.FX_Rate, 1) END AS amount_eur,
+                cur.Currencies_ShortName AS currency,
+                COALESCE(rt.next_due_date, CURRENT_DATE) AS next_due_date,
+                rt.periodicity
+            FROM Recurring_Templates rt
+            JOIN Accounts a ON a.Accounts_Id = rt.accounts_id
+            JOIN Currencies cur ON cur.Currencies_Id = a.Currencies_Id
+            LEFT JOIN Payees py ON py.Payees_Id = rt.payees_id
+            LEFT JOIN LatestFX fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            LEFT JOIN tmpl_categories tc ON tc.templates_id = rt.templates_id
+            WHERE rt.active = TRUE
+              AND rt.accounts_id_target IS NULL
+              AND (rt.end_date IS NULL OR rt.end_date >= CURRENT_DATE)
         """, conn)
 
         df_recurring = pd.read_sql(f"""
@@ -2347,14 +2390,47 @@ def get_cash_flow_forecast_full(
     else:
         df_f = pd.DataFrame()
 
-    # Deduplicate: drop recurring patterns whose payee already has scheduled transactions
-    if not df_recurring.empty and not df_f.empty:
-        scheduled_payees = set(
-            df_f['payees_name'].dropna().str.strip().str.lower().unique()
-        )
-        df_recurring = df_recurring[
-            ~df_recurring['payees_name'].str.strip().str.lower().isin(scheduled_payees)
-        ].copy()
+    # Project each active template forward from its own next_due_date, one step at a
+    # time, for every occurrence that falls strictly after today and within the
+    # horizon. next_due_date already reflects whatever generate_drafts() last
+    # advanced it to, so this never re-projects an occurrence that's already been
+    # materialized into an actual (draft or confirmed) Transactions row.
+    template_rows = []
+    if not df_templates.empty:
+        df_templates['next_due_date'] = pd.to_datetime(df_templates['next_due_date'])
+        today_ts = pd.Timestamp(today)
+        cutoff_ts = pd.Timestamp(cutoff)
+        for _, row in df_templates.iterrows():
+            step = _PERIOD_STEP.get(str(row['periodicity']), relativedelta(months=1))
+            occ = row['next_due_date']
+            while occ <= today_ts:
+                occ += step
+            while occ <= cutoff_ts:
+                template_rows.append({
+                    'date': occ.date().isoformat(),
+                    'payees_name': str(row['payees_name'] or ''),
+                    'accounts_name': str(row['accounts_name'] or ''),
+                    'category': str(row.get('category') or ''),
+                    'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
+                    'currency': str(row['currency'] or 'EUR'),
+                    'periodicity': str(row['periodicity'] or ''),
+                })
+                occ += step
+    template_rows.sort(key=lambda x: x['date'])
+
+    # Deduplicate: drop statistically-detected recurring patterns whose payee already
+    # has a scheduled transaction OR an active recurring template — those are already
+    # represented accurately elsewhere, so counting them again here would double them up.
+    if not df_recurring.empty:
+        covered_payees = set()
+        if not df_f.empty:
+            covered_payees |= set(df_f['payees_name'].dropna().str.strip().str.lower().unique())
+        if not df_templates.empty:
+            covered_payees |= set(df_templates['payees_name'].dropna().str.strip().str.lower().unique())
+        if covered_payees:
+            df_recurring = df_recurring[
+                ~df_recurring['payees_name'].str.strip().str.lower().isin(covered_payees)
+            ].copy()
 
     # Project recurring patterns as concrete future occurrences
     recur_rows = []
@@ -2397,18 +2473,23 @@ def get_cash_flow_forecast_full(
 
     sched_in  = sum(r['amount_eur'] for r in scheduled if r['amount_eur'] > 0)
     sched_out = sum(r['amount_eur'] for r in scheduled if r['amount_eur'] < 0)
+    tmpl_in   = sum(r['amount_eur'] for r in template_rows if r['amount_eur'] > 0)
+    tmpl_out  = sum(r['amount_eur'] for r in template_rows if r['amount_eur'] < 0)
     recur_in  = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] > 0)
     recur_out = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] < 0)
 
     return {
         'scheduled': scheduled,
+        'templates': template_rows,
         'recurring': recur_rows,
         'metrics': {
             'sched_in':  round(sched_in,  2),
             'sched_out': round(sched_out, 2),
+            'tmpl_in':   round(tmpl_in,   2),
+            'tmpl_out':  round(tmpl_out,  2),
             'recur_in':  round(recur_in,  2),
             'recur_out': round(recur_out, 2),
-            'net_total': round(sched_in + sched_out + recur_in + recur_out, 2),
+            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out, 2),
         },
     }
 

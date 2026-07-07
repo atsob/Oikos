@@ -434,7 +434,8 @@ export const getReconciliationHistory = (accountId: number) => api.get(`/bank/re
 export const saveSecurityMappings = (source: string, mappings: Record<string, number>) =>
   api.post('/bank/save-security-mappings', { source, mappings }).then(r => r.data)
 
-export const ibFlexFetch = (token: string, queryId: string) => api.post('/bank/ib-flex-fetch', { token, query_id: queryId }).then(r => r.data)
+export const ibFlexFetch = (token: string, queryId: string, forceRefresh = false) =>
+  api.post('/bank/ib-flex-fetch', { token, query_id: queryId, force_refresh: forceRefresh }).then(r => r.data)
 export const ibFlexParse = (xml: string, accountId: number, cashAccountId?: number) =>
   api.post('/bank/ib-flex-parse', { xml, account_id: accountId, cash_account_id: cashAccountId ?? null }).then(r => r.data)
 export const ibFlexImport = (data: Record<string, unknown>) => api.post('/bank/ib-flex-import', data).then(r => r.data)

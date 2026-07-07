@@ -80,7 +80,15 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 }
 
 function ErrorBox({ msg }: { msg: string }) {
-  return <div className="bg-red-50 text-red-700 rounded-lg p-3 text-sm flex gap-2"><XCircle size={16} className="shrink-0 mt-0.5" />{msg}</div>
+  return <div className="bg-red-50 text-red-700 rounded-lg p-3 text-sm flex gap-2 whitespace-pre-line"><XCircle size={16} className="shrink-0 mt-0.5" />{msg}</div>
+}
+
+// Prefer the backend's actual error detail (FastAPI's HTTPException body) over
+// axios's generic "Request failed with status code NNN" message.
+function apiErrorMsg(err: unknown): string {
+  if (!err) return ''
+  const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
+  return axiosErr.response?.data?.detail || axiosErr.message || 'Unknown error'
 }
 
 function SuccessBox({ msg }: { msg: string }) {
@@ -1167,11 +1175,13 @@ function IBFlexTab() {
   const [xml, setXml] = useState('')
   const [accountId, setAccountId] = useState<number | null>(null)
   const [cashAccountId, setCashAccountId] = useState<number | null>(null)
+  const [excludeFxSpot, setExcludeFxSpot] = useState(true)
   const saveSettings = useImporterSettings('ib', s => {
     if (s.token)           setToken(s.token as string)
     if (s.query_id)        setQueryId(s.query_id as string)
     if (s.account_id)      setAccountId(s.account_id as number)
     if (s.cash_account_id) setCashAccountId(s.cash_account_id as number)
+    if (s.exclude_fx_spot != null) setExcludeFxSpot(Boolean(s.exclude_fx_spot))
   })
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
@@ -1188,12 +1198,14 @@ function IBFlexTab() {
   const cashAccounts = (allAccounts as Record<string, unknown>[]).filter(a => !brokerageAccTypes.includes(a.type as string))
 
   const _persistSettings = () =>
-    saveSettings({ token, query_id: queryId, account_id: accountId, cash_account_id: cashAccountId })
+    saveSettings({ token, query_id: queryId, account_id: accountId, cash_account_id: cashAccountId, exclude_fx_spot: excludeFxSpot })
 
+  const [wasCached, setWasCached] = useState<boolean | null>(null)
   const fetchMut = useMutation({
-    mutationFn: () => ibFlexFetch(token, queryId),
+    mutationFn: (forceRefresh: boolean) => ibFlexFetch(token, queryId, forceRefresh),
     onSuccess: async (data) => {
       setXml(data.xml)
+      setWasCached(Boolean(data.cached))
       _persistSettings()
       if (accountId) {
         const parsed = await ibFlexParse(data.xml, accountId, cashAccountId ?? undefined)
@@ -1226,6 +1238,7 @@ function IBFlexTab() {
         import_tx: true,
         filter_from: filterFrom || null,
         filter_to: filterTo || null,
+        exclude_fx_spot: excludeFxSpot,
       })
     },
     onSuccess: (d) => {
@@ -1237,16 +1250,29 @@ function IBFlexTab() {
   const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const meta = parseResult?.meta as Record<string, unknown> ?? {}
-  const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
+  const rawSecMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
 
-  // Apply date filter to preview display (same logic as server-side import filter)
+  // Apply date + FX-spot filters to preview display (same logic as server-side import filter)
+  const FX_SPOT_CATS = new Set(['CASH', 'FX', 'FXSPOT'])
+  const isFxSpot = (r: Record<string, unknown>) => FX_SPOT_CATS.has(String(r.asset_category ?? '').toUpperCase())
   const filterRecord = (r: Record<string, unknown>) => {
     const d = r.date as string
     if (filterFrom && d < filterFrom) return false
     if (filterTo && d > filterTo) return false
+    if (excludeFxSpot && isFxSpot(r)) return false
     return true
   }
-  const visibleInv = (filterFrom || filterTo) ? inv.filter(filterRecord) : inv
+
+  // The Security Mapping panel is keyed the same way the backend matches
+  // securities (ISIN if present, else name) — drop the keys that belong only
+  // to FX-spot rows once those are excluded, so this panel doesn't ask you to
+  // map/create a security for something that won't actually be imported.
+  const secMatchKey = (r: Record<string, unknown>) => (r.isin as string) || (r.name as string) || ''
+  const fxSpotKeys = new Set(inv.filter(isFxSpot).map(secMatchKey))
+  const secMatches = excludeFxSpot
+    ? Object.fromEntries(Object.entries(rawSecMatches).filter(([k]) => !fxSpotKeys.has(k)))
+    : rawSecMatches
+  const visibleInv = (filterFrom || filterTo || excludeFxSpot) ? inv.filter(filterRecord) : inv
   const visibleTx  = (filterFrom || filterTo) ? tx.filter(filterRecord)  : tx
 
   const newInv = visibleInv.filter(r => r.status === 'new').length
@@ -1272,7 +1298,7 @@ function IBFlexTab() {
         <CardBody className="space-y-4">
           <div className="flex gap-3">
             {[{ v: 'api', l: '🌐 Fetch via API (Token + Query ID)' }, { v: 'paste', l: '📋 Paste XML from IB portal' }].map(o => (
-              <button key={o.v} onClick={() => setSourceMode(o.v as 'api' | 'paste')}
+              <button key={o.v} onClick={() => { setSourceMode(o.v as 'api' | 'paste'); fetchMut.reset(); parseMut.reset() }}
                 className={`px-3 py-2 rounded-lg text-sm border transition-colors ${sourceMode === o.v ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
                 {o.l}
               </button>
@@ -1350,23 +1376,47 @@ function IBFlexTab() {
         </CardBody>
       </Card>
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2">
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <input type="checkbox" checked={excludeFxSpot} onChange={e => {
+            setExcludeFxSpot(e.target.checked)
+            saveSettings({ token, query_id: queryId, account_id: accountId, cash_account_id: cashAccountId, exclude_fx_spot: e.target.checked })
+          }} />
+          Exclude FX Spot / currency-conversion trades (e.g. EUR.GBP, EUR.USD — IB's own housekeeping to fund foreign-currency buys, not real positions)
+        </label>
         <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
           <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} />
           Replace mode (delete all existing IB records for this account)
         </label>
       </div>
 
-      <Button
-        onClick={() => sourceMode === 'api' ? fetchMut.mutate() : parseMut.mutate()}
-        disabled={
-        (sourceMode === 'api' ? (!token || !queryId || !accountId) : (!rawXml || !accountId))
-        || fetchMut.isPending || parseMut.isPending
-      }
-      >
-        {fetchMut.isPending || parseMut.isPending ? <><Spinner size={14} /> {sourceMode === 'api' ? 'Fetching…' : 'Parsing…'}</> : sourceMode === 'api' ? '📡 Fetch & Preview' : '🔍 Parse XML'}
-      </Button>
-      {(fetchMut.isError || parseMut.isError) && <ErrorBox msg={String(((fetchMut.error ?? parseMut.error) as {message?: string})?.message)} />}
+      <div className="flex items-center gap-3">
+        <Button
+          onClick={() => sourceMode === 'api' ? fetchMut.mutate(false) : parseMut.mutate()}
+          disabled={
+          (sourceMode === 'api' ? (!token || !queryId || !accountId) : (!rawXml || !accountId))
+          || fetchMut.isPending || parseMut.isPending
+        }
+        >
+          {fetchMut.isPending || parseMut.isPending ? <><Spinner size={14} /> {sourceMode === 'api' ? 'Fetching…' : 'Parsing…'}</> : sourceMode === 'api' ? '📡 Fetch & Preview' : '🔍 Parse XML'}
+        </Button>
+        {sourceMode === 'api' && wasCached && (
+          <button
+            onClick={() => fetchMut.mutate(true)}
+            disabled={fetchMut.isPending}
+            className="text-xs text-blue-600 hover:underline"
+          >
+            ↻ Using today's cached statement — force a fresh fetch from IB instead
+          </button>
+        )}
+      </div>
+      {sourceMode === 'api' && wasCached && !fetchMut.isError && (
+        <p className="text-xs text-slate-400">
+          Reused the statement already fetched today — IB's Activity Statements only refresh once daily, so this avoids an unnecessary request.
+        </p>
+      )}
+      {sourceMode === 'api' && fetchMut.isError && <ErrorBox msg={apiErrorMsg(fetchMut.error)} />}
+      {sourceMode === 'paste' && parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
 
       {parseResult && (
         <div className="space-y-4">
@@ -1493,7 +1543,7 @@ function IBFlexTab() {
           ) : (
             <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
           )}
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
         </div>
       )}

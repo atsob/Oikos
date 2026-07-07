@@ -58,6 +58,16 @@ _ASSET_TO_SECTYPE: dict[str, str] = {
     "CRYPTO": "Crypto",
 }
 
+# assetCategory values IB uses for the currency-conversion trades it books to fund
+# purchases of foreign-currency securities (e.g. selling EUR.GBP to raise GBP for a
+# UK stock buy) — these aren't real security positions, just FX housekeeping.
+_FX_SPOT_CATEGORIES: set[str] = {"CASH", "FX", "FXSPOT"}
+
+
+def is_fx_spot_record(rec: dict) -> bool:
+    """True for investment records that are IB's own currency-conversion trades."""
+    return str(rec.get("asset_category") or "").upper() in _FX_SPOT_CATEGORIES
+
 # CashTransaction.type → Investments.Action
 _CASH_INV_MAP: dict[str, str] = {
     "Dividends":                    "Dividend",
@@ -66,6 +76,30 @@ _CASH_INV_MAP: dict[str, str] = {
     "Broker Interest Paid":         "MiscExp",
     "Withholding Tax":              "MiscExp",   # negative — reduces income
 }
+
+# Cash-transaction types that are account-level cash flow, not tied to any real,
+# individually-held security — e.g. interest on idle cash, or Stock Yield
+# Enhancement Program (SYEP) fee income for lending out shares. IB's own
+# "symbol"/"description" fields for these are often non-empty but unstable
+# (e.g. "...INTEREST FOR JUN-2026", changing every month) or just the
+# settlement currency — neither is a usable, stable security identity. These
+# are always booked against one placeholder security per settlement currency
+# instead of matching/creating a security from the raw description, so the
+# same kind of monthly interest never spawns a new one-off "security" each
+# time it recurs. Kept separate per currency — matching this app's existing
+# convention of one Securities row per currency variant for the same
+# underlying thing (e.g. "Thomson Reuters Corp (USD)" / "(GBP)" / "(CAD)") —
+# so a USD interest payment doesn't get mislabeled under a security whose
+# currency is actually EUR or GBP.
+_ACCOUNT_LEVEL_CASH_TYPES: set[str] = {"Broker Interest Received", "Broker Interest Paid"}
+
+
+def _ib_cash_symbol(currency: str) -> str:
+    return f"IB-CASH-{currency or 'EUR'}"
+
+
+def _ib_cash_name(currency: str) -> str:
+    return f"Interactive Brokers Cash Interest ({currency or 'EUR'})"
 
 # CashTransaction.type → plain Transactions
 _CASH_TX_TYPES: set[str] = {
@@ -97,10 +131,19 @@ def _parse_ib_date(s: str) -> Optional[date]:
 # Flex Web Service — network layer
 # ---------------------------------------------------------------------------
 
-# IB error messages that are transient — safe to retry automatically
+# IB error messages that are transient — safe to retry automatically.
+# Note: IB's Activity Statement Flex Queries only refresh once per day at
+# close of business (per IB's own docs, "there is no benefit to generating
+# and retrieving these reports more than once per day") — a same-day retry
+# after an already-successful fetch reliably surfaces one of these same
+# messages (1001/1009), not a real transient server hiccup, so retrying
+# won't help there. The fetch endpoint caches each day's successful XML to
+# avoid ever hitting this in normal use; this list is for genuine transient
+# failures on the *first* fetch of a day.
 _IB_TRANSIENT_ERRORS = (
-    "Statement could not be generated at this time",   # code 1019
-    "Statement generation in progress",                # still queued
+    "Statement could not be generated at this time",   # codes 1001, 1009
+    "Statement generation in progress",                # code 1019 — still queued
+    "Statement could not be retrieved",                # code 1021
     "Please try again",
 )
 
@@ -167,10 +210,14 @@ def _request_statement(token: str, query_id: str,
 
     raise ValueError(
         f"IB Flex request failed after {max_attempts} attempts: {last_err}\n\n"
-        "💡 Most likely fix: in IB portal → Reports → Flex Queries → Edit your query "
-        "→ scroll to the bottom → tick 'Allow Web Service Access' → Save.\n\n"
-        "If the flag is already set, IB's server is temporarily busy — "
-        "wait 30–60 seconds and try again, or switch to 'Paste XML' mode."
+        "💡 If you already fetched this statement successfully earlier today, this is "
+        "expected — IB only regenerates Activity Statements once per day, so a repeat "
+        "request has nothing new to generate. Try again tomorrow, or reuse the XML you "
+        "already fetched via 'Paste XML' mode.\n\n"
+        "If this is your first attempt today: in IB portal → Reports → Flex Queries → "
+        "Edit your query → scroll to the bottom → tick 'Allow Web Service Access' → Save. "
+        "If that's already set, IB's server may just be temporarily busy — wait 30–60 "
+        "seconds and try again."
     )
 
 
@@ -358,13 +405,14 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
 
         if tx_type in _CASH_INV_MAP:
             action = _CASH_INV_MAP[tx_type]
+            is_account_level = tx_type in _ACCOUNT_LEVEL_CASH_TYPES
             inv_records.append({
                 "record_type":    "investment",
                 "source":         "IB",
                 "desc":           key,
-                "symbol":         symbol or "IB-CASH",
-                "name":           name,
-                "isin":           isin,
+                "symbol":         _ib_cash_symbol(currency) if is_account_level else (symbol or "IB-CASH"),
+                "name":           _ib_cash_name(currency) if is_account_level else name,
+                "isin":           "" if is_account_level else isin,
                 "currency":       currency,
                 "fx_rate":        fx_rate,
                 "asset_category": "STK",

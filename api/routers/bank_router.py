@@ -398,15 +398,39 @@ def get_reconciliation_history(account_id: int):
 
 @router.post("/ib-flex-fetch")
 def ib_flex_fetch(data: dict):
-    """Fetch IB Flex XML using token + query_id."""
+    """Fetch IB Flex XML using token + query_id.
+
+    IB's own documentation states Activity Statement Flex Queries only refresh
+    once per day at close of business, and in practice a second SendRequest for
+    the same query later the same day reliably fails — there's nothing to
+    regenerate. To avoid that failure, the last successfully-fetched XML for
+    this query is cached for the calendar day and reused automatically; pass
+    force_refresh to bypass the cache and hit IB again anyway.
+    """
+    import datetime as _dt
+    from database.queries import get_app_setting, save_app_setting
+
     token = data.get("token", "").strip()
     query_id = data.get("query_id", "").strip()
+    force_refresh = bool(data.get("force_refresh", False))
     if not token or not query_id:
         raise HTTPException(400, "token and query_id are required")
+
+    today_str = _dt.date.today().isoformat()
+    date_key = f"ib_flex_cache_date_{query_id}"
+    xml_key = f"ib_flex_cache_xml_{query_id}"
+
+    if not force_refresh and get_app_setting(date_key) == today_str:
+        cached_xml = get_app_setting(xml_key)
+        if cached_xml:
+            return {"xml": cached_xml, "cached": True}
+
     try:
         from data.ib_flex_connector import fetch_flex_xml
         xml = fetch_flex_xml(token, query_id)
-        return {"xml": xml}
+        save_app_setting(date_key, today_str)
+        save_app_setting(xml_key, xml)
+        return {"xml": xml, "cached": False}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -497,14 +521,19 @@ def ib_flex_import(data: dict):
     import_tx = data.get("import_tx", True)
     filter_from = data.get("filter_from")
     filter_to = data.get("filter_to")
+    exclude_fx_spot = data.get("exclude_fx_spot", False)
 
     if not xml or not account_id:
         raise HTTPException(400, "xml and account_id are required")
     try:
         from data.ib_flex_connector import (
             parse_flex_xml, check_existing_records, check_fuzzy_duplicates, run_import,
+            is_fx_spot_record,
         )
         inv_records, tx_records, _ = parse_flex_xml(xml)
+
+        if exclude_fx_spot:
+            inv_records = [r for r in inv_records if not is_fx_spot_record(r)]
 
         if filter_from or filter_to:
             from datetime import date as _dt

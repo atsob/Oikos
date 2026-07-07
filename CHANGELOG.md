@@ -2,6 +2,19 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-07
+
+### Fixed
+- **Cash Flow Forecast report ignored your Recurring Templates entirely**: the report only ever showed explicitly scheduled future transactions and statistically-guessed patterns from recent history — it never once queried the Recurring Templates table, so a rent, subscription, or salary template you'd actually configured was invisible to the forecast unless it happened to also get picked up by the guesswork. It now projects every active template forward from its own due date and frequency, and the statistical guesswork skips any payee already covered by a template (or a scheduled transaction) so nothing is counted twice.
+- **Interactive Brokers importer — repeated same-day "Fetch & Preview" attempts always failed**: IB's Activity Statement Flex Queries only refresh once per day, so any fetch after the first one that day had nothing new to generate and reliably errored. The app now caches each day's successfully-fetched statement and reuses it automatically, with a link to force a fresh fetch from IB if genuinely needed. Also fixed the error message shown for IB Flex failures — it was displaying axios's generic "Request failed with status code 500" instead of IB's actual, much more informative error text.
+- **Interactive Brokers importer — a stale error banner could persist across unrelated actions**: the error shown above the Fetch/Parse button checked both the "Fetch via API" and "Paste XML" actions' error state at once, so a failed API fetch earlier in the session kept showing even after successfully switching to Paste XML mode and parsing correctly. The banner now only reflects whichever mode is currently active, and switching modes clears both.
+- **Interactive Brokers importer — FX Spot currency-conversion trades (e.g. `EUR.GBP`, `EUR.USD`) could be imported as fake securities**: these are IB's own internal trades to fund foreign-currency purchases, not real positions. Added an "Exclude FX Spot / currency-conversion trades" option (on by default) that filters them from the preview, the Security Mapping panel, and the actual import.
+- **Interactive Brokers importer — interest income (including Stock Yield Enhancement Program payments) could spawn a new throwaway "security" every month**: IB's own description text for these cash transactions embeds the month (e.g. "...INTEREST FOR JUN-2026"), which the importer was using as the security-matching key — guaranteed to never match anything from a prior month. These are now booked against one stable placeholder security per settlement currency (matching this app's existing convention of separate securities per currency variant, e.g. `Thomson Reuters Corp (USD)` / `(GBP)`), so the same recurring interest correctly reuses the same security every time regardless of the month-specific wording IB sends.
+
+### Added
+- **Cash Flow Forecast report**: new "Recurring Templates" section, with its own chart series and In/Out KPI cards, alongside the existing Scheduled and statistically-detected sections.
+- **Interactive Brokers importer**: "Force a fresh fetch from IB" link, shown when a cached statement is being reused, to bypass the daily cache when you specifically need up-to-the-minute data.
+
 ## 2026-07-06
 
 ### Fixed

@@ -4660,10 +4660,12 @@ const CF_HORIZONS = [
   { label: '12m', days: 365 },
 ]
 const CF_COLOR_MAP: Record<string, string> = {
-  'Income · Scheduled':         '#2ECC71',
-  'Expense · Scheduled':        '#E74C3C',
-  'Income · Recurring (est.)':  '#82E0AA',
-  'Expense · Recurring (est.)': '#F1948A',
+  'Income · Scheduled':           '#2ECC71',
+  'Expense · Scheduled':          '#E74C3C',
+  'Income · Recurring Template':  '#3498DB',
+  'Expense · Recurring Template': '#F39C12',
+  'Income · Recurring (est.)':    '#82E0AA',
+  'Expense · Recurring (est.)':   '#F1948A',
 }
 
 function CashFlowSection() {
@@ -4678,11 +4680,12 @@ function CashFlowSection() {
 
   const result = data as {
     scheduled: Row[]
+    templates: Row[]
     recurring: Row[]
-    metrics: { sched_in: number; sched_out: number; recur_in: number; recur_out: number; net_total: number }
+    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; net_total: number }
   } | undefined
 
-  // Build chart data: aggregate scheduled + recurring by calendar month
+  // Build chart data: aggregate scheduled + templates + recurring by calendar month
   const chartTraces = useMemo(() => {
     if (!result) return []
     const bySeriesMonth: Record<string, Record<string, number>> = {}
@@ -4694,6 +4697,7 @@ function CashFlowSection() {
       bySeriesMonth[series][month] = (bySeriesMonth[series][month] ?? 0) + amt
     }
     for (const r of result.scheduled) addRow(String(r.date), Number(r.amount_eur), 'Scheduled')
+    for (const r of result.templates) addRow(String(r.date), Number(r.amount_eur), 'Recurring Template')
     for (const r of result.recurring) addRow(String(r.date), Number(r.amount_eur), 'Recurring (est.)')
 
     const allMonths = [...new Set([
@@ -4713,14 +4717,17 @@ function CashFlowSection() {
 
   const m = result?.metrics
   const scheduled = result?.scheduled ?? []
+  const templates = result?.templates ?? []
   const recurring = result?.recurring ?? []
 
   const KPI_METRICS = m ? [
     { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.' },
     { label: 'Scheduled Out', value: fmtEur(m.sched_out), color: 'text-red-600',   tip: 'Total expenses from explicitly scheduled future transactions within the horizon.' },
-    { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns, projected forward.' },
-    { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns, projected forward.' },
-    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled and recurring in/out amounts within the horizon.' },
+    { label: 'Template In',   value: fmtEur(m.tmpl_in),   color: 'text-blue-700',  tip: 'Total income projected from your active Recurring Templates within the horizon.' },
+    { label: 'Template Out',  value: fmtEur(m.tmpl_out),  color: 'text-orange-600', tip: 'Total expenses projected from your active Recurring Templates within the horizon.' },
+    { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.' },
+    { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.' },
+    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, and recurring in/out amounts within the horizon.' },
   ] : []
 
   return (
@@ -4752,7 +4759,7 @@ function CashFlowSection() {
 
       {/* KPI metrics */}
       {KPI_METRICS.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
           {KPI_METRICS.map(k => (
             <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
               <Tooltip text={k.tip}>
@@ -4824,12 +4831,58 @@ function CashFlowSection() {
         )}
       </div>
 
+      {/* Recurring Templates */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">🔂 Recurring Templates</h3>
+        <p className="text-xs text-slate-400 mb-2">
+          Every future occurrence of your active <strong>Recurring Templates</strong> (see Recurring page) within this horizon,
+          projected forward from each template's own next due date and frequency.
+        </p>
+        {templates.length === 0 ? (
+          <p className="text-sm text-slate-400">No active recurring templates due within this horizon.</p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Due Date</th>
+                  <th className="px-3 py-2 text-left">Payee</th>
+                  <th className="px-3 py-2 text-left">Account</th>
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-right">Amount (€)</th>
+                  <th className="px-3 py-2 text-left">Frequency</th>
+                  <th className="px-3 py-2 text-left">Currency</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {templates.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.accounts_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.periodicity || '—')}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
+
       {/* Projected Recurring Payments */}
       <div>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">🔁 Projected Recurring Payments</h3>
         <p className="text-xs text-slate-400 mb-2">
           Payee + Category combinations detected in <strong>every one</strong> of the last <strong>{monthsBack} complete months</strong>,
-          projected forward at their average payment interval. Payees with explicit scheduled entries are excluded to avoid double-counting.
+          projected forward at their average payment interval. Payees already covered by an explicit scheduled entry or an active
+          Recurring Template above are excluded to avoid double-counting.
         </p>
         {recurring.length === 0 ? (
           <p className="text-sm text-slate-400">No recurring payments projected within this horizon.</p>

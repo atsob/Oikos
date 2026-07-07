@@ -310,7 +310,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
 
         <H3>🔄 Cash Flow Forecast</H3>
-        <P>Projects future cash flow from recurring templates and scheduled transactions.</P>
+        <P>
+          Projects future cash flow from three sources, shown separately: <b>explicitly scheduled</b> future
+          transactions already entered, <b>active Recurring Templates</b> (see Recurring) projected forward from
+          each template's own due date and frequency, and <b>statistically-detected patterns</b> — payee/category
+          combinations seen in every one of the last few complete months, for recurring bills you haven't set up
+          a template for.
+        </P>
+        <Note>
+          A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
+          by a scheduled transaction or an active Recurring Template, so setting up a template for something
+          doesn't cause it to double up in the forecast.
+        </Note>
 
         <H3>🎯 Budget &amp; Spending</H3>
         <P>Three tabs: Budget vs. Actual, Spending Trends, and Savings Rate.</P>
@@ -416,6 +427,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Import Profiles and Payee Rules are reusable — set a bank's column mapping or a payee's default
           category once, then every future import uses it automatically.
         </P>
+        <Note>
+          <b>Interactive Brokers (Flex)</b>: IB only refreshes an Activity Statement once per day, so a second
+          "Fetch &amp; Preview" the same day would normally fail — the app caches that day's statement
+          automatically and reuses it, with a link to force a fresh fetch from IB if you really need one.
+          "Exclude FX Spot / currency-conversion trades" (on by default) filters out the internal{' '}
+          <code>EUR.GBP</code>-style trades IB books to fund foreign-currency purchases — these aren't real
+          positions. Interest income
+          (including Stock Yield Enhancement Program payments) is booked against one placeholder security per
+          settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
+        </Note>
       </>
     ),
   },
