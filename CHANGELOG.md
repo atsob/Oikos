@@ -2,6 +2,20 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-08
+
+### Fixed
+- **New Transaction — checking "recurring" on save could create a template with no categories**: the inline "create a Recurring Template" flow (checking the recurring box while saving a brand-new transaction) sent the template's name/amount/frequency to the backend but never its splits, even though the backend has always supported saving them — only the separate "Create Template from Transaction" action (converting an existing row afterward) copied categories correctly. Any template created this way silently lost its categorization, so every future generated draft came in uncategorized. Two real templates found affected by this ("Monthly - Cosmote Mobile - Anatolie & Michael" and "...- Nikolas") were repaired with the categories from their original source transactions.
+- **Securities Analysis → Portfolio Action Signals — the "P&L %" column didn't actually sort**: its sort key pointed at a field that was never present on the underlying row data (the percentage shown is computed on the fly from Unrealized P&L ÷ Cost), so clicking the column header silently did nothing. It now sorts correctly, ascending and descending.
+
+### Added
+- **Security Detail → Investment Transactions**: the KPI row now also shows **Sharpe Ratio**, **Agent Signal** (the combined math + analyst recommendation), and **Analyst Target** price with upside %, pulled from the same data as the Securities Analysis report.
+- **Recurring Transactions → Pending Drafts**: the category picker for a draft's splits now suggests that payee's most-used categories first, matching the New Transaction form's existing behavior — useful when a template's splits were never set up (or need a one-off correction) and you're categorizing by hand.
+
+### Changed
+- **Static Data & Market Data**: every tab's toolbar now consistently places Search on the left and Add/Merge actions on the right (previously inconsistent between a shared page-level search bar and per-tab layouts).
+- **Security Detail**: "Est. Current Value" renamed to "Current Value" for consistency with the "Cur. Value" column just below it.
+
 ## 2026-07-07
 
 ### Fixed

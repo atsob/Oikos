@@ -6,7 +6,7 @@ import {
   updateRecurringTemplate, deleteRecurringTemplate, runRecurringTemplate,
   getRecurringDrafts, generateRecurringDrafts, updateRecurringDraft,
   confirmRecurringDraft, deleteRecurringDraft,
-  getAccounts, getPayees, getCategories, getSplits,
+  getAccounts, getPayees, getCategories, getSplits, getPayeeTopCategories,
   getRecentTransactionsForTemplate, createTemplateFromTransaction,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
@@ -230,6 +230,26 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
 
   const set = (k: keyof DraftForm, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const payeeId = form.payees_id ? Number(form.payees_id) : null
+  const { data: topCats = [] } = useQuery({
+    queryKey: ['payee-top-categories', payeeId],
+    queryFn: () => getPayeeTopCategories(payeeId!),
+    enabled: !!payeeId,
+    staleTime: 60_000,
+  })
+  const sortedCategories = useMemo(() => {
+    if (!payeeId || !(topCats as Row[]).length) return categories
+    const topIds = new Set((topCats as Row[]).map(c => String(c.id)))
+    const top = (topCats as Row[]).map(tc => categories.find(c => String(c.id) === String(tc.id))).filter(Boolean) as Row[]
+    const rest = categories.filter(c => !topIds.has(String(c.id)))
+    return top.length ? [
+      { id: '__sep__', full_path: '── Recent for this payee ──', _disabled: true },
+      ...top,
+      { id: '__sep2__', full_path: '── All categories ──', _disabled: true },
+      ...rest,
+    ] : categories
+  }, [categories, topCats, payeeId])
+
   useEffect(() => {
     getSplits(Number(draft.id)).then((rows: Row[]) => {
       setSplits(rows.map(r => ({
@@ -388,7 +408,9 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
                         <td className="px-2 py-1.5">
                           <select className="w-full rounded border border-slate-300 px-2 py-1 text-xs" value={sp.categories_id} onChange={e => setSplit(i, 'categories_id', e.target.value)}>
                             <option value="">— none —</option>
-                            {(categories as Row[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)}</option>)}
+                            {sortedCategories.map(c => (
+                              <option key={String(c.id)} value={String(c.id)} disabled={!!c._disabled}>{String(c.full_path)}</option>
+                            ))}
                           </select>
                         </td>
                         <td className="px-2 py-1.5">

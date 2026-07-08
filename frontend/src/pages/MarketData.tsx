@@ -79,7 +79,7 @@ const ANOMALY_COLS: ColDef[] = [
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
 
 // ── Securities CRUD tab ───────────────────────────────────────────────────────
-function SecuritiesTab({ search }: { search: string }) {
+function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
@@ -227,10 +227,16 @@ function SecuritiesTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{(securities as unknown[]).length} securities</span>
+        </div>
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{(securities as unknown[]).length} securities</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact rowData={securities} columnDefs={colDefs}
@@ -292,7 +298,7 @@ function SecuritiesTab({ search }: { search: string }) {
 }
 
 // ── Currencies CRUD tab ───────────────────────────────────────────────────────
-function CurrenciesTab({ search }: { search: string }) {
+function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -365,10 +371,16 @@ function CurrenciesTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} currencies</span>
+        </div>
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} currencies</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
         <AgGridReact rowData={filtered} columnDefs={colDefs}
@@ -539,9 +551,11 @@ function FxPricesTab() {
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
-          <div className="flex items-center gap-3 mb-1">
-            <Search size={14} className="text-slate-400" />
-            <Input className="w-56 h-7 text-xs" placeholder="Search…" value={fxSearch} onChange={e => setFxSearch(e.target.value)} />
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={fxSearch} onChange={e => setFxSearch(e.target.value)} />
+            </div>
             {selectedDates.length > 0 && (
               <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
                 <Trash2 size={13} /> Delete {selectedDates.length} selected
@@ -802,9 +816,11 @@ function SecuritiesPricesTab() {
             config={{ displayModeBar: true, responsive: true }}
             style={{ width: '100%' }}
           />
-          <div className="flex items-center gap-3 mb-1">
-            <Search size={14} className="text-slate-400" />
-            <Input className="w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
+          <div className="flex items-center justify-between gap-3 mb-1">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
+            </div>
             {selectedDates.length > 0 && (
               <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
                 <Trash2 size={13} /> Delete {selectedDates.length} selected
@@ -1281,8 +1297,11 @@ function AlertsTab() {
   return (
     <div className="p-4 space-y-4">
       <div className="flex justify-between items-center gap-3">
-        <div className="flex items-center gap-2 flex-1">
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search alerts…" className="max-w-xs" />
+        <div className="flex items-center gap-3 flex-1">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search alerts…" className="pl-8 max-w-xs" />
+          </div>
           <p className="text-sm text-slate-500 whitespace-nowrap">{filtered.length} of {rows.length} alert{rows.length !== 1 ? 's' : ''}</p>
         </div>
         <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Alert</Button>
@@ -1394,27 +1413,19 @@ export default function MarketData() {
       <PageHeader title="Market Data" />
 
       <div className="px-6 py-4 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
-            {TABS.map(t => (
-              <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
-                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-          {(tab === 'Securities' || tab === 'Currencies') && (
-            <div className="relative sm:ml-4">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input className="pl-8 w-full sm:w-52" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
-            </div>
-          )}
+        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
+              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+              {t}
+            </button>
+          ))}
         </div>
 
         <Card>
           <CardBody className="p-0">
-            {tab === 'Currencies' && <CurrenciesTab search={search} />}
-            {tab === 'Securities' && <SecuritiesTab search={search} />}
+            {tab === 'Currencies' && <CurrenciesTab search={search} onSearchChange={setSearch} />}
+            {tab === 'Securities' && <SecuritiesTab search={search} onSearchChange={setSearch} />}
             {tab === 'FX Prices' && <FxPricesTab />}
             {tab === 'Securities Prices' && <SecuritiesPricesTab />}
             {tab === 'Downloads' && <DownloadsTab />}

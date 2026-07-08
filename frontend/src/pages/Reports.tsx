@@ -3554,7 +3554,12 @@ function InvestmentSignalsTab() {
 function PortfolioActionSignalsTab() {
   const { data = [], isLoading } = usePortfolioSignals()
   const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
-  const rows = data as Signal[]
+  const rows = (data as Signal[]).map(r => ({
+    ...r,
+    unrealized_pnl_pct: r.unrealized_pnl_eur != null && r.total_cost_eur != null && Number(r.total_cost_eur) > 0
+      ? Number(r.unrealized_pnl_eur) / Number(r.total_cost_eur) * 100
+      : null,
+  }))
 
   const filtered = rows.filter(r => {
     if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
@@ -3641,8 +3646,7 @@ function PortfolioActionSignalsTab() {
               {sortedFiltered.map((r, i) => {
                 const pnl = r.unrealized_pnl_eur
                 const cost = r.total_cost_eur
-                const pnlPct = pnl != null && cost != null && Number(cost) > 0
-                  ? Number(pnl) / Number(cost) * 100 : null
+                const pnlPct = r.unrealized_pnl_pct
                 return (
                   <tr key={i} className={`hover:bg-slate-50 ${Number(r.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}`}>
                     <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap sticky left-0 bg-white"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>

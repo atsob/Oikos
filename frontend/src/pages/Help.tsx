@@ -266,6 +266,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           actual transaction (as a draft or confirmed, depending on setup). The Dashboard's "Upcoming Bills"
           list and the Cash Flow Forecast report both project forward from these templates.
         </P>
+        <Note>
+          When reviewing a Pending Draft, the category dropdown in Splits leads with that payee's most-used
+          categories (a "Recent for this payee" group), the same suggestion behavior as the regular New
+          Transaction form — handy for filling in a template's splits for the first time.
+        </Note>
       </>
     ),
   },
@@ -401,6 +406,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           for withholding tax), Price Anomalies, Dividends, Corporate Actions, and Downloads, all for that one
           security.
         </P>
+        <Note>
+          The Investment Transactions tab's KPI row also shows <b>Sharpe Ratio</b>, <b>Agent Signal</b>, and{' '}
+          <b>Analyst Target</b> (with upside %) for the security, when available — the same figures as the
+          Securities Analysis → Portfolio Action Signals report, at a glance without leaving the security.
+        </Note>
       </>
     ),
   },

@@ -1,14 +1,13 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
-import type { ColDef, GridReadyEvent, GridApi, CellValueChangedEvent, RowClickedEvent } from 'ag-grid-community'
+import type { RowClickedEvent } from 'ag-grid-community'
 import {
   api,
   getPayees, getCategories, getInstitutions, getAccountsMaster,
   upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories,
-  getSecuritiesMaster, upsertSecurity,
-  getCurrenciesMaster, upsertCurrency,
+  getCurrenciesMaster,
   getPayeeTransactions, getCategoryTransactions,
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
@@ -22,7 +21,6 @@ const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Tax Rules', '
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
-const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const deleteRow = (table: string, id: number) =>
@@ -59,7 +57,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Payees Tab ────────────────────────────────────────────────────────────────
-function PayeesTab({ search }: { search: string }) {
+function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [editName, setEditName] = useState('')
@@ -130,15 +128,23 @@ function PayeesTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
-        <Button size="sm" variant="secondary" onClick={() => openEdit({ id: null, name: '', categories_id: null })}>
-          <Plus size={13} /> Add Payee
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
-          <ArrowRightLeft size={13} /> Merge Payees
-        </Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} payees · double-click to edit</span>
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} payees · double-click to edit</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={() => openEdit({ id: null, name: '', categories_id: null })}>
+            <Plus size={13} /> Add Payee
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
+            <ArrowRightLeft size={13} /> Merge Payees
+          </Button>
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
@@ -250,7 +256,7 @@ function PayeesTab({ search }: { search: string }) {
 }
 
 // ── Categories Tab ────────────────────────────────────────────────────────────
-function CategoriesTab({ search }: { search: string }) {
+function CategoriesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState({ name: '', parent_id: '', type: 'Expense' })
@@ -330,13 +336,21 @@ function CategoriesTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Category</Button>
-        <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
-          <ArrowRightLeft size={13} /> Merge Categories
-        </Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} categories · double-click to edit</span>
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} categories · double-click to edit</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Category</Button>
+          <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
+            <ArrowRightLeft size={13} /> Merge Categories
+          </Button>
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
@@ -457,7 +471,7 @@ function CategoriesTab({ search }: { search: string }) {
 }
 
 // ── Accounts Tab ──────────────────────────────────────────────────────────────
-function AccountsTab({ search }: { search: string }) {
+function AccountsTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, unknown>>({})
@@ -528,10 +542,16 @@ function AccountsTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} accounts · double-click to edit</span>
+        </div>
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} accounts · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
@@ -624,83 +644,8 @@ function AccountsTab({ search }: { search: string }) {
   )
 }
 
-// ── GridTab (Institutions, Securities, Currencies) ────────────────────────────
-const INSTITUTION_COLS: ColDef[] = [
-  { field: 'id', headerName: 'ID', width: 70, editable: false },
-  { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160, editable: true },
-  { field: 'type', headerName: 'Type', width: 130, editable: true },
-  { field: 'bic', headerName: 'BIC', width: 110, editable: true },
-  { field: 'moodys', headerName: "Moody's", width: 90, editable: true },
-  { field: 'sp', headerName: 'S&P', width: 80, editable: true },
-  { field: 'fitch', headerName: 'Fitch', width: 80, editable: true },
-  { field: 'website', headerName: 'Website', flex: 1, minWidth: 140, editable: true },
-  { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120, editable: true },
-  { field: 'phone', headerName: 'Phone', width: 130, editable: true },
-  { field: 'email', headerName: 'Email', flex: 1, minWidth: 140, editable: true },
-  { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 140, editable: true },
-]
-
-const SECURITY_COLS: ColDef[] = [
-  { field: 'id', headerName: 'ID', width: 70, editable: false },
-  { field: 'ticker', headerName: 'Ticker', width: 100, editable: true, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-  { field: 'name', headerName: 'Name', flex: 2, minWidth: 180, editable: true },
-  { field: 'type', headerName: 'Type', width: 130, editable: true },
-  { field: 'instrument_type', headerName: 'Instrument', width: 120, editable: true },
-  { field: 'currency', headerName: 'Currency', width: 90, editable: false },
-  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'price_date', headerName: 'Price Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-  { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn', editable: false },
-]
-
-const CURRENCY_COLS: ColDef[] = [
-  { field: 'id', headerName: 'ID', width: 70, editable: false },
-  { field: 'code', headerName: 'Code', width: 90, editable: true },
-  { field: 'name', headerName: 'Name', flex: 2, minWidth: 160, editable: true },
-  { field: 'symbol', headerName: 'Symbol', width: 80, editable: true },
-  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 120, type: 'numericColumn', editable: false, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'rate_date', headerName: 'Rate Date', width: 110, editable: false, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-]
-
-const GRID_TAB_CONFIG: Record<string, {
-  queryKey: string
-  queryFn: (s?: string) => Promise<unknown>
-  colDefs: ColDef[]
-  upsertFn: (d: Record<string, unknown>) => Promise<unknown>
-  deleteTable: string
-  idField: string
-  newRow: () => Record<string, unknown>
-}> = {
-  Institutions: {
-    queryKey: 'institutions',
-    queryFn: (s) => getInstitutions(s),
-    colDefs: INSTITUTION_COLS,
-    upsertFn: upsertInstitution,
-    deleteTable: 'institutions',
-    idField: 'id',
-    newRow: () => ({ name: 'New Institution', type: 'Bank' }),
-  },
-  Securities: {
-    queryKey: 'securities-master',
-    queryFn: (s) => getSecuritiesMaster(s),
-    colDefs: SECURITY_COLS,
-    upsertFn: upsertSecurity,
-    deleteTable: 'securities',
-    idField: 'id',
-    newRow: () => ({ ticker: 'NEW', name: 'New Security', type: 'Stock' }),
-  },
-  Currencies: {
-    queryKey: 'currencies-master',
-    queryFn: () => getCurrenciesMaster(),
-    colDefs: CURRENCY_COLS,
-    upsertFn: upsertCurrency,
-    deleteTable: 'currencies',
-    idField: 'id',
-    newRow: () => ({ code: 'XXX', name: 'New Currency', symbol: '$' }),
-  },
-}
-
 // ── Institutions modal for full edit ─────────────────────────────────────────
-function InstitutionsTab({ search }: { search: string }) {
+function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -759,10 +704,16 @@ function InstitutionsTab({ search }: { search: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} institutions · double-click to edit</span>
+        </div>
         <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} institutions · double-click to edit</span>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
@@ -826,297 +777,6 @@ function InstitutionsTab({ search }: { search: string }) {
                 <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm resize-none" rows={2} value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} />
               </Field>
             </div>
-          </div>
-          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-function GridTab({ tabName, search }: { tabName: string; search: string }) {
-  const cfg = GRID_TAB_CONFIG[tabName]
-  const qc = useQueryClient()
-  const [gridApi, setGridApi] = useState<GridApi | null>(null)
-  const [pendingChanges, setPendingChanges] = useState<Map<string, Record<string, unknown>>>(new Map())
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const { data = [], isLoading } = useQuery({ queryKey: [cfg.queryKey], queryFn: () => cfg.queryFn() })
-
-  const filtered = search
-    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
-    : data as Record<string, unknown>[]
-
-  const onGridReady = useCallback((e: GridReadyEvent) => setGridApi(e.api), [])
-
-  const onCellValueChanged = useCallback((e: CellValueChangedEvent) => {
-    const row = e.data as Record<string, unknown>
-    const key = String(row[cfg.idField] ?? `_new_${Date.now()}`)
-    setPendingChanges(prev => new Map(prev).set(key, { ...row }))
-  }, [cfg.idField])
-
-  const saveChanges = async () => {
-    setSaving(true); setError(null)
-    try {
-      for (const row of pendingChanges.values()) await cfg.upsertFn(row)
-      setPendingChanges(new Map())
-      qc.invalidateQueries({ queryKey: [cfg.queryKey] })
-    } catch (e: unknown) { setError(extractError(e)) }
-    finally { setSaving(false) }
-  }
-
-  const deleteSelected = async () => {
-    if (!gridApi) return
-    const selected = gridApi.getSelectedRows() as Record<string, unknown>[]
-    if (selected.length === 0) return
-    if (!confirm(`Delete ${selected.length} row(s)?`)) return
-    setSaving(true); setError(null)
-    try {
-      for (const row of selected) if (row[cfg.idField]) await deleteRow(cfg.deleteTable, Number(row[cfg.idField]))
-      qc.invalidateQueries({ queryKey: [cfg.queryKey] })
-    } catch (e: unknown) { setError(extractError(e)) }
-    finally { setSaving(false) }
-  }
-
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
-        <Button size="sm" variant="secondary" onClick={() => {
-          if (!gridApi) return
-          const newRow = cfg.newRow()
-          gridApi.applyTransaction({ add: [newRow], addIndex: 0 })
-          const key = `_new_${Date.now()}`
-          setPendingChanges(prev => new Map(prev).set(key, newRow))
-          gridApi.startEditingCell({ rowIndex: 0, colKey: cfg.colDefs.find(c => c.editable)?.field ?? '' })
-        }}><Plus size={13} /> Add</Button>
-        <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={saving}><Trash2 size={13} /> Delete Selected</Button>
-        {pendingChanges.size > 0 && (
-          <Button size="sm" onClick={saveChanges} disabled={saving}>
-            <Save size={13} /> {saving ? 'Saving…' : `Save (${pendingChanges.size} changed)`}
-          </Button>
-        )}
-        {error && <span className="text-xs text-red-600 ml-2">{error}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} rows · Double-click cell to edit</span>
-      </div>
-      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
-          rowData={filtered}
-          columnDefs={cfg.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
-          rowSelection="multiple"
-          onGridReady={onGridReady}
-          onCellValueChanged={onCellValueChanged}
-          stopEditingWhenCellsLoseFocus
-        />
-      </div>
-    </div>
-  )
-}
-
-
-// ── Currencies Tab ────────────────────────────────────────────────────────────
-function CurrenciesTab({ search }: { search: string }) {
-  const qc = useQueryClient()
-  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
-  const [form, setForm] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  const { data = [], isLoading } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
-  const filtered = search
-    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
-    : data as Record<string, unknown>[]
-
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-
-  const openEdit = (row: Record<string, unknown>) => {
-    setEditRow(row)
-    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
-    setError(null)
-  }
-  const openNew = () => { setEditRow({}); setForm({ code: '', name: '', symbol: '' }); setError(null) }
-
-  const handleSave = async () => {
-    setSaving(true); setError(null)
-    try {
-      await upsertCurrency({ id: editRow?.id ?? undefined, ...form })
-      qc.invalidateQueries({ queryKey: ['currencies-master'] })
-      setEditRow(null)
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
-    finally { setSaving(false) }
-  }
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this currency?')) return
-    setDeleteError(null)
-    try {
-      await deleteRow('currencies', id)
-      qc.invalidateQueries({ queryKey: ['currencies-master'] })
-    } catch (e) { setDeleteError(extractError(e)) }
-  }
-
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} currencies · double-click to edit</span>
-      </div>
-      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
-          rowData={filtered}
-          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'code', headerName: 'Code', width: 90 },
-            { field: 'name', headerName: 'Name', flex: 2, minWidth: 160 },
-            { field: 'symbol', headerName: 'Symbol', width: 80 },
-            { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? Number(p.value).toFixed(4) : '—' },
-            { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
-        />
-      </div>
-      {editRow !== null && (
-        <Modal title={form.id ? 'Edit Currency' : 'New Currency'} onClose={() => setEditRow(null)}
-          footer={<>
-            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
-            <span className="flex-1" />
-            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving || !form.code?.trim() || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
-          </>}>
-          <Field label="Code *"><Input value={form.code ?? ''} onChange={e => set('code', e.target.value)} placeholder="EUR" /></Field>
-          <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} placeholder="Euro" /></Field>
-          <Field label="Symbol"><Input value={form.symbol ?? ''} onChange={e => set('symbol', e.target.value)} placeholder="€" /></Field>
-          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-// ── Securities Tab ────────────────────────────────────────────────────────────
-function SecuritiesTab({ search }: { search: string }) {
-  const qc = useQueryClient()
-  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
-  const [form, setForm] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  const { data = [], isLoading } = useQuery({ queryKey: ['securities-master'], queryFn: () => getSecuritiesMaster() })
-  const { data: currencies = [] } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
-
-  const filtered = search
-    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
-    : data as Record<string, unknown>[]
-
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-
-  const openEdit = (row: Record<string, unknown>) => {
-    setEditRow(row)
-    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
-    setError(null)
-  }
-  const openNew = () => { setEditRow({}); setForm({ ticker: '', name: '', type: 'Stock', instrument_type: '' }); setError(null) }
-
-  const handleSave = async () => {
-    setSaving(true); setError(null)
-    try {
-      await upsertSecurity({ id: editRow?.id ?? undefined, ...form })
-      qc.invalidateQueries({ queryKey: ['securities-master'] })
-      setEditRow(null)
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
-    finally { setSaving(false) }
-  }
-
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this security? This cannot be undone.')) return
-    setDeleteError(null)
-    try {
-      await deleteRow('securities', id)
-      qc.invalidateQueries({ queryKey: ['securities-master'] })
-    } catch (e) { setDeleteError(extractError(e)) }
-  }
-
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
-        {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-        <span className="ml-auto text-xs text-slate-400">{filtered.length} securities · double-click to edit</span>
-      </div>
-      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
-          rowData={filtered}
-          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'ticker', headerName: 'Ticker', width: 100, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-            { field: 'name', headerName: 'Name', flex: 2, minWidth: 180 },
-            { field: 'type', headerName: 'Type', width: 130 },
-            { field: 'instrument_type', headerName: 'Instrument', width: 120 },
-            { field: 'currency', headerName: 'Currency', width: 90 },
-            { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-            { field: 'price_date', headerName: 'Price Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-            { field: 'held_in_accounts', headerName: 'Held In', width: 80, type: 'numericColumn' },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
-        />
-      </div>
-      {editRow !== null && (
-        <Modal title={form.id ? 'Edit Security' : 'New Security'} onClose={() => setEditRow(null)}
-          footer={<>
-            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
-            <span className="flex-1" />
-            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving || !form.ticker?.trim() || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
-          </>}>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Ticker *"><Input value={form.ticker ?? ''} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" /></Field>
-            <Field label="Type *">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.type ?? 'Stock'} onChange={e => set('type', e.target.value)}>
-                {SECURITY_TYPES.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </Field>
-            <div className="col-span-2">
-              <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} placeholder="Apple Inc." /></Field>
-            </div>
-            <Field label="Instrument Type"><Input value={form.instrument_type ?? ''} onChange={e => set('instrument_type', e.target.value)} placeholder="Common Stock" /></Field>
-            <Field label="Currency">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.currencies_id ?? ''} onChange={e => set('currencies_id', e.target.value)}>
-                <option value="">— select —</option>
-                {(currencies as Record<string, unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} – {String(c.name)}</option>)}
-              </select>
-            </Field>
-            <Field label="ISIN"><Input value={form.isin ?? ''} onChange={e => set('isin', e.target.value)} placeholder="US0378331005" /></Field>
-            <Field label="Exchange"><Input value={form.exchange ?? ''} onChange={e => set('exchange', e.target.value)} placeholder="NASDAQ" /></Field>
           </div>
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
@@ -1495,26 +1155,20 @@ export default function StaticData() {
     <div>
       <PageHeader title="Static Data" subtitle="Master reference data" />
       <div className="px-6 py-4 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
-            {TABS.map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-          <div className="relative sm:ml-4 shrink-0">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <Input className="pl-8 w-full sm:w-52" placeholder="Filter…" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
+        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+              {t}
+            </button>
+          ))}
         </div>
 
         <Card className="overflow-hidden">
-          {tab === 'Payees'       && <PayeesTab search={search} />}
-          {tab === 'Categories'   && <CategoriesTab search={search} />}
-          {tab === 'Institutions' && <InstitutionsTab search={search} />}
-          {tab === 'Accounts'     && <AccountsTab search={search} />}
+          {tab === 'Payees'       && <PayeesTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Categories'   && <CategoriesTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Institutions' && <InstitutionsTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Accounts'     && <AccountsTab search={search} onSearchChange={setSearch} />}
           {tab === 'Tax Rules'      && <TaxRulesTab />}
           {tab === 'Instrument Tax' && <InstrumentTaxTab />}
         </Card>

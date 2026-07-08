@@ -22,7 +22,7 @@ import {
   downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
-  getAccounts,
+  getAccounts, getPortfolioSignals,
 } from '@/lib/api'
 import { InvTransactionModal, emptyInvForm, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -328,6 +328,8 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   })
   const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
   const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: getSecurities })
+  const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -444,18 +446,49 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   return (
     <div className="p-4 space-y-6">
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Transactions" value={String(transactions.length)} />
-        <StatCard label="Total Qty Held" value={fmt(totalQty, 8)} />
+      <div className={`grid gap-3 ${signal ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' : 'grid-cols-2 md:grid-cols-4'}`}>
+        <StatCard compact label="Transactions" value={String(transactions.length)} />
+        <StatCard compact label="Total Qty Held" value={fmt(totalQty, 8)} />
         <StatCard
+          compact
           label={holdings.latest_price != null ? `Price (${holdings.price_date})` : 'Price'}
           value={holdings.latest_price != null ? fmt(holdings.latest_price, 4) : '—'}
         />
         <StatCard
-          label="Est. Current Value"
+          compact
+          label="Current Value"
           value={totalValue ? fmt(totalValue, 2) : '—'}
           subs={totalPnl !== 0 ? [{ text: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl, 2)} P&L`, color: totalPnl >= 0 ? 'text-green-600' : 'text-red-600' }] : undefined}
         />
+        {signal && (
+          <>
+            <StatCard
+              compact
+              label="Sharpe Ratio"
+              value={signal.sharpe_ratio != null ? Number(signal.sharpe_ratio).toFixed(2) : '—'}
+              color={signal.sharpe_ratio != null ? (Number(signal.sharpe_ratio) >= 1 ? 'text-green-600' : Number(signal.sharpe_ratio) < 0 ? 'text-red-600' : undefined) : undefined}
+              sub={signal.quality_score != null ? `Quality score ${Number(signal.quality_score).toFixed(2)}` : undefined}
+            />
+            <StatCard
+              compact
+              label="Agent Signal"
+              value={String(signal.final_signal ?? '—')}
+              sub={signal.recommendation_signal ? `Math: ${String(signal.recommendation_signal)}` : undefined}
+            />
+            <StatCard
+              compact
+              label="Analyst Target"
+              value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'}
+              subs={[
+                signal.wall_street_view ? { text: String(signal.wall_street_view).replace('_', ' ') } : null,
+                signal.upside_pct != null ? {
+                  text: `${Number(signal.upside_pct) >= 0 ? '+' : ''}${Number(signal.upside_pct).toFixed(2)}% upside`,
+                  color: Number(signal.upside_pct) >= 0 ? 'text-green-600' : 'text-red-600',
+                } : null,
+              ].filter((s): s is { text: string; color?: string } => s !== null)}
+            />
+          </>
+        )}
       </div>
 
       {/* Holdings by Account */}

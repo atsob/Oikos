@@ -771,18 +771,16 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
           txId = res.id
         }
 
-        if (useSplits) {
-          const validSplits = splits
-            .filter(s => s.amount !== '' && s.amount !== '0')
-            .map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
-          if (validSplits.length > 0) await upsertSplits(txId, validSplits)
-        } else {
-          await upsertSplits(txId, [{
-            categories_id: form.categories_id ? Number(form.categories_id) : null,
-            amount: parseFloat(form.total_amount),
-            memo: form.memo || null,
-          }])
-        }
+        const finalSplits = useSplits
+          ? splits
+              .filter(s => s.amount !== '' && s.amount !== '0')
+              .map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
+          : [{
+              categories_id: form.categories_id ? Number(form.categories_id) : null,
+              amount: parseFloat(form.total_amount),
+              memo: form.memo || null,
+            }]
+        if (!useSplits || finalSplits.length > 0) await upsertSplits(txId, finalSplits)
 
         if (!form.id && recurringEnabled && recurringName.trim()) {
           await createRecurringTemplate({
@@ -794,6 +792,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
             periodicity: recurringFreq,
             next_due_date: recurringNextDue,
             accounts_id_target: null,
+            splits: finalSplits,
           })
         }
       }
