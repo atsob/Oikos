@@ -207,7 +207,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Investments</H2>
-        <P>Manage brokerage/investment-account activity directly, in three views:</P>
+        <P>Manage brokerage/investment-account activity directly, in three views (each with its own search box):</P>
         <Ul>
           <li><b>Holdings</b> — current positions, quantity, cost basis, market value, unrealized P&amp;L.</li>
           <li><b>Transactions</b> — the full Buy/Sell/Dividend/Reinvest/etc. history, editable.</li>
@@ -446,6 +446,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           positions. Interest income
           (including Stock Yield Enhancement Program payments) is booked against one placeholder security per
           settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
+        </Note>
+        <Note>
+          <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no
+          underlying security, so they're linked to a single <b>Charge Payee</b> instead — configurable in that
+          section, defaulting to auto-creating a "Saxo Bank" payee the first time you import if left unset.
         </Note>
       </>
     ),

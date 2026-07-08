@@ -1799,18 +1799,8 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   return (
     <div className="space-y-5">
       {/* Description */}
-      <div className="text-xs text-slate-500 space-y-1">
-        <p>Quantifies the risk profile of your current portfolio using historical price data. Returns are <strong>value-weighted</strong> by current position size and use a <strong>3% risk-free rate</strong>.</p>
-        <ul className="list-disc pl-4 space-y-0.5">
-          <li><strong>Ann. Volatility</strong> — annualised standard deviation of daily returns; higher = more volatile.</li>
-          <li><strong>Sharpe Ratio</strong> — excess return per unit of total risk. Above 1.0 is good; above 2.0 is excellent.</li>
-          <li><strong>Sortino Ratio</strong> — like Sharpe but only penalises downside volatility. Preferred when returns are skewed.</li>
-          <li><strong>Max Drawdown</strong> — largest peak-to-trough decline in the period.</li>
-          <li><strong>VaR 95%</strong> — on a typical day there is only a 5% chance the portfolio loses <em>more</em> than this percentage.</li>
-          <li><strong>CVaR 95%</strong> — average loss on the worst 5% of days (Expected Shortfall); a more conservative tail-risk measure.</li>
-          <li><strong>Beta</strong> — sensitivity of portfolio returns to the chosen benchmark. &gt;1 means more volatile than the market.</li>
-          <li><strong>Alpha (Jensen's)</strong> — annualised excess return above what CAPM predicts given your Beta. Positive = outperformance.</li>
-        </ul>
+      <div className="text-xs text-slate-500">
+        <p>Quantifies the risk profile of your current portfolio using historical price data. Returns are <strong>value-weighted</strong> by current position size and use a <strong>3% risk-free rate</strong>. Hover any metric below for its definition.</p>
       </div>
 
       {/* Controls */}

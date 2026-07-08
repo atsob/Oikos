@@ -58,8 +58,11 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
     signed = -abs(net) if cash_out else abs(net)
 
     if existing_tx_id:
+        # payee_id is only resolved here when the investment row has a security
+        # (see caller); account-level entries (VAT, CustodyFee, ...) have none,
+        # so preserve whatever payee is already linked instead of clearing it.
         cur.execute(
-            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id_target=%s, payees_id=%s, description=%s WHERE transactions_id=%s",
+            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id_target=%s, payees_id=COALESCE(%s, payees_id), description=%s WHERE transactions_id=%s",
             (date, signed, abs(net), inv_account_id, payee_id, description, existing_tx_id),
         )
     else:

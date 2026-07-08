@@ -608,6 +608,7 @@ def saxo_get_settings():
         account_map = json.loads(get_app_setting("saxo_account_map") or "{}")
     except Exception:
         account_map = {}
+    charge_payee_id = get_app_setting("saxo_charge_payee_id")
     return {
         "app_key":       get_app_setting("saxo_app_key") or "",
         "app_secret":    get_app_setting("saxo_app_secret") or "",
@@ -617,6 +618,7 @@ def saxo_get_settings():
         "expires_at":    expiry,
         "token_valid":   bool(refresh_token) and expiry > int(time.time()),
         "account_map":   account_map,
+        "charge_payee_id": int(charge_payee_id) if charge_payee_id and charge_payee_id.isdigit() else None,
     }
 
 
@@ -625,6 +627,17 @@ def saxo_save_account_map(data: dict):
     import json
     from database.queries import save_app_setting
     save_app_setting("saxo_account_map", json.dumps(data.get("account_map", {})))
+    return {"ok": True}
+
+
+@router.post("/saxo-save-charge-payee")
+def saxo_save_charge_payee(data: dict):
+    """Persist which Payee account-level Saxo charges (VAT, CustodyFee, ...)
+    should be linked to, used by create_linked_cash_transactions_for_unlinked
+    instead of hardcoding a name."""
+    from database.queries import save_app_setting
+    payee_id = data.get("payee_id")
+    save_app_setting("saxo_charge_payee_id", str(int(payee_id)) if payee_id else "")
     return {"ok": True}
 
 

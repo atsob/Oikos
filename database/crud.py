@@ -600,6 +600,22 @@ def _get_or_create_payee_in_cur(cur, name: str) -> "int | None":
     return cur.fetchone()[0]
 
 
+def _resolve_saxo_charge_payee(cur) -> int:
+    """Return the Payees_Id for account-level Saxo charges (VAT, CustodyFee, ...).
+
+    Configurable via the ``saxo_charge_payee_id`` app setting (Importers →
+    Saxo Bank → Account Charges); falls back to get-or-create a "Saxo Bank"
+    payee if unset or the configured payee no longer exists.
+    """
+    from database.queries import get_app_setting
+    configured = get_app_setting("saxo_charge_payee_id")
+    if configured and configured.isdigit():
+        cur.execute("SELECT 1 FROM Payees WHERE Payees_Id = %s", (int(configured),))
+        if cur.fetchone():
+            return int(configured)
+    return _get_or_create_payee_in_cur(cur, "Saxo Bank")
+
+
 def create_linked_cash_transactions_for_unlinked(
     acc_id: int,
     linked_acc_id: int,
@@ -644,10 +660,21 @@ def create_linked_cash_transactions_for_unlinked(
         for inv_id, inv_date, action, total_acc, description, sec_name in rows:
             cur.execute("SAVEPOINT cltx_sp")
             try:
-                label     = sec_name or description or action or ""
+                # Account-level charges (VAT, CustodyFee, ...) have no security and
+                # their Description is an internal dedup key (e.g.
+                # "SAXO|CHARGE|VAT||2026-06-01|0_0200"), not a payee name — use a
+                # broker-level payee and a readable charge-type label instead of
+                # surfacing the raw key.
+                if description and description.startswith("SAXO|CHARGE|"):
+                    payee_id    = _resolve_saxo_charge_payee(cur)
+                    charge_type = description.split("|")[2] if description.count("|") >= 2 else ""
+                    desc_label  = f"Saxo {charge_type}".strip() if charge_type else "Saxo Bank"
+                else:
+                    payee_label = sec_name or description or action or ""
+                    desc_label  = payee_label
+                    payee_id    = _get_or_create_payee_in_cur(cur, payee_label)
                 total_f   = float(total_acc or 0)
                 cash_sign = -abs(total_f) if action in _LINKED_TX_CASH_OUT else abs(total_f)
-                payee_id  = _get_or_create_payee_in_cur(cur, label)
 
                 cur.execute(
                     """
@@ -658,7 +685,7 @@ def create_linked_cash_transactions_for_unlinked(
                     VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s, NULL)
                     RETURNING Transactions_Id
                     """,
-                    (linked_acc_id, inv_date, payee_id, label or action,
+                    (linked_acc_id, inv_date, payee_id, desc_label or action,
                      cash_sign, acc_id, abs(total_f)),
                 )
                 tx_id = cur.fetchone()[0]

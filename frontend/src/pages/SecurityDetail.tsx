@@ -337,6 +337,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [transferOpen, setTransferOpen] = useState(false)
+  const [txSearch, setTxSearch] = useState('')
 
   const accounts = accountsData as Record<string, unknown>[]
   const investmentAccounts = accounts.filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
@@ -358,7 +359,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
       action: String(row.action ?? 'Buy'),
       quantity: row.quantity != null ? String(row.quantity) : '',
       price_per_share: row.price_per_share != null ? String(row.price_per_share) : '',
-      commission: row.commission != null ? String(row.commission) : '0',
+      commission: row.commission != null ? String(row.commission) : '',
       fx_rate: row.fx_rate != null ? String(row.fx_rate) : '1',
       tax_amount: row.tax_amount != null ? String(row.tax_amount) : '',
       total_amount_acccur: row.total_acc_cur != null ? String(row.total_acc_cur) : '',
@@ -375,7 +376,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
     setSaving(true); setSaveError(null)
     const payload = {
       accounts_id: Number(form.accounts_id),
-      securities_id: Number(form.securities_id),
+      securities_id: form.securities_id ? Number(form.securities_id) : null,
       date: form.date,
       action: form.action,
       quantity: form.quantity ? parseFloat(form.quantity) : null,
@@ -537,8 +538,15 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
 
       {/* All Transactions */}
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-semibold text-slate-700">All Transactions ({transactions.length})</p>
+        <p className="text-sm font-semibold text-slate-700 mb-2">All Transactions</p>
+        <div className="-mx-4 flex items-center justify-between gap-2 px-4 py-2 border-y border-slate-100 bg-slate-50 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
+            </div>
+            <span className="text-xs text-slate-400 whitespace-nowrap">{transactions.length} transactions</span>
+          </div>
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openNew}><Plus size={14} /> New Transaction</Button>
             <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
@@ -547,9 +555,10 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
             <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
           </div>
         </div>
-        <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
+        <div className="ag-theme-alpine mt-2" style={{ height: '400px', width: '100%' }}>
           <AgGridReact
             rowData={transactions}
+            quickFilterText={txSearch}
             columnDefs={[
               { field: 'account', headerName: 'Account', width: 180 },
               { field: 'date', headerName: 'Date', width: 120 },

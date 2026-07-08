@@ -14,7 +14,7 @@ import {
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport, saveSecurityMappings,
   revtParse, revtImport, revsParse, revsImport, importFile,
   getImporterSettings, saveImporterSettings, getLinkedAccount,
-  saxoGetSettings, saxoSaveAccountMap, saxoGetAuthUrl, saxoExchangeCode, saxoRefreshToken,
+  saxoGetSettings, saxoSaveAccountMap, saxoSaveChargePayee, saxoGetAuthUrl, saxoExchangeCode, saxoRefreshToken,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
   coinbaseGetSettings, coinbaseTest, coinbaseFetch, coinbaseImport,
@@ -281,7 +281,7 @@ function ImportReconcileTab() {
             >
               {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>Parse & Match</>}
             </Button>
-            {parseMut.isError && <ErrorBox msg={String((parseMut.error as {message?: string})?.message)} />}
+            {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
           </CardBody>
         </Card>
       )}
@@ -396,7 +396,7 @@ function ImportReconcileTab() {
               <Button onClick={() => applyMut.mutate()} disabled={applyMut.isPending}>
                 {applyMut.isPending ? <><Spinner size={14} /> Applying…</> : <>✅ Apply & Reconcile</>}
               </Button>
-              {applyMut.isError && <ErrorBox msg={String((applyMut.error as {message?: string})?.message)} />}
+              {applyMut.isError && <ErrorBox msg={apiErrorMsg(applyMut.error)} />}
             </div>
           </CardBody>
         </Card>
@@ -585,7 +585,7 @@ function ImportProfilesTab() {
             </Button>
             <Button variant="secondary" onClick={() => setEditing(EMPTY_PROFILE)}>Clear</Button>
           </div>
-          {saveMut.isError && <ErrorBox msg={String((saveMut.error as {message?: string})?.message)} />}
+          {saveMut.isError && <ErrorBox msg={apiErrorMsg(saveMut.error)} />}
           {saveMut.isSuccess && <SuccessBox msg="Profile saved." />}
         </CardBody>
       </Card>
@@ -716,7 +716,7 @@ function PayeeRulesTab() {
             </Button>
             <Button variant="secondary" onClick={() => setEditing(EMPTY_RULE)}>Clear</Button>
           </div>
-          {saveMut.isError && <ErrorBox msg={String((saveMut.error as {message?: string})?.message)} />}
+          {saveMut.isError && <ErrorBox msg={apiErrorMsg(saveMut.error)} />}
           {saveMut.isSuccess && <SuccessBox msg="Rule saved." />}
         </CardBody>
       </Card>
@@ -873,7 +873,7 @@ function RevolutPersonalTab() {
           <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
             {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
         </CardBody>
       </Card>
@@ -977,7 +977,7 @@ function RevolutSavingsTab() {
           <Button onClick={() => parseMut.mutate()} disabled={!file || !accountId || parseMut.isPending}>
             {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Parse & Preview</>}
           </Button>
-          {parseMut.isError && <ErrorBox msg={String((parseMut.error as {message?: string})?.message)} />}
+          {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
         </CardBody>
       </Card>
 
@@ -1093,7 +1093,7 @@ function RevolutSavingsTab() {
           ) : (
             <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
           )}
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
         </div>
       )}
@@ -1657,7 +1657,7 @@ function RevolutTradingTab() {
           <Button onClick={() => parseMut.mutate()} disabled={!file || !accountId || parseMut.isPending}>
             {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Parse & Preview</>}
           </Button>
-          {parseMut.isError && <ErrorBox msg={String((parseMut.error as {message?: string})?.message)} />}
+          {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
         </CardBody>
       </Card>
 
@@ -1791,7 +1791,7 @@ function RevolutTradingTab() {
           ) : (
             <InfoBox>Nothing new to import.</InfoBox>
           )}
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
         </div>
       )}
@@ -2040,7 +2040,7 @@ function SaxoTab() {
             </Button>
           </CardHeader>
           <CardBody>
-            {fetchAccountsMut.isError && <ErrorBox msg={String((fetchAccountsMut.error as {message?: string})?.message)} />}
+            {fetchAccountsMut.isError && <ErrorBox msg={apiErrorMsg(fetchAccountsMut.error)} />}
             {saxoAccounts.length === 0 ? (
               <p className="text-sm text-slate-400">No accounts fetched yet. Click "Fetch Saxo Accounts" above.</p>
             ) : (
@@ -2110,7 +2110,7 @@ function SaxoTab() {
               disabled={fetchTradesMut.isPending}>
               {fetchTradesMut.isPending ? <><Spinner size={14} /> Fetching…</> : <>🔍 Fetch & Preview</>}
             </Button>
-            {fetchTradesMut.isError && <ErrorBox msg={String((fetchTradesMut.error as {message?: string})?.message)} />}
+            {fetchTradesMut.isError && <ErrorBox msg={apiErrorMsg(fetchTradesMut.error)} />}
           </CardBody>
         </Card>
       )}
@@ -2183,7 +2183,7 @@ function SaxoTab() {
                 </Button>
               )
             })()}
-            {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+            {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           </CardBody>
         </Card>
       )}
@@ -2203,6 +2203,7 @@ function SaxoTab() {
 }
 
 function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id: number; name: string }>; saxoAccounts: Array<{ AccountId: string; app_account_id?: number }> }) {
+  const qc = useQueryClient()
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfAccountId, setPdfAccountId] = useState<number | ''>('')
   const [replaceMode, setReplaceMode] = useState(false)
@@ -2212,6 +2213,14 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
   // Pre-fill account from saxo mapping if only one mapped
   const mappedAppId = saxoAccounts.find(a => a.app_account_id)?.app_account_id
   const effectiveAccountId = pdfAccountId !== '' ? pdfAccountId : (mappedAppId ?? '')
+
+  const settingsQuery = useQuery({ queryKey: ['saxoSettings'], queryFn: saxoGetSettings })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
+  const chargePayeeId: number | '' = settingsQuery.data?.charge_payee_id ?? ''
+  const chargePayeeMut = useMutation({
+    mutationFn: (payeeId: number | null) => saxoSaveChargePayee(payeeId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['saxoSettings'] }),
+  })
 
   const previewMut = useMutation({
     mutationFn: () => saxoPdfPreview(pdfFile!),
@@ -2249,6 +2258,21 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
           </div>
         </div>
 
+        <div>
+          <label className="block text-xs font-medium text-slate-600 mb-1">
+            Charge Payee <span className="font-normal text-slate-400">— used for account-level entries (VAT, CustodyFee, FinancingCost, …) that have no security</span>
+          </label>
+          <Select
+            value={chargePayeeId}
+            onChange={e => chargePayeeMut.mutate(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">— default (auto-create "Saxo Bank") —</option>
+            {(payees as Record<string, unknown>[]).map(p => (
+              <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>
+            ))}
+          </Select>
+        </div>
+
         {pdfFile ? (
           <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
             <CheckCircle size={16} className="text-green-500" />
@@ -2265,7 +2289,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
             {previewMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Preview Charges</>}
           </Button>
         )}
-        {previewMut.isError && <ErrorBox msg={String((previewMut.error as {message?: string})?.message)} />}
+        {previewMut.isError && <ErrorBox msg={apiErrorMsg(previewMut.error)} />}
 
         {pdfPreview && (
           <div className="space-y-3">
@@ -2297,7 +2321,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || !effectiveAccountId || newCount === 0}>
               {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Import {newCount} new charges</>}
             </Button>
-            {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+            {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           </div>
         )}
 
@@ -2440,7 +2464,7 @@ function CoinbaseTab() {
               {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Test Connection
             </Button>
           </div>
-          {testMut.isError && <ErrorBox msg={String((testMut.error as {message?: string})?.message)} />}
+          {testMut.isError && <ErrorBox msg={apiErrorMsg(testMut.error)} />}
           {testResult && (
             <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded p-2">
               ✅ Connected — {testResult.length} account(s): {testResult.map(a => `${a.currency_code as string} (${(a.balance as number)?.toFixed(4)})`).join(', ')}
@@ -2495,7 +2519,7 @@ function CoinbaseTab() {
             disabled={!apiKey || !apiSecret || !accountId || fetchMut.isPending}>
             {fetchMut.isPending ? <><Spinner size={14} /> Fetching…</> : <>📡 Fetch & Preview</>}
           </Button>
-          {fetchMut.isError && <ErrorBox msg={String((fetchMut.error as {message?: string})?.message)} />}
+          {fetchMut.isError && <ErrorBox msg={apiErrorMsg(fetchMut.error)} />}
         </CardBody>
       </Card>
 
@@ -2526,7 +2550,7 @@ function CoinbaseTab() {
               <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || (invImportCount + txImportCount === 0)}>
                 {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({invImportCount + txImportCount} records)</>}
               </Button>
-              {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+              {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
             </CardBody>
           </Card>
         )
@@ -2578,7 +2602,7 @@ function CryptoComTab() {
           <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
             {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
         </CardBody>
       </Card>
@@ -2622,7 +2646,7 @@ function CapitalComTab() {
           <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
             {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
         </CardBody>
       </Card>
@@ -2666,7 +2690,7 @@ function FxProTab() {
           <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
             {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
         </CardBody>
       </Card>
@@ -2703,7 +2727,7 @@ function QIFTab() {
           <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
             {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={String((importMut.error as {message?: string})?.message)} />}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
           {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
         </CardBody>
       </Card>

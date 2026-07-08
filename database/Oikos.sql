@@ -533,6 +533,13 @@ CREATE OR REPLACE FUNCTION public.update_holdings_from_investments()
     LANGUAGE plpgsql
 AS $$
 BEGIN
+    -- Account-level entries (fees, VAT, interest, …) have no underlying
+    -- instrument and are intentionally stored with Securities_Id = NULL —
+    -- Holdings.Securities_Id is NOT NULL, so skip them rather than error.
+    IF NEW.Securities_Id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
     INSERT INTO Holdings (Accounts_Id, Securities_Id, Quantity, Last_Update)
     SELECT
         NEW.Accounts_Id,
@@ -555,6 +562,10 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+CREATE TRIGGER trg_update_holdings
+AFTER INSERT OR UPDATE ON Investments
+FOR EACH ROW EXECUTE FUNCTION update_holdings_from_investments();
 
 
 -- =============================================================================

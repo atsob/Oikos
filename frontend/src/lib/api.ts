@@ -464,6 +464,8 @@ export const revsImport = (file: File, accountId: number, mode: 'inv' | 'tx', re
 export const saxoGetSettings = () => api.get('/bank/saxo-settings').then(r => r.data)
 export const saxoSaveAccountMap = (accountMap: Record<string, number>) =>
   api.post('/bank/saxo-save-account-map', { account_map: accountMap }).then(r => r.data)
+export const saxoSaveChargePayee = (payeeId: number | null) =>
+  api.post('/bank/saxo-save-charge-payee', { payee_id: payeeId }).then(r => r.data)
 export const saxoGetAuthUrl = (appKey: string, appSecret: string, redirectUri: string, useSim: boolean) =>
   api.post('/bank/saxo-auth-url', { app_key: appKey, app_secret: appSecret, redirect_uri: redirectUri, use_sim: useSim }).then(r => r.data)
 export const saxoExchangeCode = (data: { app_key: string; app_secret: string; code: string; redirect_uri: string; use_sim: boolean; remember: boolean }) =>

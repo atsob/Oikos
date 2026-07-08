@@ -13,7 +13,7 @@ import {
 import { api } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
-import { Plus, Save, RefreshCw, ArrowLeftRight } from 'lucide-react'
+import { Plus, Save, RefreshCw, ArrowLeftRight, Search } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -259,6 +259,8 @@ export default function Investments() {
   const [activePeriod, setActivePeriod] = useState('6M')
   const [actionFilter, setActionFilter] = useState('')
   const [offset, setOffset] = useState(0)
+  const [txSearch, setTxSearch] = useState('')
+  const [cashSearch, setCashSearch] = useState('')
   const PAGE_SIZE = 200
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -354,7 +356,7 @@ export default function Investments() {
     setSaving(true); setSaveError(null)
     const payload = {
       accounts_id: Number(form.accounts_id),
-      securities_id: Number(form.securities_id),
+      securities_id: form.securities_id ? Number(form.securities_id) : null,
       date: form.date,
       action: form.action,
       quantity: form.quantity ? parseFloat(form.quantity) : null,
@@ -402,7 +404,7 @@ export default function Investments() {
       action: String(row.action ?? 'Buy'),
       quantity: row.quantity != null ? String(row.quantity) : '',
       price_per_share: row.price != null ? String(row.price) : '',
-      commission: row.commission != null ? String(row.commission) : '0',
+      commission: row.commission != null ? String(row.commission) : '',
       fx_rate: row.fx_rate != null ? String(row.fx_rate) : '1',
       total_amount_acccur: row.total != null ? String(row.total) : '',
       total_amount_seccur: row.total_seccur != null ? String(row.total_seccur) : '',
@@ -582,17 +584,29 @@ export default function Investments() {
               ) : cashLoading ? (
                 <div className="flex justify-center py-12"><Spinner /></div>
               ) : (
-                <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
-                  <AgGridReact
-                    rowData={cashRows}
-                    columnDefs={cashColDefs}
-                    defaultColDef={{ resizable: true, sortable: true, filter: true }}
-                    onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
-                    onGridReady={e => e.api.autoSizeAllColumns()}
-                    onFirstDataRendered={e => e.api.autoSizeAllColumns()}
-                    onRowDataUpdated={e => e.api.autoSizeAllColumns()}
-                  />
-                </div>
+                <>
+                  <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <Input className="pl-8 w-56" placeholder="Search…" value={cashSearch} onChange={e => setCashSearch(e.target.value)} />
+                      </div>
+                      <span className="text-xs text-slate-400 whitespace-nowrap">{cashRows.length} transactions</span>
+                    </div>
+                  </div>
+                  <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
+                    <AgGridReact
+                      rowData={cashRows}
+                      quickFilterText={cashSearch}
+                      columnDefs={cashColDefs}
+                      defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                      onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
+                      onGridReady={e => e.api.autoSizeAllColumns()}
+                      onFirstDataRendered={e => e.api.autoSizeAllColumns()}
+                      onRowDataUpdated={e => e.api.autoSizeAllColumns()}
+                    />
+                  </div>
+                </>
               )}
             </>
           )}
@@ -600,9 +614,19 @@ export default function Investments() {
           {tab === 'transactions' && (
             invLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
               <>
-                <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
+                <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
+                    </div>
+                    <span className="text-xs text-slate-400 whitespace-nowrap">{invData?.total ?? invWithBalance.length} transactions</span>
+                  </div>
+                </div>
+                <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                   <AgGridReact
                     rowData={invWithBalance}
+                    quickFilterText={txSearch}
                     columnDefs={[
                       ...makeInvCols(navigate),
                       { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn', pinned: 'right',

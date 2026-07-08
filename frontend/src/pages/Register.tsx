@@ -214,11 +214,6 @@ export default function Register() {
           Show inactive
         </label>
 
-        <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <Input className="pl-8 w-52" placeholder="Search payee / description…" value={search} onChange={e => { setSearch(e.target.value); setOffset(0) }} />
-        </div>
-
         {/* Period shortcuts */}
         <div className="flex gap-1">
           {PERIODS.map(p => (
@@ -246,8 +241,6 @@ export default function Register() {
             <span className="text-xs text-slate-500">Today</span>
           </label>
         </div>
-
-        <span className="text-xs text-slate-400 ml-auto">{txQuery.data?.total != null ? `${txQuery.data.total.toLocaleString()} transactions` : ''}</span>
       </div>
 
       {/* Credit Card / Loan info bar */}
@@ -308,7 +301,16 @@ export default function Register() {
           <div className="flex items-center justify-center h-64"><Spinner /></div>
         ) : (
           <Card className="overflow-hidden">
-            <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 240px)', width: '100%' }}>
+            <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => { setSearch(e.target.value); setOffset(0) }} />
+                </div>
+                <span className="text-xs text-slate-400 whitespace-nowrap">{txQuery.data?.total != null ? `${txQuery.data.total.toLocaleString()} transactions` : ''}</span>
+              </div>
+            </div>
+            <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
               <AgGridReact
                 ref={gridRef}
                 rowData={txQuery.data?.transactions ?? []}
