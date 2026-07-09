@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable,
 } from '@/components/ui'
-import { Upload, CheckCircle, XCircle, Trash2, Plus, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { fmtNum } from '@/lib/utils'
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
@@ -115,7 +115,6 @@ function ImportReconcileTab() {
     else setProfileId(null)
   }, [accountId])
   const [parsedRows, setParsedRows] = useState<Record<string, unknown>[]>([])
-  const [appTxns, setAppTxns] = useState<Record<string, unknown>[]>([])
   const [reviewRows, setReviewRows] = useState<Record<string, unknown>[]>([])
   const [payeeAssign, setPayeeAssign] = useState<Record<number, { payee_name: string; category_id: number | null }>>({})
   const [notes, setNotes] = useState('')
@@ -167,7 +166,6 @@ function ImportReconcileTab() {
 
       const dates = rows.map(r => r.date as string).sort()
       const appData = await getAppTransactions(accountId!, dates[0], dates[dates.length - 1])
-      setAppTxns(appData)
 
       // Simple matching: exact date + amount
       const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
@@ -189,7 +187,7 @@ function ImportReconcileTab() {
           _idx: i,
           status,
           match_tx_id: exact ? exact.id : fuzzy ? fuzzy.id : null,
-          already_reconciled: (exact ?? fuzzy)?.reconciled ?? false,
+          already_reconciled: ((exact || fuzzy) || undefined)?.reconciled ?? false,
           action: defaultAction,
         }
       })
@@ -227,7 +225,6 @@ function ImportReconcileTab() {
     setReviewRows(prev => prev.map(r => r._idx === idx ? { ...r, [field]: value } : r))
   }
 
-  const accObj = (accounts as Record<string, unknown>[]).find(a => a.id === accountId)
   const nMatched = reviewRows.filter(r => r.action === 'Reconcile').length
   const nImport = reviewRows.filter(r => r.action === 'Import').length
 
@@ -1857,7 +1854,7 @@ function SaxoTab() {
             setSaxoAccounts(ad.accounts.map((a: Record<string, unknown>) => ({
               ...a,
               app_account_id: map[a.AccountId as string] ?? undefined,
-            })))
+            })) as Array<{ AccountId: string; AccountKey: string; AccountType: string; Currency: string; app_account_id?: number }>)
           })
         })
         .catch(() => { /* silent fail — user can re-auth manually */ })

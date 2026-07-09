@@ -1,21 +1,20 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef } from 'ag-grid-community'
 import {
-  getHoldings, getInvestments, getAccounts, getSecurities, getFxRates,
+  getHoldings, getInvestments, getAccounts, getSecurities,
   updateHolding, stakingReinvest, getLinkedAccount,
   getTransactions, getPayees, getCategories,
   syncBalances,
 } from '@/lib/api'
-import { api } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
-import { InvTransactionModal, emptyInvForm, ACTIONS, INSTRUMENT_TYPES, CASH_ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
+import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
 
@@ -59,7 +58,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'price', headerName: 'Price', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
   { field: 'commission', headerName: 'Commission', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
   // Tax_Amount and Total_Amount_AccCur are both stored in the account's own currency.
-  { field: 'tax_amount', headerName: 'W. Tax', width: 95, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.account_currency) : '—', cellStyle: p => p.value != null ? { color: '#dc2626' } : {} },
+  { field: 'tax_amount', headerName: 'W. Tax', width: 95, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.account_currency) : '—', cellStyle: p => p.value != null ? { color: '#dc2626' } : null },
   { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
   { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtCur(Number(p.value), p.data?.account_currency), cellStyle: { fontWeight: 600 } },
   { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? fmtNum(Number(p.value), 4) : '—' },
@@ -85,8 +84,8 @@ function CashStatusCell({ data }: { data: Record<string, unknown> }) {
   if (!data.cleared && !data.reconciled) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-700">Pending</span>
   return (
     <span className="inline-flex items-center gap-1">
-      {data.cleared && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">Cleared</span>}
-      {data.reconciled && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700">Reconciled</span>}
+      {Boolean(data.cleared) && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">Cleared</span>}
+      {Boolean(data.reconciled) && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700">Reconciled</span>}
     </span>
   )
 }
@@ -136,7 +135,6 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
     setSaving(true); setMsg(null)
     try {
       for (const id of changedIds) {
-        const row = holdings.find(h => Number(h.id) === id)!
         const edit = edits[id]
         await updateHolding(id, { quantity: parseFloat(edit.quantity), staking: edit.staking })
       }
@@ -153,7 +151,6 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
     } finally { setSaving(false) }
   }
 
-  const fmt6 = (v: unknown) => v != null ? fmtQty(Number(v), 6) : '—'
   // Simple/FIFO avg cost and last price are all in the security's own native
   // currency (row.currency), not EUR — only "Value (EUR)"/"Gain-Loss" below are.
   const fmtP = (v: unknown, currency?: unknown) => v != null ? fmtCur(Number(v), String(currency ?? 'EUR')) : '—'
@@ -270,8 +267,8 @@ export default function Investments() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [transferOpen, setTransferOpen] = useState(false)
 
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => import('@/lib/api').then(m => m.getAccounts()) })
-  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => import('@/lib/api').then(m => m.getSecurities()) })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
 
   const investmentAccounts = (accounts as Record<string, unknown>[])
     .filter(a => INVESTMENT_ACCOUNT_TYPES.includes(String(a.type ?? '')))
@@ -309,13 +306,6 @@ export default function Investments() {
 
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
-
-  const { data: linkedAccountData } = useQuery({
-    queryKey: ['linked-account', accountId],
-    queryFn: () => getLinkedAccount(accountId!),
-    enabled: accountId != null,
-  })
-  const linkedCashAccountId: number | null = (linkedAccountData as { linked_account_id: number | null } | undefined)?.linked_account_id ?? null
 
   const cashParams = { account_id: accountId ?? undefined, from_date: cashFromDate, to_date: cashToDate, limit: PAGE_SIZE }
   const { data: cashData, isLoading: cashLoading } = useQuery({

@@ -7,11 +7,11 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshPrices, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct, fmtQty } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Search, RefreshCw, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
+import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -45,26 +45,6 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
 }
 
 const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'Alerts']
-
-const SECURITY_COLS: ColDef[] = [
-  { field: 'ticker', headerName: 'Ticker', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-  { field: 'name', headerName: 'Name', flex: 2, minWidth: 180 },
-  { field: 'type', headerName: 'Type', width: 110 },
-  { field: 'currency', headerName: 'Currency', width: 90 },
-  { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
-  { field: 'price_date', headerName: 'Price Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-  { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '—' },
-  { field: 'price_records', headerName: '# Prices', width: 90, type: 'numericColumn' },
-  { field: 'held_quantity', headerName: 'Held Qty', width: 90, type: 'numericColumn' },
-]
-
-const CURRENCY_COLS: ColDef[] = [
-  { field: 'code', headerName: 'Code', width: 90 },
-  { field: 'name', headerName: 'Currency', flex: 2 },
-  { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-  { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
-]
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -1181,7 +1161,7 @@ function WatchlistTab() {
               <tr key={String(row.watchlist_id)} className="hover:bg-slate-50">
                 <td className="px-3 py-2 font-medium">
                   {String(row.securities_name)}
-                  {row.already_held && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">held</span>}
+                  {Boolean(row.already_held) && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">held</span>}
                 </td>
                 <td className="px-3 py-2 text-slate-500 text-xs">{String(row.securities_type ?? '—')}</td>
                 <td className="px-3 py-2 text-slate-500 text-xs">{String(row.currency ?? '—')}</td>
@@ -1191,7 +1171,7 @@ function WatchlistTab() {
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_target)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.pct_from_stop)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmtPct(row.upside_to_analyst)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.dividend_yield != null ? fmtPct(Number(row.dividend_yield), 2) : '—'}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtPct(row.dividend_yield)}</td>
                 <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{String(row.added_date ?? '—')}</td>
                 <td className="px-3 py-2">
                   <div className="flex gap-1">

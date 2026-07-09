@@ -12,7 +12,7 @@ import {
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, useEscapeKey } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
@@ -206,7 +206,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeSource} onChange={e => setMergeSource(e.target.value)}>
               <option value="">— select —</option>
               {(payees as Record<string, unknown>[]).map(p => (
-                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({p.transactions_count} txns)</option>
+                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({String(p.transactions_count)} txns)</option>
               ))}
             </select>
           </Field>
@@ -214,7 +214,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeTarget} onChange={e => setMergeTarget(e.target.value)}>
               <option value="">— select —</option>
               {(payees as Record<string, unknown>[]).filter(p => String(p.id) !== mergeSource).map(p => (
-                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({p.transactions_count} txns)</option>
+                <option key={String(p.id)} value={String(p.id)}>{String(p.name)} ({String(p.transactions_count)} txns)</option>
               ))}
             </select>
           </Field>
@@ -419,7 +419,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeSource} onChange={e => setMergeSource(e.target.value)}>
               <option value="">— select —</option>
               {catList.map(c => (
-                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({c.transactions_count} splits)</option>
+                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({String(c.transactions_count)} splits)</option>
               ))}
             </select>
           </Field>
@@ -427,7 +427,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={mergeTarget} onChange={e => setMergeTarget(e.target.value)}>
               <option value="">— select —</option>
               {catList.filter(c => String(c.id) !== mergeSource).map(c => (
-                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({c.transactions_count} splits)</option>
+                <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)} ({String(c.transactions_count)} splits)</option>
               ))}
             </select>
           </Field>

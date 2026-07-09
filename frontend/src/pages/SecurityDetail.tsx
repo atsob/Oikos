@@ -16,7 +16,7 @@ import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityDividends,
-  getSecurityCorporateActions, createCorporateAction, updateCorporateAction, deleteCorporateAction,
+  getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
   downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
@@ -316,7 +316,7 @@ function PricesTab({ secId }: { secId: number }) {
 }
 
 // ── Investment Transactions Tab ────────────────────────────────────────────────
-function InvestmentTransactionsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
   const { data: txData = [], isLoading: txLoading } = useQuery({
     queryKey: ['sec-transactions', secId],
@@ -326,8 +326,8 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
     queryKey: ['sec-holdings', secId],
     queryFn: () => getSecurityHoldings(secId),
   })
-  const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
-  const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: getSecurities })
+  const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
 
@@ -507,7 +507,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               {
                 headerName: 'Cost/Share', flex: 1,
-                valueGetter: (p: { data: Record<string, unknown> }) => {
+                valueGetter: (p: { data?: Record<string, unknown> }) => {
                   const qty = Number(p.data?.qty_held ?? 0)
                   const cost = Number(p.data?.cost_basis ?? 0)
                   return qty ? cost / qty : null
@@ -522,7 +522,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               },
               {
                 headerName: 'P&L %', flex: 1,
-                valueGetter: (p: { data: Record<string, unknown> }) => {
+                valueGetter: (p: { data?: Record<string, unknown> }) => {
                   const cost = Number(p.data?.cost_basis ?? 0)
                   const pnl = Number(p.data?.unrealised_pnl ?? 0)
                   return cost ? pnl / cost * 100 : null
@@ -566,7 +566,7 @@ function InvestmentTransactionsTab({ secId, security }: { secId: number; securit
               { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
               { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
               { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : {} },
+              { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : null },
               { field: 'total_sec_cur', headerName: 'Total (Sec. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               { field: 'total_acc_cur', headerName: 'Total (Acc. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
               { field: 'currency', headerName: 'Currency', width: 90 },
@@ -713,10 +713,10 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     <div className="p-4 space-y-5">
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Dividend Yield" value={fmtPct(security.dividend_yield)} />
+        <StatCard label="Dividend Yield" value={fmtPct(security.dividend_yield != null ? Number(security.dividend_yield) : null)} />
         <StatCard label="Annual Rate" value={security.dividend_rate != null ? fmtNum(Number(security.dividend_rate), 4) : '—'} />
-        <StatCard label="5Y Avg Yield" value={fmtPct(security.five_year_avg_yield)} />
-        <StatCard label="Payout Ratio" value={fmtPct(security.payout_ratio)} />
+        <StatCard label="5Y Avg Yield" value={fmtPct(security.five_year_avg_yield != null ? Number(security.five_year_avg_yield) : null)} />
+        <StatCard label="Payout Ratio" value={fmtPct(security.payout_ratio != null ? Number(security.payout_ratio) : null)} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard label="Ex-Dividend Date" value={String(security.ex_dividend_date ?? '—')} />
@@ -948,7 +948,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 
             {editRow && (
               <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3 mt-3">
-                <p className="text-sm font-semibold text-slate-700">Edit Corporate Action #{editRow.id} — <span className="text-blue-600">{editRow.type as string}</span></p>
+                <p className="text-sm font-semibold text-slate-700">Edit Corporate Action #{String(editRow.id)} — <span className="text-blue-600">{editRow.type as string}</span></p>
                 {['Dividend', 'Return of Capital'].includes(editForm.type) && (
                   <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
                     Saving will update the gross amount, withholding tax, and totals on all linked investment transactions.
@@ -993,7 +993,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
               <div className="flex gap-3 items-center">
                 <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm w-72" value={deleteId} onChange={e => setDeleteId(e.target.value)}>
                   <option value="">— choose —</option>
-                  {actions.map(a => <option key={String(a.id)} value={String(a.id)}>#{a.id} · {String(a.date)} · {String(a.type)}</option>)}
+                  {actions.map(a => <option key={String(a.id)} value={String(a.id)}>#{String(a.id)} · {String(a.date)} · {String(a.type)}</option>)}
                 </select>
                 <Button size="sm" variant="destructive" disabled={!deleteId || deleteMut.isPending} onClick={() => deleteMut.mutate(Number(deleteId))}>
                   <Trash2 size={13} /> Delete
@@ -1417,14 +1417,6 @@ export default function SecurityDetail() {
   const securities = securitiesRaw as Record<string, unknown>[]
   const security = securities.find(s => Number(s.id) === secId) ?? {} as Record<string, unknown>
 
-  const priceCount = security.price_records != null ? Number(security.price_records) : null
-  const priceDate = security.price_date ? String(security.price_date).slice(0, 10) : null
-  const subtitle = [
-    security.currency ? String(security.currency) : null,
-    priceCount != null ? `${priceCount.toLocaleString()} prices` : null,
-    priceDate ? `last: ${priceDate}` : null,
-  ].filter(Boolean).join(' · ')
-
   return (
     <div>
       <PageHeader
@@ -1472,7 +1464,7 @@ export default function SecurityDetail() {
             <CardBody className="p-0">
               {tab === 'Setup' && <SecuritySetupTab security={security} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}
-              {tab === 'Investment Transactions' && <InvestmentTransactionsTab secId={secId} security={security} />}
+              {tab === 'Investment Transactions' && <InvestmentTransactionsTab secId={secId} />}
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}
               {tab === 'Dividends' && <DividendsTab secId={secId} security={security} />}
               {tab === 'Corporate Actions' && <CorporateActionsTab secId={secId} security={security} />}

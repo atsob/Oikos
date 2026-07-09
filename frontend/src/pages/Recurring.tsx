@@ -326,7 +326,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
             }
             {form.amount && <><span className="text-slate-400">|</span>
               <span className={`font-semibold ${amtNum < 0 ? 'text-red-600' : 'text-green-600'}`}>{fmtEur(amtNum)}</span></>}
-            {draft.template_name && <span className="text-slate-400 italic text-xs font-normal">(from: {String(draft.template_name)}{draft.template_periodicity ? ` · ${draft.template_periodicity}` : ''})</span>}
+            {Boolean(draft.template_name) && <span className="text-slate-400 italic text-xs font-normal">(from: {String(draft.template_name)}{draft.template_periodicity ? ` · ${draft.template_periodicity}` : ''})</span>}
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 ml-3 shrink-0"><X size={18} /></button>
         </div>
@@ -457,7 +457,7 @@ function DraftsTab() {
   const qc = useQueryClient()
   const [reviewDraft, setReviewDraft] = useState<Row | null>(null)
   const { data: drafts = [], isLoading } = useQuery({ queryKey: ['recurring-drafts'], queryFn: getRecurringDrafts })
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
 
@@ -507,12 +507,12 @@ function DraftsTab() {
                 <div className="space-y-0.5 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap text-sm">
                     <span className="font-medium text-slate-800">{String(d.description || d.payee || '—')}</span>
-                    {d.template_name && <Badge label={String(d.template_name)} variant="blue" />}
+                    {Boolean(d.template_name) && <Badge label={String(d.template_name)} variant="blue" />}
                   </div>
                   <div className="flex gap-4 text-xs text-slate-500">
                     <span>{fmtDate(String(d.date))}</span>
-                    {d.account && <span>{String(d.account)}</span>}
-                    {d.payee && <span>{String(d.payee)}</span>}
+                    {Boolean(d.account) && <span>{String(d.account)}</span>}
+                    {Boolean(d.payee) && <span>{String(d.payee)}</span>}
                     <span className={`font-semibold ${Number(d.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {fmtEur(Number(d.amount))}
                     </span>
@@ -671,7 +671,7 @@ export default function Recurring() {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const { data: templates = [], isLoading } = useQuery({ queryKey: ['recurring-templates'], queryFn: getRecurringTemplates })
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
   const { data: drafts = [] } = useQuery({ queryKey: ['recurring-drafts'], queryFn: getRecurringDrafts })
@@ -804,19 +804,19 @@ export default function Recurring() {
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-slate-800">{String(t.name ?? '—')}</span>
-                        {t.frequency && <Badge label={String(t.frequency)} variant="blue" />}
+                        {Boolean(t.frequency) && <Badge label={String(t.frequency)} variant="blue" />}
                         <Badge label={t.is_active ? 'Active' : 'Inactive'} variant={t.is_active ? 'green' : 'gray'} />
-                        {t.auto_confirm && <Badge label="Auto-confirm" variant="blue" />}
+                        {Boolean(t.auto_confirm) && <Badge label="Auto-confirm" variant="blue" />}
                       </div>
                       <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
-                        {t.account_name && <span>Account: {String(t.account_name)}</span>}
-                        {t.payee_name && <span>Payee: {String(t.payee_name)}</span>}
+                        {Boolean(t.account_name) && <span>Account: {String(t.account_name)}</span>}
+                        {Boolean(t.payee_name) && <span>Payee: {String(t.payee_name)}</span>}
                         {t.total_amount != null && (
                           <span className={`font-semibold ${Number(t.total_amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                             {fmtEur(Number(t.total_amount))}
                           </span>
                         )}
-                        {t.next_date && <span>Next due: {fmtDate(String(t.next_date))}</span>}
+                        {Boolean(t.next_date) && <span>Next due: {fmtDate(String(t.next_date))}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 ml-3 shrink-0">

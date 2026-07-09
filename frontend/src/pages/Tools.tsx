@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { usePersist, useSettings } from '@/lib/hooks'
 import { SETTINGS_DEFAULTS } from '@/lib/settings'
 import type { AppSettings } from '@/lib/settings'
@@ -618,7 +618,6 @@ function PriceQuality() {
   const [checked, setChecked] = useState<Set<number>>(new Set())
   const [confirm, setConfirm] = useState<'selected' | 'all' | null>(null)
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const qc = useQueryClient()
 
   const { data: allRows = [], isLoading, refetch } = useQuery({
     queryKey: ['price-anomalies', threshold],
@@ -1196,7 +1195,7 @@ function FixMissingTransferMirrors() {
   const [filterAcc, setFilterAcc] = useState<string>('')
   const [checked, setChecked] = useState<Set<number>>(new Set())
   const [confirm, setConfirm] = useState<'selected' | 'all' | null>(null)
-  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
 
   const { data: allRows = [], isLoading, refetch } = useQuery({
     queryKey: ['missing-transfer-mirrors'], queryFn: getMissingTransferMirrors, staleTime: 30_000,
@@ -2162,7 +2161,7 @@ function ScheduledTasks() {
   }
 
   const saveMut = useMutation({
-    mutationFn: () => updateSchedulerJob(editing!, form),
+    mutationFn: () => updateSchedulerJob(editing!, { ...form }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scheduler-jobs'] })
       setMsg({ type: 'success', text: 'Job saved.' })

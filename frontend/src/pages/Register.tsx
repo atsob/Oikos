@@ -39,8 +39,8 @@ function ClearedCell({ data }: { data: Record<string, unknown> }) {
   if (!data.cleared && !data.reconciled) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-700">Pending</span>
   return (
     <span className="inline-flex items-center gap-1">
-      {data.cleared && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">Cleared</span>}
-      {data.reconciled && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700">Reconciled</span>}
+      {Boolean(data.cleared) && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">Cleared</span>}
+      {Boolean(data.reconciled) && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-700">Reconciled</span>}
     </span>
   )
 }
@@ -101,7 +101,7 @@ export default function Register() {
   const [reconcileMsg, setReconcileMsg] = useState<string | null>(null)
   const [reconciling, setReconciling] = useState(false)
 
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: getAccounts })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: accountsFuture = [] } = useQuery({ queryKey: ['accounts', 'future'], queryFn: () => getAccounts(true) })
   const cashAccounts = (accounts as Record<string, unknown>[])
     .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
@@ -407,11 +407,11 @@ export default function Register() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-400 shrink-0">{fmtDate(String(row.date))}</span>
                       <span className="text-sm font-medium text-slate-800 truncate">{String(row.payee || row.description || '—')}</span>
-                      {row.payee && row.description && <span className="text-xs text-slate-400 truncate">{String(row.description)}</span>}
+                      {Boolean(row.payee) && Boolean(row.description) && <span className="text-xs text-slate-400 truncate">{String(row.description)}</span>}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-slate-500 truncate">{String(row.account_name)}</span>
-                      {row.category && <span className="text-xs text-slate-400 truncate">· {String(row.category)}</span>}
+                      {Boolean(row.category) && <span className="text-xs text-slate-400 truncate">· {String(row.category)}</span>}
                     </div>
                   </div>
                   <span className={`text-sm font-semibold tabular-nums shrink-0 ${Number(row.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>

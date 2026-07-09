@@ -243,7 +243,7 @@ function CategorySelect({ value, onChange, categories, onCategoryCreated, classN
           leafId = String(existing.id)
           continue
         }
-        const res = await api.post('/static-data/categories', { name: seg, parent_id: parentId, type: newType })
+        const res: { data: { id: number } } = await api.post('/static-data/categories', { name: seg, parent_id: parentId, type: newType })
         const newCat = { id: res.data.id, full_path: pathSoFar, type: newType }
         onCategoryCreated?.(newCat)
         known = [...known, newCat]

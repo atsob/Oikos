@@ -6,15 +6,15 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import {
-  getIncomeExpense, getSavingsRate, getTopCategories, getPortfolioSummary, getAllocationReport,
+  getPortfolioSummary, getAllocationReport,
   getAllocationTargets, saveAllocationTargets, getAllocationDelta, getRebalancingPlan,
   getHoldingsSnapshot,
-  getIncomeExpenseDetail, getDividends, getCapitalGains,
+  getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
-  getCashFlowForecast, getCashFlowForecastFull, getPnl, getCategoryBreakdown,
+  getCashFlowForecastFull, getPnl,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
-  getSpendingByPayee, getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals,
+  getSpendingTrends, getSavingsRateDetail,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
@@ -26,10 +26,10 @@ import {
   getTransactionById,
   api,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
-import { fmtEur, fmtPct, fmtNum, fmtQty, plotLayout, plotAxis } from '@/lib/utils'
+import { Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
+import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Trash2, Plus, Check, X, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
+import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
 
@@ -73,20 +73,6 @@ function SubTabs({ tabs, active, onChange }: { tabs: string[]; active: string; o
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function GroupingPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex gap-1">
-      {['month', 'quarter', 'year'].map(g => (
-        <button key={g} onClick={() => onChange(g)}
-          className={`px-2.5 py-1 rounded text-xs font-medium capitalize transition-colors ${value === g ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-          {g}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-
 function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip, compact }: { label: string; value: string; color?: string; subtitle?: string; subtitleNode?: React.ReactNode; tooltip?: string; compact?: boolean }) {
   return (
     <div className={`bg-slate-50 rounded-lg ${compact ? 'p-2.5' : 'p-3'}`}>
@@ -182,76 +168,6 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true }: {
           </tbody>
         </table>
       </div>
-    </WithCopy>
-  )
-}
-
-// ── Hierarchical Pivot table ──────────────────────────────────────────────────
-function HierarchicalPivotTable({ data, catTypeFilter, periods }: {
-  data: Row[]; catTypeFilter: string; periods: string[]
-}) {
-  const filtered = data.filter(r => !catTypeFilter || String(r.cat_type) === catTypeFilter)
-  const leafMap: Record<string, Record<string, number>> = {}
-  for (const r of filtered) {
-    const cat = String(r.category); const period = String(r.period)
-    if (!leafMap[cat]) leafMap[cat] = {}
-    leafMap[cat][period] = (leafMap[cat][period] ?? 0) + Number(r.total ?? 0)
-  }
-  const leafPaths = Object.keys(leafMap)
-  const allPaths = new Set<string>(leafPaths)
-  for (const path of leafPaths) {
-    const parts = path.split(' : ')
-    for (let i = 1; i < parts.length; i++) allPaths.add(parts.slice(0, i).join(' : '))
-  }
-  const sumForPath = (path: string) => {
-    const leaves = leafPaths.filter(p => p === path || p.startsWith(path + ' : '))
-    const result: Record<string, number> = {}
-    for (const p of periods) result[p] = leaves.reduce((s, l) => s + (leafMap[l]?.[p] ?? 0), 0)
-    return result
-  }
-  const sorted = [...allPaths].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
-  const rows = sorted.map(path => {
-    const level = path.split(' : ').length - 1
-    const isParent = [...allPaths].some(p => p !== path && p.startsWith(path + ' : '))
-    return { path, level, isParent, label: path.split(' : ')[level], totals: sumForPath(path) }
-  })
-  const grandTotal: Record<string, number> = {}
-  for (const p of periods) grandTotal[p] = rows.filter(r => r.level === 0).reduce((s, r) => s + (r.totals[p] ?? 0), 0)
-
-  if (rows.length === 0) return <p className="text-sm text-slate-400 py-4">No data</p>
-  return (
-    <WithCopy>
-    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-      <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-10 bg-slate-50">
-          <tr className="bg-slate-50">
-            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-56">Category</th>
-            {periods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{p.slice(0, 7)}</th>)}
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => {
-            const rowTotal = periods.reduce((s, p) => s + (r.totals[p] ?? 0), 0)
-            return (
-              <tr key={r.path} className={`border-b border-slate-100 ${r.isParent ? 'bg-slate-50 font-semibold' : 'hover:bg-slate-50'}`}>
-                <td className={`px-2 py-1 sticky left-0 ${r.isParent ? 'bg-slate-50' : 'bg-white'}`} style={{ paddingLeft: `${8 + r.level * 16}px` }}>{r.label}</td>
-                {periods.map(p => {
-                  const v = r.totals[p] ?? 0
-                  return <td key={p} className={`text-right px-2 py-1 tabular-nums ${v === 0 ? 'text-slate-300' : ''}`}>{v !== 0 ? fmtEur(v) : '—'}</td>
-                })}
-                <td className="text-right px-2 py-1 tabular-nums font-semibold">{fmtEur(rowTotal)}</td>
-              </tr>
-            )
-          })}
-          <tr className="border-t-2 border-slate-400 bg-slate-100 font-bold">
-            <td className="px-2 py-1.5 sticky left-0 bg-slate-100">TOTAL</td>
-            {periods.map(p => <td key={p} className="text-right px-2 py-1.5 tabular-nums">{fmtEur(grandTotal[p] ?? 0)}</td>)}
-            <td className="text-right px-2 py-1.5 tabular-nums">{fmtEur(periods.reduce((s, p) => s + (grandTotal[p] ?? 0), 0))}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
     </WithCopy>
   )
 }
@@ -509,7 +425,7 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
   )
 }
 
-function NwDetailAnalysis({ rows, allPeriods, accountMeta, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
+function NwDetailAnalysis({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: string[]; accountMeta: Record<string, string>; grouping: string }) {
   const { isDark } = useTheme()
   const [selectedPeriod, setSelectedPeriod] = usePersist('nw_detail_period', '')
   const period = (selectedPeriod && allPeriods.includes(selectedPeriod)) ? selectedPeriod : (allPeriods[allPeriods.length - 1] ?? '')
@@ -938,7 +854,7 @@ function AllocationReport() {
 
   // Rebalancing plan with optional extra cash
   const portfolioTotal = planRows.length > 0 ? Number(planRows[0].portfolio_total_eur ?? 0) : 0
-  const planWithCash = planRows.map(r => {
+  const planWithCash: (Row & { total_delta_eur: number; est_shares: number })[] = planRows.map(r => {
     const baseDelta = Number(r.suggested_delta_eur ?? 0)
     const typeTgt = Number(r.type_target_pct ?? 0)
     const cashForType = portfolioTotal > 0 ? (typeTgt / 100) * cash : 0
@@ -1794,8 +1710,6 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   }
   const d = data as RiskData | undefined
 
-  const LOOKBACK_MARKS = [60, 252, 365, 756, 1260, 1825, 3650]
-
   return (
     <div className="space-y-5">
       {/* Description */}
@@ -2414,7 +2328,8 @@ function PerformanceTab() {
       if (!agg[name]) agg[name] = {}
       for (const c of sumCols) agg[name][c] = (agg[name][c] ?? 0) + Number(r[c] ?? 0)
     }
-    const list = Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name }))
+    const list: (Record<string, number> & { securities_name: string })[] =
+      Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name }) as Record<string, number> & { securities_name: string })
     for (const v of list) {
       const prev = v.current_value_eur - (v.pnl_dtd_eur ?? 0)
       v.pnl_dtd_pct = prev !== 0 ? (v.pnl_dtd_eur ?? 0) / prev * 100 : NaN
@@ -3085,8 +3000,6 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
   )
 }
 
-const MC_TARGETS = [50000, 100000, 250000, 500000, 1000000]
-
 function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const [yearsAhead, setYearsAhead] = usePersist('mc_years', 10)
@@ -3290,6 +3203,7 @@ function usePortfolioSignals() {
 }
 
 type Signal = {
+  securities_id: number
   securities_name: string
   price_today: number | null
   price_today_date: string | null
@@ -3324,7 +3238,6 @@ type Signal = {
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
 function VolatilityTab() {
-  const { isDark } = useTheme()
   const { data = [], isLoading } = usePortfolioSignals()
   const [volPeriod, setVolPeriod] = usePersist('vol_period', 'Annual Vol (ann)')
   const rows = data as Signal[]
@@ -4228,7 +4141,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <div>
             <p className="text-sm font-semibold text-slate-700 mb-2">Distribution Analysis</p>
             <div className="grid grid-cols-2 gap-4">
-              {([['Income', INCOME_TYPES, '#10b981'] as const, ['Expenses', EXPENSE_TYPES, '#ef4444'] as const]).map(([label, types, color]) => {
+              {([['Income', INCOME_TYPES, '#10b981'] as const, ['Expenses', EXPENSE_TYPES, '#ef4444'] as const]).map(([label, types]) => {
                 const subset = catSummary.filter(r => types.includes(r.cat_type as string)).sort((a, b) => b.abs - a.abs)
                 const topCats = subset.slice(0, topN).map(r => r.cat)
                 const agg: Record<string, number> = {}
@@ -4339,7 +4252,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                           <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
                           <td className="px-2 py-1 text-slate-400">{String(r.source_type ?? '')}</td>
                           <td className="px-2 py-1">
-                            {r.transaction_id && (
+                            {Boolean(r.transaction_id) && (
                               <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
                                 <Pencil size={11} />
                               </button>
@@ -4481,7 +4394,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                           <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
                           <td className="px-2 py-1 text-slate-500">{String(r.source_type ?? '')}</td>
                           <td className="px-2 py-1">
-                            {r.transaction_id && (
+                            {Boolean(r.transaction_id) && (
                               <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
                                 <Pencil size={11} />
                               </button>
@@ -4599,7 +4512,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                             <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
                             <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
                             <td className="px-2 py-1">
-                              {r.transaction_id && (
+                              {Boolean(r.transaction_id) && (
                                 <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
                                   <Pencil size={11} />
                                 </button>
@@ -5393,15 +5306,6 @@ function CgTable({ rows, method }: { rows: Row[]; method: string }) {
       </table>
     </div>
     </WithCopy>
-  )
-}
-
-function CgMetric({ label, value, color, help }: { label: string; value: string; color?: string; help?: string }) {
-  return (
-    <div className="bg-slate-50 rounded-lg px-4 py-3 flex-1 min-w-[140px]" title={help}>
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
-      <div className={`text-lg font-bold tabular-nums ${color ?? ''}`}>{value}</div>
-    </div>
   )
 }
 
@@ -6390,7 +6294,6 @@ function MultiSelect({ label, options, selected, onChange, placeholder }: {
 }
 
 function CustomReportsSection() {
-  const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
 
   // Filter data
@@ -6589,10 +6492,10 @@ function CustomReportsSection() {
     try {
       const ddDates = ddPeriod === '— All Periods —'
         ? { date_from: resultParams.date_from, date_to: resultParams.date_to }
-        : periodDates(ddPeriod)
+        : (() => { const p = periodDates(ddPeriod); return { date_from: p.from, date_to: p.to } })()
       const base = {
-        date_from: ddDates.date_from ?? ddDates.from,
-        date_to: ddDates.date_to ?? ddDates.to,
+        date_from: ddDates.date_from,
+        date_to: ddDates.date_to,
         account_ids: resultParams.account_ids,
         use_account_currency: resultParams.use_account_currency,
       }
@@ -6835,7 +6738,7 @@ function CustomReportsSection() {
       {/* Run button */}
       <div>
         <Button onClick={handleRun} disabled={running} className="px-6">
-          {running ? <><Spinner size="sm" /> Running…</> : '▶ Run Report'}
+          {running ? <><Spinner size={14} /> Running…</> : '▶ Run Report'}
         </Button>
       </div>
 
@@ -6938,7 +6841,7 @@ function CustomReportsSection() {
                     </select>
                   </div>
                   <Button onClick={handleDrillDown} disabled={ddRunning} className="self-end">
-                    {ddRunning ? <><Spinner size="sm" /> Loading…</> : 'Load'}
+                    {ddRunning ? <><Spinner size={14} /> Loading…</> : 'Load'}
                   </Button>
                 </div>
 

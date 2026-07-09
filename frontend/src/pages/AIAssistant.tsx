@@ -134,7 +134,7 @@ export default function AIAssistant() {
             )
           ) : null}
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => embedMut.mutate()}
             disabled={embedMut.isPending}
