@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
-import { getFxRates, getLinkedAccount } from '@/lib/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { getFxRates, getLinkedAccount, getHoldings } from '@/lib/api'
 import { api } from '@/lib/api'
 import { Input, Button, useEscapeKey } from '@/components/ui'
 import { X, Save } from 'lucide-react'
@@ -16,6 +17,10 @@ export const INSTRUMENT_TYPES = [
 ]
 
 export const CASH_ACTIONS = new Set(['Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnCap', 'MiscExp', 'MiscInc', 'CashOut', 'CashIn'])
+
+// Actions that act on shares/units you must already hold in this account —
+// as opposed to Buy/ShrIn/Grant, which can establish a brand-new position.
+const POSITION_REQUIRED_ACTIONS = new Set(['Sell', 'Dividend', 'Reinvest', 'Split', 'ShrOut', 'Exercise', 'Expire', 'RtrnCap'])
 
 const TAX_ACTIONS = new Set(['Dividend', 'IntInc', 'RtrnCap'])
 
@@ -43,7 +48,7 @@ export const emptyInvForm = (): InvFormData => ({
   action: 'Buy',
   quantity: '',
   price_per_share: '',
-  commission: '0',
+  commission: '',
   fx_rate: '1',
   total_amount_acccur: '',
   total_amount_seccur: '',
@@ -76,8 +81,57 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
   useEscapeKey(onClose)
   const set = (k: keyof InvFormData, v: string) => onChange({ ...form, [k]: v })
 
+  // Short selling opens a new short position with a Sell action, so it's the
+  // one exception to "Sell requires an existing position" — this flag sets
+  // Action to Sell and lists every security instead of just held ones.
+  const [shortSell, setShortSell] = useState(false)
+  const onActionChange = (v: string) => {
+    if (v !== 'Sell') setShortSell(false)
+    set('action', v)
+  }
+
+  // For actions that require an already-outstanding position (Sell, Dividend, …),
+  // narrow the Security picker to securities actually held in the selected account.
+  const bypassPositionFilter = form.action === 'Sell' && shortSell
+  const { data: accountHoldings = [] } = useQuery({
+    queryKey: ['modal-holdings', form.accounts_id],
+    queryFn: () => getHoldings(Number(form.accounts_id)),
+    enabled: !!form.accounts_id && POSITION_REQUIRED_ACTIONS.has(form.action) && !bypassPositionFilter,
+  })
+  const securityOptions = useMemo(() => {
+    if (!form.accounts_id || !POSITION_REQUIRED_ACTIONS.has(form.action) || bypassPositionFilter) return securities
+    const heldIds = new Set(
+      (accountHoldings as Record<string, unknown>[])
+        .filter(h => Number(h.quantity) !== 0)
+        .map(h => Number(h.securities_id))
+    )
+    const filtered = securities.filter(s => heldIds.has(Number(s.id)))
+    // Keep the currently-selected security visible even if it's since been
+    // fully closed out, so editing an existing transaction never shows a
+    // blank Security field.
+    if (form.securities_id && !filtered.some(s => String(s.id) === form.securities_id)) {
+      const current = securities.find(s => String(s.id) === form.securities_id)
+      if (current) return [...filtered, current]
+    }
+    return filtered
+  }, [securities, accountHoldings, form.accounts_id, form.action, form.securities_id, bypassPositionFilter])
+
+  // Editing an existing transaction opens the modal with date/security/account
+  // already populated, which would otherwise trigger the auto-recalculation
+  // below on mount and clobber the fx_rate actually stored with that
+  // transaction. Skip the initial load in edit mode; still recalculate
+  // normally once the user actually changes date/security/account.
+  // Keyed by the exact input values (not just "first call") so this stays
+  // correct under React 18 StrictMode, which invokes effects twice in dev.
+  const lastHandledKey = useRef('')
+
   useEffect(() => {
     if (!form.date || !form.securities_id || !form.accounts_id) return
+    const key = `${form.date}|${form.securities_id}|${form.accounts_id}`
+    if (key === lastHandledKey.current) return
+    const isInitialLoad = lastHandledKey.current === '' && editId != null
+    lastHandledKey.current = key
+    if (isInitialLoad) return
     const sec = securities.find(s => String(s.id) === form.securities_id)
     const acc = accounts.find(a => String(a.id) === form.accounts_id)
     if (!sec || !acc) return
@@ -153,11 +207,20 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Action *</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.action} onChange={e => set('action', e.target.value)}>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.action} onChange={e => onActionChange(e.target.value)}>
                 {ACTIONS.map(a => <option key={a}>{a}</option>)}
               </select>
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={shortSell} onChange={e => {
+              const checked = e.target.checked
+              setShortSell(checked)
+              if (checked) set('action', 'Sell')
+            }} />
+            🔻 Short sell (sets Action to Sell and lists all securities, not just held ones)
+          </label>
 
           <div>
             <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
@@ -181,7 +244,7 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             <label className="text-xs font-medium text-slate-500 block mb-1">Security *</label>
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.securities_id} onChange={e => set('securities_id', e.target.value)}>
               <option value="">— select —</option>
-              {securities.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.ticker ?? '')} · {String(s.name)}</option>)}
+              {securityOptions.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.ticker ?? '')} · {String(s.name)}</option>)}
             </select>
           </div>
 

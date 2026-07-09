@@ -4,9 +4,7 @@ Imports leveraged trades history + funds history CSVs into the database.
 """
 
 import io
-import csv
 import pandas as pd
-import streamlit as st
 from database.connection import get_connection
 from database.crud import (
     update_investment_balances, update_holdings, update_accounts_balances,
@@ -406,17 +404,89 @@ def _transaction_exists(cur, acc_id: int, description: str) -> bool:
     return cur.fetchone() is not None
 
 
-# ── Main import function ──────────────────────────────────────────────────────
+# ── Pre-import preview helpers ─────────────────────────────────────────────────
 
-def run_import(
-    trades_content: str,
-    funds_content: str,
-    account_id: int,
-    include_swaps: bool,
-    include_dividends: bool,
-    replace_mode: bool = False,
-    progress_cb=None,
-) -> dict:
+def check_existing_records(
+    inv_records: list, tx_records: list, account_id: int,
+) -> tuple[set, set]:
+    """Return (existing_inv_descs, existing_tx_descs) for the preview screen."""
+    conn = get_connection()
+    cur  = conn.cursor()
+    try:
+        existing_inv: set = set()
+        existing_tx:  set = set()
+        if inv_records:
+            descs = [r['desc'] for r in inv_records]
+            ph    = ",".join(["%s"] * len(descs))
+            cur.execute(
+                f"SELECT Description FROM Investments WHERE Accounts_Id = %s AND Description IN ({ph})",
+                [account_id] + descs,
+            )
+            existing_inv = {row[0] for row in cur.fetchall()}
+        if tx_records:
+            descs = [r['description'] for r in tx_records]
+            ph    = ",".join(["%s"] * len(descs))
+            cur.execute(
+                f"SELECT Description FROM Transactions WHERE Accounts_Id = %s AND Description IN ({ph})",
+                [account_id] + descs,
+            )
+            existing_tx = {row[0] for row in cur.fetchall()}
+        return existing_inv, existing_tx
+    finally:
+        cur.close()
+        conn.close()
+
+
+def preview_security_matches(inv_records: list) -> dict[str, tuple]:
+    """Return {symbol → (securities_id | None, match_type)} for each unique instrument.
+
+    Match priority mirrors _get_or_create_security: saved mapping → name → ticker → 'new'.
+    """
+    from database.queries import get_security_mappings as _get_map
+    mappings = _get_map("Capital.com")
+
+    unique: dict[str, tuple] = {
+        r['symbol']: (r['symbol'], r['name'])
+        for r in inv_records
+        if r.get('symbol')
+    }
+    result: dict[str, tuple] = {}
+    conn = get_connection()
+    cur  = conn.cursor()
+    try:
+        for symbol, (sym, name) in unique.items():
+            if sym in mappings:
+                sec_id = mappings[sym]
+                cur.execute("SELECT Securities_Name FROM Securities WHERE Securities_Id = %s", (sec_id,))
+                row = cur.fetchone()
+                result[symbol] = (sec_id, f"mapped:{row[0] if row else sym}")
+                continue
+
+            if name:
+                cur.execute("SELECT Securities_Id FROM Securities WHERE Securities_Name = %s LIMIT 1", (name,))
+                row = cur.fetchone()
+                if row:
+                    result[symbol] = (row[0], "name")
+                    continue
+
+            cur.execute("SELECT Securities_Id FROM Securities WHERE Ticker = %s LIMIT 1", (sym,))
+            row = cur.fetchone()
+            if row:
+                result[symbol] = (row[0], "ticker")
+                continue
+
+            result[symbol] = (None, "new")
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+def build_preview_records(
+    trades_content: str, funds_content: str,
+    include_swaps: bool, include_dividends: bool,
+) -> tuple[list, list]:
+    """Parse the two CSVs and build (inv_records, tx_records) without touching the DB."""
     trades_df = _parse_trades(trades_content)
     funds_df  = _parse_funds(funds_content)
 
@@ -428,6 +498,23 @@ def run_import(
     adj_inv, adj_tx = _build_trade_adjustment_records(funds_df, trades_df)
     inv_records += adj_inv
     tx_records   = _build_transaction_records(funds_df) + adj_tx
+    return inv_records, tx_records
+
+
+# ── Main import function ──────────────────────────────────────────────────────
+
+def run_import(
+    trades_content: str,
+    funds_content: str,
+    account_id: int,
+    include_swaps: bool,
+    include_dividends: bool,
+    replace_mode: bool = False,
+    progress_cb=None,
+) -> dict:
+    inv_records, tx_records = build_preview_records(
+        trades_content, funds_content, include_swaps, include_dividends,
+    )
 
     conn = get_connection()
     cur  = conn.cursor()
@@ -533,331 +620,3 @@ def run_import(
         update_investment_balances()
 
     return counts
-
-
-# ── Security Mapping UI ───────────────────────────────────────────────────────
-
-def _render_cap_security_mapping(trades_df: pd.DataFrame) -> None:
-    """Show the security mapping panel for Capital.com instrument symbols.
-
-    Identifies instruments that have no saved mapping and no automatic match
-    (by name or ticker) and lets the user link them to existing DB securities.
-    Mappings are persisted to import_security_mappings under source='Capital.com'.
-    """
-    from database.queries import get_security_mappings, save_security_mappings
-
-    # Unique instruments that appear in trade records
-    instr_df = (
-        trades_df[trades_df['Status'].isin(['OPENED', 'CLOSED', 'DIVIDEND', 'SWAP'])]
-        [['Instrument Symbol', 'Instrument Name', 'Currency']]
-        .drop_duplicates()
-        .sort_values('Instrument Name')
-    )
-    if instr_df.empty:
-        return
-
-    saved_ids = get_security_mappings("Capital.com")   # {symbol → sec_id}
-
-    # Load all DB securities
-    conn = get_connection()
-    all_secs = pd.read_sql(
-        """SELECT s.Securities_Id   AS securities_id,
-                  s.Ticker          AS ticker,
-                  s.Securities_Name AS name
-           FROM   Securities s
-           ORDER  BY s.Securities_Name""",
-        conn,
-    )
-    conn.close()
-
-    name_to_id   = dict(zip(all_secs["name"],   all_secs["securities_id"].astype(int)))
-    ticker_to_id = dict(zip(all_secs["ticker"], all_secs["securities_id"].astype(int)))
-    id_to_name   = dict(zip(all_secs["securities_id"].astype(int), all_secs["name"]))
-
-    # Find instruments with no resolved match
-    unmapped: list[dict] = []
-    for _, row in instr_df.iterrows():
-        sym  = str(row["Instrument Symbol"]).strip()
-        nm   = str(row["Instrument Name"]).strip()
-        ccy  = str(row.get("Currency", "")).strip()
-        if sym in saved_ids:
-            continue                                    # already mapped
-        if nm in name_to_id or sym in ticker_to_id:
-            continue                                    # auto-matched
-        unmapped.append({"symbol": sym, "name": nm, "currency": ccy})
-
-    # Always show the expander so users can review / update saved mappings
-    saved_count   = len(saved_ids)
-    unmapped_count = len(unmapped)
-
-    with st.expander(
-        f"🗺️ Security Mappings — {unmapped_count} unmapped · {saved_count} saved",
-        expanded=bool(unmapped_count),
-    ):
-        if unmapped_count == 0 and saved_count == 0:
-            st.success("All instruments matched automatically — no manual mapping needed.")
-            return
-
-        if unmapped_count:
-            st.caption(
-                "These instruments could not be matched in your database by name or ticker. "
-                "Select the corresponding DB security for each one, then click **💾 Save Mappings**. "
-                "Mappings are permanent and used for all future Capital.com imports."
-            )
-            sec_options = ["(create new — will be added on import)"] + all_secs["name"].tolist()
-            pending: dict[str, int] = {}
-
-            for item in unmapped:
-                sym = item["symbol"]
-                c1, c2, c3 = st.columns([1, 2, 3])
-                with c1:
-                    st.markdown(f"**{sym}**")
-                with c2:
-                    st.caption(item["name"])
-                with c3:
-                    chosen = st.selectbox(
-                        f"Map {sym}",
-                        sec_options,
-                        key=f"cap_map_{sym.replace(' ', '_').replace('/', '_').replace('#', 'h')}",
-                        label_visibility="collapsed",
-                    )
-                    if not chosen.startswith("(create new"):
-                        sid = name_to_id.get(chosen)
-                        if sid:
-                            pending[sym] = int(sid)
-
-            if pending:
-                if st.button("💾 Save Mappings", key="cap_save_mappings", type="primary"):
-                    try:
-                        save_security_mappings("Capital.com", pending)
-                        st.success(f"✅ Saved {len(pending)} mapping(s).")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Failed to save mappings: {exc}")
-
-        # Show / manage already-saved mappings
-        if saved_count:
-            st.divider()
-            st.markdown(f"**Saved mappings** ({saved_count}):")
-            rows = [
-                {"Symbol": sym, "Mapped to": id_to_name.get(int(sid), f"id={sid}")}
-                for sym, sid in saved_ids.items()
-            ]
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
-
-            to_delete = st.multiselect(
-                "Remove mappings:", list(saved_ids.keys()), key="cap_del_mappings"
-            )
-            if to_delete and st.button("🗑️ Remove selected", key="cap_del_mappings_btn"):
-                from database.queries import delete_security_mapping
-                for sym in to_delete:
-                    delete_security_mapping("Capital.com", sym)
-                st.success(f"Removed {len(to_delete)} mapping(s).")
-                st.rerun()
-
-
-# ── Streamlit UI ──────────────────────────────────────────────────────────────
-
-def render_capitalcom_importer():
-    st.subheader("Capital.com CSV Importer")
-    st.caption(
-        "Import Capital.com all-time trade and funds history. "
-        "Upload both CSV exports from the Capital.com platform."
-    )
-
-    # ── Restore last-used settings (first render only) ───────────────────────
-    from database.queries import get_app_setting, save_app_setting
-    if "cap_acc_mode" not in st.session_state:
-        st.session_state["cap_acc_mode"] = get_app_setting("cap_acc_mode") or "Existing"
-    if "cap_acc_select" not in st.session_state:
-        _saved = get_app_setting("cap_acc_select")
-        if _saved:
-            st.session_state["cap_acc_select"] = _saved
-    if "cap_include_swaps" not in st.session_state:
-        st.session_state["cap_include_swaps"] = get_app_setting("cap_include_swaps") != "false"
-    if "cap_include_divs" not in st.session_state:
-        st.session_state["cap_include_divs"] = get_app_setting("cap_include_divs") != "false"
-    if "cap_replace_mode" not in st.session_state:
-        st.session_state["cap_replace_mode"] = get_app_setting("cap_replace_mode") == "true"
-
-    col_t, col_f = st.columns(2)
-    with col_t:
-        trades_file = st.file_uploader(
-            "Leveraged Trades History CSV",
-            type="csv",
-            key="cap_trades_file",
-            help="capitalcom-leveraged_trades_history.csv",
-        )
-    with col_f:
-        funds_file = st.file_uploader(
-            "Funds History CSV",
-            type="csv",
-            key="cap_funds_file",
-            help="capitalcom-funds_history-*.csv",
-        )
-
-    if not trades_file or not funds_file:
-        st.info("Upload both CSV files to continue.")
-        return
-
-    # ── Parse & summarise ─────────────────────────────────────────────────────
-    trades_content = trades_file.read().decode('utf-8')
-    funds_content  = funds_file.read().decode('utf-8')
-
-    trades_df = _parse_trades(trades_content)
-    funds_df  = _parse_funds(funds_content)
-
-    opened = trades_df[trades_df['Status'] == 'OPENED']
-    closed = trades_df[trades_df['Status'] == 'CLOSED']
-    divs   = trades_df[trades_df['Status'] == 'DIVIDEND']
-    dep    = funds_df[funds_df['Type'] == 'DEPOSIT']['Amount'].sum()
-    wdl    = funds_df[funds_df['Type'] == 'WITHDRAWAL']['Amount'].sum()
-    pnl    = funds_df[funds_df['Type'] == 'TRADE']['Amount'].sum()
-    swap   = funds_df[funds_df['Type'] == 'SWAP']['Amount'].sum()
-
-    date_min = trades_df['Date'].min()
-    date_max = trades_df['Date'].max()
-
-    st.markdown(f"""
-| | |
-|---|---|
-| **Date range** | {date_min} → {date_max} |
-| **Trades** | {len(opened)} opened · {len(closed)} close executions |
-| **Dividends** | {len(divs)} |
-| **Instruments** | {trades_df['Instrument Symbol'].nunique()} |
-| **Deposits** | €{dep:,.2f} |
-| **Withdrawals** | €{wdl:,.2f} |
-| **Trade P&L** | €{pnl:,.2f} |
-| **Swap fees** | €{swap:,.2f} |
-| **Net** | €{dep+wdl+pnl+swap:,.2f} |
-""")
-
-    st.divider()
-
-    # ── Security Mapping ──────────────────────────────────────────────────────
-    _render_cap_security_mapping(trades_df)
-
-    st.divider()
-
-    # ── Account selection ─────────────────────────────────────────────────────
-    _INVESTMENT_TYPES = ('Brokerage', 'Margin', 'Pension', 'Other Investment')
-    conn = get_connection()
-    acc_df = pd.read_sql(
-        f"SELECT Accounts_Id AS accounts_id, Accounts_Name AS accounts_name FROM Accounts "
-        f"WHERE Accounts_Type IN {_INVESTMENT_TYPES} ORDER BY Accounts_Name",
-        conn,
-    )
-    conn.close()
-
-    col_mode, col_acc = st.columns([1, 3])
-    with col_mode:
-        mode = st.radio("Account", ["Existing", "New"], key="cap_acc_mode")
-    with col_acc:
-        if mode == "Existing":
-            acc_options = dict(zip(acc_df['accounts_name'], acc_df['accounts_id']))
-            default_idx = next(
-                (i for i, n in enumerate(acc_df['accounts_name']) if 'capital' in n.lower()),
-                0,
-            )
-            selected_name = st.selectbox(
-                "Select account",
-                list(acc_options.keys()),
-                index=default_idx,
-                key="cap_acc_select",
-            )
-            account_id = acc_options[selected_name]
-        else:
-            new_name = st.text_input(
-                "New account name", value="Capital.com", key="cap_acc_name"
-            )
-            account_id = None  # resolved at import time
-
-    st.divider()
-
-    # ── Options ───────────────────────────────────────────────────────────────
-    col_o1, col_o2, col_o3 = st.columns(3)
-    with col_o1:
-        include_swaps = st.checkbox(
-            "Import swap fees as MiscExp (per security)",
-            value=True,
-            key="cap_include_swaps",
-            help=f"Total swap/financing cost: {swap:,.2f} EUR — imported as MiscExp in Investments, one row per security, so they count toward Total Net P&L.",
-        )
-    with col_o2:
-        include_dividends = st.checkbox(
-            "Import dividends",
-            value=True,
-            key="cap_include_divs",
-            help=f"{len(divs)} dividend records",
-        )
-    with col_o3:
-        replace_mode = st.checkbox(
-            "Replace: delete ALL account data before import",
-            value=False,
-            key="cap_replace_mode",
-            help="Deletes ALL investments and transactions for the selected account before importing. Use this to cleanly re-import the full Capital.com history.",
-        )
-
-    # ── Preview ───────────────────────────────────────────────────────────────
-    with st.expander("Preview instruments to be imported", expanded=False):
-        instr = (
-            trades_df[trades_df['Status'].isin(['OPENED', 'CLOSED', 'DIVIDEND'])]
-            [['Instrument Symbol', 'Instrument Name', 'Currency']]
-            .drop_duplicates()
-            .sort_values('Instrument Name')
-        )
-        instr['Type'] = instr.apply(
-            lambda r: _classify_security(r['Instrument Symbol'], r['Instrument Name'], r['Currency']),
-            axis=1,
-        )
-        st.dataframe(instr, hide_index=True, width="stretch")
-
-    # ── Import ────────────────────────────────────────────────────────────────
-    if st.button("⬆ Import", type="primary", key="cap_import_btn"):
-        resolved_account_id = account_id
-        if mode == "New":
-            conn2 = get_connection()
-            cur2  = conn2.cursor()
-            try:
-                resolved_account_id = _get_or_create_account(cur2, new_name)
-                conn2.commit()
-            finally:
-                cur2.close()
-                conn2.close()
-
-        progress = st.progress(0.0, text="Importing…")
-
-        try:
-            counts = run_import(
-                trades_content=trades_content,
-                funds_content=funds_content,
-                account_id=resolved_account_id,
-                include_swaps=include_swaps,
-                include_dividends=include_dividends,
-                replace_mode=replace_mode,
-                progress_cb=lambda p: progress.progress(p, text="Importing…"),
-            )
-            progress.progress(1.0, text="Done.")
-            deleted_msg = (
-                f" Deleted first: {counts['deleted_investments']} investments · "
-                f"{counts['deleted_transactions']} transactions."
-            ) if replace_mode else ""
-            st.success(
-                f"Imported: **{counts['investments']}** investment records · "
-                f"**{counts['transactions']}** transactions.  "
-                f"Skipped (already exist): {counts['investments_skip']} investments · "
-                f"{counts['transactions_skip']} transactions.{deleted_msg}"
-            )
-            try:
-                save_app_setting("cap_acc_mode",      mode)
-                save_app_setting("cap_acc_select",    selected_name if mode == "Existing" else "")
-                save_app_setting("cap_include_swaps", "true" if include_swaps    else "false")
-                save_app_setting("cap_include_divs",  "true" if include_dividends else "false")
-                save_app_setting("cap_replace_mode",  "true" if replace_mode     else "false")
-            except Exception:
-                pass
-            st.rerun()
-        except Exception as e:
-            progress.empty()
-            st.error(f"Import failed: {e}")
-            st.exception(e)

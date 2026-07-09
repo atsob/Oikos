@@ -18,6 +18,9 @@ import {
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
   coinbaseGetSettings, coinbaseTest, coinbaseFetch, coinbaseImport,
+  cryptocomGetSettings, cryptocomTest, cryptocomFetch, cryptocomImport,
+  capitalcomParse, capitalcomImport,
+  fxproParse, fxproImport,
   getSecurities,
 } from '@/lib/api'
 
@@ -1560,6 +1563,7 @@ function RevolutTradingTab() {
     if (s.account_id) setAccountId(s.account_id as number)
   })
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
   const { data: allAccounts = [] } = useQuery({ queryKey: ['all-accounts'], queryFn: getAllAccounts })
@@ -1580,11 +1584,17 @@ function RevolutTradingTab() {
 
   const parseMut = useMutation({
     mutationFn: () => revtParse(file!, accountId!),
-    onSuccess: (d) => { setParseResult(d); saveSettings({ account_id: accountId }) },
+    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
   })
 
   const importMut = useMutation({
-    mutationFn: () => revtImport(file!, accountId!, replaceMode, importInv, importTx),
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Revolut Trading', toSave)
+      }
+      return revtImport(file!, accountId!, replaceMode, importInv, importTx)
+    },
     onSuccess: (d) => { setImportResult(d); saveSettings({ account_id: accountId }) },
   })
 
@@ -1593,6 +1603,7 @@ function RevolutTradingTab() {
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
   const summary = parseResult?.summary as Record<string, unknown> ?? {}
+  const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
 
   return (
     <div className="space-y-6">
@@ -1781,6 +1792,14 @@ function RevolutTradingTab() {
             )}
           </div>
 
+          {Object.keys(secMatches).length > 0 && (
+            <SecurityMappingPanel
+              secMatches={secMatches}
+              overrides={secMappingOverrides}
+              onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+            />
+          )}
+
           {(importInv ? newInv : 0) + (importTx ? newTx : 0) > 0 ? (
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
               {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({(importInv ? newInv : 0) + (importTx ? newTx : 0)} records)</>}
@@ -1871,6 +1890,7 @@ function SaxoTab() {
   // Preview + import
   const [preview, setPreview] = useState<{ inv_records: unknown[]; charge_records: unknown[]; sec_matches: Record<string, unknown> } | null>(null)
   const [fuzzySelected, setFuzzySelected] = useState<Set<number>>(new Set())
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
   const isAuthenticated = !!accessToken && !!expiresAt && Date.now() / 1000 < expiresAt
@@ -1921,10 +1941,15 @@ function SaxoTab() {
       const fuzzyIdxs = new Set((d.inv_records as Array<Record<string, unknown>>)
         .map((r, i) => r.status === 'likely_dup' ? i : -1).filter(i => i >= 0))
       setFuzzySelected(fuzzyIdxs)
+      setSecMappingOverrides({})
     },
   })
   const importMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Saxo Bank', toSave)
+      }
       const selectedDescs = preview
         ? (preview.inv_records as Array<Record<string, unknown>>)
             .filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzySelected.has(i)))
@@ -2171,6 +2196,13 @@ function SaxoTab() {
                 </table>
               </div>
             )}
+            {Object.keys(preview.sec_matches).length > 0 && (
+              <SecurityMappingPanel
+                secMatches={preview.sec_matches as Record<string, { sec_id: number | null; match_type: string }>}
+                overrides={secMappingOverrides}
+                onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+              />
+            )}
             {(() => {
               const recs = preview.inv_records as Array<Record<string, unknown>>
               const importCount = recs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzySelected.has(i))).length
@@ -2349,6 +2381,7 @@ function CoinbaseTab() {
   const [preview, setPreview] = useState<{ raw_count: number; inv_records: Array<Record<string, unknown>>; tx_records: Array<Record<string, unknown>>; sec_matches: Record<string, unknown> } | null>(null)
   const [fuzzyInvSelected, setFuzzyInvSelected] = useState<Set<number>>(new Set())
   const [fuzzyTxSelected, setFuzzyTxSelected] = useState<Set<number>>(new Set())
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
@@ -2370,10 +2403,15 @@ function CoinbaseTab() {
       setPreview(d)
       setFuzzyInvSelected(new Set((d.inv_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
       setFuzzyTxSelected(new Set((d.tx_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
+      setSecMappingOverrides({})
     },
   })
   const importMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Coinbase', toSave)
+      }
       const invRecs = preview!.inv_records
       const txRecs  = preview!.tx_records
       return coinbaseImport({
@@ -2544,6 +2582,13 @@ function CoinbaseTab() {
                     cols={[{ key: 'date', label: 'Date' }, { key: 'description', label: 'Description' }, { key: 'amount', label: 'Amount', right: true }, { key: 'currency', label: 'Ccy' }]} />
                 </>
               )}
+              {Object.keys(preview.sec_matches).length > 0 && (
+                <SecurityMappingPanel
+                  secMatches={preview.sec_matches as Record<string, { sec_id: number | null; match_type: string }>}
+                  overrides={secMappingOverrides}
+                  onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+                />
+              )}
               <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || (invImportCount + txImportCount === 0)}>
                 {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({invImportCount + txImportCount} records)</>}
               </Button>
@@ -2563,20 +2608,285 @@ function CoinbaseTab() {
 // ── Brokerage → Crypto.com ────────────────────────────────────────────────────
 
 function CryptoComTab() {
-  const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccounts'], queryFn: getAllAccounts })
-  const [file, setFile] = useState<File | null>(null)
-  const [accountId, setAccountId] = useState<number | null>(null)
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
-  const saveSettings = useImporterSettings('cryptocom', s => { if (s.account_id) setAccountId(s.account_id as number) })
-  const importMut = useMutation({
-    mutationFn: () => { const fd = new FormData(); fd.append('file', file!); return importFile('cryptocom', fd) },
-    onSuccess: (d) => { setResult(d); saveSettings({ account_id: accountId }) },
+  const allAccounts = useQuery({ queryKey: ['allAccounts'], queryFn: getAllAccounts })
+  const settingsQuery = useQuery({ queryKey: ['cryptocomSettings'], queryFn: cryptocomGetSettings })
+
+  const [apiKey, setApiKey] = useState('')
+  const [apiSecret, setApiSecret] = useState('')
+  const [remember, setRemember] = useState(true)
+  const [accountId, setAccountId] = useState<number | ''>('')
+  const [cashAccountId, setCashAccountId] = useState<number | ''>('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [replaceMode, setReplaceMode] = useState(false)
+
+  const [testResult, setTestResult] = useState<Array<Record<string, unknown>> | null>(null)
+  const [preview, setPreview] = useState<{ raw_count: number; inv_records: Array<Record<string, unknown>>; tx_records: Array<Record<string, unknown>>; sec_matches: Record<string, unknown> } | null>(null)
+  const [fuzzyInvSelected, setFuzzyInvSelected] = useState<Set<number>>(new Set())
+  const [fuzzyTxSelected, setFuzzyTxSelected] = useState<Set<number>>(new Set())
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+
+  useEffect(() => {
+    if (!settingsQuery.data) return
+    const s = settingsQuery.data
+    if (s.api_key)    setApiKey(s.api_key)
+    if (s.api_secret) setApiSecret(s.api_secret)
+    if (s.account_id)      setAccountId(Number(s.account_id))
+    if (s.cash_account_id) setCashAccountId(Number(s.cash_account_id))
+  }, [settingsQuery.data])
+
+  const testMut = useMutation({
+    mutationFn: () => cryptocomTest({ api_key: apiKey, api_secret: apiSecret, remember }),
+    onSuccess: (d) => setTestResult(d.accounts),
   })
+  const fetchMut = useMutation({
+    mutationFn: () => cryptocomFetch({ api_key: apiKey, api_secret: apiSecret, account_id: accountId || null, cash_account_id: cashAccountId || null, date_from: dateFrom, date_to: dateTo, remember }),
+    onSuccess: (d) => {
+      setPreview(d)
+      setFuzzyInvSelected(new Set((d.inv_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
+      setFuzzyTxSelected(new Set((d.tx_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
+      setSecMappingOverrides({})
+    },
+  })
+  const importMut = useMutation({
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Crypto.com', toSave)
+      }
+      const invRecs = preview!.inv_records
+      const txRecs  = preview!.tx_records
+      return cryptocomImport({
+        api_key: apiKey, api_secret: apiSecret,
+        account_id: accountId || null, cash_account_id: cashAccountId || null,
+        date_from: dateFrom, date_to: dateTo, replace_mode: replaceMode,
+        selected_inv: invRecs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).map(r => r.desc),
+        selected_tx:  txRecs.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).map(r => r.desc),
+      })
+    },
+    onSuccess: (d) => { setImportResult(d); setPreview(null) },
+  })
+
+  const sc = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] ?? 'text-slate-600 bg-slate-100')
+  const sl = (s: string) => ({ new: 'New', exists: 'Exists', likely_dup: 'Fuzzy Dup' }[s] ?? s)
+
+  const PreviewTable = ({ records, fuzzySelected, setFuzzySelected, cols }: {
+    records: Array<Record<string, unknown>>; fuzzySelected: Set<number>; setFuzzySelected: (s: Set<number>) => void
+    cols: Array<{ key: string; label: string; right?: boolean }>
+  }) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead><tr className="text-slate-500 border-b">
+          <th className="text-left py-1 pr-3">Import</th>
+          <th className="text-left py-1 pr-3">Status</th>
+          {cols.map(c => <th key={c.key} className={`${c.right ? 'text-right' : 'text-left'} py-1 pr-3`}>{c.label}</th>)}
+        </tr></thead>
+        <tbody>
+          {records.map((r, i) => {
+            const isFuzzy = r.status === 'likely_dup'; const isNew = r.status === 'new'
+            return (
+              <tr key={i} className={`border-b last:border-0 ${!isNew && !isFuzzy ? 'opacity-40' : ''}`}>
+                <td className="py-1 pr-3">
+                  {isNew ? <span className="text-xs text-slate-400">✓</span>
+                    : isFuzzy ? <input type="checkbox" checked={fuzzySelected.has(i)} className="rounded"
+                        onChange={e => { const n = new Set(fuzzySelected); e.target.checked ? n.add(i) : n.delete(i); setFuzzySelected(n) }} />
+                    : <span className="text-xs text-slate-300">—</span>}
+                </td>
+                <td className="py-1 pr-3"><span className={`px-1.5 py-0.5 rounded text-xs font-medium ${sc(r.status as string)}`}>{sl(r.status as string)}</span></td>
+                {cols.map(c => <td key={c.key} className={`py-1 pr-3 ${c.right ? 'text-right font-mono' : ''}`}>{String(r[c.key] ?? '')}</td>)}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
   return (
     <div className="space-y-4">
       <InfoBox>
-        Import trading history from <strong>Crypto.com Exchange</strong>.<br />
-        In Crypto.com Exchange: <strong>Orders → Trade History → Export → CSV</strong>
+        Import trades, deposits, and withdrawals from <strong>Crypto.com Exchange</strong> using the REST API.
+      </InfoBox>
+
+      <details className="border rounded-lg p-3 text-sm">
+        <summary className="cursor-pointer text-slate-600 font-medium">ℹ️ How to create Crypto.com Exchange API keys (click to expand)</summary>
+        <div className="mt-3 space-y-2 text-xs text-slate-600">
+          <p>Log in to <code>crypto.com/exchange</code> → Settings → API Management → Create API Key.</p>
+          <p>Enable the read-only <strong>View</strong> permission (no trading/withdrawal permissions needed). Paste the API Key and Secret below.</p>
+        </div>
+      </details>
+
+      {/* Credentials */}
+      <Card>
+        <CardHeader><CardTitle>🔑 API Credentials</CardTitle></CardHeader>
+        <CardBody className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">API Key</label>
+              <input className="w-full border rounded px-3 py-1.5 text-sm font-mono" value={apiKey} onChange={e => setApiKey(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">API Secret</label>
+              <input className="w-full border rounded px-3 py-1.5 text-sm font-mono" type="password" value={apiSecret} onChange={e => setApiSecret(e.target.value)} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="rounded" />
+            💾 Remember credentials (stored in app settings)
+          </label>
+          <div className="flex gap-2">
+            <Button onClick={() => testMut.mutate()} disabled={!apiKey || !apiSecret || testMut.isPending} size="sm">
+              {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Test Connection
+            </Button>
+          </div>
+          {testMut.isError && <ErrorBox msg={apiErrorMsg(testMut.error)} />}
+          {testResult && (
+            <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded p-2">
+              ✅ Connected — {testResult.length} account(s): {testResult.map(a => `${a.currency as string} (${(a.balance as number)?.toFixed(4)})`).join(', ')}
+            </div>
+          )}
+        </CardBody>
+      </Card>
+
+      {/* Account Mapping */}
+      <Card>
+        <CardHeader><CardTitle>🏦 Account Mapping</CardTitle></CardHeader>
+        <CardBody className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Investment account (buys, sells, transfers)</label>
+              <Select value={accountId} onChange={e => setAccountId(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">— select account —</option>
+                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Cash account <span className="text-slate-400">(optional — fiat deposits/withdrawals)</span></label>
+              <Select value={cashAccountId} onChange={e => setCashAccountId(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">— none (use investment account) —</option>
+                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </Select>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Date + Options */}
+      <Card>
+        <CardHeader><CardTitle>📅 Date Filter & Options</CardTitle></CardHeader>
+        <CardBody className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
+              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
+              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} className="rounded" />
+            Replace mode — delete all existing Crypto.com records before importing
+          </label>
+          <Button onClick={() => { setPreview(null); setImportResult(null); fetchMut.mutate() }}
+            disabled={!apiKey || !apiSecret || !accountId || fetchMut.isPending}>
+            {fetchMut.isPending ? <><Spinner size={14} /> Fetching…</> : <>📡 Fetch & Preview</>}
+          </Button>
+          {fetchMut.isError && <ErrorBox msg={apiErrorMsg(fetchMut.error)} />}
+        </CardBody>
+      </Card>
+
+      {/* Preview */}
+      {preview && (() => {
+        const invImportCount = preview.inv_records.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).length
+        const txImportCount  = preview.tx_records.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).length
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Preview — {preview.raw_count} raw · {preview.inv_records.length} inv · {preview.tx_records.length} tx · <span className="text-green-600">{invImportCount + txImportCount} to import</span></CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              {preview.inv_records.length > 0 && (
+                <>
+                  <p className="text-xs font-medium text-slate-600">Investment records</p>
+                  <PreviewTable records={preview.inv_records} fuzzySelected={fuzzyInvSelected} setFuzzySelected={setFuzzyInvSelected}
+                    cols={[{ key: 'date', label: 'Date' }, { key: 'action', label: 'Action' }, { key: 'symbol', label: 'Symbol' }, { key: 'quantity', label: 'Qty', right: true }, { key: 'total_eur', label: 'Amount', right: true }]} />
+                </>
+              )}
+              {preview.tx_records.length > 0 && (
+                <>
+                  <p className="text-xs font-medium text-slate-600">Cash transactions</p>
+                  <PreviewTable records={preview.tx_records} fuzzySelected={fuzzyTxSelected} setFuzzySelected={setFuzzyTxSelected}
+                    cols={[{ key: 'date', label: 'Date' }, { key: 'description', label: 'Description' }, { key: 'amount', label: 'Amount', right: true }, { key: 'currency', label: 'Ccy' }]} />
+                </>
+              )}
+              {Object.keys(preview.sec_matches).length > 0 && (
+                <SecurityMappingPanel
+                  secMatches={preview.sec_matches as Record<string, { sec_id: number | null; match_type: string }>}
+                  overrides={secMappingOverrides}
+                  onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+                />
+              )}
+              <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || (invImportCount + txImportCount === 0)}>
+                {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({invImportCount + txImportCount} records)</>}
+              </Button>
+              {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
+            </CardBody>
+          </Card>
+        )
+      })()}
+
+      {importResult && (
+        <SuccessBox msg={`Import complete. Investments: ${importResult.investments ?? 0} imported. Transactions: ${importResult.transactions ?? 0} imported. Skipped: ${importResult.investments_skip ?? 0}.`} />
+      )}
+    </div>
+  )
+}
+
+// ── Brokerage → Capital.com ───────────────────────────────────────────────────
+
+function CapitalComTab() {
+  const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccounts'], queryFn: getAllAccounts })
+  const [tradesFile, setTradesFile] = useState<File | null>(null)
+  const [fundsFile, setFundsFile] = useState<File | null>(null)
+  const [accountId, setAccountId] = useState<number | null>(null)
+  const [includeSwaps, setIncludeSwaps] = useState(true)
+  const [includeDividends, setIncludeDividends] = useState(true)
+  const [replaceMode, setReplaceMode] = useState(false)
+  const saveSettings = useImporterSettings('capitalcom', s => { if (s.account_id) setAccountId(s.account_id as number) })
+
+  const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+
+  const parseMut = useMutation({
+    mutationFn: () => capitalcomParse(tradesFile!, fundsFile!, accountId!, includeSwaps, includeDividends),
+    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
+  })
+  const importMut = useMutation({
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('Capital.com', toSave)
+      }
+      return capitalcomImport(tradesFile!, fundsFile!, accountId!, includeSwaps, includeDividends, replaceMode)
+    },
+    onSuccess: (d) => { setImportResult(d); setParseResult(null) },
+  })
+
+  const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
+  const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
+  const newInv = inv.filter(r => r.status === 'new').length
+  const newTx = tx.filter(r => r.status === 'new').length
+  const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
+
+  return (
+    <div className="space-y-4">
+      <InfoBox>
+        Import leveraged trades from <strong>Capital.com</strong> using two CSV exports.<br />
+        In Capital.com: <strong>History → Trades → Download report (CSV)</strong> and <strong>History → Funds → Download report (CSV)</strong>
       </InfoBox>
       <Card>
         <CardBody className="space-y-4">
@@ -2587,66 +2897,150 @@ function CryptoComTab() {
               {(allAccounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
             </Select>
           </div>
-          {file ? (
-            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
-              <CheckCircle size={16} className="text-green-500" />
-              <span className="text-sm font-medium">{file.name}</span>
-              <button className="ml-auto text-xs text-red-500" onClick={() => { setFile(null); setResult(null) }}>Remove</button>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs font-medium text-slate-600 mb-1">Trades CSV</p>
+              {tradesFile ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
+                  <CheckCircle size={16} className="text-green-500" />
+                  <span className="text-sm font-medium truncate">{tradesFile.name}</span>
+                  <button className="ml-auto text-xs text-red-500" onClick={() => { setTradesFile(null); setParseResult(null) }}>Remove</button>
+                </div>
+              ) : (
+                <FileDropZone accept=".csv" onChange={setTradesFile} label="Upload Trades CSV" />
+              )}
             </div>
-          ) : (
-            <FileDropZone accept=".csv" onChange={setFile} label="Upload Crypto.com CSV export" />
-          )}
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
-            {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
-          </Button>
-          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
-          {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
-        </CardBody>
-      </Card>
-    </div>
-  )
-}
-
-// ── Brokerage → Capital.com ───────────────────────────────────────────────────
-
-function CapitalComTab() {
-  const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccounts'], queryFn: getAllAccounts })
-  const [file, setFile] = useState<File | null>(null)
-  const [accountId, setAccountId] = useState<number | null>(null)
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
-  const saveSettings = useImporterSettings('capitalcom', s => { if (s.account_id) setAccountId(s.account_id as number) })
-  const importMut = useMutation({
-    mutationFn: () => { const fd = new FormData(); fd.append('file', file!); return importFile('capitalcom', fd) },
-    onSuccess: (d) => { setResult(d); saveSettings({ account_id: accountId }) },
-  })
-  return (
-    <div className="space-y-4">
-      <InfoBox>Import trading history from a <strong>Capital.com</strong> CSV export.<br />In Capital.com: <strong>History → Download report (CSV)</strong></InfoBox>
-      <Card>
-        <CardBody className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Target Account</label>
-            <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
-              <option value="">— select account —</option>
-              {(allAccounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
-            </Select>
+            <div>
+              <p className="text-xs font-medium text-slate-600 mb-1">Funds CSV</p>
+              {fundsFile ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
+                  <CheckCircle size={16} className="text-green-500" />
+                  <span className="text-sm font-medium truncate">{fundsFile.name}</span>
+                  <button className="ml-auto text-xs text-red-500" onClick={() => { setFundsFile(null); setParseResult(null) }}>Remove</button>
+                </div>
+              ) : (
+                <FileDropZone accept=".csv" onChange={setFundsFile} label="Upload Funds CSV" />
+              )}
+            </div>
           </div>
-          {file ? (
-            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
-              <CheckCircle size={16} className="text-green-500" />
-              <span className="text-sm font-medium">{file.name}</span>
-              <button className="ml-auto text-xs text-red-500" onClick={() => setFile(null)}>Remove</button>
-            </div>
-          ) : (
-            <FileDropZone accept=".csv" onChange={setFile} label="Upload Capital.com CSV export" />
-          )}
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
-            {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={includeSwaps} onChange={e => setIncludeSwaps(e.target.checked)} />
+              Include swap/financing costs
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+              <input type="checkbox" checked={includeDividends} onChange={e => setIncludeDividends(e.target.checked)} />
+              Include dividends
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="cap_replace" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} />
+            <label htmlFor="cap_replace" className="text-sm text-slate-700">Replace mode (delete existing Capital.com records for this account)</label>
+          </div>
+          <Button onClick={() => parseMut.mutate()} disabled={!tradesFile || !fundsFile || !accountId || parseMut.isPending}>
+            {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Parse & Preview</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
-          {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
+          {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
         </CardBody>
       </Card>
+
+      {parseResult && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: '🆕 New investments', value: newInv },
+              { label: '🔄 Skip investments', value: inv.length - newInv },
+              { label: '🆕 New transactions', value: newTx },
+              { label: '🔄 Skip transactions', value: tx.length - newTx },
+            ].map(s => (
+              <div key={s.label} className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-500">{s.label}</p>
+                <p className="text-2xl font-bold">{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <Card>
+            <CardHeader><CardTitle>Preview — Investments ({inv.length})</CardTitle></CardHeader>
+            <CardBody>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1 px-2 text-left">Status</th>
+                    <th className="py-1 px-2 text-left">Date</th>
+                    <th className="py-1 px-2 text-left">Action</th>
+                    <th className="py-1 px-2 text-left">Symbol</th>
+                    <th className="py-1 px-2 text-right">Qty</th>
+                    <th className="py-1 px-2 text-right">Price</th>
+                    <th className="py-1 px-2 text-right">Total (€)</th>
+                  </tr></thead>
+                  <tbody>
+                    {inv.slice(0, 100).map((r, i) => (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                        <td className="py-1 px-2">{r.date as string}</td>
+                        <td className="py-1 px-2">{r.action as string}</td>
+                        <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {inv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {inv.length} records</p>}
+              </div>
+            </CardBody>
+          </Card>
+
+          {tx.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Preview — Cash Transactions ({tx.length})</CardTitle></CardHeader>
+              <CardBody>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left">Status</th>
+                      <th className="py-1 px-2 text-left">Date</th>
+                      <th className="py-1 px-2 text-left">Description</th>
+                      <th className="py-1 px-2 text-right">Amount (€)</th>
+                    </tr></thead>
+                    <tbody>
+                      {tx.slice(0, 100).map((r, i) => (
+                        <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2">{r.date as string}</td>
+                          <td className="py-1 px-2">{r.description as string}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {tx.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {tx.length} records</p>}
+                </div>
+              </CardBody>
+            </Card>
+          )}
+
+          {Object.keys(secMatches).length > 0 && (
+            <SecurityMappingPanel
+              secMatches={secMatches}
+              overrides={secMappingOverrides}
+              onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+            />
+          )}
+
+          {newInv + newTx > 0 ? (
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+            </Button>
+          ) : (
+            <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
+          )}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
+          {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
+        </div>
+      )}
     </div>
   )
 }
@@ -2657,15 +3051,38 @@ function FxProTab() {
   const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccounts'], queryFn: getAllAccounts })
   const [file, setFile] = useState<File | null>(null)
   const [accountId, setAccountId] = useState<number | null>(null)
-  const [result, setResult] = useState<Record<string, unknown> | null>(null)
+  const [replaceMode, setReplaceMode] = useState(false)
   const saveSettings = useImporterSettings('fxpro', s => { if (s.account_id) setAccountId(s.account_id as number) })
-  const importMut = useMutation({
-    mutationFn: () => { const fd = new FormData(); fd.append('file', file!); return importFile('fxpro', fd) },
-    onSuccess: (d) => { setResult(d); saveSettings({ account_id: accountId }) },
+
+  const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+
+  const parseMut = useMutation({
+    mutationFn: () => fxproParse(file!, accountId!),
+    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
   })
+  const importMut = useMutation({
+    mutationFn: async () => {
+      const toSave = Object.fromEntries(Object.entries(secMappingOverrides).filter(([, v]) => v > 0))
+      if (Object.keys(toSave).length > 0) {
+        await saveSecurityMappings('FxPro', toSave)
+      }
+      return fxproImport(file!, accountId!, replaceMode)
+    },
+    onSuccess: (d) => { setImportResult(d); setParseResult(null) },
+  })
+
+  const inv = (parseResult?.inv_records as Record<string, unknown>[]) ?? []
+  const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
+  const newInv = inv.filter(r => r.status === 'new').length
+  const newTx = tx.filter(r => r.status === 'new').length
+  const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
+  const parseErrors = (parseResult?.errors as string[]) ?? []
+
   return (
     <div className="space-y-4">
-      <InfoBox>Import trading history from an <strong>FxPro</strong> PDF statement.</InfoBox>
+      <InfoBox>Import trading history from an <strong>FxPro</strong> MT4 or MT5 PDF statement.</InfoBox>
       <Card>
         <CardBody className="space-y-4">
           <div>
@@ -2679,18 +3096,121 @@ function FxProTab() {
             <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
               <CheckCircle size={16} className="text-green-500" />
               <span className="text-sm font-medium">{file.name}</span>
-              <button className="ml-auto text-xs text-red-500" onClick={() => setFile(null)}>Remove</button>
+              <button className="ml-auto text-xs text-red-500" onClick={() => { setFile(null); setParseResult(null) }}>Remove</button>
             </div>
           ) : (
             <FileDropZone accept=".pdf" onChange={setFile} label="Upload FxPro PDF statement" />
           )}
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
-            {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="fxp_replace" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} />
+            <label htmlFor="fxp_replace" className="text-sm text-slate-700">Replace mode (delete existing FxPro records for this account)</label>
+          </div>
+          <Button onClick={() => parseMut.mutate()} disabled={!file || !accountId || parseMut.isPending}>
+            {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>🔍 Parse & Preview</>}
           </Button>
-          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
-          {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
+          {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
         </CardBody>
       </Card>
+
+      {parseResult && (
+        <div className="space-y-4">
+          {parseErrors.length > 0 && <ErrorBox msg={parseErrors.join('; ')} />}
+
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: '🆕 New investments', value: newInv },
+              { label: '🔄 Skip investments', value: inv.length - newInv },
+              { label: '🆕 New transactions', value: newTx },
+              { label: '🔄 Skip transactions', value: tx.length - newTx },
+            ].map(s => (
+              <div key={s.label} className="bg-slate-50 rounded-lg p-3">
+                <p className="text-xs text-slate-500">{s.label}</p>
+                <p className="text-2xl font-bold">{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <Card>
+            <CardHeader><CardTitle>Preview — Investments ({inv.length})</CardTitle></CardHeader>
+            <CardBody>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1 px-2 text-left">Status</th>
+                    <th className="py-1 px-2 text-left">Date</th>
+                    <th className="py-1 px-2 text-left">Action</th>
+                    <th className="py-1 px-2 text-left">Symbol</th>
+                    <th className="py-1 px-2 text-right">Qty</th>
+                    <th className="py-1 px-2 text-right">Price</th>
+                    <th className="py-1 px-2 text-right">Total (€)</th>
+                  </tr></thead>
+                  <tbody>
+                    {inv.slice(0, 100).map((r, i) => (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                        <td className="py-1 px-2">{r.date as string}</td>
+                        <td className="py-1 px-2">{r.action as string}</td>
+                        <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
+                        <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {inv.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {inv.length} records</p>}
+              </div>
+            </CardBody>
+          </Card>
+
+          {tx.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Preview — Cash Transactions ({tx.length})</CardTitle></CardHeader>
+              <CardBody>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left">Status</th>
+                      <th className="py-1 px-2 text-left">Date</th>
+                      <th className="py-1 px-2 text-left">Description</th>
+                      <th className="py-1 px-2 text-right">Amount (€)</th>
+                    </tr></thead>
+                    <tbody>
+                      {tx.slice(0, 100).map((r, i) => (
+                        <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2">{r.date as string}</td>
+                          <td className="py-1 px-2">{r.description as string}</td>
+                          <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {tx.length > 100 && <p className="text-xs text-slate-400 py-2 text-center">Showing 100 of {tx.length} records</p>}
+                </div>
+              </CardBody>
+            </Card>
+          )}
+
+          {Object.keys(secMatches).length > 0 && (
+            <SecurityMappingPanel
+              secMatches={secMatches}
+              overrides={secMappingOverrides}
+              onChange={(key, val) => setSecMappingOverrides(prev => ({ ...prev, [key]: val }))}
+            />
+          )}
+
+          {newInv + newTx > 0 ? (
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+            </Button>
+          ) : (
+            <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
+          )}
+          {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
+          {importResult && <SuccessBox msg={`Import complete! Investments: ${(importResult as Record<string, unknown>).investments ?? 0} imported, ${(importResult as Record<string, unknown>).investments_skip ?? 0} skipped. Transactions: ${(importResult as Record<string, unknown>).transactions ?? 0} imported.`} />}
+        </div>
+      )}
     </div>
   )
 }

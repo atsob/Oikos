@@ -10,7 +10,6 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import pdfplumber
-import streamlit as st
 from database.connection import get_connection
 from database.crud import update_investment_balances, update_holdings, update_accounts_balances
 
@@ -56,12 +55,6 @@ def _load_saved_mapping() -> dict[str, int]:
     return get_security_mappings("FxPro")
 
 
-def _save_mapping(sec_id_map: dict[str, int]) -> None:
-    """Persist {pdf_symbol → securities_id} to the DB (non-None values only)."""
-    from database.queries import save_security_mappings
-    to_save = {sym: sid for sym, sid in sec_id_map.items() if sid is not None}
-    if to_save:
-        save_security_mappings("FxPro", to_save)
 
 # ── Security classification ──────────────────────────────────────────────────
 
@@ -816,24 +809,6 @@ def _build_mt4_records(df: pd.DataFrame) -> tuple:
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
-def _get_or_create_account(cur, name: str) -> int:
-    cur.execute(
-        "SELECT Accounts_Id FROM Accounts WHERE Accounts_Name = %s LIMIT 1", (name,)
-    )
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    cur.execute(
-        """INSERT INTO Accounts (Accounts_Name, Accounts_Type, Accounts_Balance, Currencies_Id)
-           VALUES (%s, 'Margin', 0,
-                   (SELECT Currencies_Id FROM Currencies
-                    WHERE Currencies_ShortName = 'EUR' LIMIT 1))
-           RETURNING Accounts_Id""",
-        (name,),
-    )
-    return cur.fetchone()[0]
-
-
 def _get_or_create_security(cur, symbol: str,
                              _cached_mappings: dict | None = None) -> int:
     """Resolve or create a Security record for *symbol*.
@@ -907,103 +882,71 @@ def _load_db_securities() -> pd.DataFrame:
     return df
 
 
-def _best_db_match(symbol: str, db_df: pd.DataFrame) -> dict | None:
-    """Return the first DB row that matches symbol, or None."""
-    for candidate in (symbol, symbol.lstrip('#')):
-        m = db_df[db_df['ticker'].str.lower() == candidate.lower()]
-        if not m.empty:
-            return m.iloc[0].to_dict()
-    return None
+def preview_security_matches(inv_records: list) -> dict[str, tuple]:
+    """Return {symbol → (securities_id | None, match_type)} for each unique instrument.
 
-
-def _render_security_mapping(symbols: list, db_df: pd.DataFrame) -> dict:
-    """Render the security-mapping table.
-
-    Returns ``sec_id_map = {pdf_symbol: int | None}`` where *None* means
-    'create new security on import'.
-
-    Mappings are now stored in the ``import_security_mappings`` DB table
-    (source = 'FxPro') instead of the legacy JSON file.
+    Match priority mirrors _get_or_create_security: saved mapping → ticker → 'new'.
     """
-    _NONE_LABEL = '— Create new —'
+    mappings = _load_saved_mapping()  # includes one-time JSON migration
+    unique = {r['symbol'] for r in inv_records if r.get('symbol')}
+    result: dict[str, tuple] = {}
+    conn = get_connection()
+    cur  = conn.cursor()
+    try:
+        for symbol in unique:
+            if symbol in mappings:
+                sec_id = mappings[symbol]
+                cur.execute("SELECT Securities_Name FROM Securities WHERE Securities_Id = %s", (sec_id,))
+                row = cur.fetchone()
+                result[symbol] = (sec_id, f"mapped:{row[0] if row else symbol}")
+                continue
 
-    db_options = [_NONE_LABEL] + [
-        f"{r['ticker']} | {r['name']} | {r['currency']}"
-        for _, r in db_df.iterrows()
-    ]
-    label_to_id = {
-        f"{r['ticker']} | {r['name']} | {r['currency']}": int(r['sec_id'])
-        for _, r in db_df.iterrows()
-    }
-    id_to_label = {v: k for k, v in label_to_id.items()}
+            cur.execute("SELECT Securities_Id FROM Securities WHERE Ticker = %s LIMIT 1", (symbol,))
+            row = cur.fetchone()
+            if row:
+                result[symbol] = (row[0], "ticker")
+                continue
 
-    # Load saved {symbol → sec_id} from DB (includes one-time JSON migration)
-    saved_ids = _load_saved_mapping()
-
-    rows = []
-    for sym in symbols:
-        match = _best_db_match(sym, db_df)
-        if match:
-            auto_label = f"{match['ticker']} | {match['name']} | {match['currency']}"
-            db_ticker, db_name, db_currency = match['ticker'], match['name'], match['currency']
-        else:
-            auto_label = _NONE_LABEL
-            db_ticker = db_name = db_currency = ''
-
-        # Priority: saved DB mapping > auto-match by ticker > Create new
-        saved_sid = saved_ids.get(sym)
-        if saved_sid is not None:
-            default = id_to_label.get(int(saved_sid), auto_label)
-        else:
-            default = auto_label
-
-        rows.append({
-            'PDF Symbol':   sym,
-            'PDF Type':     _classify_security(sym),
-            'DB Ticker':    db_ticker,
-            'DB Name':      db_name,
-            'DB Currency':  db_currency,
-            'Map to':       default,
-        })
-
-    mapping_df = pd.DataFrame(rows)
-
-    edited = st.data_editor(
-        mapping_df,
-        column_config={
-            'PDF Symbol':  st.column_config.TextColumn('PDF Symbol',  disabled=True),
-            'PDF Type':    st.column_config.TextColumn('PDF Type',    disabled=True),
-            'DB Ticker':   st.column_config.TextColumn('DB Ticker',   disabled=True),
-            'DB Name':     st.column_config.TextColumn('DB Name',     disabled=True),
-            'DB Currency': st.column_config.TextColumn('DB Currency', disabled=True),
-            'Map to':      st.column_config.SelectboxColumn(
-                'Map to DB Security',
-                options=db_options,
-                required=True,
-                help='Select an existing DB security or leave as "— Create new —".',
-            ),
-        },
-        hide_index=True,
-        width="stretch",
-        key='fxp_sec_mapping',
-    )
-
-    sec_id_map = {}
-    for _, row in edited.iterrows():
-        sel = row['Map to']
-        sec_id_map[row['PDF Symbol']] = label_to_id.get(sel)   # None → create new
-    return sec_id_map
+            result[symbol] = (None, "new")
+        return result
+    finally:
+        cur.close()
+        conn.close()
 
 
-# ── Per-file parse cache ──────────────────────────────────────────────────────
+def check_existing_records(inv_records: list, tx_records: list, account_id: int) -> tuple[set, set]:
+    """Return (existing_inv_descs, existing_tx_descs) for the preview screen."""
+    conn = get_connection()
+    cur  = conn.cursor()
+    try:
+        existing_inv: set = set()
+        existing_tx:  set = set()
+        if inv_records:
+            descs = [r['desc'] for r in inv_records]
+            ph    = ",".join(["%s"] * len(descs))
+            cur.execute(
+                f"SELECT Description FROM Investments WHERE Accounts_Id = %s AND Description IN ({ph})",
+                [account_id] + descs,
+            )
+            existing_inv = {row[0] for row in cur.fetchall()}
+        if tx_records:
+            descs = [r['description'] for r in tx_records]
+            ph    = ",".join(["%s"] * len(descs))
+            cur.execute(
+                f"SELECT Description FROM Transactions WHERE Accounts_Id = %s AND Description IN ({ph})",
+                [account_id] + descs,
+            )
+            existing_tx = {row[0] for row in cur.fetchall()}
+        return existing_inv, existing_tx
+    finally:
+        cur.close()
+        conn.close()
 
-@st.cache_data(show_spinner=False)
-def _cached_parse_pdf(pdf_bytes: bytes) -> tuple:
-    """Parse one FxPro PDF and return (fmt, inv_records, tx_records, error_str).
 
-    Decorated with @st.cache_data so the expensive PDF parsing only runs once
-    per unique file; Streamlit reruns caused by UI interactions hit the cache.
-    """
+# ── PDF parsing ────────────────────────────────────────────────────────────────
+
+def parse_pdf(pdf_bytes: bytes) -> tuple:
+    """Parse one FxPro PDF and return (fmt, inv_records, tx_records, error_str)."""
     fmt = _detect_format(pdf_bytes)
     if fmt == 'MT5':
         df = _parse_mt5_pdf(pdf_bytes)
@@ -1045,26 +988,15 @@ def run_import(
     fmt_used = set()
 
     for pdf_bytes in pdf_bytes_list:
-        fmt = _detect_format(pdf_bytes)
+        fmt, inv, tx, error = parse_pdf(pdf_bytes)
         fmt_used.add(fmt)
-        if fmt == 'MT5':
-            df = _parse_mt5_pdf(pdf_bytes)
-            if not df.empty:
-                inv, tx = _build_mt5_records(df)
-                all_inv.extend(inv)
-                all_tx.extend(tx)
-        elif fmt == 'MT5_POS':
-            df = _parse_mt5_positions_pdf(pdf_bytes)
-            if not df.empty:
-                all_inv.extend(_build_mt5_position_records(df))
-        elif fmt == 'MT4':
-            df = _parse_mt4_pdf(pdf_bytes)
-            if not df.empty:
-                inv, tx = _build_mt4_records(df)
-                all_inv.extend(inv)
-                all_tx.extend(tx)
-        else:
-            raise ValueError("Could not detect MT4/MT5 format in one of the uploaded PDFs.")
+        if error:
+            continue  # unreadable/empty statement — skip, matching the preview step's leniency
+        all_inv.extend(inv)
+        all_tx.extend(tx)
+
+    if not all_inv and not all_tx:
+        raise ValueError("Could not detect MT4/MT5 format in any of the uploaded PDFs.")
 
     # Deduplicate by description (in case same PDF uploaded twice)
     seen = {}
@@ -1159,227 +1091,3 @@ def run_import(
 
     return counts
 
-
-# ── Streamlit UI ──────────────────────────────────────────────────────────────
-
-def render_fxpro_importer():
-    st.subheader("FxPro PDF Statement Importer")
-    st.caption(
-        "Import FxPro MT4 and MT5 trade statements from PDF. "
-        "Upload multiple PDFs at once to import several statements for the same account."
-    )
-
-    # ── Restore last-used settings (first render only) ───────────────────────
-    from database.queries import get_app_setting, save_app_setting
-    if "fxp_acc_mode" not in st.session_state:
-        st.session_state["fxp_acc_mode"] = get_app_setting("fxp_acc_mode") or "Existing"
-    if "fxp_acc_select" not in st.session_state:
-        _saved = get_app_setting("fxp_acc_select")
-        if _saved:
-            st.session_state["fxp_acc_select"] = _saved
-    if "fxp_replace_mode" not in st.session_state:
-        st.session_state["fxp_replace_mode"] = get_app_setting("fxp_replace_mode") == "true"
-
-    pdf_files = st.file_uploader(
-        "FxPro Statement PDFs",
-        type="pdf",
-        accept_multiple_files=True,
-        key="fxp_pdf_files",
-    )
-
-    if not pdf_files:
-        st.info("Upload one or more FxPro statement PDFs to continue.")
-        return
-
-    all_pdf_bytes = [f.read() for f in pdf_files]
-
-    # Parse PDFs — results are cached per unique file content so that
-    # Streamlit reruns (e.g., while editing the mapping table) are instant.
-    fmt_list = []
-    parse_errors = []
-    all_inv = []
-    all_tx = []
-
-    with st.spinner("Parsing PDFs…"):
-        for pdf_bytes, f in zip(all_pdf_bytes, pdf_files):
-            fmt, inv, tx, err = _cached_parse_pdf(pdf_bytes)
-            fmt_list.append(fmt)
-            if err:
-                parse_errors.append(f"{f.name}: {err}")
-            else:
-                all_inv.extend(inv)
-                all_tx.extend(tx)
-
-    for err in parse_errors:
-        st.error(err)
-
-    if not all_inv and not all_tx:
-        st.warning("No records were parsed from the uploaded PDFs.")
-        return
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    inv_df = pd.DataFrame(all_inv)
-    symbols = sorted(inv_df['symbol'].unique()) if not inv_df.empty else []
-    date_min = inv_df['date'].min() if not inv_df.empty else None
-    date_max = inv_df['date'].max() if not inv_df.empty else None
-
-    buy_sell = inv_df[inv_df['action'].isin(['Buy', 'Sell'])] if not inv_df.empty else pd.DataFrame()
-    misc_exp = inv_df[inv_df['action'] == 'MiscExp'] if not inv_df.empty else pd.DataFrame()
-
-    misc_total = misc_exp['total_eur'].sum() if not misc_exp.empty else 0.0
-    tx_total = sum(r['amount'] for r in all_tx)
-
-    _FMT_LABELS = {'MT5': 'MT5 Deals', 'MT5_POS': 'MT5 Positions', 'MT4': 'MT4', 'unknown': 'unknown'}
-    fmt_str = ', '.join(sorted({_FMT_LABELS.get(f, f) for f in fmt_list}))
-    files_str = ', '.join(f.name for f in pdf_files)
-
-    st.markdown(f"""
-| | |
-|---|---|
-| **Files** | {files_str} |
-| **Formats detected** | {fmt_str} |
-| **Date range** | {date_min} → {date_max} |
-| **Trade records** | {len(buy_sell)} (Buy/Sell entries) |
-| **Cost records** | {len(misc_exp)} (commission/swap · total {misc_total:,.2f}) |
-| **Transaction records** | {len(all_tx)} (deposits/withdrawals · total {tx_total:,.2f}) |
-| **Instruments** | {len(symbols)} |
-""")
-
-    # ── Open-position warning ─────────────────────────────────────────────────
-    # Detect securities where Buy qty ≠ Sell qty — these will produce a non-zero
-    # holding after import, which means the statements don't cover their full
-    # open-to-close lifecycle (positions open at statement date, or missing PDFs).
-    if not buy_sell.empty:
-        net = (
-            buy_sell.assign(
-                signed=lambda d: d.apply(
-                    lambda r: r['quantity'] if r['action'] == 'Buy' else -r['quantity'], axis=1
-                )
-            )
-            .groupby('symbol')['signed'].sum()
-        )
-        unbalanced = net[net.abs() > 0.000001]
-        if not unbalanced.empty:
-            lines = ', '.join(
-                f"**{sym}** ({qty:+.4g} lots)" for sym, qty in unbalanced.items()
-            )
-            st.warning(
-                f"⚠ {len(unbalanced)} symbol(s) have unmatched open/close deals in the "
-                f"uploaded PDFs: {lines}. "
-                "These will show a non-zero holding after import. "
-                "If all positions should be closed, upload the missing statement(s) "
-                "and re-import with **Replace** mode."
-            )
-
-    st.divider()
-
-    # ── Account selection ─────────────────────────────────────────────────────
-    _INVESTMENT_TYPES = ('Brokerage', 'Margin', 'Pension', 'Other Investment')
-    conn = get_connection()
-    acc_df = pd.read_sql(
-        f"SELECT Accounts_Id AS accounts_id, Accounts_Name AS accounts_name FROM Accounts "
-        f"WHERE Accounts_Type IN {_INVESTMENT_TYPES} ORDER BY Accounts_Name",
-        conn,
-    )
-    conn.close()
-
-    col_mode, col_acc = st.columns([1, 3])
-    with col_mode:
-        mode = st.radio("Account", ["Existing", "New"], key="fxp_acc_mode")
-    with col_acc:
-        if mode == "Existing":
-            acc_options = dict(zip(acc_df['accounts_name'], acc_df['accounts_id']))
-            default_idx = next(
-                (i for i, n in enumerate(acc_df['accounts_name']) if 'fxpro' in n.lower()),
-                0,
-            )
-            selected_name = st.selectbox(
-                "Select account",
-                list(acc_options.keys()),
-                index=default_idx,
-                key="fxp_acc_select",
-            )
-            account_id = acc_options[selected_name]
-        else:
-            new_name = st.text_input("New account name", value="FxPro", key="fxp_acc_name")
-            account_id = None
-
-    st.divider()
-
-    # ── Security mapping ──────────────────────────────────────────────────────
-    st.markdown("#### Security Mapping")
-    st.caption(
-        "Review how each FxPro symbol maps to a security in your database. "
-        "The **DB** columns show the best automatic match by ticker. "
-        "Override **Map to DB Security** to link to a different existing security, "
-        "or leave as '— Create new —' to insert a new one on import. "
-        "Mappings are stored in the database and applied automatically on future imports."
-    )
-    db_df = _load_db_securities()
-    security_map = _render_security_mapping(symbols, db_df)
-
-    col_save_map, _ = st.columns([1, 5])
-    with col_save_map:
-        if st.button("💾 Save Mapping", key="fxp_save_map_btn"):
-            _save_mapping(security_map)
-            st.success("Mapping saved to database.")
-
-    st.divider()
-
-    # ── Options ───────────────────────────────────────────────────────────────
-    replace_mode = st.checkbox(
-        "Replace: delete ALL account data before import",
-        value=False,
-        key="fxp_replace_mode",
-        help=(
-            "Deletes ALL investments and transactions for the selected account before importing. "
-            "Use this to cleanly re-import the full FxPro history."
-        ),
-    )
-
-    # ── Import ────────────────────────────────────────────────────────────────
-    if st.button("⬆ Import", type="primary", key="fxp_import_btn"):
-        resolved_account_id = account_id
-        if mode == "New":
-            conn2 = get_connection()
-            cur2 = conn2.cursor()
-            try:
-                resolved_account_id = _get_or_create_account(cur2, new_name)
-                conn2.commit()
-            finally:
-                cur2.close()
-                conn2.close()
-
-        progress = st.progress(0.0, text="Importing…")
-
-        try:
-            counts = run_import(
-                pdf_bytes_list=all_pdf_bytes,
-                account_id=resolved_account_id,
-                replace_mode=replace_mode,
-                security_map=security_map,
-                progress_cb=lambda p: progress.progress(p, text="Importing…"),
-            )
-            _save_mapping(security_map)   # persist mapping after every successful import
-            try:
-                save_app_setting("fxp_acc_mode",    mode)
-                save_app_setting("fxp_acc_select",  selected_name if mode == "Existing" else "")
-                save_app_setting("fxp_replace_mode", "true" if replace_mode else "false")
-            except Exception:
-                pass
-            progress.progress(1.0, text="Done.")
-            deleted_msg = (
-                f" Deleted first: {counts['deleted_investments']} investments · "
-                f"{counts['deleted_transactions']} transactions."
-            ) if replace_mode else ""
-            st.success(
-                f"Imported: **{counts['investments']}** investment records · "
-                f"**{counts['transactions']}** transactions.  "
-                f"Skipped (already exist): {counts['investments_skip']} investments · "
-                f"{counts['transactions_skip']} transactions.{deleted_msg}"
-            )
-            st.rerun()
-        except Exception as e:
-            progress.empty()
-            st.error(f"Import failed: {e}")
-            st.exception(e)

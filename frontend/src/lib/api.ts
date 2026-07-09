@@ -460,6 +460,30 @@ export const revsImport = (file: File, accountId: number, mode: 'inv' | 'tx', re
   return api.post('/bank/revolut-savings-import', fd, { params: { account_id: accountId, mode, replace_mode: replaceMode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
 }
 
+export const capitalcomParse = (trades: File, funds: File, accountId: number, includeSwaps: boolean, includeDividends: boolean) => {
+  const fd = new FormData(); fd.append('trades', trades); fd.append('funds', funds)
+  return api.post('/bank/capitalcom-parse', fd, {
+    params: { account_id: accountId, include_swaps: includeSwaps, include_dividends: includeDividends },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+export const capitalcomImport = (trades: File, funds: File, accountId: number, includeSwaps: boolean, includeDividends: boolean, replaceMode: boolean) => {
+  const fd = new FormData(); fd.append('trades', trades); fd.append('funds', funds)
+  return api.post('/bank/capitalcom-import', fd, {
+    params: { account_id: accountId, include_swaps: includeSwaps, include_dividends: includeDividends, replace_mode: replaceMode },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+
+export const fxproParse = (file: File, accountId: number) => {
+  const fd = new FormData(); fd.append('files', file)
+  return api.post('/bank/fxpro-parse', fd, { params: { account_id: accountId }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+}
+export const fxproImport = (file: File, accountId: number, replaceMode: boolean) => {
+  const fd = new FormData(); fd.append('files', file)
+  return api.post('/bank/fxpro-import', fd, { params: { account_id: accountId, replace_mode: replaceMode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+}
+
 // ── Saxo Bank ─────────────────────────────────────────────────────────────────
 export const saxoGetSettings = () => api.get('/bank/saxo-settings').then(r => r.data)
 export const saxoSaveAccountMap = (accountMap: Record<string, number>) =>
@@ -493,6 +517,12 @@ export const coinbaseGetSettings = () => api.get('/bank/coinbase-settings').then
 export const coinbaseTest = (data: object) => api.post('/bank/coinbase-test', data).then(r => r.data)
 export const coinbaseFetch = (data: object) => api.post('/bank/coinbase-fetch', data).then(r => r.data)
 export const coinbaseImport = (data: object) => api.post('/bank/coinbase-import', data).then(r => r.data)
+
+// ── Crypto.com ────────────────────────────────────────────────────────────────
+export const cryptocomGetSettings = () => api.get('/bank/cryptocom-settings').then(r => r.data)
+export const cryptocomTest = (data: object) => api.post('/bank/cryptocom-test', data).then(r => r.data)
+export const cryptocomFetch = (data: object) => api.post('/bank/cryptocom-fetch', data).then(r => r.data)
+export const cryptocomImport = (data: object) => api.post('/bank/cryptocom-import', data).then(r => r.data)
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
 export const runVacuum = () => api.post('/tools/vacuum').then(r => r.data)

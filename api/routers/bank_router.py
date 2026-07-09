@@ -1040,6 +1040,295 @@ def coinbase_import(data: dict):
         raise HTTPException(500, str(e))
 
 
+# ── Crypto.com ────────────────────────────────────────────────────────────────
+
+@router.get("/cryptocom-settings")
+def cryptocom_get_settings():
+    from database.queries import get_app_setting
+    return {
+        "api_key":    get_app_setting("cdc_api_key")    or "",
+        "api_secret": get_app_setting("cdc_api_secret") or "",
+        "account_id":      get_app_setting("cdc_account_id")      or "",
+        "cash_account_id": get_app_setting("cdc_cash_account_id") or "",
+    }
+
+
+@router.post("/cryptocom-test")
+def cryptocom_test(data: dict):
+    try:
+        from data.cryptocom_connector import test_connection
+        accounts = test_connection(data["api_key"].strip(), data["api_secret"].strip())
+        if data.get("remember"):
+            from database.queries import save_app_setting
+            save_app_setting("cdc_api_key",    data["api_key"].strip())
+            save_app_setting("cdc_api_secret", data["api_secret"].strip())
+        return {"accounts": accounts}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/cryptocom-fetch")
+def cryptocom_fetch(data: dict):
+    try:
+        from data.cryptocom_connector import (
+            fetch_all_transactions, build_cryptocom_records,
+            check_existing_records, check_fuzzy_duplicates, preview_security_matches,
+        )
+        from datetime import date as _dt
+        api_key    = data["api_key"].strip()
+        api_secret = data["api_secret"].strip()
+        acc_id     = data.get("account_id")
+        cash_acc_id = data.get("cash_account_id") or None
+        date_from  = data.get("date_from") or None
+        date_to    = data.get("date_to")   or None
+
+        if data.get("remember"):
+            from database.queries import save_app_setting
+            save_app_setting("cdc_api_key",    api_key)
+            save_app_setting("cdc_api_secret", api_secret)
+            if acc_id:      save_app_setting("cdc_account_id",      str(acc_id))
+            if cash_acc_id: save_app_setting("cdc_cash_account_id", str(cash_acc_id))
+
+        d_from = _dt.fromisoformat(date_from) if date_from else None
+        d_to   = _dt.fromisoformat(date_to)   if date_to   else None
+
+        orders, deposits, withdrawals = fetch_all_transactions(api_key, api_secret, start_date=d_from, end_date=d_to)
+        inv_records, tx_records = build_cryptocom_records(orders, deposits, withdrawals)
+
+        existing_inv, existing_tx = check_existing_records(inv_records, tx_records, acc_id, cash_acc_id)
+        fuzzy_inv, fuzzy_tx       = check_fuzzy_duplicates(inv_records, tx_records, acc_id, cash_acc_id)
+        fuzzy_inv -= existing_inv
+        fuzzy_tx  -= existing_tx
+        sec_matches = preview_security_matches(inv_records)
+
+        def _ser(r):
+            d = dict(r)
+            if hasattr(d.get("date"), "isoformat"): d["date"] = d["date"].isoformat()
+            return d
+
+        def _annotate(records, existing, fuzzy):
+            out = []
+            for r in records:
+                d = _ser(r)
+                d["status"] = "exists" if r["desc"] in existing else ("likely_dup" if r["desc"] in fuzzy else "new")
+                out.append(d)
+            return out
+
+        def _annotate_inv(records):
+            out = []
+            for r in records:
+                d = _ser(r)
+                is_cash_flow = r["action"] in ("CashIn", "CashOut") and not r.get("symbol")
+                if is_cash_flow and cash_acc_id:
+                    ex, fz = existing_tx, fuzzy_tx
+                else:
+                    ex, fz = existing_inv, fuzzy_inv
+                d["status"] = "exists" if r["desc"] in ex else ("likely_dup" if r["desc"] in fz else "new")
+                out.append(d)
+            return out
+
+        return {
+            "raw_count":   len(orders) + len(deposits) + len(withdrawals),
+            "inv_records": _annotate_inv(inv_records),
+            "tx_records":  _annotate(tx_records, existing_tx, fuzzy_tx),
+            "sec_matches": {k: {"sec_id": v[0], "match_type": v[1]} for k, v in sec_matches.items()},
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/cryptocom-import")
+def cryptocom_import(data: dict):
+    try:
+        from data.cryptocom_connector import (
+            fetch_all_transactions, build_cryptocom_records,
+            check_existing_records, run_cryptocom_import,
+        )
+        from datetime import date as _dt
+        api_key     = data["api_key"].strip()
+        api_secret  = data["api_secret"].strip()
+        acc_id      = data["account_id"]
+        cash_acc_id = data.get("cash_account_id") or None
+        date_from   = data.get("date_from") or None
+        date_to     = data.get("date_to")   or None
+        replace_mode = data.get("replace_mode", False)
+        selected_inv = set(data["selected_inv"]) if data.get("selected_inv") is not None else None
+        selected_tx  = set(data["selected_tx"])  if data.get("selected_tx")  is not None else None
+
+        d_from = _dt.fromisoformat(date_from) if date_from else None
+        d_to   = _dt.fromisoformat(date_to)   if date_to   else None
+
+        orders, deposits, withdrawals = fetch_all_transactions(api_key, api_secret, start_date=d_from, end_date=d_to)
+        inv_records, tx_records = build_cryptocom_records(orders, deposits, withdrawals)
+
+        if not replace_mode:
+            existing_inv, existing_tx = check_existing_records(inv_records, tx_records, acc_id, cash_acc_id)
+            def _inv_existing(r):
+                is_cash_flow = r["action"] in ("CashIn", "CashOut") and not r.get("symbol")
+                return r["desc"] in (existing_tx if (is_cash_flow and cash_acc_id) else existing_inv)
+            if selected_inv is not None:
+                inv_records = [r for r in inv_records if r["desc"] in selected_inv and not _inv_existing(r)]
+            else:
+                inv_records = [r for r in inv_records if not _inv_existing(r)]
+            if selected_tx is not None:
+                tx_records  = [r for r in tx_records  if r["desc"] in selected_tx  and r["desc"] not in existing_tx]
+            else:
+                tx_records  = [r for r in tx_records  if r["desc"] not in existing_tx]
+
+        counts = run_cryptocom_import(
+            inv_records, tx_records, acc_id,
+            replace_mode=replace_mode,
+            cash_account_id=cash_acc_id,
+        )
+        return counts
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── Capital.com ───────────────────────────────────────────────────────────────
+
+@router.post("/capitalcom-parse")
+async def capitalcom_parse(
+    trades: UploadFile = File(...),
+    funds: UploadFile = File(...),
+    account_id: int = Query(...),
+    include_swaps: bool = Query(True),
+    include_dividends: bool = Query(True),
+):
+    try:
+        from data.capitalcom_importer import (
+            build_preview_records, check_existing_records, preview_security_matches,
+        )
+        trades_content = (await trades.read()).decode("utf-8", errors="replace")
+        funds_content  = (await funds.read()).decode("utf-8", errors="replace")
+
+        inv_records, tx_records = build_preview_records(
+            trades_content, funds_content, include_swaps, include_dividends,
+        )
+        existing_inv, existing_tx = check_existing_records(inv_records, tx_records, account_id)
+        sec_matches = preview_security_matches(inv_records)
+
+        def _ser(r):
+            d = dict(r)
+            if hasattr(d.get("date"), "isoformat"): d["date"] = d["date"].isoformat()
+            return d
+
+        inv_out = []
+        for r in inv_records:
+            d = _ser(r)
+            d["status"] = "exists" if r["desc"] in existing_inv else "new"
+            inv_out.append(d)
+        tx_out = []
+        for r in tx_records:
+            d = _ser(r)
+            d["status"] = "exists" if r["description"] in existing_tx else "new"
+            tx_out.append(d)
+
+        return {
+            "inv_records": inv_out,
+            "tx_records":  tx_out,
+            "sec_matches": {k: {"sec_id": v[0], "match_type": v[1]} for k, v in sec_matches.items()},
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/capitalcom-import")
+async def capitalcom_import(
+    trades: UploadFile = File(...),
+    funds: UploadFile = File(...),
+    account_id: int = Query(...),
+    include_swaps: bool = Query(True),
+    include_dividends: bool = Query(True),
+    replace_mode: bool = Query(False),
+):
+    try:
+        from data.capitalcom_importer import run_import
+        trades_content = (await trades.read()).decode("utf-8", errors="replace")
+        funds_content  = (await funds.read()).decode("utf-8", errors="replace")
+        counts = run_import(
+            trades_content, funds_content, account_id,
+            include_swaps, include_dividends, replace_mode=replace_mode,
+        )
+        return counts
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── FxPro ─────────────────────────────────────────────────────────────────────
+
+@router.post("/fxpro-parse")
+async def fxpro_parse(
+    files: list[UploadFile] = File(...),
+    account_id: int = Query(...),
+):
+    try:
+        from data.fxpro_importer import parse_pdf, check_existing_records, preview_security_matches
+
+        all_inv, all_tx, fmt_used, errors = [], [], set(), []
+        for f in files:
+            content = await f.read()
+            fmt, inv, tx, error = parse_pdf(content)
+            fmt_used.add(fmt)
+            if error:
+                errors.append(f"{f.filename}: {error}")
+                continue
+            all_inv.extend(inv)
+            all_tx.extend(tx)
+
+        # Deduplicate by description (in case the same PDF is uploaded twice)
+        seen = {}
+        for rec in all_inv:
+            seen.setdefault(rec["desc"], rec)
+        all_inv = list(seen.values())
+
+        existing_inv, existing_tx = check_existing_records(all_inv, all_tx, account_id)
+        sec_matches = preview_security_matches(all_inv)
+
+        def _ser(r):
+            d = dict(r)
+            if hasattr(d.get("date"), "isoformat"): d["date"] = d["date"].isoformat()
+            return d
+
+        inv_out = []
+        for r in all_inv:
+            d = _ser(r)
+            d["status"] = "exists" if r["desc"] in existing_inv else "new"
+            inv_out.append(d)
+        tx_out = []
+        for r in all_tx:
+            d = _ser(r)
+            d["status"] = "exists" if r["description"] in existing_tx else "new"
+            tx_out.append(d)
+
+        return {
+            "formats":     sorted(fmt_used),
+            "errors":      errors,
+            "inv_records": inv_out,
+            "tx_records":  tx_out,
+            "sec_matches": {k: {"sec_id": v[0], "match_type": v[1]} for k, v in sec_matches.items()},
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/fxpro-import")
+async def fxpro_import(
+    files: list[UploadFile] = File(...),
+    account_id: int = Query(...),
+    replace_mode: bool = Query(False),
+):
+    try:
+        from data.fxpro_importer import run_import
+        pdf_bytes_list = []
+        for f in files:
+            pdf_bytes_list.append(await f.read())
+        counts = run_import(pdf_bytes_list, account_id, replace_mode=replace_mode)
+        return counts
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ── Revolut Savings ───────────────────────────────────────────────────────────
 
 @router.post("/revolut-savings-parse")

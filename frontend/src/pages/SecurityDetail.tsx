@@ -340,7 +340,17 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const [txSearch, setTxSearch] = useState('')
 
   const accounts = accountsData as Record<string, unknown>[]
-  const investmentAccounts = accounts.filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
+  const investmentAccounts = accounts
+    .filter(a => ['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? '')))
+    .filter(a => Boolean(a.is_active))
+  // The transaction being edited may belong to an inactive account that's filtered
+  // out above — without this, the modal's account <select> would have no matching
+  // <option>, silently showing no account selected even though form.accounts_id is set.
+  const modalAccounts = useMemo(() => {
+    if (!form.accounts_id || investmentAccounts.some(a => String(a.id) === form.accounts_id)) return investmentAccounts
+    const current = accounts.find(a => String(a.id) === form.accounts_id)
+    return current ? [...investmentAccounts, current] : investmentAccounts
+  }, [investmentAccounts, accounts, form.accounts_id])
   const securities = securitiesData as Record<string, unknown>[]
 
   // Same modal used by the Investments register page — new transactions here start
@@ -583,7 +593,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
         <InvTransactionModal
           form={form}
           onChange={setForm}
-          accounts={investmentAccounts}
+          accounts={modalAccounts}
           allAccounts={accounts}
           securities={securities}
           onSave={handleSave}

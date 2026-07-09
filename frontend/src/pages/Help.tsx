@@ -247,6 +247,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           column) — e.g. a USD stock inside a EUR-denominated account still shows its price in USD. W. Tax and
           Total (acc) are in the account's currency instead, since that's what was actually withheld/settled.
         </Note>
+        <Note>
+          In the New/Edit Transaction form, actions that require an already-outstanding position — Sell,
+          Dividend, Reinvest, Split, ShrOut, Exercise, Expire, RtrnCap — narrow the Security picker to only what's
+          actually held in the selected account. The exception is <b>short selling</b>: check{' '}
+          <b>🔻 Short sell</b> to set Action to Sell and list every security again, since opening a short
+          position doesn't require holding it first.
+        </Note>
         <P>
           For deeper analysis — performance, risk, tax, dividend income, benchmarking — see the <b>Reports</b>{' '}
           section, which has several dedicated investment reports.
@@ -457,6 +464,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no
           underlying security, so they're linked to a single <b>Charge Payee</b> instead — configurable in that
           section, defaulting to auto-creating a "Saxo Bank" payee the first time you import if left unset.
+        </Note>
+        <Note>
+          <b>Security Mapping</b>: on Interactive Brokers, Coinbase, Saxo Bank, Revolut Trading, Capital.com, and
+          FxPro, any imported security that isn't found in your database appears in a mapping panel before you
+          confirm the import — map it to an existing security (e.g. an imported "ATOM" to your existing
+          "ATOMUSD") instead of letting it create a duplicate under a different ticker. The mapping is
+          remembered per source, so the same symbol resolves automatically next time.
         </Note>
       </>
     ),
