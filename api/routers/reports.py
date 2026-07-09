@@ -2214,7 +2214,14 @@ def get_cash_flow_forecast_full(
 
     with get_db() as conn:
         df_future = pd.read_sql("""
-            WITH LatestFX AS (
+            WITH RECURSIVE CategoryHierarchy AS (
+                SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
+                FROM Categories WHERE Categories_Id_Parent IS NULL
+                UNION ALL
+                SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
+                FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+            ),
+            LatestFX AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
             )
@@ -2225,13 +2232,13 @@ def get_cash_flow_forecast_full(
                 c.Currencies_ShortName AS currency,
                 CASE WHEN c.Currencies_ShortName = 'EUR' THEN s.Amount
                      ELSE s.Amount * COALESCE(fx.FX_Rate, 1) END AS amount_eur,
-                cat.Categories_Name AS category
+                cat.Full_Path AS category
             FROM Transactions t
             JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
             JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
             LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
             LEFT JOIN Splits s ON t.Transactions_Id = s.Transactions_Id
-            LEFT JOIN Categories cat ON s.Categories_Id = cat.Categories_Id
+            LEFT JOIN CategoryHierarchy cat ON s.Categories_Id = cat.Categories_Id
             LEFT JOIN LatestFX fx ON fx.Currencies_Id_1 = c.Currencies_Id
             WHERE t.Date > CURRENT_DATE
               AND t.Transfers_Id IS NULL
@@ -2239,14 +2246,21 @@ def get_cash_flow_forecast_full(
         """, conn)
 
         df_templates = pd.read_sql("""
-            WITH LatestFX AS (
+            WITH RECURSIVE CategoryHierarchy AS (
+                SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
+                FROM Categories WHERE Categories_Id_Parent IS NULL
+                UNION ALL
+                SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
+                FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+            ),
+            LatestFX AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
             ),
             tmpl_categories AS (
-                SELECT rts.templates_id, STRING_AGG(DISTINCT c.Categories_Name, ', ') AS category
+                SELECT rts.templates_id, STRING_AGG(DISTINCT c.Full_Path, ', ') AS category
                 FROM Recurring_Template_Splits rts
-                LEFT JOIN Categories c ON c.Categories_Id = rts.Categories_Id
+                LEFT JOIN CategoryHierarchy c ON c.Categories_Id = rts.Categories_Id
                 GROUP BY rts.templates_id
             )
             SELECT
@@ -2272,7 +2286,13 @@ def get_cash_flow_forecast_full(
         """, conn)
 
         df_recurring = pd.read_sql(f"""
-            WITH
+            WITH RECURSIVE CategoryHierarchy AS (
+                SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
+                FROM Categories WHERE Categories_Id_Parent IS NULL
+                UNION ALL
+                SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
+                FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+            ),
             recent AS (
                 SELECT
                     t.Payees_Id, p.Payees_Name,
@@ -2371,7 +2391,7 @@ def get_cash_flow_forecast_full(
             )
             SELECT
                 s.Payees_Name,
-                s.Categories_Name                        AS category,
+                COALESCE(cat.Full_Path, s.Categories_Name) AS category,
                 ROUND(s.avg_days_between::numeric, 0)    AS avg_days_between,
                 s.last_date,
                 (s.last_date + ROUND(s.avg_days_between)::int)::date AS next_expected_date,
@@ -2380,6 +2400,7 @@ def get_cash_flow_forecast_full(
             FROM   stats s
             JOIN   Currencies c ON c.Currencies_Id    = s.Currencies_Id
             LEFT   JOIN fx      ON fx.Currencies_Id_1 = s.Currencies_Id
+            LEFT   JOIN CategoryHierarchy cat ON cat.Categories_Id = s.Categories_Id
             ORDER  BY next_expected_date ASC
         """, conn)
 

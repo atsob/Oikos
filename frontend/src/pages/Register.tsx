@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo } from 'react'
 import { usePersist } from '@/lib/hooks'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent } from 'ag-grid-community'
 import {
@@ -110,7 +110,7 @@ export default function Register() {
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
 
   const queryParams = { account_id: accountId, search: search || undefined, from_date: fromDate, to_date: toDate, limit: PAGE_SIZE, offset }
-  const txQuery = useQuery({ queryKey: ['transactions', queryParams], queryFn: () => getTransactions(queryParams), enabled: !!accountId })
+  const txQuery = useQuery({ queryKey: ['transactions', queryParams], queryFn: () => getTransactions(queryParams), enabled: !!accountId, placeholderData: keepPreviousData })
 
   const globalQ = globalSearch.trim()
   const globalSearchQuery = useQuery({

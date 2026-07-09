@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
@@ -76,6 +76,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
   const { data: securities = [], isLoading } = useQuery({
     queryKey: ['securities', search],
     queryFn: () => getSecurities(search || undefined),
+    placeholderData: keepPreviousData,
   })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
   const { data: taxRules = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })

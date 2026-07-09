@@ -26,8 +26,9 @@ import {
   getTransactionById,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
-import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
+import { fmtEur, fmtPct, fmtNum, fmt, plotLayout } from '@/lib/utils'
+import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
@@ -1438,7 +1439,7 @@ function PnlReport() {
                     <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
                       <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? `${fmtNum(Number(r.price_today), 4)} ${r.currency ?? ''}` : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? fmt(Number(r.price_today), 4, getCurrencySymbol(String(r.currency ?? 'EUR'))) : '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
                       <PnlCell val={Number(r[pk] ?? 0)} />
                       {showPct && (() => {
@@ -2374,16 +2375,16 @@ function PerformanceTab() {
       <td className="px-3 py-2 font-medium text-blue-700">{String(v.securities_name)}</td>
       {viewPct ? (
         <>
-          <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
-          <td className={`px-3 py-2 text-right tabular-nums ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
+          <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
+          <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
         </>
       ) : (
         <>
-          <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
-          {pctCol && !isNaN(Number(v[pctCol])) && <td className={`px-3 py-2 text-right tabular-nums ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>}
+          <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[eurCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtDelta(Number(v[eurCol] ?? 0))}</td>
+          {pctCol && !isNaN(Number(v[pctCol])) && <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>}
         </>
       )}
-      {invCol && <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtEur(Number(v[invCol] ?? 0))}</td>}
+      {invCol && <td className="px-3 py-2 text-right tabular-nums text-slate-500 whitespace-nowrap">{fmtEur(Number(v[invCol] ?? 0))}</td>}
     </tr>
   )
 
@@ -2628,8 +2629,8 @@ function SavingsAccountsTab() {
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_total)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.first_tx_date)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.last_tx_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.first_tx_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_tx_date)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2668,8 +2669,8 @@ function SavingsAccountsTab() {
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct_last)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct_last)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_last)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.period_start_date)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{dateStr(r.last_interest_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.period_start_date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_interest_date)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4811,7 +4812,7 @@ function CashFlowSection() {
                 {recurring.map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
-                    <td className="px-3 py-2 font-medium text-blue-600">{String(r.payees_name || '—')}</td>
+                    <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {fmtEur(Number(r.amount_eur))}
@@ -4842,6 +4843,8 @@ function BudgetReport() {
   const [budgetEdits, setBudgetEdits] = useState<Record<number, string>>({})
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [drillCat, setDrillCat] = useState<string | null>(null)
+  const [copyFromYear, setCopyFromYear] = useState(now.getFullYear() - 1)
+  const [copySource, setCopySource] = useState<'budget' | 'actual'>('budget')
 
   const isCurrentYear = year === now.getFullYear()
   const ytdLabel = isCurrentYear ? 'YTD Actual' : 'Actual'
@@ -4893,6 +4896,26 @@ function BudgetReport() {
     onError: () => setSaveMsg('❌ Save failed'),
   })
 
+  const copyMut = useMutation({
+    mutationFn: async () => {
+      const srcRows = (await getBudgetVsActual(copyFromYear, refYears)) as Row[]
+      const srcField = copySource === 'budget' ? 'budget_amount' : 'actual_amount'
+      const toCopy = srcRows.filter(r => Number(r[srcField]) > 0)
+      await Promise.all(toCopy.map(r =>
+        saveBudget({ year, categories_id: Number(r.categories_id), budget_amount: Number(r[srcField]) })
+      ))
+      return toCopy.length
+    },
+    onSuccess: (n) => {
+      const srcLabel = copySource === 'budget' ? 'budget' : 'actuals'
+      setSaveMsg(`✅ Copied ${n} ${srcLabel === 'actuals' ? 'categories from' : 'budgets from'} ${copyFromYear} ${srcLabel} to ${year} budget!`)
+      setBudgetEdits({})
+      qc.invalidateQueries({ queryKey: ['budget-vs-actual'] })
+      setTimeout(() => setSaveMsg(null), 3000)
+    },
+    onError: () => setSaveMsg('❌ Copy failed'),
+  })
+
   // Drill-down categories
   const catTotals: Record<string, number> = {}
   for (const r of txRows) {
@@ -4921,6 +4944,25 @@ function BudgetReport() {
           <label className="text-sm font-medium text-slate-600">Reference years (hist avg): {refYears}</label>
           <input type="range" min={1} max={5} value={refYears}
             onChange={e => setRefYears(Number(e.target.value))} className="w-28" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-sm font-medium text-slate-600">Copy</label>
+          <Select className="w-20" value={copySource} onChange={e => setCopySource(e.target.value as 'budget' | 'actual')}>
+            <option value="budget">Budget</option>
+            <option value="actual">Actual</option>
+          </Select>
+          <Input type="number" className="w-20" value={copyFromYear}
+            onChange={e => setCopyFromYear(Number(e.target.value))} />
+          <Button size="sm" variant="secondary" disabled={(copySource === 'budget' && copyFromYear === year) || copyMut.isPending}
+            onClick={() => {
+              const srcLabel = copySource === 'budget' ? 'budget' : 'actual spend'
+              if (window.confirm(`Copy ${srcLabel} from ${copyFromYear} into ${year}'s budget? This will overwrite any existing ${year} budget for those categories.`)) {
+                setSaveMsg(null)
+                copyMut.mutate()
+              }
+            }}>
+            {copyMut.isPending ? <Spinner size={12} /> : null} 📋 Copy
+          </Button>
         </div>
       </div>
 
@@ -6802,9 +6844,9 @@ function CustomReportsSection() {
                             <td className="px-3 py-1.5 text-slate-700 sticky left-0 bg-white max-w-[300px] truncate" title={cat}>{cat}</td>
                             {periods.map(p => {
                               const v = pivot[cat]?.[p] ?? 0
-                              return <td key={p} className={`px-3 py-1.5 text-right tabular-nums ${v < 0 ? 'text-red-600' : ''}`}>{v !== 0 ? fmtEur(v) : '—'}</td>
+                              return <td key={p} className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap ${v < 0 ? 'text-red-600' : ''}`}>{v !== 0 ? fmtEur(v) : '—'}</td>
                             })}
-                            <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${rowTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(rowTotal)}</td>
+                            <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap font-medium ${rowTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(rowTotal)}</td>
                           </tr>
                         )
                       })}
@@ -6812,8 +6854,8 @@ function CustomReportsSection() {
                     <tfoot>
                       <tr className="border-t-2 border-slate-200 font-semibold bg-slate-50">
                         <td className="px-3 py-2 sticky left-0 bg-slate-50">TOTAL</td>
-                        {periods.map(p => <td key={p} className={`px-3 py-2 text-right tabular-nums ${(periodTotals[p] ?? 0) < 0 ? 'text-red-600' : ''}`}>{fmtEur(periodTotals[p] ?? 0)}</td>)}
-                        <td className={`px-3 py-2 text-right tabular-nums ${grandTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(grandTotal)}</td>
+                        {periods.map(p => <td key={p} className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${(periodTotals[p] ?? 0) < 0 ? 'text-red-600' : ''}`}>{fmtEur(periodTotals[p] ?? 0)}</td>)}
+                        <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${grandTotal < 0 ? 'text-red-600' : ''}`}>{fmtEur(grandTotal)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -6885,9 +6927,9 @@ function CustomReportsSection() {
                                   ? <>
                                       <td className="px-2 py-1.5 font-medium max-w-[180px] truncate">{String(r.security ?? '')}</td>
                                       <td className="px-2 py-1.5 text-slate-500">{String(r.action ?? '')}</td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.quantity != null ? fmtNum(Number(r.quantity), 4) : '—'}</td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.price != null ? fmtNum(Number(r.price), 4) : '—'}</td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums">{r.amount != null ? fmtEur(Number(r.amount)) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{r.quantity != null ? fmtNum(Number(r.quantity), 4) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{r.price != null ? fmtNum(Number(r.price), 4) : '—'}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{r.amount != null ? fmtEur(Number(r.amount)) : '—'}</td>
                                     </>
                                   : <>
                                       <td className="px-2 py-1.5 max-w-[160px] truncate">{String(r.payee ?? '')}</td>
@@ -6895,7 +6937,7 @@ function CustomReportsSection() {
                                       <td className="px-2 py-1.5 text-slate-400 text-xs max-w-[200px] truncate">{String(r.notes ?? '')}</td>
                                     </>
                                 }
-                                <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                                <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
                                   {fmtEur(Number(r.amount_eur ?? 0))}
                                 </td>
                                 <td className="px-2 py-1.5 text-slate-500 text-xs">{String(r.account ?? '')}</td>
@@ -6945,7 +6987,7 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
-          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && activeTab !== 'tax' && (
+          {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && activeTab !== 'tax' && activeTab !== 'budget' && activeTab !== 'planning' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <span className="text-slate-400 text-sm">to</span>

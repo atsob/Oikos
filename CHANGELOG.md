@@ -2,6 +2,20 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-09
+
+### Fixed
+- **Cash Register and Market Data search boxes lost focus after every keystroke**: both search inputs sat inside a section gated by `isLoading ? <Spinner/> : (...)`, and since the search text was part of the query key, every keystroke triggered a momentary `isLoading: true` — unmounting and remounting the whole section, including the input, and dropping keyboard focus mid-word. Fixed by keeping the previous page's data on screen while a new search resolves, so the section never unmounts.
+- **Cash Flow Forecast report showed only the leaf category name** (e.g. "Electricity") **instead of the full path** (e.g. "Bills : Electricity") in all three tables — Scheduled, Recurring Templates, and statistically-detected patterns — unlike every other report in the app, which shows the full recursive category path. Fixed at the source query for all three.
+- **Inv. Performance → P&L drill-down — the Price column always showed EUR/USD/etc. as a currency code instead of a symbol** (e.g. "88.89 USD" instead of "$88.89"), inconsistent with how prices are shown everywhere else in the app.
+- **Inv. Performance → Performance tab — the P&L column wrapped its +/− sign onto its own line** above the amount on narrow columns (visible in the Top Gainers/Losers table).
+- **Inv. Performance → Savings tab — dates in the Detail tables wrapped onto two lines** in narrow columns.
+- **Custom Reports — negative amounts in the pivot table and transaction drill-down could split the minus sign onto its own line**, above the number, in narrow columns.
+- **Budget & Spending and Financial Planning tabs showed a date-range picker in the header that did nothing**: it's wired up for reports that use it (Net Worth, Income & Expense, etc.), but these two tabs never read it. Removed for both.
+
+### Added
+- **Budget & Spending → Budget vs. Actual**: a **Copy** control to fill the selected year's budget from another year in one step — either that year's existing budget, or its actual spend (including copying the same year's own actuals in as its starting budget). Overwrites any existing budget for the categories being copied.
+
 ## 2026-07-08
 
 ### Fixed

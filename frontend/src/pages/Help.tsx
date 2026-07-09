@@ -330,6 +330,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🎯 Budget &amp; Spending</H3>
         <P>Three tabs: Budget vs. Actual, Spending Trends, and Savings Rate.</P>
+        <Note>
+          On Budget vs. Actual, the <b>Copy</b> control fills the selected year's budget from another year's
+          figures in one step: either that year's <b>budget</b> (e.g. carry 2025's budget into 2026), or its{' '}
+          <b>actual</b> spend — including the same year, so you can turn this year's real spending into next
+          year's starting budget. It overwrites any existing budget for the categories being copied.
+        </Note>
 
         <H3>📈 Inv. Positions</H3>
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
