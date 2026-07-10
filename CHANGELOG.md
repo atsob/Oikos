@@ -10,6 +10,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **All Brokerage importers (Interactive Brokers, Revolut Trading, Saxo Bank, Coinbase, Crypto.com, Capital.com, FxPro)**: every preview table now has a per-row checkbox in a new "Import" column, so you can include or exclude individual records regardless of their status — even ones flagged "New" or "⚠️ Likely Dup" — instead of the import decision being fixed by that status alone. "New" rows are checked by default; "Likely Dup" rows start unchecked, requiring a deliberate opt-in before something that looks like a duplicate gets imported. A header checkbox selects/deselects an entire table at once. (Saxo, Coinbase, and Crypto.com already supported overriding fuzzy-duplicate rows one at a time; this extends the same control to "New" rows and to the remaining four importers.)
 - **Saxo Bank → Authentication**: the authorization code from Saxo's OAuth redirect is now read automatically from the URL and filled into the "authorization code" field, instead of needing to be copied out of the address bar by hand.
+- **Investments → Transfer / Convert Holding**: a **Transfer all** checkbox next to Quantity sent fills in the full held quantity automatically instead of typing it in by hand, and re-fills itself if you switch which security you're sending. Unchecking it hands the field back for manual entry.
 
 ## 2026-07-09
 

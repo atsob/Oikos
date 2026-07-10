@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getHoldings, getSecurities, previewInvestmentTransfer, executeInvestmentTransfer } from '@/lib/api'
 import { Button, Select, Input, SearchableSelect, Spinner, useEscapeKey } from '@/components/ui'
@@ -40,6 +40,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
   const [fromAccountId, setFromAccountId] = useState('')
   const [fromSecuritiesId, setFromSecuritiesId] = useState('')
   const [quantity, setQuantity] = useState('')
+  const [transferAll, setTransferAll] = useState(false)
   const [toAccountId, setToAccountId] = useState('')
   const [toSecuritiesId, setToSecuritiesId] = useState('')
   const [feeType, setFeeType] = useState<FeeType>('none')
@@ -75,6 +76,17 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
   const fromSec = (securities as Record<string, unknown>[]).find(s => String(s.id) === fromSecuritiesId)
   const toSec = (securities as Record<string, unknown>[]).find(s => String(s.id) === toSecuritiesId)
   const isConversion = !!fromSecuritiesId && !!toSecuritiesId && fromSecuritiesId !== toSecuritiesId
+
+  const fromHolding = heldSecurities.find(h => String(h.securities_id) === fromSecuritiesId)
+  const fromHeldQty = fromHolding ? Number(fromHolding.quantity) : 0
+
+  // Keep the quantity field pinned to the full held amount while "Transfer all" is
+  // checked — covers both switching security/account and holdings data loading in.
+  useEffect(() => {
+    if (!transferAll) return
+    setQuantity(fromHeldQty > 0 ? String(fromHeldQty) : '')
+    setPreview(null)
+  }, [transferAll, fromHeldQty])
 
   const canPreview = fromAccountId && fromSecuritiesId && toAccountId && toSecuritiesId && parseFloat(quantity) > 0
     && (feeType !== 'source' && feeType !== 'destination' || parseFloat(feeQuantity || '0') > 0)
@@ -167,7 +179,19 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 block mb-1">Quantity sent *</label>
-                <Input type="number" step="any" value={quantity} onChange={e => { setQuantity(e.target.value); setPreview(null) }} placeholder="0.00" />
+                <Input
+                  type="number" step="any" value={quantity} placeholder="0.00"
+                  disabled={transferAll}
+                  onChange={e => { setQuantity(e.target.value); setPreview(null) }}
+                />
+                <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none mt-1.5">
+                  <input
+                    type="checkbox" checked={transferAll} disabled={!fromSecuritiesId}
+                    onChange={e => setTransferAll(e.target.checked)}
+                    className="rounded"
+                  />
+                  Transfer all ({fromHeldQty > 0 ? fmtQty(fromHeldQty, 8) : '—'} held)
+                </label>
               </div>
             </div>
 

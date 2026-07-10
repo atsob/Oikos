@@ -221,7 +221,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a
           holding from one account to another: the <b>same security</b> — a pure custody transfer, cost basis
           carried over — or a <b>different security</b>, a conversion/swap. An optional fee can be taken in the
-          source security, the destination security, or cash from any account.
+          source security, the destination security, or cash from any account. Tick <b>Transfer all</b> to move
+          the entire held quantity instead of typing it in — it stays pinned to the full amount if you switch
+          which security you're sending.
         </P>
         <Note>
           A same-security transfer with <b>no fee</b> creates zero P&amp;L <i>overall</i> — nothing is gained or
