@@ -466,11 +466,24 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           section, defaulting to auto-creating a "Saxo Bank" payee the first time you import if left unset.
         </Note>
         <Note>
+          <b>Saxo Bank → Authentication</b>: after authorizing with Saxo, the redirect back to Oikos carries the
+          authorization code in the URL — it's picked up and pasted into the "authorization code" field
+          automatically, so you don't need to copy it out of the address bar by hand.
+        </Note>
+        <Note>
           <b>Security Mapping</b>: on Interactive Brokers, Coinbase, Saxo Bank, Revolut Trading, Capital.com, and
           FxPro, any imported security that isn't found in your database appears in a mapping panel before you
           confirm the import — map it to an existing security (e.g. an imported "ATOM" to your existing
           "ATOMUSD") instead of letting it create a duplicate under a different ticker. The mapping is
           remembered per source, so the same symbol resolves automatically next time.
+        </Note>
+        <Note>
+          <b>Choosing what to import</b>: every Brokerage importer's preview table has a per-row checkbox in
+          the "Import" column, so you can include or exclude individual records regardless of how they're
+          flagged — even a row marked "New" or "⚠️ Likely Dup". <b>New</b> rows are checked by default;{' '}
+          <b>Likely Dup</b> rows start unchecked (opt in only if you're sure it isn't actually a duplicate);
+          rows already in the database ("Exists") can't be re-selected. A checkbox in the column header
+          selects/deselects everything in that table at once.
         </Note>
       </>
     ),

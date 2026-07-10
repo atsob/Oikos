@@ -1295,8 +1295,11 @@ function PnlReport() {
     accountMap.get(acc)!.push(r)
   }
 
-  const isClosedAccount = (acRows: Row[]) => acRows.every(r => Number(r.current_value_eur ?? 0) === 0)
-  const isClosedPosition = (r: Row) => Number(r.current_value_eur ?? 0) === 0
+  // Cumulative buy/sell quantities on fully-closed positions rarely net to exactly 0 —
+  // floating-point residue (e.g. 1e-15) survives the sum, so compare against a cent
+  // tolerance rather than exact equality.
+  const isClosedAccount = (acRows: Row[]) => acRows.every(r => Math.abs(Number(r.current_value_eur ?? 0)) < 0.01)
+  const isClosedPosition = (r: Row) => Math.abs(Number(r.current_value_eur ?? 0)) < 0.01
 
   const accounts = Array.from(accountMap.entries())
     .filter(([, acRows]) => showClosedAccounts || !isClosedAccount(acRows))

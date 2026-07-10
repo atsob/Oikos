@@ -981,6 +981,8 @@ def run_import(
     replace_mode: bool = False,
     security_map: dict | None = None,
     progress_cb=None,
+    selected_inv: set[str] | None = None,
+    selected_tx: set[str] | None = None,
 ) -> dict:
     """Import one or more FxPro PDF statements into the database."""
     all_inv = []
@@ -1003,6 +1005,11 @@ def run_import(
     for rec in all_inv:
         seen.setdefault(rec['desc'], rec)
     all_inv = list(seen.values())
+
+    if selected_inv is not None:
+        all_inv = [r for r in all_inv if r['desc'] in selected_inv]
+    if selected_tx is not None:
+        all_tx = [r for r in all_tx if r['description'] in selected_tx]
 
     conn = get_connection()
     cur = conn.cursor()

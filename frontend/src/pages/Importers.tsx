@@ -64,6 +64,37 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[status] ?? ''}`}>{label[status] ?? status}</span>
 }
 
+/** Checkbox cell for a broker preview row — records already imported ("exists") can't be re-selected. */
+function ImportCheckboxCell({ status, checked, onToggle }: { status: string; checked: boolean; onToggle: (v: boolean) => void }) {
+  if (status === 'exists') return <span className="text-xs text-slate-300">—</span>
+  return <input type="checkbox" checked={checked} onChange={e => onToggle(e.target.checked)} className="rounded" />
+}
+
+/** Header "select all" checkbox for a broker preview table's Import column. */
+function SelectAllCheckbox({ records, selected, setSelected, keyField = 'desc' }: {
+  records: Record<string, unknown>[]
+  selected: Set<string>
+  setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
+  keyField?: string
+}) {
+  const keys = records.filter(r => r.status !== 'exists').map(r => String(r[keyField]))
+  const allChecked = keys.length > 0 && keys.every(k => selected.has(k))
+  return (
+    <input type="checkbox" checked={allChecked} className="rounded"
+      onChange={e => setSelected(prev => {
+        const next = new Set(prev)
+        keys.forEach(k => e.target.checked ? next.add(k) : next.delete(k))
+        return next
+      })}
+    />
+  )
+}
+
+/** Default selection for a freshly-parsed preview table: only clean "new" rows — likely-dup rows start unchecked so a probable duplicate is never imported without a deliberate opt-in. */
+function defaultSelection(records: Record<string, unknown>[], keyField = 'desc'): Set<string> {
+  return new Set(records.filter(r => r.status === 'new').map(r => String(r[keyField])))
+}
+
 function SubTabs({ tabs, active, onChange }: { tabs: string[]; active: string; onChange: (t: string) => void }) {
   return (
     <div className="flex gap-1 border-b border-slate-200 mb-4 flex-wrap">
@@ -1191,6 +1222,8 @@ function IBFlexTab() {
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
   const [expandedInv, setExpandedInv] = useState(true)
   const [expandedTx, setExpandedTx] = useState(true)
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
 
   const { data: allAccounts = [] } = useQuery({ queryKey: ['all-accounts'], queryFn: getAllAccounts })
   const brokerageAccTypes = ['Brokerage', 'Margin', 'Other Investment', 'Pension']
@@ -1211,13 +1244,19 @@ function IBFlexTab() {
         const parsed = await ibFlexParse(data.xml, accountId, cashAccountId ?? undefined)
         setParseResult(parsed)
         setSecMappingOverrides({})
+        setSelectedInv(defaultSelection(parsed.inv_records ?? []))
+        setSelectedTx(defaultSelection(parsed.tx_records ?? []))
       }
     },
   })
 
   const parseMut = useMutation({
     mutationFn: () => ibFlexParse(rawXml, accountId!, cashAccountId ?? undefined),
-    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); _persistSettings() },
+    onSuccess: (d) => {
+      setParseResult(d); setSecMappingOverrides({}); _persistSettings()
+      setSelectedInv(defaultSelection(d.inv_records ?? []))
+      setSelectedTx(defaultSelection(d.tx_records ?? []))
+    },
   })
 
   const importMut = useMutation({
@@ -1239,6 +1278,8 @@ function IBFlexTab() {
         filter_from: filterFrom || null,
         filter_to: filterTo || null,
         exclude_fx_spot: excludeFxSpot,
+        selected_inv: Array.from(selectedInv),
+        selected_tx: Array.from(selectedTx),
       })
     },
     onSuccess: (d) => {
@@ -1277,6 +1318,8 @@ function IBFlexTab() {
 
   const newInv = visibleInv.filter(r => r.status === 'new').length
   const newTx = visibleTx.filter(r => r.status === 'new').length
+  const selInvCount = visibleInv.filter(r => selectedInv.has(r.desc as string)).length
+  const selTxCount = visibleTx.filter(r => selectedTx.has(r.desc as string)).length
 
   return (
     <div className="space-y-6">
@@ -1462,6 +1505,7 @@ function IBFlexTab() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left"><SelectAllCheckbox records={visibleInv} selected={selectedInv} setSelected={setSelectedInv} /></th>
                       <th className="py-1 px-2 text-left">Status</th>
                       <th className="py-1 px-2 text-left">Date</th>
                       <th className="py-1 px-2 text-left">Action</th>
@@ -1473,6 +1517,10 @@ function IBFlexTab() {
                     <tbody>
                       {visibleInv.slice(0, 100).map((r, i) => (
                         <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2">
+                            <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
+                              onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                          </td>
                           <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
@@ -1503,6 +1551,7 @@ function IBFlexTab() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left"><SelectAllCheckbox records={visibleTx} selected={selectedTx} setSelected={setSelectedTx} /></th>
                         <th className="py-1 px-2 text-left">Status</th>
                         <th className="py-1 px-2 text-left">Date</th>
                         <th className="py-1 px-2 text-left">Description</th>
@@ -1511,6 +1560,10 @@ function IBFlexTab() {
                       <tbody>
                         {visibleTx.slice(0, 100).map((r, i) => (
                           <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2">
+                              <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.desc as string)}
+                                onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                            </td>
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
@@ -1536,8 +1589,8 @@ function IBFlexTab() {
 
           {newInv + newTx > 0 ? (
             <div className="flex gap-2 items-center">
-              <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
-                {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+              <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
+                {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
               </Button>
             </div>
           ) : (
@@ -1565,6 +1618,8 @@ function RevolutTradingTab() {
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
 
   const { data: allAccounts = [] } = useQuery({ queryKey: ['all-accounts'], queryFn: getAllAccounts })
   const brokerAccounts = (allAccounts as Record<string, unknown>[]).filter(a =>
@@ -1584,7 +1639,11 @@ function RevolutTradingTab() {
 
   const parseMut = useMutation({
     mutationFn: () => revtParse(file!, accountId!),
-    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
+    onSuccess: (d) => {
+      setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId })
+      setSelectedInv(defaultSelection((d.inv_records as Record<string, unknown>[]) ?? []))
+      setSelectedTx(defaultSelection((d.tx_records as Record<string, unknown>[]) ?? []))
+    },
   })
 
   const importMut = useMutation({
@@ -1593,7 +1652,7 @@ function RevolutTradingTab() {
       if (Object.keys(toSave).length > 0) {
         await saveSecurityMappings('Revolut Trading', toSave)
       }
-      return revtImport(file!, accountId!, replaceMode, importInv, importTx)
+      return revtImport(file!, accountId!, replaceMode, importInv, importTx, Array.from(selectedInv), Array.from(selectedTx))
     },
     onSuccess: (d) => { setImportResult(d); saveSettings({ account_id: accountId }) },
   })
@@ -1602,6 +1661,8 @@ function RevolutTradingTab() {
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
+  const selInvCount = inv.filter(r => selectedInv.has(r.desc as string)).length
+  const selTxCount = tx.filter(r => selectedTx.has(r.desc as string)).length
   const summary = parseResult?.summary as Record<string, unknown> ?? {}
   const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
 
@@ -1714,6 +1775,7 @@ function RevolutTradingTab() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left"><SelectAllCheckbox records={inv} selected={selectedInv} setSelected={setSelectedInv} /></th>
                       <th className="py-1 px-2 text-left">Status</th>
                       <th className="py-1 px-2 text-left">Date</th>
                       <th className="py-1 px-2 text-left">Action</th>
@@ -1725,6 +1787,10 @@ function RevolutTradingTab() {
                     <tbody>
                       {inv.slice(0, 100).map((r, i) => (
                         <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2">
+                            <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
+                              onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                          </td>
                           <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
@@ -1755,6 +1821,7 @@ function RevolutTradingTab() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead><tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-1 px-2 text-left"><SelectAllCheckbox records={tx} selected={selectedTx} setSelected={setSelectedTx} /></th>
                         <th className="py-1 px-2 text-left">Status</th>
                         <th className="py-1 px-2 text-left">Date</th>
                         <th className="py-1 px-2 text-left">Description</th>
@@ -1763,6 +1830,10 @@ function RevolutTradingTab() {
                       <tbody>
                         {tx.slice(0, 100).map((r, i) => (
                           <tr key={i} className="border-b border-slate-100">
+                            <td className="py-1 px-2">
+                              <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.desc as string)}
+                                onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                            </td>
                             <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
@@ -1781,11 +1852,11 @@ function RevolutTradingTab() {
           <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
             <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
               <input type="checkbox" checked={importInv} onChange={e => setImportInv(e.target.checked)} />
-              Investments ({newInv} new)
+              Investments ({selInvCount} selected)
             </label>
             <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
               <input type="checkbox" checked={importTx} onChange={e => setImportTx(e.target.checked)} />
-              Cash transactions ({newTx} new)
+              Cash transactions ({selTxCount} selected)
             </label>
             {linkedAccountName && importTx && (
               <span className="text-xs text-blue-600">→ will land on <strong>{linkedAccountName}</strong></span>
@@ -1800,9 +1871,9 @@ function RevolutTradingTab() {
             />
           )}
 
-          {(importInv ? newInv : 0) + (importTx ? newTx : 0) > 0 ? (
+          {(importInv ? selInvCount : 0) + (importTx ? selTxCount : 0) > 0 ? (
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
-              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({(importInv ? newInv : 0) + (importTx ? newTx : 0)} records)</>}
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({(importInv ? selInvCount : 0) + (importTx ? selTxCount : 0)} records)</>}
             </Button>
           ) : (
             <InfoBox>Nothing new to import.</InfoBox>
@@ -1835,6 +1906,21 @@ function SaxoTab() {
   const [authCode, setAuthCode] = useState('')
   const [authUrl, setAuthUrl] = useState('')
   const [autoRefreshAttempted, setAutoRefreshAttempted] = useState(false)
+
+  // Saxo's OAuth redirect lands back on this page as ?code=...&state=saxo_import
+  // (see data/saxo_connector.py get_auth_url) — auto-fill the code so the user
+  // doesn't have to copy it out of the address bar by hand.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code && params.get('state') === 'saxo_import') {
+      setAuthCode(code)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('code')
+      url.searchParams.delete('state')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [])
 
   // Saxo accounts from API
   const [clientKey, setClientKey] = useState('')
@@ -1889,7 +1975,7 @@ function SaxoTab() {
 
   // Preview + import
   const [preview, setPreview] = useState<{ inv_records: unknown[]; charge_records: unknown[]; sec_matches: Record<string, unknown> } | null>(null)
-  const [fuzzySelected, setFuzzySelected] = useState<Set<number>>(new Set())
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
@@ -1937,10 +2023,7 @@ function SaxoTab() {
     mutationFn: () => saxoFetchTrades({ access_token: accessToken, client_key: clientKey, saxo_accounts: saxoAccounts, date_from: dateFrom, date_to: dateTo, use_sim: useSim }),
     onSuccess: (d) => {
       setPreview(d)
-      // Default: all fuzzy dups selected (checked) — matches old behaviour
-      const fuzzyIdxs = new Set((d.inv_records as Array<Record<string, unknown>>)
-        .map((r, i) => r.status === 'likely_dup' ? i : -1).filter(i => i >= 0))
-      setFuzzySelected(fuzzyIdxs)
+      setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
       setSecMappingOverrides({})
     },
   })
@@ -1952,7 +2035,7 @@ function SaxoTab() {
       }
       const selectedDescs = preview
         ? (preview.inv_records as Array<Record<string, unknown>>)
-            .filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzySelected.has(i)))
+            .filter(r => selectedInv.has(r.desc as string))
             .map(r => r.desc as string)
         : null
       return saxoImport({ access_token: accessToken, client_key: clientKey, saxo_accounts: saxoAccounts, date_from: dateFrom, date_to: dateTo, use_sim: useSim, replace_mode: replaceMode, import_inv: importInv, import_charges: importCharges, selected_descs: selectedDescs })
@@ -2143,7 +2226,7 @@ function SaxoTab() {
           <CardHeader>
             {(() => {
               const recs = preview.inv_records as Array<Record<string, unknown>>
-              const importCount = recs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzySelected.has(i))).length
+              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length
               return <CardTitle>Preview — {recs.length} trades, {(preview.charge_records as unknown[]).length} charges · <span className="text-green-600">{importCount} to import</span></CardTitle>
             })()}
           </CardHeader>
@@ -2152,30 +2235,21 @@ function SaxoTab() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="text-slate-500 border-b">
-                    {['Import', 'Status', 'Date', 'Account', 'Action', 'Security', 'Qty', 'Price', 'Amount'].map(h => (
+                    <th className="text-left py-1 pr-3">
+                      <SelectAllCheckbox records={preview.inv_records as Record<string, unknown>[]} selected={selectedInv} setSelected={setSelectedInv} />
+                    </th>
+                    {['Status', 'Date', 'Account', 'Action', 'Security', 'Qty', 'Price', 'Amount'].map(h => (
                       <th key={h} className="text-left py-1 pr-3">{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {(preview.inv_records as Array<Record<string, unknown>>).map((r, i) => {
-                      const isFuzzy = r.status === 'likely_dup'
-                      const isNew = r.status === 'new'
-                      const willImport = isNew || (isFuzzy && fuzzySelected.has(i))
+                      const willImport = selectedInv.has(r.desc as string)
                       return (
                         <tr key={i} className={`border-b last:border-0 ${!willImport && r.status !== 'exists' ? 'opacity-50' : ''}`}>
                           <td className="py-1 pr-3">
-                            {isNew ? (
-                              <span className="text-xs text-slate-400">✓</span>
-                            ) : isFuzzy ? (
-                              <input type="checkbox" checked={fuzzySelected.has(i)}
-                                onChange={e => setFuzzySelected(prev => {
-                                  const next = new Set(prev)
-                                  e.target.checked ? next.add(i) : next.delete(i)
-                                  return next
-                                })} className="rounded" />
-                            ) : (
-                              <span className="text-xs text-slate-300">—</span>
-                            )}
+                            <ImportCheckboxCell status={r.status as string} checked={willImport}
+                              onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                           </td>
                           <td className="py-1 pr-3">
                             <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${statusColor(r.status as string)}`}>
@@ -2205,7 +2279,7 @@ function SaxoTab() {
             )}
             {(() => {
               const recs = preview.inv_records as Array<Record<string, unknown>>
-              const importCount = recs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzySelected.has(i))).length
+              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length
               return (
                 <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || importCount === 0}>
                   {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({importCount} records)</>}
@@ -2379,8 +2453,8 @@ function CoinbaseTab() {
 
   const [testResult, setTestResult] = useState<Array<Record<string, unknown>> | null>(null)
   const [preview, setPreview] = useState<{ raw_count: number; inv_records: Array<Record<string, unknown>>; tx_records: Array<Record<string, unknown>>; sec_matches: Record<string, unknown> } | null>(null)
-  const [fuzzyInvSelected, setFuzzyInvSelected] = useState<Set<number>>(new Set())
-  const [fuzzyTxSelected, setFuzzyTxSelected] = useState<Set<number>>(new Set())
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
@@ -2401,8 +2475,8 @@ function CoinbaseTab() {
     mutationFn: () => coinbaseFetch({ api_key: apiKey, api_secret: apiSecret, account_id: accountId || null, cash_account_id: cashAccountId || null, date_from: dateFrom, date_to: dateTo, remember }),
     onSuccess: (d) => {
       setPreview(d)
-      setFuzzyInvSelected(new Set((d.inv_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
-      setFuzzyTxSelected(new Set((d.tx_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
+      setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
+      setSelectedTx(defaultSelection(d.tx_records as Array<Record<string, unknown>>))
       setSecMappingOverrides({})
     },
   })
@@ -2418,8 +2492,8 @@ function CoinbaseTab() {
         api_key: apiKey, api_secret: apiSecret,
         account_id: accountId || null, cash_account_id: cashAccountId || null,
         date_from: dateFrom, date_to: dateTo, replace_mode: replaceMode,
-        selected_inv: invRecs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).map(r => r.desc),
-        selected_tx:  txRecs.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).map(r => r.desc),
+        selected_inv: invRecs.filter(r => selectedInv.has(r.desc as string)).map(r => r.desc),
+        selected_tx:  txRecs.filter(r  => selectedTx.has(r.desc as string)).map(r => r.desc),
       })
     },
     onSuccess: (d) => { setImportResult(d); setPreview(null) },
@@ -2428,27 +2502,25 @@ function CoinbaseTab() {
   const sc = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] ?? 'text-slate-600 bg-slate-100')
   const sl = (s: string) => ({ new: 'New', exists: 'Exists', likely_dup: 'Fuzzy Dup' }[s] ?? s)
 
-  const PreviewTable = ({ records, fuzzySelected, setFuzzySelected, cols }: {
-    records: Array<Record<string, unknown>>; fuzzySelected: Set<number>; setFuzzySelected: (s: Set<number>) => void
+  const PreviewTable = ({ records, selected, setSelected, cols }: {
+    records: Array<Record<string, unknown>>; selected: Set<string>; setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
     cols: Array<{ key: string; label: string; right?: boolean }>
   }) => (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead><tr className="text-slate-500 border-b">
-          <th className="text-left py-1 pr-3">Import</th>
+          <th className="text-left py-1 pr-3"><SelectAllCheckbox records={records} selected={selected} setSelected={setSelected} /></th>
           <th className="text-left py-1 pr-3">Status</th>
           {cols.map(c => <th key={c.key} className={`${c.right ? 'text-right' : 'text-left'} py-1 pr-3`}>{c.label}</th>)}
         </tr></thead>
         <tbody>
           {records.map((r, i) => {
-            const isFuzzy = r.status === 'likely_dup'; const isNew = r.status === 'new'
+            const willImport = selected.has(r.desc as string)
             return (
-              <tr key={i} className={`border-b last:border-0 ${!isNew && !isFuzzy ? 'opacity-40' : ''}`}>
+              <tr key={i} className={`border-b last:border-0 ${r.status !== 'exists' && !willImport ? 'opacity-40' : ''}`}>
                 <td className="py-1 pr-3">
-                  {isNew ? <span className="text-xs text-slate-400">✓</span>
-                    : isFuzzy ? <input type="checkbox" checked={fuzzySelected.has(i)} className="rounded"
-                        onChange={e => { const n = new Set(fuzzySelected); e.target.checked ? n.add(i) : n.delete(i); setFuzzySelected(n) }} />
-                    : <span className="text-xs text-slate-300">—</span>}
+                  <ImportCheckboxCell status={r.status as string} checked={willImport}
+                    onToggle={v => setSelected(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                 </td>
                 <td className="py-1 pr-3"><span className={`px-1.5 py-0.5 rounded text-xs font-medium ${sc(r.status as string)}`}>{sl(r.status as string)}</span></td>
                 {cols.map(c => <td key={c.key} className={`py-1 pr-3 ${c.right ? 'text-right font-mono' : ''}`}>{String(r[c.key] ?? '')}</td>)}
@@ -2560,8 +2632,8 @@ function CoinbaseTab() {
 
       {/* Preview */}
       {preview && (() => {
-        const invImportCount = preview.inv_records.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).length
-        const txImportCount  = preview.tx_records.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).length
+        const invImportCount = preview.inv_records.filter(r => selectedInv.has(r.desc as string)).length
+        const txImportCount  = preview.tx_records.filter(r  => selectedTx.has(r.desc as string)).length
         return (
           <Card>
             <CardHeader>
@@ -2571,14 +2643,14 @@ function CoinbaseTab() {
               {preview.inv_records.length > 0 && (
                 <>
                   <p className="text-xs font-medium text-slate-600">Investment records</p>
-                  <PreviewTable records={preview.inv_records} fuzzySelected={fuzzyInvSelected} setFuzzySelected={setFuzzyInvSelected}
+                  <PreviewTable records={preview.inv_records} selected={selectedInv} setSelected={setSelectedInv}
                     cols={[{ key: 'date', label: 'Date' }, { key: 'action', label: 'Action' }, { key: 'symbol', label: 'Symbol' }, { key: 'quantity', label: 'Qty', right: true }, { key: 'total_eur', label: 'Amount', right: true }]} />
                 </>
               )}
               {preview.tx_records.length > 0 && (
                 <>
                   <p className="text-xs font-medium text-slate-600">Cash transactions</p>
-                  <PreviewTable records={preview.tx_records} fuzzySelected={fuzzyTxSelected} setFuzzySelected={setFuzzyTxSelected}
+                  <PreviewTable records={preview.tx_records} selected={selectedTx} setSelected={setSelectedTx}
                     cols={[{ key: 'date', label: 'Date' }, { key: 'description', label: 'Description' }, { key: 'amount', label: 'Amount', right: true }, { key: 'currency', label: 'Ccy' }]} />
                 </>
               )}
@@ -2622,8 +2694,8 @@ function CryptoComTab() {
 
   const [testResult, setTestResult] = useState<Array<Record<string, unknown>> | null>(null)
   const [preview, setPreview] = useState<{ raw_count: number; inv_records: Array<Record<string, unknown>>; tx_records: Array<Record<string, unknown>>; sec_matches: Record<string, unknown> } | null>(null)
-  const [fuzzyInvSelected, setFuzzyInvSelected] = useState<Set<number>>(new Set())
-  const [fuzzyTxSelected, setFuzzyTxSelected] = useState<Set<number>>(new Set())
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
 
@@ -2644,8 +2716,8 @@ function CryptoComTab() {
     mutationFn: () => cryptocomFetch({ api_key: apiKey, api_secret: apiSecret, account_id: accountId || null, cash_account_id: cashAccountId || null, date_from: dateFrom, date_to: dateTo, remember }),
     onSuccess: (d) => {
       setPreview(d)
-      setFuzzyInvSelected(new Set((d.inv_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
-      setFuzzyTxSelected(new Set((d.tx_records as Array<Record<string, unknown>>).map((r, i) => r.status === 'likely_dup' ? i : -1).filter((i: number) => i >= 0)))
+      setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
+      setSelectedTx(defaultSelection(d.tx_records as Array<Record<string, unknown>>))
       setSecMappingOverrides({})
     },
   })
@@ -2661,8 +2733,8 @@ function CryptoComTab() {
         api_key: apiKey, api_secret: apiSecret,
         account_id: accountId || null, cash_account_id: cashAccountId || null,
         date_from: dateFrom, date_to: dateTo, replace_mode: replaceMode,
-        selected_inv: invRecs.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).map(r => r.desc),
-        selected_tx:  txRecs.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).map(r => r.desc),
+        selected_inv: invRecs.filter(r => selectedInv.has(r.desc as string)).map(r => r.desc),
+        selected_tx:  txRecs.filter(r  => selectedTx.has(r.desc as string)).map(r => r.desc),
       })
     },
     onSuccess: (d) => { setImportResult(d); setPreview(null) },
@@ -2671,27 +2743,25 @@ function CryptoComTab() {
   const sc = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] ?? 'text-slate-600 bg-slate-100')
   const sl = (s: string) => ({ new: 'New', exists: 'Exists', likely_dup: 'Fuzzy Dup' }[s] ?? s)
 
-  const PreviewTable = ({ records, fuzzySelected, setFuzzySelected, cols }: {
-    records: Array<Record<string, unknown>>; fuzzySelected: Set<number>; setFuzzySelected: (s: Set<number>) => void
+  const PreviewTable = ({ records, selected, setSelected, cols }: {
+    records: Array<Record<string, unknown>>; selected: Set<string>; setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
     cols: Array<{ key: string; label: string; right?: boolean }>
   }) => (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead><tr className="text-slate-500 border-b">
-          <th className="text-left py-1 pr-3">Import</th>
+          <th className="text-left py-1 pr-3"><SelectAllCheckbox records={records} selected={selected} setSelected={setSelected} /></th>
           <th className="text-left py-1 pr-3">Status</th>
           {cols.map(c => <th key={c.key} className={`${c.right ? 'text-right' : 'text-left'} py-1 pr-3`}>{c.label}</th>)}
         </tr></thead>
         <tbody>
           {records.map((r, i) => {
-            const isFuzzy = r.status === 'likely_dup'; const isNew = r.status === 'new'
+            const willImport = selected.has(r.desc as string)
             return (
-              <tr key={i} className={`border-b last:border-0 ${!isNew && !isFuzzy ? 'opacity-40' : ''}`}>
+              <tr key={i} className={`border-b last:border-0 ${r.status !== 'exists' && !willImport ? 'opacity-40' : ''}`}>
                 <td className="py-1 pr-3">
-                  {isNew ? <span className="text-xs text-slate-400">✓</span>
-                    : isFuzzy ? <input type="checkbox" checked={fuzzySelected.has(i)} className="rounded"
-                        onChange={e => { const n = new Set(fuzzySelected); e.target.checked ? n.add(i) : n.delete(i); setFuzzySelected(n) }} />
-                    : <span className="text-xs text-slate-300">—</span>}
+                  <ImportCheckboxCell status={r.status as string} checked={willImport}
+                    onToggle={v => setSelected(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                 </td>
                 <td className="py-1 pr-3"><span className={`px-1.5 py-0.5 rounded text-xs font-medium ${sc(r.status as string)}`}>{sl(r.status as string)}</span></td>
                 {cols.map(c => <td key={c.key} className={`py-1 pr-3 ${c.right ? 'text-right font-mono' : ''}`}>{String(r[c.key] ?? '')}</td>)}
@@ -2800,8 +2870,8 @@ function CryptoComTab() {
 
       {/* Preview */}
       {preview && (() => {
-        const invImportCount = preview.inv_records.filter((r, i) => r.status === 'new' || (r.status === 'likely_dup' && fuzzyInvSelected.has(i))).length
-        const txImportCount  = preview.tx_records.filter((r, i)  => r.status === 'new' || (r.status === 'likely_dup' && fuzzyTxSelected.has(i))).length
+        const invImportCount = preview.inv_records.filter(r => selectedInv.has(r.desc as string)).length
+        const txImportCount  = preview.tx_records.filter(r  => selectedTx.has(r.desc as string)).length
         return (
           <Card>
             <CardHeader>
@@ -2811,14 +2881,14 @@ function CryptoComTab() {
               {preview.inv_records.length > 0 && (
                 <>
                   <p className="text-xs font-medium text-slate-600">Investment records</p>
-                  <PreviewTable records={preview.inv_records} fuzzySelected={fuzzyInvSelected} setFuzzySelected={setFuzzyInvSelected}
+                  <PreviewTable records={preview.inv_records} selected={selectedInv} setSelected={setSelectedInv}
                     cols={[{ key: 'date', label: 'Date' }, { key: 'action', label: 'Action' }, { key: 'symbol', label: 'Symbol' }, { key: 'quantity', label: 'Qty', right: true }, { key: 'total_eur', label: 'Amount', right: true }]} />
                 </>
               )}
               {preview.tx_records.length > 0 && (
                 <>
                   <p className="text-xs font-medium text-slate-600">Cash transactions</p>
-                  <PreviewTable records={preview.tx_records} fuzzySelected={fuzzyTxSelected} setFuzzySelected={setFuzzyTxSelected}
+                  <PreviewTable records={preview.tx_records} selected={selectedTx} setSelected={setSelectedTx}
                     cols={[{ key: 'date', label: 'Date' }, { key: 'description', label: 'Description' }, { key: 'amount', label: 'Amount', right: true }, { key: 'currency', label: 'Ccy' }]} />
                 </>
               )}
@@ -2860,10 +2930,16 @@ function CapitalComTab() {
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
 
   const parseMut = useMutation({
     mutationFn: () => capitalcomParse(tradesFile!, fundsFile!, accountId!, includeSwaps, includeDividends),
-    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
+    onSuccess: (d) => {
+      setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId })
+      setSelectedInv(defaultSelection((d.inv_records as Record<string, unknown>[]) ?? []))
+      setSelectedTx(defaultSelection((d.tx_records as Record<string, unknown>[]) ?? [], 'description'))
+    },
   })
   const importMut = useMutation({
     mutationFn: async () => {
@@ -2871,7 +2947,7 @@ function CapitalComTab() {
       if (Object.keys(toSave).length > 0) {
         await saveSecurityMappings('Capital.com', toSave)
       }
-      return capitalcomImport(tradesFile!, fundsFile!, accountId!, includeSwaps, includeDividends, replaceMode)
+      return capitalcomImport(tradesFile!, fundsFile!, accountId!, includeSwaps, includeDividends, replaceMode, Array.from(selectedInv), Array.from(selectedTx))
     },
     onSuccess: (d) => { setImportResult(d); setParseResult(null) },
   })
@@ -2880,6 +2956,8 @@ function CapitalComTab() {
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
+  const selInvCount = inv.filter(r => selectedInv.has(r.desc as string)).length
+  const selTxCount = tx.filter(r => selectedTx.has(r.description as string)).length
   const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
 
   return (
@@ -2966,6 +3044,7 @@ function CapitalComTab() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1 px-2 text-left"><SelectAllCheckbox records={inv} selected={selectedInv} setSelected={setSelectedInv} /></th>
                     <th className="py-1 px-2 text-left">Status</th>
                     <th className="py-1 px-2 text-left">Date</th>
                     <th className="py-1 px-2 text-left">Action</th>
@@ -2977,6 +3056,10 @@ function CapitalComTab() {
                   <tbody>
                     {inv.slice(0, 100).map((r, i) => (
                       <tr key={i} className="border-b border-slate-100">
+                        <td className="py-1 px-2">
+                          <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
+                            onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                        </td>
                         <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                         <td className="py-1 px-2">{r.date as string}</td>
                         <td className="py-1 px-2">{r.action as string}</td>
@@ -3000,6 +3083,7 @@ function CapitalComTab() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left"><SelectAllCheckbox records={tx} selected={selectedTx} setSelected={setSelectedTx} keyField="description" /></th>
                       <th className="py-1 px-2 text-left">Status</th>
                       <th className="py-1 px-2 text-left">Date</th>
                       <th className="py-1 px-2 text-left">Description</th>
@@ -3008,6 +3092,10 @@ function CapitalComTab() {
                     <tbody>
                       {tx.slice(0, 100).map((r, i) => (
                         <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2">
+                            <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.description as string)}
+                              onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.description as string) : n.delete(r.description as string); return n })} />
+                          </td>
                           <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.description as string}</td>
@@ -3031,8 +3119,8 @@ function CapitalComTab() {
           )}
 
           {newInv + newTx > 0 ? (
-            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
-              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
             </Button>
           ) : (
             <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>
@@ -3057,10 +3145,16 @@ function FxProTab() {
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
   const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null)
+  const [selectedInv, setSelectedInv] = useState<Set<string>>(new Set())
+  const [selectedTx, setSelectedTx] = useState<Set<string>>(new Set())
 
   const parseMut = useMutation({
     mutationFn: () => fxproParse(file!, accountId!),
-    onSuccess: (d) => { setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId }) },
+    onSuccess: (d) => {
+      setParseResult(d); setSecMappingOverrides({}); saveSettings({ account_id: accountId })
+      setSelectedInv(defaultSelection((d.inv_records as Record<string, unknown>[]) ?? []))
+      setSelectedTx(defaultSelection((d.tx_records as Record<string, unknown>[]) ?? [], 'description'))
+    },
   })
   const importMut = useMutation({
     mutationFn: async () => {
@@ -3068,7 +3162,7 @@ function FxProTab() {
       if (Object.keys(toSave).length > 0) {
         await saveSecurityMappings('FxPro', toSave)
       }
-      return fxproImport(file!, accountId!, replaceMode)
+      return fxproImport(file!, accountId!, replaceMode, Array.from(selectedInv), Array.from(selectedTx))
     },
     onSuccess: (d) => { setImportResult(d); setParseResult(null) },
   })
@@ -3077,6 +3171,8 @@ function FxProTab() {
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
+  const selInvCount = inv.filter(r => selectedInv.has(r.desc as string)).length
+  const selTxCount = tx.filter(r => selectedTx.has(r.description as string)).length
   const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
   const parseErrors = (parseResult?.errors as string[]) ?? []
 
@@ -3136,6 +3232,7 @@ function FxProTab() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1 px-2 text-left"><SelectAllCheckbox records={inv} selected={selectedInv} setSelected={setSelectedInv} /></th>
                     <th className="py-1 px-2 text-left">Status</th>
                     <th className="py-1 px-2 text-left">Date</th>
                     <th className="py-1 px-2 text-left">Action</th>
@@ -3147,6 +3244,10 @@ function FxProTab() {
                   <tbody>
                     {inv.slice(0, 100).map((r, i) => (
                       <tr key={i} className="border-b border-slate-100">
+                        <td className="py-1 px-2">
+                          <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
+                            onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                        </td>
                         <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                         <td className="py-1 px-2">{r.date as string}</td>
                         <td className="py-1 px-2">{r.action as string}</td>
@@ -3170,6 +3271,7 @@ function FxProTab() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-1 px-2 text-left"><SelectAllCheckbox records={tx} selected={selectedTx} setSelected={setSelectedTx} keyField="description" /></th>
                       <th className="py-1 px-2 text-left">Status</th>
                       <th className="py-1 px-2 text-left">Date</th>
                       <th className="py-1 px-2 text-left">Description</th>
@@ -3178,6 +3280,10 @@ function FxProTab() {
                     <tbody>
                       {tx.slice(0, 100).map((r, i) => (
                         <tr key={i} className="border-b border-slate-100">
+                          <td className="py-1 px-2">
+                            <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.description as string)}
+                              onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.description as string) : n.delete(r.description as string); return n })} />
+                          </td>
                           <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.description as string}</td>
@@ -3201,8 +3307,8 @@ function FxProTab() {
           )}
 
           {newInv + newTx > 0 ? (
-            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
-              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({newInv + newTx} records)</>}
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
             </Button>
           ) : (
             <InfoBox>Nothing new to import. All records already exist in the database.</InfoBox>

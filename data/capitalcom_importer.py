@@ -511,10 +511,16 @@ def run_import(
     include_dividends: bool,
     replace_mode: bool = False,
     progress_cb=None,
+    selected_inv: set[str] | None = None,
+    selected_tx: set[str] | None = None,
 ) -> dict:
     inv_records, tx_records = build_preview_records(
         trades_content, funds_content, include_swaps, include_dividends,
     )
+    if selected_inv is not None:
+        inv_records = [r for r in inv_records if r['desc'] in selected_inv]
+    if selected_tx is not None:
+        tx_records = [r for r in tx_records if r['description'] in selected_tx]
 
     conn = get_connection()
     cur  = conn.cursor()

@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-10
+
+### Fixed
+- **Inv. Performance → P&L report showed accounts as still open when they were actually fully closed** (e.g. Crypto.com, with dust of two fractional units left over): the "closed account" check compared each position's current value against exactly `0`, but a fully closed position's cumulative buy/sell quantity almost never lands on exactly zero — floating-point residue (values as small as `1e-15`) survives the sum. With "Show Closed Accounts" unchecked, an account like this stayed visible in the list instead of being hidden with the rest of the genuinely-closed ones. Now compares against a cent-level tolerance instead of exact equality.
+
+### Added
+- **All Brokerage importers (Interactive Brokers, Revolut Trading, Saxo Bank, Coinbase, Crypto.com, Capital.com, FxPro)**: every preview table now has a per-row checkbox in a new "Import" column, so you can include or exclude individual records regardless of their status — even ones flagged "New" or "⚠️ Likely Dup" — instead of the import decision being fixed by that status alone. "New" rows are checked by default; "Likely Dup" rows start unchecked, requiring a deliberate opt-in before something that looks like a duplicate gets imported. A header checkbox selects/deselects an entire table at once. (Saxo, Coinbase, and Crypto.com already supported overriding fuzzy-duplicate rows one at a time; this extends the same control to "New" rows and to the remaining four importers.)
+- **Saxo Bank → Authentication**: the authorization code from Saxo's OAuth redirect is now read automatically from the URL and filled into the "authorization code" field, instead of needing to be copied out of the address bar by hand.
+
 ## 2026-07-09
 
 ### Fixed

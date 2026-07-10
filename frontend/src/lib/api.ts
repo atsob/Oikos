@@ -443,10 +443,14 @@ export const revtParse = (file: File, accountId: number) => {
   const fd = new FormData(); fd.append('file', file)
   return api.post('/bank/revolut-trading-parse', fd, { params: { account_id: accountId }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
 }
-export const revtImport = (file: File, accountId: number, replaceMode: boolean, importInv: boolean, importTx: boolean) => {
+export const revtImport = (file: File, accountId: number, replaceMode: boolean, importInv: boolean, importTx: boolean, selectedInv?: string[], selectedTx?: string[]) => {
   const fd = new FormData(); fd.append('file', file)
   return api.post('/bank/revolut-trading-import', fd, {
-    params: { account_id: accountId, replace_mode: replaceMode, import_inv: importInv, import_tx: importTx },
+    params: {
+      account_id: accountId, replace_mode: replaceMode, import_inv: importInv, import_tx: importTx,
+      selected_inv: selectedInv ? JSON.stringify(selectedInv) : undefined,
+      selected_tx: selectedTx ? JSON.stringify(selectedTx) : undefined,
+    },
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
 }
@@ -467,10 +471,14 @@ export const capitalcomParse = (trades: File, funds: File, accountId: number, in
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
 }
-export const capitalcomImport = (trades: File, funds: File, accountId: number, includeSwaps: boolean, includeDividends: boolean, replaceMode: boolean) => {
+export const capitalcomImport = (trades: File, funds: File, accountId: number, includeSwaps: boolean, includeDividends: boolean, replaceMode: boolean, selectedInv?: string[], selectedTx?: string[]) => {
   const fd = new FormData(); fd.append('trades', trades); fd.append('funds', funds)
   return api.post('/bank/capitalcom-import', fd, {
-    params: { account_id: accountId, include_swaps: includeSwaps, include_dividends: includeDividends, replace_mode: replaceMode },
+    params: {
+      account_id: accountId, include_swaps: includeSwaps, include_dividends: includeDividends, replace_mode: replaceMode,
+      selected_inv: selectedInv ? JSON.stringify(selectedInv) : undefined,
+      selected_tx: selectedTx ? JSON.stringify(selectedTx) : undefined,
+    },
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
 }
@@ -479,9 +487,16 @@ export const fxproParse = (file: File, accountId: number) => {
   const fd = new FormData(); fd.append('files', file)
   return api.post('/bank/fxpro-parse', fd, { params: { account_id: accountId }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
 }
-export const fxproImport = (file: File, accountId: number, replaceMode: boolean) => {
+export const fxproImport = (file: File, accountId: number, replaceMode: boolean, selectedInv?: string[], selectedTx?: string[]) => {
   const fd = new FormData(); fd.append('files', file)
-  return api.post('/bank/fxpro-import', fd, { params: { account_id: accountId, replace_mode: replaceMode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+  return api.post('/bank/fxpro-import', fd, {
+    params: {
+      account_id: accountId, replace_mode: replaceMode,
+      selected_inv: selectedInv ? JSON.stringify(selectedInv) : undefined,
+      selected_tx: selectedTx ? JSON.stringify(selectedTx) : undefined,
+    },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
 }
 
 // ── Saxo Bank ─────────────────────────────────────────────────────────────────

@@ -522,6 +522,8 @@ def ib_flex_import(data: dict):
     filter_from = data.get("filter_from")
     filter_to = data.get("filter_to")
     exclude_fx_spot = data.get("exclude_fx_spot", False)
+    selected_inv = set(data["selected_inv"]) if data.get("selected_inv") is not None else None
+    selected_tx  = set(data["selected_tx"])  if data.get("selected_tx")  is not None else None
 
     if not xml or not account_id:
         raise HTTPException(400, "xml and account_id are required")
@@ -552,15 +554,22 @@ def ib_flex_import(data: dict):
             existing_inv, existing_tx = check_existing_records(
                 inv_records, tx_records, account_id, cash_account_id=cash_account_id
             )
-            fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(
-                inv_records, tx_records, account_id, cash_account_id=cash_account_id
-            )
-            fuzzy_inv -= existing_inv
-            fuzzy_tx -= existing_tx
-            inv_records = [r for r in inv_records
-                           if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
-            tx_records = [r for r in tx_records
-                          if r["desc"] not in existing_tx and r["desc"] not in fuzzy_tx]
+            if selected_inv is None or selected_tx is None:
+                fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(
+                    inv_records, tx_records, account_id, cash_account_id=cash_account_id
+                )
+                fuzzy_inv -= existing_inv
+                fuzzy_tx -= existing_tx
+            if selected_inv is not None:
+                inv_records = [r for r in inv_records if r["desc"] in selected_inv and r["desc"] not in existing_inv]
+            else:
+                inv_records = [r for r in inv_records
+                               if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
+            if selected_tx is not None:
+                tx_records = [r for r in tx_records if r["desc"] in selected_tx and r["desc"] not in existing_tx]
+            else:
+                tx_records = [r for r in tx_records
+                              if r["desc"] not in existing_tx and r["desc"] not in fuzzy_tx]
 
         counts = run_import(
             inv_records if import_inv else [],
@@ -1241,14 +1250,19 @@ async def capitalcom_import(
     include_swaps: bool = Query(True),
     include_dividends: bool = Query(True),
     replace_mode: bool = Query(False),
+    selected_inv: str = Query(None),
+    selected_tx: str = Query(None),
 ):
     try:
+        import json
         from data.capitalcom_importer import run_import
         trades_content = (await trades.read()).decode("utf-8", errors="replace")
         funds_content  = (await funds.read()).decode("utf-8", errors="replace")
         counts = run_import(
             trades_content, funds_content, account_id,
             include_swaps, include_dividends, replace_mode=replace_mode,
+            selected_inv=set(json.loads(selected_inv)) if selected_inv else None,
+            selected_tx=set(json.loads(selected_tx)) if selected_tx else None,
         )
         return counts
     except Exception as e:
@@ -1317,13 +1331,20 @@ async def fxpro_import(
     files: list[UploadFile] = File(...),
     account_id: int = Query(...),
     replace_mode: bool = Query(False),
+    selected_inv: str = Query(None),
+    selected_tx: str = Query(None),
 ):
     try:
+        import json
         from data.fxpro_importer import run_import
         pdf_bytes_list = []
         for f in files:
             pdf_bytes_list.append(await f.read())
-        counts = run_import(pdf_bytes_list, account_id, replace_mode=replace_mode)
+        counts = run_import(
+            pdf_bytes_list, account_id, replace_mode=replace_mode,
+            selected_inv=set(json.loads(selected_inv)) if selected_inv else None,
+            selected_tx=set(json.loads(selected_tx)) if selected_tx else None,
+        )
         return counts
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1478,25 +1499,37 @@ async def revolut_trading_import(
     replace_mode: bool = Query(False),
     import_inv: bool = Query(True),
     import_tx: bool = Query(True),
+    selected_inv: str = Query(None),
+    selected_tx: str = Query(None),
 ):
     try:
+        import json
         from data.revolut_importer import (
             parse_revolut_trading_csv, build_trading_records,
             check_existing_records, check_fuzzy_duplicates,
             run_trading_import,
         )
+        sel_inv = set(json.loads(selected_inv)) if selected_inv else None
+        sel_tx  = set(json.loads(selected_tx))  if selected_tx  else None
         file_bytes = await file.read()
         df_raw = parse_revolut_trading_csv(file_bytes)
         inv_records, tx_records = build_trading_records(df_raw)
         if not replace_mode:
             existing_inv, existing_tx = check_existing_records(inv_records, tx_records, account_id)
-            fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(inv_records, tx_records, account_id)
-            fuzzy_inv -= existing_inv
-            fuzzy_tx -= existing_tx
-            inv_records = [r for r in inv_records
-                           if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
-            tx_records = [r for r in tx_records
-                          if r["desc"] not in existing_tx and r["desc"] not in fuzzy_tx]
+            if sel_inv is None or sel_tx is None:
+                fuzzy_inv, fuzzy_tx = check_fuzzy_duplicates(inv_records, tx_records, account_id)
+                fuzzy_inv -= existing_inv
+                fuzzy_tx -= existing_tx
+            if sel_inv is not None:
+                inv_records = [r for r in inv_records if r["desc"] in sel_inv and r["desc"] not in existing_inv]
+            else:
+                inv_records = [r for r in inv_records
+                               if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
+            if sel_tx is not None:
+                tx_records = [r for r in tx_records if r["desc"] in sel_tx and r["desc"] not in existing_tx]
+            else:
+                tx_records = [r for r in tx_records
+                              if r["desc"] not in existing_tx and r["desc"] not in fuzzy_tx]
         counts = run_trading_import(
             inv_records if import_inv else [],
             tx_records if import_tx else [],
