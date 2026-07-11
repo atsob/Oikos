@@ -122,8 +122,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
 
         <Note>
-          Questions or need support? Reach out at{' '}
-          <a href="mailto:info@allabout360c.com" className="underline hover:no-underline">info@allabout360c.com</a>.
+          This instance carries <b>AllAbout360C</b>'s branding — its logo in the sidebar and as the browser
+          favicon/app icon, and its colors throughout. Questions or need support? Reach out at{' '}
+          <a href="mailto:info@allabout360c.com" className="underline hover:no-underline">info@allabout360c.com</a>
+          {' '}or <a href="https://allabout360c.com" target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">allabout360c.com</a>.
         </Note>
       </>
     ),
@@ -206,6 +208,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           filters) searches every account at once. Clicking a result jumps to that account and transaction
           directly — the date range narrows automatically to make sure the transaction is actually on screen,
           and it's scrolled to and highlighted.
+        </Note>
+        <Note>
+          <b>Installment series</b>: when creating a new transaction, "Create installment series" generates
+          every installment immediately, dated forward at whatever frequency you pick, with the description
+          suffixed <code>(1/N)</code>, <code>(2/N)</code>, etc. When editing an <i>existing</i> transaction,
+          the same option reads "Convert to installment series" — it turns that transaction into installment
+          1/N in place and creates the remaining N-1 as new transactions, for when a plain purchase turns out
+          to actually be a payment plan after the fact.
         </Note>
         <Note>
           When choosing a payee or category, typing a name with no match shows an inline <b>"+ Add"</b> option.

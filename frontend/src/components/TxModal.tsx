@@ -522,9 +522,11 @@ export function TxModal({
             </label>
           </div>
 
-          {/* Recurring / Installment only for new transactions */}
-          {!form.id && (
-            <div className="space-y-2">
+          {/* Recurring template: new transactions only. Installment series: available on
+              edit too, so an existing one-off transaction can be converted in place — it
+              becomes installment 1/N and the remaining installments are created fresh. */}
+          <div className="space-y-2">
+            {!form.id && (
               <div className="border border-slate-200 rounded-lg">
                 <button type="button"
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
@@ -553,34 +555,38 @@ export function TxModal({
                   </div>
                 )}
               </div>
+            )}
 
-              <div className="border border-slate-200 rounded-lg">
-                <button type="button"
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
-                  onClick={() => { setInstallmentEnabled(!installmentEnabled); if (!installmentEnabled) setRecurringEnabled(false) }}>
-                  <input type="checkbox" checked={installmentEnabled} onChange={() => {}} className="rounded pointer-events-none" />
-                  Create installment series
-                </button>
-                {installmentEnabled && (
-                  <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
-                    <p className="pt-2 text-xs text-slate-500">Creates all transactions immediately. Description will be suffixed with (1/{installmentCount || 'N'}), (2/{installmentCount || 'N'}), …</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Number of installments *</label>
-                        <Input type="number" min="2" step="1" value={installmentCount} onChange={e => setInstallmentCount(e.target.value)} placeholder="e.g. 6" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
-                        <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={installmentFreq} onChange={e => setInstallmentFreq(e.target.value)}>
-                          {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
-                        </select>
-                      </div>
+            <div className="border border-slate-200 rounded-lg">
+              <button type="button"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
+                onClick={() => { setInstallmentEnabled(!installmentEnabled); if (!installmentEnabled) setRecurringEnabled(false) }}>
+                <input type="checkbox" checked={installmentEnabled} onChange={() => {}} className="rounded pointer-events-none" />
+                {form.id ? 'Convert to installment series' : 'Create installment series'}
+              </button>
+              {installmentEnabled && (
+                <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
+                  <p className="pt-2 text-xs text-slate-500">
+                    {form.id
+                      ? 'This transaction becomes installment 1 and the remaining installments are created as new transactions.'
+                      : 'Creates all transactions immediately.'} Description will be suffixed with (1/{installmentCount || 'N'}), (2/{installmentCount || 'N'}), …
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 block mb-1">Number of installments *</label>
+                      <Input type="number" min="2" step="1" value={installmentCount} onChange={e => setInstallmentCount(e.target.value)} placeholder="e.g. 6" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
+                      <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={installmentFreq} onChange={e => setInstallmentFreq(e.target.value)}>
+                        {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
+                      </select>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </div>
@@ -684,6 +690,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
     setSplits(loadedSplits)
     setUseSplits(loadedSplits.length > 1)
     setSaveError(null)
+    resetExtras()
     setModalOpen(true)
   }, [])
 
@@ -738,6 +745,45 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
           if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
         }
         for (let i = 0; i < n; i++) {
+          const instDate = addPeriod(form.date, installmentFreq, i)
+          const instDesc = baseDesc ? `${baseDesc} (${i + 1}/${n})` : `(${i + 1}/${n})`
+          const res = await createTransaction({
+            accounts_id: form.accounts_id,
+            date: instDate,
+            description: instDesc,
+            total_amount: parseFloat(form.total_amount),
+            payees_id: form.payees_id ? Number(form.payees_id) : null,
+            accounts_id_target: null,
+            ...statusFields,
+          }) as { id: number }
+          if (splitPayload.length > 0) await upsertSplits(res.id, splitPayload)
+        }
+      } else if (form.id && installmentEnabled && parseInt(installmentCount) >= 2) {
+        // Converts the transaction being edited into installment 1/N in place, then
+        // creates the remaining N-1 installments as new transactions going forward.
+        const n = parseInt(installmentCount)
+        const baseDesc = form.description || ''
+        const splitPayload = useSplits
+          ? splits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
+          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || null }]
+        if (useSplits) {
+          const splitsTotal = splitPayload.reduce((sum, s) => sum + s.amount, 0)
+          const txTotal = parseFloat(form.total_amount)
+          if (Math.round(splitsTotal * 100) !== Math.round(txTotal * 100)) throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(txTotal)})`)
+        }
+
+        await updateTransaction(form.id, {
+          accounts_id: form.accounts_id,
+          date: form.date,
+          description: baseDesc ? `${baseDesc} (1/${n})` : `(1/${n})`,
+          total_amount: parseFloat(form.total_amount),
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
+          accounts_id_target: null,
+          ...statusFields,
+        })
+        if (splitPayload.length > 0) await upsertSplits(form.id, splitPayload)
+
+        for (let i = 1; i < n; i++) {
           const instDate = addPeriod(form.date, installmentFreq, i)
           const instDesc = baseDesc ? `${baseDesc} (${i + 1}/${n})` : `(${i + 1}/${n})`
           const res = await createTransaction({
