@@ -35,7 +35,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icons.svg', 'icon-192.png', 'icon-512.png'],
+      includeAssets: ['favicon.png', 'logo.png', 'icons.svg', 'icon-192.png', 'icon-512.png'],
       devOptions: {
         enabled: true,
       },
@@ -43,7 +43,7 @@ export default defineConfig({
         name: 'Oikos',
         short_name: 'Oikos',
         description: 'Personal Finance Manager',
-        theme_color: '#1e40af',
+        theme_color: '#312682',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',

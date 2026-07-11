@@ -120,6 +120,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Sell, Dividend, Reinvest, Split, ShrIn/ShrOut (transfers), and more. Holdings, cost basis, and P&amp;L
           are derived from this history, not entered directly.
         </P>
+
+        <Note>
+          Questions or need support? Reach out at{' '}
+          <a href="mailto:info@allabout360c.com" className="underline hover:no-underline">info@allabout360c.com</a>.
+        </Note>
       </>
     ),
   },

@@ -68,11 +68,14 @@ export default function Layout() {
         collapsed ? 'md:w-14' : 'md:w-[220px]',
       )}>
         <div className={cn('flex items-center border-b border-slate-700 py-4 px-5 justify-between', collapsed && 'md:justify-center md:px-2')}>
-          <div className={collapsed ? 'md:hidden' : undefined}>
-            <span className="text-xl font-bold tracking-tight text-white">Oikos</span>
-            <span className="ml-2 text-xs text-slate-400">Finance</span>
+          <div className={cn('flex items-center gap-2', collapsed && 'md:hidden')}>
+            <img src="/logo.png" alt="A²360 Consulting" className="w-8 h-8 shrink-0 object-contain" />
+            <div className="leading-tight">
+              <div className="text-base font-bold tracking-tight text-white">Oikos</div>
+              <div className="text-[10px] text-slate-400 tracking-wide">Finance</div>
+            </div>
           </div>
-          {collapsed && <span className="hidden md:inline text-xl font-bold tracking-tight text-white">O</span>}
+          {collapsed && <img src="/logo.png" alt="A²360 Consulting" className="hidden md:block w-7 h-7 object-contain" />}
           <button
             onClick={() => (mobileOpen ? setMobileOpen(false) : setCollapsed(true))}
             title="Collapse sidebar"
@@ -131,6 +134,12 @@ export default function Layout() {
               </button>
             ))}
           </div>
+          <a href="https://allabout360c.com" target="_blank" rel="noopener noreferrer" className="text-xs text-slate-400 hover:text-white block">
+            allabout360c.com
+          </a>
+          <a href="mailto:info@allabout360c.com" className="text-xs text-slate-400 hover:text-white block">
+            info@allabout360c.com
+          </a>
           <p className="text-xs text-slate-500">v2.0 · React + FastAPI</p>
           <p className="text-xs text-slate-600" title={__GIT_DATE__ ? `Built from commit ${__GIT_HASH__} on ${__GIT_DATE__}` : undefined}>
             {__GIT_HASH__}{__GIT_DATE__ && ` · ${__GIT_DATE__}`}

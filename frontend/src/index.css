@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/* AllAbout360C brand palette — remaps Tailwind's built-in `blue` scale to the
+   brand's indigo/violet (#312682 at the 600 stop, matching every existing
+   `blue-*`/`ring-blue-*`/`focus:ring-blue-*` utility across the app) so every
+   primary button, active nav item, link, and focus ring picks it up without
+   touching each component. Light stops are #312682 tinted toward white, dark
+   stops shaded toward black — the same technique used to derive Tailwind's
+   own scales, just anchored on our color instead of theirs. */
+@theme {
+  --color-blue-50:  #f5f4f9;
+  --color-blue-100: #e6e5f0;
+  --color-blue-200: #c9c7de;
+  --color-blue-300: #a4a0c8;
+  --color-blue-400: #736baa;
+  --color-blue-500: #4e4494;
+  --color-blue-600: #312682;
+  --color-blue-700: #2a206e;
+  --color-blue-800: #211a58;
+  --color-blue-900: #191444;
+  --color-blue-950: #110d2e;
+}
+
 @layer base {
   :root {
     --sidebar-width: 220px;
@@ -55,7 +76,7 @@ html.dark .text-slate-400 { color: #475569 !important; }
 html.dark .hover\:bg-slate-50:hover  { background-color: #293548 !important; }
 html.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
 html.dark .hover\:bg-slate-200:hover { background-color: #3e4f66 !important; }
-html.dark .hover\:bg-blue-50:hover   { background-color: #1e3a5f !important; }
+html.dark .hover\:bg-blue-50:hover   { background-color: #211a58 !important; }
 
 /* Form controls */
 html.dark input,
@@ -78,8 +99,8 @@ html.dark .ag-theme-alpine {
   --ag-header-foreground-color: #94a3b8;
   --ag-foreground-color: #e2e8f0;
   --ag-selected-row-background-color: #1e3a5f;
-  --ag-input-focus-border-color: #3b82f6;
-  --ag-range-selection-border-color: #3b82f6;
+  --ag-input-focus-border-color: #4e4494;
+  --ag-range-selection-border-color: #4e4494;
 }
 html.dark .ag-theme-alpine .ag-root-wrapper,
 html.dark .ag-theme-alpine .ag-body-viewport { background-color: #1e293b !important; border-color: #334155 !important; }
@@ -95,11 +116,11 @@ html.dark .ag-theme-alpine .ag-menu { background-color: #1e293b !important; bord
 /* Alert / notification backgrounds */
 html.dark .bg-amber-50  { background-color: #2d1a00 !important; }
 html.dark .bg-red-50    { background-color: #2d0a0a !important; }
-html.dark .bg-blue-50   { background-color: #0c1e38 !important; }
+html.dark .bg-blue-50   { background-color: #191444 !important; }
 html.dark .bg-green-50  { background-color: #052e16 !important; }
 html.dark .border-amber-300 { border-color: #92400e !important; }
 html.dark .border-red-300   { border-color: #991b1b !important; }
-html.dark .border-blue-300  { border-color: #1e40af !important; }
+html.dark .border-blue-300  { border-color: #211a58 !important; }
 html.dark .border-green-300 { border-color: #166534 !important; }
 html.dark .text-orange-700  { color: #fb923c !important; }
 

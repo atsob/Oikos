@@ -2,6 +2,16 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-11
+
+### Fixed
+- **Cash Register — clicking a global search result landed on the right account but often not on the actual transaction**: the account's own date filter (e.g. the default "last month" view) usually didn't cover an arbitrary search hit, and since the transaction list is always sorted newest-first and capped to its first page, simply showing "all time" wasn't enough either — anything newer than the target still filled up that page and pushed it off-screen. The date range now narrows to end exactly on the target transaction's own date (guaranteeing it's on page one regardless of how much history the account has), and the matching row is scrolled into view and selected automatically.
+- **Cash Register — that narrowed date range could get stuck**: after jumping in from a search result, switching accounts or clicking a period shortcut (1M/3M/6M/YTD/All) only updated the *start* of the date range, not the end — so the leftover narrow upper bound could clash with the new range and show nothing at all. Both account switching and period shortcuts now reset the full range.
+- **Cash Register — transactions split across more than one category showed only the first category**, indistinguishable from a single-category transaction, in the Category column. Multi-split transactions now show "Split," and hovering it shows every split's category and amount.
+
+### Changed
+- **Branding**: logo, color scheme, domain, and support contact updated to AllAbout360C (allabout360c.com) — sidebar logo/favicon/app icons replaced, the app's primary color re-themed from blue to the brand's indigo/violet throughout (buttons, active nav, links, focus rings), and a support email (info@allabout360c.com) added to the sidebar footer and Help page. The app itself remains named Oikos.
+
 ## 2026-07-10
 
 ### Fixed
