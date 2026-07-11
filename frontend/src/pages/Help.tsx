@@ -187,7 +187,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Ul>
           <li><b>Cleared</b> marks a transaction as bank-confirmed — future/pending entries stay unmarked.</li>
           <li><b>Reconciled</b> is set when a transaction is matched during bank-statement import reconciliation.</li>
-          <li>Splitting a transaction lets one payment cover several categories.</li>
+          <li>
+            Splitting a transaction lets one payment cover several categories — the Category column shows
+            "Split" for these (instead of just the first category), and hovering it lists every split's
+            category and amount.
+          </li>
         </Ul>
         <P>
           <b>Sync Balances</b> (top-right) refreshes Bank &amp; Cash balances only — the account types this
@@ -196,6 +200,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           Amounts and balances are always shown in <b>that account's own currency</b> — a USD account shows
           "$", a EUR account shows "€", regardless of your reporting-currency setting elsewhere in the app.
+        </Note>
+        <Note>
+          The <b>search box in the top-right header</b> (separate from the account-scoped search below the
+          filters) searches every account at once. Clicking a result jumps to that account and transaction
+          directly — the date range narrows automatically to make sure the transaction is actually on screen,
+          and it's scrolled to and highlighted.
         </Note>
         <Note>
           When choosing a payee or category, typing a name with no match shows an inline <b>"+ Add"</b> option.

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -14,6 +14,7 @@ import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 
 const PAGE_SIZE = 200
+const DEFAULT_TO_DATE = '2099-12-31'   // "no upper bound" — includes future-dated/scheduled transactions
 
 const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
@@ -34,6 +35,14 @@ function AmountCell({ value, currency }: { value: number; currency?: string }) {
 function BalanceCell({ value, currency }: { value: number; currency?: string }) {
   return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtCur(value, currency)}</span>
 }
+type SplitDetail = { category: string | null; amount: number }
+function CategoryCell({ value, data, currency }: { value: string; data: Record<string, unknown>; currency?: string }) {
+  const splitCount = Number(data.split_count ?? 0)
+  if (splitCount <= 1) return <span>{value ?? ''}</span>
+  const splits = (data.splits as SplitDetail[]) ?? []
+  const tooltip = splits.map(s => `${s.category ?? '(no category)'}: ${fmtCur(s.amount, currency)}`).join('\n')
+  return <span className="italic text-slate-500 cursor-help" title={tooltip}>Split</span>
+}
 function ClearedCell({ data }: { data: Record<string, unknown> }) {
   if (data.is_draft) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">Draft</span>
   if (!data.cleared && !data.reconciled) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-700">Pending</span>
@@ -49,7 +58,7 @@ const makeColDefs = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
-  { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
+  { field: 'category', headerName: 'Category', flex: 1, minWidth: 140, cellRenderer: CategoryCell, cellRendererParams: { currency } },
   { field: 'target_account', headerName: 'Transfer To', width: 130 },
   { field: 'memo', headerName: 'Memo', width: 140 },
   { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
@@ -79,7 +88,7 @@ export default function Register() {
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState(monthsAgo(1))
-  const [toDate, setToDate] = useState('2099-12-31')
+  const [toDate, setToDate] = useState(DEFAULT_TO_DATE)
   const [activePeriod, setActivePeriod] = useState<string>('1M')
   const [offset, setOffset] = useState(0)
 
@@ -88,6 +97,7 @@ export default function Register() {
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('')
   const [globalOpen, setGlobalOpen] = useState(false)
+  const [focusTxId, setFocusTxId] = useState<number | null>(null)
 
   // Clear state
   const [clearOpen, setClearOpen] = useState(false)
@@ -129,8 +139,30 @@ export default function Register() {
 
   const onGridReady = useCallback((e: GridReadyEvent) => { setGridApi(e.api); e.api.autoSizeAllColumns() }, [])
 
+  // After navigating in from global search, jump to and select the target transaction
+  // once its page of data has loaded (the account's date filter was just narrowed to
+  // cover it — see the search result's onClick — but the row still needs locating).
+  // Gated on isFetching (not just txQuery.data): with keepPreviousData, the query key
+  // changing to the new account/dates fires this effect once immediately with the old,
+  // still-displayed dataset (nothing found yet) before the real fetch resolves — acting
+  // on that premature firing would clear focusTxId before the actual data ever arrives.
+  useEffect(() => {
+    if (!focusTxId || !txQuery.data || txQuery.isFetching) return
+    const api = gridRef.current?.api
+    const node = api?.getRowNode(String(focusTxId))
+    if (node) {
+      api!.ensureNodeVisible(node, 'middle')
+      node.setSelected(true, true)
+    }
+    setFocusTxId(null)
+  }, [txQuery.data, focusTxId, txQuery.isFetching])
+
   const setPeriod = (label: string, from: string) => {
     setFromDate(from)
+    // A period shortcut always means "from X up to now" — reset the upper bound too, in
+    // case it was left narrowed (e.g. by jumping in from a global search hit) and would
+    // otherwise clash with the new lower bound and show nothing.
+    setToDate(DEFAULT_TO_DATE)
     setActivePeriod(label)
     setOffset(0)
   }
@@ -193,7 +225,13 @@ export default function Register() {
 
       {/* Filters */}
       <div className="flex items-center gap-3 px-6 py-3 bg-white border-b border-slate-200 flex-wrap">
-        <Select className="w-56" value={accountId ?? ''} onChange={e => { setAccountId(Number(e.target.value) || null); setOffset(0) }}>
+        <Select className="w-56" value={accountId ?? ''} onChange={e => {
+          setAccountId(Number(e.target.value) || null)
+          // Same reasoning as setPeriod: don't carry over an upper bound narrowed by a
+          // previous global-search jump — a fresh account should start from a normal view.
+          setToDate(DEFAULT_TO_DATE)
+          setOffset(0)
+        }}>
           <option value="">— Select account —</option>
           {CASH_ACCOUNT_TYPES.map(type => {
             const group = cashAccounts.filter(a => String(a.type ?? '') === type)
@@ -236,7 +274,7 @@ export default function Register() {
               type="checkbox"
               className="rounded"
               checked={toDate === today()}
-              onChange={e => setToDate(e.target.checked ? today() : '2099-12-31')}
+              onChange={e => setToDate(e.target.checked ? today() : DEFAULT_TO_DATE)}
             />
             <span className="text-xs text-slate-500">Today</span>
           </label>
@@ -399,6 +437,19 @@ export default function Register() {
                   className="w-full flex items-center gap-4 px-4 py-3 hover:bg-slate-50 border-b border-slate-100 last:border-0 text-left"
                   onClick={() => {
                     setAccountId(Number(row.accounts_id))
+                    // The account's own date filter (default: last month) usually won't cover an
+                    // arbitrary search hit — and the transaction list is always sorted newest-first,
+                    // capped to the first page, so simply widening "from" to the beginning of time
+                    // isn't enough on an active account: anything newer than the target still fills
+                    // up that first page and pushes it off-screen. Capping "to" at the target's own
+                    // date instead guarantees it's the newest (or tied-newest) row in range, so it's
+                    // always on page one.
+                    setFromDate('1900-01-01')
+                    setToDate(String(row.date))
+                    setActivePeriod('All')
+                    setSearch('')
+                    setOffset(0)
+                    setFocusTxId(Number(row.id))
                     setGlobalOpen(false)
                     setGlobalSearch('')
                   }}

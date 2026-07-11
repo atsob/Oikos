@@ -77,11 +77,19 @@ def get_transactions(
         account_info AS (
             SELECT accounts_balance FROM Accounts WHERE accounts_id = %(account_id)s
         ),
-        first_split AS (
-            SELECT DISTINCT ON (transactions_id)
-                   transactions_id, categories_id, memo
-            FROM Splits
-            ORDER BY transactions_id, splits_id
+        split_agg AS (
+            SELECT
+                s.transactions_id,
+                COUNT(*) AS split_count,
+                (ARRAY_AGG(s.categories_id ORDER BY s.splits_id))[1] AS categories_id,
+                (ARRAY_AGG(s.memo ORDER BY s.splits_id))[1] AS memo,
+                JSON_AGG(
+                    JSON_BUILD_OBJECT('category', sct.full_path, 'amount', s.amount)
+                    ORDER BY s.splits_id
+                )::text AS splits_detail
+            FROM Splits s
+            LEFT JOIN cat_tree sct ON sct.categories_id = s.categories_id
+            GROUP BY s.transactions_id
         )
         SELECT
             t.transactions_id AS id,
@@ -94,17 +102,19 @@ def get_transactions(
             t.payees_id AS payees_id,
             t.accounts_id_target AS accounts_id_target,
             t.transfers_id AS transfers_id,
-            fs.memo AS memo,
+            sa.memo AS memo,
             p.payees_name AS payee,
             ct.full_path AS category,
+            COALESCE(sa.split_count, 0) AS split_count,
+            sa.splits_detail AS splits,
             ta.accounts_name AS target_account,
             (ai.accounts_balance - at2.grand_total + at2.cumulative_total) AS running_balance
         FROM Transactions t
         JOIN all_txns at2 ON at2.transactions_id = t.transactions_id
         CROSS JOIN account_info ai
         LEFT JOIN Payees p ON t.payees_id = p.payees_id
-        LEFT JOIN first_split fs ON fs.transactions_id = t.transactions_id
-        LEFT JOIN cat_tree ct ON ct.categories_id = fs.categories_id
+        LEFT JOIN split_agg sa ON sa.transactions_id = t.transactions_id
+        LEFT JOIN cat_tree ct ON ct.categories_id = sa.categories_id
         LEFT JOIN Accounts ta ON t.accounts_id_target = ta.accounts_id
         WHERE t.accounts_id = %(account_id)s
           AND t.date BETWEEN %(from_date)s AND %(to_date)s
@@ -125,6 +135,10 @@ def get_transactions(
 
     with get_db() as conn:
         df = pd.read_sql(query, conn, params=params)
+
+    if "splits" in df.columns:
+        import json as _json
+        df["splits"] = df["splits"].apply(lambda x: _json.loads(x) if isinstance(x, str) else [])
 
     # Total count for pagination
     count_query = f"""
