@@ -36,6 +36,9 @@ export const generateWeeklySummary = (week_start: string) =>
 export const getDraftTransactions = () =>
   api.get('/dashboard/draft-transactions').then(r => r.data)
 
+export const getUncategorizedTransactions = () =>
+  api.get('/dashboard/uncategorized-transactions').then(r => r.data)
+
 export const getInsights = () =>
   api.get('/dashboard/insights').then(r => r.data)
 
@@ -523,6 +526,57 @@ export const saxoPdfImport = (file: File, accountId: number, accountIdSaxo = '',
   const fd = new FormData(); fd.append('file', file)
   return api.post('/bank/saxo-pdf-import', fd, { params: { account_id: accountId, account_id_saxo: accountIdSaxo, replace_mode: replaceMode }, headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
 }
+
+// ── QIF Importer ────────────────────────────────────────────────────────────
+export const getQifOptions = () => api.get('/bank/qif-options').then(r => r.data)
+
+export const qifParse = (file: File) => {
+  const fd = new FormData(); fd.append('file', file)
+  return api.post('/bank/qif-parse', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+}
+
+export type QifAccountAction = {
+  action: 'skip' | 'map' | 'create'
+  oikos_account_id?: number | null
+  new_name?: string | null
+  new_type?: string | null
+}
+
+export const qifImport = (
+  file: File,
+  tablesToClear: string[],
+  importOptions: Record<string, boolean>,
+  excludeBankAccountIds: number[] | null,
+  excludeInvAccountIds: number[] | null,
+  saveExclusions: boolean,
+  accountMap: Record<string, QifAccountAction>,
+  dateFrom: string | null,
+  dateTo: string | null,
+) => {
+  const fd = new FormData(); fd.append('file', file)
+  return api.post('/bank/qif-import', fd, {
+    params: {
+      tables_to_clear: JSON.stringify(tablesToClear),
+      import_options: JSON.stringify(importOptions),
+      exclude_bank_account_ids: excludeBankAccountIds ? JSON.stringify(excludeBankAccountIds) : undefined,
+      exclude_inv_account_ids: excludeInvAccountIds ? JSON.stringify(excludeInvAccountIds) : undefined,
+      save_exclusions: saveExclusions,
+      account_map: JSON.stringify(accountMap),
+      date_from: dateFrom ?? undefined,
+      date_to: dateTo ?? undefined,
+    },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+export const qifClearImpact = (
+  tablesToClear: string[],
+  excludeBankAccountIds: number[] | null,
+  excludeInvAccountIds: number[] | null,
+) => api.post('/bank/qif-clear-impact', {
+  tables_to_clear: tablesToClear,
+  exclude_bank_account_ids: excludeBankAccountIds,
+  exclude_inv_account_ids: excludeInvAccountIds,
+}).then(r => r.data)
 
 // ── Coinbase ──────────────────────────────────────────────────────────────────
 export const getImporterSettings = (key: string) => api.get(`/bank/importer-settings/${key}`).then(r => r.data)

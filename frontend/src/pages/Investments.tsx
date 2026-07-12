@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useGridColumnState } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -10,7 +10,7 @@ import {
   getTransactions, getPayees, getCategories,
   syncBalances,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -302,7 +302,12 @@ export default function Investments() {
   const [cashActivePeriod, setCashActivePeriod] = useState('6M')
   // Shared with Cash Register — same modal, same save/delete/transfer/installment/
   // recurring-template logic, instead of a separately-maintained copy that can drift.
-  const cashTx = useTxModal({ onSaved: () => qc.invalidateQueries({ queryKey: ['inv-cash'] }) })
+  const cashTx = useTxModal({
+    onSaved: () => {
+      qc.invalidateQueries({ queryKey: ['inv-cash'] })
+      qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    },
+  })
 
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
@@ -321,6 +326,15 @@ export default function Investments() {
 
   const selectedAccount = investmentAccounts.find(a => Number(a.id) === accountId)
   const cashColDefs = useMemo(() => makeCashCols(String(selectedAccount?.currency ?? 'EUR')), [selectedAccount])
+  const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
+
+  const txColDefs = useMemo(() => [
+    ...makeInvCols(navigate),
+    { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, pinned: 'right' as const,
+      cellRenderer: CashBalanceCell,
+    },
+  ], [navigate])
+  const txGridCols = useGridColumnState('investments-transactions', txColDefs)
 
   const CASH_OUT_ACTIONS = new Set(['Buy', 'MiscExp', 'CashOut'])
   const CASH_IN_ACTIONS = new Set(['Sell', 'Dividend', 'IntInc', 'CashIn', 'RtrnCap', 'MiscInc'])
@@ -583,15 +597,18 @@ export default function Investments() {
                       </div>
                       <span className="text-xs text-slate-400 whitespace-nowrap">{cashRows.length} transactions</span>
                     </div>
+                    <ColumnsMenu columns={cashGridCols.columns} onToggle={cashGridCols.toggleColumn} />
                   </div>
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                     <AgGridReact
                       rowData={cashRows}
                       quickFilterText={cashSearch}
-                      columnDefs={cashColDefs}
+                      columnDefs={cashGridCols.colDefs}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
                       onGridReady={e => e.api.autoSizeAllColumns()}
+                      onColumnMoved={cashGridCols.onColumnMoved}
+                      onColumnResized={cashGridCols.onColumnResized}
                       onFirstDataRendered={e => e.api.autoSizeAllColumns()}
                       onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                     />
@@ -612,20 +629,18 @@ export default function Investments() {
                     </div>
                     <span className="text-xs text-slate-400 whitespace-nowrap">{invData?.total ?? invWithBalance.length} transactions</span>
                   </div>
+                  <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
                 </div>
                 <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                   <AgGridReact
                     rowData={invWithBalance}
                     quickFilterText={txSearch}
-                    columnDefs={[
-                      ...makeInvCols(navigate),
-                      { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn', pinned: 'right',
-                        cellRenderer: CashBalanceCell,
-                      },
-                    ]}
+                    columnDefs={txGridCols.colDefs}
                     defaultColDef={{ resizable: true, sortable: true, filter: true }}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
                     onGridReady={e => e.api.autoSizeAllColumns()}
+                    onColumnMoved={txGridCols.onColumnMoved}
+                    onColumnResized={txGridCols.onColumnResized}
                     onFirstDataRendered={e => e.api.autoSizeAllColumns()}
                     onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                   />

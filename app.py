@@ -86,7 +86,12 @@ def startup_db_maintenance():
                 ADD COLUMN IF NOT EXISTS Templates_Id INTEGER
                     REFERENCES Recurring_Templates(Templates_Id) ON DELETE SET NULL
         """)
-        # Draft-aware balance trigger (replaces existing function in-place)
+        # Draft-aware balance trigger (replaces existing function in-place).
+        # The Accounts_Id_Target branches fire only when Total_Amount_Target is
+        # also set — see the matching comment in database/Oikos.sql for why
+        # (distinguishes the single-row transfer model, which relies on this
+        # branch, from the two-row model, where each row already updates its
+        # own account and this branch used to double-count).
         cursor.execute("""
             CREATE OR REPLACE FUNCTION public.update_accounts_balance_with_transfer()
                 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -95,18 +100,18 @@ def startup_db_maintenance():
                     IF NEW.Is_Draft THEN RETURN NULL; END IF;
                     UPDATE Accounts SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
                      WHERE Accounts_Id = NEW.Accounts_Id;
-                    IF NEW.Accounts_Id_Target IS NOT NULL THEN
+                    IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
                         UPDATE Accounts
-                           SET Accounts_Balance = Accounts_Balance + COALESCE(NEW.Total_Amount_Target, -NEW.Total_Amount)
+                           SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
                          WHERE Accounts_Id = NEW.Accounts_Id_Target;
                     END IF;
                 ELSIF (TG_OP = 'DELETE') THEN
                     IF OLD.Is_Draft THEN RETURN NULL; END IF;
                     UPDATE Accounts SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
                      WHERE Accounts_Id = OLD.Accounts_Id;
-                    IF OLD.Accounts_Id_Target IS NOT NULL THEN
+                    IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
                         UPDATE Accounts
-                           SET Accounts_Balance = Accounts_Balance - COALESCE(OLD.Total_Amount_Target, -OLD.Total_Amount)
+                           SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
                          WHERE Accounts_Id = OLD.Accounts_Id_Target;
                     END IF;
                 ELSIF (TG_OP = 'UPDATE') THEN
@@ -115,17 +120,17 @@ def startup_db_maintenance():
                     ELSIF OLD.Is_Draft AND NOT NEW.Is_Draft THEN
                         UPDATE Accounts SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
                          WHERE Accounts_Id = NEW.Accounts_Id;
-                        IF NEW.Accounts_Id_Target IS NOT NULL THEN
+                        IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
                             UPDATE Accounts
-                               SET Accounts_Balance = Accounts_Balance + COALESCE(NEW.Total_Amount_Target, -NEW.Total_Amount)
+                               SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
                              WHERE Accounts_Id = NEW.Accounts_Id_Target;
                         END IF;
                     ELSIF NOT OLD.Is_Draft AND NEW.Is_Draft THEN
                         UPDATE Accounts SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
                          WHERE Accounts_Id = OLD.Accounts_Id;
-                        IF OLD.Accounts_Id_Target IS NOT NULL THEN
+                        IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
                             UPDATE Accounts
-                               SET Accounts_Balance = Accounts_Balance - COALESCE(OLD.Total_Amount_Target, -OLD.Total_Amount)
+                               SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
                              WHERE Accounts_Id = OLD.Accounts_Id_Target;
                         END IF;
                     ELSE

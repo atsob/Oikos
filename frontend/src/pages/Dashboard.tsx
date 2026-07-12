@@ -4,10 +4,12 @@ import PlotlyReact from 'react-plotly.js'
 import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getDraftTransactions, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
+  getUncategorizedTransactions, getPayees, getCategories,
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton } from '@/components/ui'
+import { TxModal, useTxModal } from '@/components/TxModal'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
@@ -155,6 +157,102 @@ function SecuritiesAlertsPanel() {
             )
           })}
         </CardBody>
+      )}
+    </Card>
+  )
+}
+
+// ── Uncategorized transactions panel ─────────────────────────────────────────
+// Non-transfer cash transactions with no category on any split — surfaced here
+// since the app now blocks new saves like this (see TxModal), so this is where
+// pre-existing ones (from before that rule, or from imports) get cleaned up.
+function UncategorizedTransactionsPanel() {
+  const qc = useQueryClient()
+  const [open, setOpen] = React.useState(false)
+
+  const { data: uncategorized = [] } = useQuery({
+    queryKey: ['uncategorized-transactions'],
+    queryFn: getUncategorizedTransactions,
+  })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+
+  const tx = useTxModal({
+    onSaved: () => {
+      qc.invalidateQueries({ queryKey: ['uncategorized-transactions'] })
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    },
+  })
+
+  const rows = uncategorized as Record<string, unknown>[]
+  if (!rows.length) return null
+
+  return (
+    <Card>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+        <span className="text-sm font-semibold text-amber-700">
+          🏷️ {rows.length} uncategorized transaction{rows.length !== 1 ? 's' : ''}
+        </span>
+        {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
+      </button>
+      {open && (
+        <CardBody className="p-0 max-h-64 overflow-y-auto">
+          {rows.map(r => (
+            <button
+              key={String(r.id)}
+              className="w-full flex items-center justify-between px-4 py-2.5 border-b border-slate-100 last:border-0 hover:bg-slate-50 text-left"
+              onClick={() => tx.openEdit(r, Number(r.account_id))}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 truncate">{String(r.description || r.payee || '—')}</p>
+                <p className="text-xs text-slate-400">{fmtDate(String(r.date))} · {String(r.account ?? '')}</p>
+              </div>
+              <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                <span className={`text-sm font-semibold tabular-nums ${Number(r.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {fmtEur(Number(r.amount))}
+                </span>
+                <Pencil size={13} className="text-slate-400" />
+              </div>
+            </button>
+          ))}
+        </CardBody>
+      )}
+
+      {tx.modalOpen && tx.form && (
+        <TxModal
+          form={tx.form}
+          splits={tx.splits}
+          useSplits={tx.useSplits}
+          setUseSplits={tx.setUseSplits}
+          onFormChange={tx.setForm}
+          onSplitsChange={tx.setSplits}
+          payees={payees as Record<string, unknown>[]}
+          categories={categories as Record<string, unknown>[]}
+          accounts={accounts as Record<string, unknown>[]}
+          onSave={tx.handleSave}
+          onDelete={tx.form.id ? tx.handleDelete : undefined}
+          onClose={tx.close}
+          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string, unknown>[]) => [...(old ?? []), c])}
+          saving={tx.saving}
+          error={tx.saveError}
+          recurringEnabled={tx.recurringEnabled}
+          setRecurringEnabled={tx.setRecurringEnabled}
+          recurringName={tx.recurringName}
+          setRecurringName={tx.setRecurringName}
+          recurringFreq={tx.recurringFreq}
+          setRecurringFreq={tx.setRecurringFreq}
+          recurringNextDue={tx.recurringNextDue}
+          setRecurringNextDue={tx.setRecurringNextDue}
+          installmentEnabled={tx.installmentEnabled}
+          setInstallmentEnabled={tx.setInstallmentEnabled}
+          installmentCount={tx.installmentCount}
+          setInstallmentCount={tx.setInstallmentCount}
+          installmentFreq={tx.installmentFreq}
+          setInstallmentFreq={tx.setInstallmentFreq}
+        />
       )}
     </Card>
   )
@@ -674,7 +772,10 @@ export default function Dashboard() {
 
   const confirmOne = useMutation({
     mutationFn: confirmDraft,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['draft-transactions'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['draft-transactions'] })
+      qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    },
   })
 
   const confirmAll = useMutation({
@@ -851,6 +952,7 @@ export default function Dashboard() {
           <div className="lg:col-span-2 space-y-3">
             <InsightsPanel insights={insights as Insight[]} />
             <SecuritiesAlertsPanel />
+            <UncategorizedTransactionsPanel />
           </div>
 
           {/* Pending Drafts */}

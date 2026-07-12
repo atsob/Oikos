@@ -19,6 +19,7 @@ import {
   getMissingInvAccountTarget, fixInvAccountTarget,
   getLogs,
   getCurrenciesMaster,
+  getPayees,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { cn } from '@/lib/utils'
@@ -1877,6 +1878,7 @@ function AppSettingsPanel() {
   const [saved, setSaved] = useSettings()
   const [form, setForm] = useState<AppSettings>(saved)
   const { data: currencyRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['currencies-master'], queryFn: getCurrenciesMaster })
+  const { data: payeeRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['payees'], queryFn: () => getPayees() })
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
 
@@ -1969,6 +1971,24 @@ function AppSettingsPanel() {
                 <option value={6}>Saturday</option>
               </select>
             </div>
+          </div>
+
+          {/* Transfers */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Transfers</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Default transfer payee</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.defaultTransferPayeeName} onChange={e => set('defaultTransferPayeeName', e.target.value)}>
+              {!payeeRows.some(p => String(p.name) === form.defaultTransferPayeeName) && form.defaultTransferPayeeName && (
+                <option value={form.defaultTransferPayeeName}>{form.defaultTransferPayeeName} (not yet created)</option>
+              )}
+              {[...payeeRows].sort((a, b) => String(a.name).localeCompare(String(b.name))).map(p => (
+                <option key={String(p.id)} value={String(p.name)}>{String(p.name)}</option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              Auto-filled as the Payee when a new cash transaction is marked as a Transfer and no payee has been chosen yet.
+            </p>
           </div>
 
           {/* Reporting currency */}

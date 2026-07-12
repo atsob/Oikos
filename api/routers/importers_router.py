@@ -16,7 +16,6 @@ SOURCE_MAP = {
     "coinbase": "_import_coinbase",
     "cryptocom": "_import_cryptocom",
     "paypal": "_import_paypal",
-    "qif": "_import_qif",
     "saxo_pdf": "_import_saxo_pdf",
 }
 
@@ -78,10 +77,6 @@ async def import_file(
         elif source == "paypal":
             from data.paypal_connector import import_paypal
             result = import_paypal(tmp_path)
-
-        elif source == "qif":
-            from data.qif_importer import import_qif
-            result = import_qif(tmp_path)
 
         elif source == "saxo_pdf":
             from data.saxo_pdf_parser import import_saxo_pdf

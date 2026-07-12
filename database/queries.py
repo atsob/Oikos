@@ -2214,16 +2214,23 @@ def _confirm_draft_row(cur, tx_id: int) -> None:
 
     _refresh(src_account)
 
-    if target_account and not existing_transfers_id:
-        cur.execute("SELECT nextval('transfers_id_seq')")
-        shared_tid = cur.fetchone()[0]
-        mirror_amount = -float(amount or 0)
-        cur.execute("""
-            INSERT INTO Transactions
-                (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
-            VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
-        """, (target_account, date, description, mirror_amount, payees_id, src_account, shared_tid))
-        cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
+    if target_account:
+        if not existing_transfers_id:
+            cur.execute("SELECT nextval('transfers_id_seq')")
+            shared_tid = cur.fetchone()[0]
+            mirror_amount = -float(amount or 0)
+            cur.execute("""
+                INSERT INTO Transactions
+                    (Accounts_Id, Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft, Accounts_Id_Target, Transfers_Id)
+                VALUES (%s, %s, %s, %s, %s, FALSE, FALSE, FALSE, %s, %s)
+            """, (target_account, date, description, mirror_amount, payees_id, src_account, shared_tid))
+            cur.execute("UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s", (shared_tid, tx_id))
+        # Whether the mirror leg was just created above or already existed as its own
+        # row, this row's Is_Draft flip just made the balance-maintaining trigger
+        # (written for an older single-row transfer model) also apply its
+        # Accounts_Id_Target branch to target_account — recompute it from scratch
+        # either way. If the mirror leg is itself still a draft, this correctly
+        # excludes it until it's confirmed too.
         _refresh(target_account)
 
 

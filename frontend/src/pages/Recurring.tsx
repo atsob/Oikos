@@ -461,7 +461,10 @@ function DraftsTab() {
   const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
+    qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+  }
 
   const genMut = useMutation({
     mutationFn: generateRecurringDrafts,

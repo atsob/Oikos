@@ -6,6 +6,7 @@ export interface AppSettings {
   dateFormat: string       // 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD'
   weekStartDay: number     // 0 = Sunday, 1 = Monday
   reportingCurrency: string // 'EUR' — display-only, does not affect stored data
+  defaultTransferPayeeName: string // auto-filled as the Payee when a new transaction is marked Transfer, if left blank
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -14,6 +15,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   dateFormat: 'DD/MM/YYYY',
   weekStartDay: 1,
   reportingCurrency: 'EUR',
+  defaultTransferPayeeName: 'Transfer Money',
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

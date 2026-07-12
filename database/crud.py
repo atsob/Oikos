@@ -1760,6 +1760,20 @@ def generate_draft_transactions() -> int:
                     "UPDATE Transactions SET Transfers_Id = %s WHERE Transactions_Id = %s",
                     (shared_tid, tx_id)
                 )
+                # Both legs carry Accounts_Id_Target, so the balance-maintaining
+                # trigger (written for an older single-row transfer model)
+                # double-applies the amount to each account when inserted
+                # already-confirmed — recompute from scratch to correct it.
+                for _acc in (acc_id, target_acc):
+                    cur.execute("""
+                        UPDATE Accounts
+                           SET Accounts_Balance = COALESCE((
+                               SELECT SUM(Total_Amount)
+                               FROM Transactions
+                               WHERE Accounts_Id = %s AND Is_Draft = FALSE
+                           ), 0)
+                         WHERE Accounts_Id = %s
+                    """, (_acc, _acc))
 
             adv = _DELTAS.get(periodicity, _DELTAS['Monthly'])
             cur.execute(

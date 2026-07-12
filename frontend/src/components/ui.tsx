@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCcw, ChevronDown } from 'lucide-react'
+import { RefreshCcw, ChevronDown, Columns3 } from 'lucide-react'
 
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
 export function useEscapeKey(onClose: () => void) {
@@ -338,6 +338,43 @@ export function Tooltip({ text, children }: { text: string; children: React.Reac
         document.body
       )}
     </span>
+  )
+}
+
+// ── Columns menu (show/hide grid columns) ──────────────────────────────────────
+// Pairs with useGridColumnState's `columns`/`toggleColumn`:
+//   <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+export function ColumnsMenu({ columns, onToggle }: {
+  columns: { colId: string; headerName: string; hidden: boolean }[]
+  onToggle: (colId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onOutside = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600">
+        <Columns3 size={13} /> Columns
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 z-30 bg-white border border-slate-200 rounded shadow-lg p-2 min-w-[180px] max-h-72 overflow-y-auto">
+          {columns.map(c => (
+            <label key={c.colId} className="flex items-center gap-2 px-1.5 py-1 text-xs cursor-pointer hover:bg-slate-50 rounded">
+              <input type="checkbox" checked={!c.hidden} onChange={() => onToggle(c.colId)} />
+              {c.headerName}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

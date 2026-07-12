@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useGridColumnState } from '@/lib/hooks'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent } from 'ag-grid-community'
@@ -8,7 +8,7 @@ import {
   clearAccount, reconcileAccount, searchAllTransactions,
   syncBalances,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
 import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
@@ -92,7 +92,12 @@ export default function Register() {
   const [activePeriod, setActivePeriod] = useState<string>('1M')
   const [offset, setOffset] = useState(0)
 
-  const tx = useTxModal({ onSaved: () => qc.invalidateQueries({ queryKey: ['transactions'] }) })
+  const tx = useTxModal({
+    onSaved: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] })
+      qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    },
+  })
 
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('')
@@ -137,7 +142,10 @@ export default function Register() {
     else if (reconcileOpen) setReconcileOpen(false)
   }, [globalOpen, clearOpen, reconcileOpen]))
 
-  const onGridReady = useCallback((e: GridReadyEvent) => { setGridApi(e.api); e.api.autoSizeAllColumns() }, [])
+  const onGridReady = useCallback((e: GridReadyEvent) => {
+    setGridApi(e.api)
+    e.api.autoSizeAllColumns()
+  }, [])
 
   // After navigating in from global search, jump to and select the target transaction
   // once its page of data has loaded (the account's date filter was just narrowed to
@@ -178,6 +186,7 @@ export default function Register() {
   const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
   const accountCurrency = String(selectedAccount?.currency ?? 'EUR')
   const colDefs = useMemo(() => makeColDefs(accountCurrency), [accountCurrency])
+  const gridCols = useGridColumnState('register', colDefs)
 
   return (
     <div className="flex flex-col h-full">
@@ -347,14 +356,17 @@ export default function Register() {
                 </div>
                 <span className="text-xs text-slate-400 whitespace-nowrap">{txQuery.data?.total != null ? `${txQuery.data.total.toLocaleString()} transactions` : ''}</span>
               </div>
+              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
             </div>
             <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
               <AgGridReact
                 ref={gridRef}
                 rowData={txQuery.data?.transactions ?? []}
-                columnDefs={colDefs}
+                columnDefs={gridCols.colDefs}
                 onGridReady={onGridReady}
                 onRowClicked={onRowClicked}
+                onColumnMoved={gridCols.onColumnMoved}
+                onColumnResized={gridCols.onColumnResized}
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 onRowDataUpdated={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true, filter: true }}

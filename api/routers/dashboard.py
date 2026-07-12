@@ -519,6 +519,35 @@ def get_draft_transactions():
     return _df_to_list(df)
 
 
+@router.get("/uncategorized-transactions")
+def get_uncategorized_transactions():
+    """Non-transfer cash transactions with no category assigned on any split."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT t.Transactions_Id AS id,
+                   t.Date::text AS date,
+                   t.Description AS description,
+                   t.Total_Amount AS amount,
+                   t.Payees_Id AS payees_id,
+                   p.Payees_Name AS payee,
+                   a.Accounts_Name AS account,
+                   a.Accounts_Id AS account_id
+            FROM Transactions t
+            JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
+            LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
+            WHERE t.Is_Draft = FALSE
+              AND t.Transfers_Id IS NULL
+              AND t.Accounts_Id_Target IS NULL
+              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND NOT EXISTS (
+                  SELECT 1 FROM Splits s
+                  WHERE s.Transactions_Id = t.Transactions_Id AND s.Categories_Id IS NOT NULL
+              )
+            ORDER BY t.Date DESC, t.Transactions_Id DESC
+        """, conn)
+    return _df_to_list(df)
+
+
 @router.post("/confirm-draft/{transaction_id}")
 def confirm_draft(transaction_id: int):
     from database.queries import confirm_draft_transaction

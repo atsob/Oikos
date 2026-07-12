@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useGridColumnState } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu,
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -63,7 +63,19 @@ function fmtPctLocal(n: unknown, dec = 2) {
 }
 
 // ── Prices Tab ────────────────────────────────────────────────────────────────
+const PRICES_TAB_COLS = [
+  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { field: 'date', headerName: 'Date', width: 110, sort: 'desc' as const },
+  { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
+  { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+  { field: 'low',    headerName: 'Low',    width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+  { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toLocaleString() : '—' },
+  { field: 'source', headerName: 'Source', width: 110 },
+  { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
+]
+
 function PricesTab({ secId }: { secId: number }) {
+  const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const [period, setPeriod] = usePersist<ChartPeriod>('sec_chart_period', 'YTD')
@@ -224,6 +236,7 @@ function PricesTab({ secId }: { secId: number }) {
             <Trash2 size={13} /> Delete {selectedDates.length} selected
           </Button>
         )}
+        <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
       </div>
       <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
         <AgGridReact
@@ -231,16 +244,9 @@ function PricesTab({ secId }: { secId: number }) {
           quickFilterText={priceSearch}
           rowSelection="multiple"
           onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
-          columnDefs={[
-            { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-            { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
-            { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
-            { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-            { field: 'low',    headerName: 'Low',    width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-            { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toLocaleString() : '—' },
-            { field: 'source', headerName: 'Source', width: 110 },
-            { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
-          ]}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
       </div>
@@ -316,7 +322,54 @@ function PricesTab({ secId }: { secId: number }) {
 }
 
 // ── Investment Transactions Tab ────────────────────────────────────────────────
+const HOLDINGS_BY_ACCOUNT_COLS = [
+  { field: 'account', headerName: 'Account', flex: 2 },
+  { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+  { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+  {
+    headerName: 'Cost/Share', flex: 1,
+    valueGetter: (p: { data?: Record<string, unknown> }) => {
+      const qty = Number(p.data?.qty_held ?? 0)
+      const cost = Number(p.data?.cost_basis ?? 0)
+      return qty ? cost / qty : null
+    },
+    valueFormatter: (p: { value: unknown }) => fmt(p.value, 4),
+  },
+  { field: 'current_value', headerName: 'Cur. Value', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+  {
+    field: 'unrealised_pnl', headerName: 'Unrealised P&L', flex: 1,
+    valueFormatter: (p: { value: unknown }) => fmt(p.value, 2),
+    cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
+  },
+  {
+    headerName: 'P&L %', flex: 1,
+    valueGetter: (p: { data?: Record<string, unknown> }) => {
+      const cost = Number(p.data?.cost_basis ?? 0)
+      const pnl = Number(p.data?.unrealised_pnl ?? 0)
+      return cost ? pnl / cost * 100 : null
+    },
+    valueFormatter: (p: { value: unknown }) => p.value != null ? `${(Number(p.value) >= 0 ? '+' : '')}${Number(p.value).toFixed(2)}%` : '—',
+    cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
+  },
+]
+
+const ALL_TRANSACTIONS_COLS = [
+  { field: 'account', headerName: 'Account', width: 180 },
+  { field: 'date', headerName: 'Date', width: 120 },
+  { field: 'action', headerName: 'Action', width: 100 },
+  { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+  { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+  { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+  { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : null },
+  { field: 'total_sec_cur', headerName: 'Total (Sec. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+  { field: 'total_acc_cur', headerName: 'Total (Acc. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+  { field: 'currency', headerName: 'Currency', width: 90 },
+  { field: 'description', headerName: 'Description', flex: 1 },
+]
+
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
+  const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
+  const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
   const qc = useQueryClient()
   const { data: txData = [], isLoading: txLoading } = useQuery({
     queryKey: ['sec-transactions', secId],
@@ -506,41 +559,17 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold text-slate-700">Holdings by Account</p>
-          <Button size="sm" variant="secondary" onClick={copyText}><Copy size={13} /> Copy</Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={copyText}><Copy size={13} /> Copy</Button>
+            <ColumnsMenu columns={holdingsGridCols.columns} onToggle={holdingsGridCols.toggleColumn} />
+          </div>
         </div>
         <div className="ag-theme-alpine" style={{ height: `${Math.min(holdings.holdings.length * 42 + 48, 300)}px`, width: '100%' }}>
           <AgGridReact
             rowData={holdings.holdings}
-            columnDefs={[
-              { field: 'account', headerName: 'Account', flex: 2 },
-              { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
-              { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              {
-                headerName: 'Cost/Share', flex: 1,
-                valueGetter: (p: { data?: Record<string, unknown> }) => {
-                  const qty = Number(p.data?.qty_held ?? 0)
-                  const cost = Number(p.data?.cost_basis ?? 0)
-                  return qty ? cost / qty : null
-                },
-                valueFormatter: (p: { value: unknown }) => fmt(p.value, 4),
-              },
-              { field: 'current_value', headerName: 'Cur. Value', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              {
-                field: 'unrealised_pnl', headerName: 'Unrealised P&L', flex: 1,
-                valueFormatter: (p: { value: unknown }) => fmt(p.value, 2),
-                cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
-              },
-              {
-                headerName: 'P&L %', flex: 1,
-                valueGetter: (p: { data?: Record<string, unknown> }) => {
-                  const cost = Number(p.data?.cost_basis ?? 0)
-                  const pnl = Number(p.data?.unrealised_pnl ?? 0)
-                  return cost ? pnl / cost * 100 : null
-                },
-                valueFormatter: (p: { value: unknown }) => p.value != null ? `${(Number(p.value) >= 0 ? '+' : '')}${Number(p.value).toFixed(2)}%` : '—',
-                cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
-              },
-            ]}
+            onColumnMoved={holdingsGridCols.onColumnMoved}
+            onColumnResized={holdingsGridCols.onColumnResized}
+            columnDefs={holdingsGridCols.colDefs}
             defaultColDef={{ resizable: true, sortable: true }}
           />
         </div>
@@ -563,25 +592,16 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
               <ArrowLeftRight size={14} /> Transfer
             </Button>
             <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
+            <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
           </div>
         </div>
         <div className="ag-theme-alpine mt-2" style={{ height: '400px', width: '100%' }}>
           <AgGridReact
             rowData={transactions}
             quickFilterText={txSearch}
-            columnDefs={[
-              { field: 'account', headerName: 'Account', width: 180 },
-              { field: 'date', headerName: 'Date', width: 120 },
-              { field: 'action', headerName: 'Action', width: 100 },
-              { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
-              { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-              { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : null },
-              { field: 'total_sec_cur', headerName: 'Total (Sec. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              { field: 'total_acc_cur', headerName: 'Total (Acc. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-              { field: 'currency', headerName: 'Currency', width: 90 },
-              { field: 'description', headerName: 'Description', flex: 1 },
-            ]}
+            onColumnMoved={txGridCols.onColumnMoved}
+            onColumnResized={txGridCols.onColumnResized}
+            columnDefs={txGridCols.colDefs}
             defaultColDef={{ resizable: true, sortable: true, filter: true }}
             rowStyle={{ cursor: 'pointer' }}
             onRowDoubleClicked={e => { if (e.data) openEdit(e.data as Record<string, unknown>) }}
@@ -622,7 +642,19 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
 }
 
 // ── Price Anomalies Tab ───────────────────────────────────────────────────────
+const anomalyPctFmt = (v: unknown) => v != null ? fmtPctLocal((Number(v) - 1) * 100, 1) : '—'
+const PRICE_ANOMALIES_COLS = [
+  { checkboxSelection: true, width: 50, pinned: 'left' as const },
+  { field: 'date', headerName: 'Date', width: 120 },
+  { field: 'close', headerName: 'Price', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+  { field: 'prev_close', headerName: 'Prev Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+  { field: 'next_close', headerName: 'Next Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+  { field: 'ratio_prev', headerName: '% vs Prev', width: 110, valueFormatter: (p: { value: unknown }) => anomalyPctFmt(p.value) },
+  { field: 'ratio_next', headerName: '% vs Next', width: 110, valueFormatter: (p: { value: unknown }) => anomalyPctFmt(p.value) },
+]
+
 function PriceAnomaliesTab({ secId }: { secId: number }) {
+  const gridCols = useGridColumnState('security-detail-anomalies', PRICE_ANOMALIES_COLS)
   const qc = useQueryClient()
   const [threshold, setThreshold] = useState(100)
   const [selected, setSelected] = useState<string[]>([])
@@ -649,8 +681,6 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
     for (const r of anomalies) await deleteMut.mutateAsync(r.date as string)
   }
 
-  const pctFmt = (v: unknown) => v != null ? fmtPctLocal((Number(v) - 1) * 100, 1) : '—'
-
   return (
     <div className="p-4 space-y-4">
       <p className="text-sm text-slate-500">
@@ -674,25 +704,20 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
               rowData={anomalies}
               rowSelection="multiple"
               onSelectionChanged={e => setSelected(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
-              columnDefs={[
-                { checkboxSelection: true, width: 50, pinned: 'left' as const },
-                { field: 'date', headerName: 'Date', width: 120 },
-                { field: 'close', headerName: 'Price', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-                { field: 'prev_close', headerName: 'Prev Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-                { field: 'next_close', headerName: 'Next Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-                { field: 'ratio_prev', headerName: '% vs Prev', width: 110, valueFormatter: (p: { value: unknown }) => pctFmt(p.value) },
-                { field: 'ratio_next', headerName: '% vs Next', width: 110, valueFormatter: (p: { value: unknown }) => pctFmt(p.value) },
-              ]}
+              onColumnMoved={gridCols.onColumnMoved}
+              onColumnResized={gridCols.onColumnResized}
+              columnDefs={gridCols.colDefs}
               defaultColDef={{ resizable: true, sortable: true }}
             />
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
             <Button size="sm" variant="secondary" disabled={selected.length === 0 || deleteMut.isPending} onClick={deleteSelected}>
               <Trash2 size={13} /> Delete selected
             </Button>
             <Button size="sm" variant="destructive" disabled={anomalies.length === 0 || deleteMut.isPending} onClick={deleteAll}>
               <Trash2 size={13} /> Delete all {anomalies.length} listed
             </Button>
+            <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           </div>
         </>
       )}
@@ -701,7 +726,14 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
 }
 
 // ── Dividends Tab ─────────────────────────────────────────────────────────────
+const DIVIDENDS_COLS = [
+  { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
+  { field: 'pay_date', headerName: 'Pay Date', width: 130 },
+  { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+]
+
 function DividendsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
   const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
     queryKey: ['sec-dividends', secId],
@@ -754,14 +786,15 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             ) : <p className="text-sm text-slate-400">No dividend history found.</p>}
           </div>
 
+          <div className="flex justify-end">
+            <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          </div>
           <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
             <AgGridReact
               rowData={dividends}
-              columnDefs={[
-                { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
-                { field: 'pay_date', headerName: 'Pay Date', width: 130 },
-                { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-              ]}
+              onColumnMoved={gridCols.onColumnMoved}
+              onColumnResized={gridCols.onColumnResized}
+              columnDefs={gridCols.colDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
             />
           </div>
@@ -916,6 +949,28 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     ]
   }, [eventGroup])
 
+  const actionsColDefs = [
+    { field: 'id', headerName: 'ID', width: 65 },
+    { field: 'date', headerName: 'Date', width: 120 },
+    { field: 'type', headerName: 'Type', width: 140 },
+    { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
+    { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
+    { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
+    { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
+    { field: 'description', headerName: 'Description', flex: 1 },
+    { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
+    {
+      headerName: '', width: 75, pinned: 'right' as const,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }) }}
+          className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
+          <Pencil size={11} /> Edit
+        </button>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -929,29 +984,15 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         </p>
         {actions.length > 0 && (
           <>
+            <div className="flex justify-end mb-2">
+              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+            </div>
             <div className="ag-theme-alpine" style={{ height: `${Math.min(actions.length * 42 + 52, 260)}px`, width: '100%' }}>
               <AgGridReact
                 rowData={actions}
-                columnDefs={[
-                  { field: 'id', headerName: 'ID', width: 65 },
-                  { field: 'date', headerName: 'Date', width: 120 },
-                  { field: 'type', headerName: 'Type', width: 140 },
-                  { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
-                  { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
-                  { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn', valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
-                  { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn', valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
-                  { field: 'description', headerName: 'Description', flex: 1 },
-                  { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
-                  {
-                    headerName: '', width: 75, pinned: 'right' as const,
-                    cellRenderer: (p: { data: Record<string, unknown> }) => (
-                      <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }) }}
-                        className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
-                        <Pencil size={11} /> Edit
-                      </button>
-                    ),
-                  },
-                ]}
+                onColumnMoved={gridCols.onColumnMoved}
+                onColumnResized={gridCols.onColumnResized}
+                columnDefs={gridCols.colDefs}
                 defaultColDef={{ resizable: true, sortable: true }}
               />
             </div>

@@ -152,6 +152,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Auto-generated observations (unusual spending, upcoming bills, low balances, etc.) and any alert
           rules you've triggered, both collapsible.
         </P>
+        <Note>
+          The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
+          click any row to open it directly in the transaction editor and fix it. New transactions can't be
+          saved without a category anymore (see Cash Register), so this is mainly for cleaning up ones that
+          predate that rule, or came in through an import.
+        </Note>
         <H3>Pending Drafts</H3>
         <P>
           Transactions imported or projected but not yet confirmed — confirm or discard them individually or
@@ -222,6 +228,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Categories can be nested by typing a path like <code>Vacation : Skiing</code> — this reuses whichever
           part of the path already exists and creates only the missing segment(s), rather than requiring you to
           create each level separately.
+        </Note>
+        <Note>
+          A non-transfer transaction now requires a category before it can be saved — otherwise it would
+          silently fall out of every spending report. Transfers and drafts (still pending review) are exempt.
+          Marking a transaction as a <b>Transfer</b> auto-fills the Payee with a configurable default (see
+          System → App Settings → Transfers) whenever none is chosen yet. And for a single-category
+          transaction, leaving the split's Memo blank now reuses the transaction's own Description instead of
+          saving an empty memo.
         </Note>
       </>
     ),
@@ -471,12 +485,27 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
             <b>Brokerage</b> — Interactive Brokers (Flex), Revolut Trading, Saxo Bank, Coinbase, Crypto.com,
             Capital.com, FXPro.
           </li>
-          <li><b>QIF</b> — generic QIF file import, plus a Transfer Issues tool for fixing unmatched transfer pairs.</li>
+          <li><b>QIF</b> — bulk import from a Quicken/QIF file, plus a Transfer Issues tool for fixing unmatched transfer pairs.</li>
         </Ul>
         <P>
           Import Profiles and Payee Rules are reusable — set a bank's column mapping or a payee's default
           category once, then every future import uses it automatically.
         </P>
+        <Note>
+          <b>QIF Importer</b> is a bulk migration tool for a from-scratch move from Quicken, MS Money, or
+          similar — a 3-step wizard rather than an incremental connector like the others above. <b>1. Parse</b>:
+          upload a file to see a raw preview and a read-only breakdown of every account it contains, grouped as
+          Cash/Bank, Credit, Investment, or Asset/Liability. <b>2. Map/Define</b>: for each account, choose to
+          skip it, map it onto an existing Oikos account, or create a new one (name and type both editable —
+          QIF can't tell Checking from Savings apart, so that's always a manual pick); set a date range to limit
+          which transactions come in; and optionally <b>clear existing tables first</b> for a true from-scratch
+          reimport (nothing is deleted unless you explicitly check a table — everything defaults to off — with
+          per-account exclusion pickers to preserve specific accounts' data even while clearing the rest).
+          Clearing a table cascades to every other table that references it — checking a box shows the
+          complete, real list of everything that will be wiped, with row counts, computed from the database's
+          actual foreign keys rather than a fixed list, and related checkboxes auto-check themselves so the
+          selection can't understate the impact. <b>3. Import</b>: review a summary of every choice, then confirm.
+        </Note>
         <Note>
           <b>Interactive Brokers (Flex)</b>: IB only refreshes an Activity Statement once per day, so a second
           "Fetch &amp; Preview" the same day would normally fail — the app caches that day's statement
@@ -530,10 +559,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           </li>
           <li>
             <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting
-            currency) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly AI summaries). App Settings —
-            and every other saved preference across the app (report filters, last-used tabs, account selections,
-            etc.) — are stored server-side, so they follow you across browsers, devices, and however you access
-            Oikos (LAN IP, hostname, or remotely), instead of being tied to one browser's local storage.
+            currency, default transfer payee name) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
+            AI summaries). App Settings — and every other saved preference across the app (report filters,
+            last-used tabs, account selections, etc.) — are stored server-side, so they follow you across
+            browsers, devices, and however you access Oikos (LAN IP, hostname, or remotely), instead of being
+            tied to one browser's local storage.
           </li>
           <li><b>📊 Market Data &amp; Prices</b> — fill missing prices from transactions, price quality checks, normalize investment prices, investment data quality.</li>
           <li><b>📋 Logs</b> — application log viewer.</li>
@@ -587,6 +617,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Most report filters (date range, grouping, account selection, tab choice) are remembered server-side,
           so returning to a report picks up where you left off — on any browser, device, or however you access
           Oikos (LAN IP, hostname, or remotely).
+        </P>
+        <H3>Rearranging and hiding table columns</H3>
+        <P>
+          Drag a column header left or right to reorder it in any data table (Cash Register, Investments,
+          Static Data, Market Data, Security Detail, and more). The <b>Columns</b> button next to each table
+          opens a checklist to show or hide individual columns. The new order, visibility, and any manual
+          column width are remembered the same way as other saved view settings, so they follow you across
+          reloads and devices.
         </P>
         <H3>Version info</H3>
         <P>

@@ -3818,6 +3818,20 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
 
   const handleModalSave = async () => {
     if (!modalForm?.id) return
+
+    // Only transfers move money without a spending/income category — everything
+    // else must be categorized, or it silently falls out of every spending report.
+    // Drafts are exempt — they're explicitly pending review before being confirmed.
+    if (!modalForm.is_transfer && !modalForm.is_draft) {
+      const hasCategory = modalUseSplits
+        ? modalSplits.some(s => s.amount !== '' && s.amount !== '0' && s.categories_id)
+        : !!modalForm.categories_id
+      if (!hasCategory) {
+        setModalError('Choose a category before saving — only transfers can be left uncategorized')
+        return
+      }
+    }
+
     setModalSaving(true); setModalError(null)
     try {
       const statusFields = { is_draft: modalForm.is_draft, cleared: modalForm.cleared, reconciled: modalForm.reconciled }
@@ -3843,7 +3857,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
         await upsertSplits(modalForm.id, [{
           categories_id: modalForm.categories_id ? Number(modalForm.categories_id) : null,
           amount: parseFloat(modalForm.total_amount),
-          memo: modalForm.memo || null,
+          memo: modalForm.memo || modalForm.description || null,
         }])
       }
       await qc.refetchQueries({ queryKey: ['ie-full'], type: 'active' })

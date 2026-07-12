@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useGridColumnState } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
@@ -203,6 +203,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
       ),
     },
   ]
+  const gridCols = useGridColumnState('market-data-securities', colDefs)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -217,11 +218,16 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{(securities as unknown[]).length} securities</span>
         </div>
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact rowData={securities} columnDefs={colDefs}
+        <AgGridReact rowData={securities} columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
       </div>
 
@@ -347,6 +353,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
       ),
     },
   ]
+  const gridCols = useGridColumnState('market-data-currencies', colDefs)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -361,11 +368,16 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} currencies</span>
         </div>
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
-        <AgGridReact rowData={filtered} columnDefs={colDefs}
+        <AgGridReact rowData={filtered} columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
       </div>
 
@@ -416,7 +428,14 @@ function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p:
 }
 
 // ── FX Prices tab: history chart + manual entry ───────────────────────────────
+const FX_PRICES_COLS = [
+  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { field: 'date', headerName: 'Date', width: 130, sort: 'desc' as const },
+  { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 6) : '' },
+]
+
 function FxPricesTab() {
+  const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const [curId, setCurId] = useState<number | null>(null)
@@ -537,11 +556,14 @@ function FxPricesTab() {
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={fxSearch} onChange={e => setFxSearch(e.target.value)} />
             </div>
-            {selectedDates.length > 0 && (
-              <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
-                <Trash2 size={13} /> Delete {selectedDates.length} selected
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {selectedDates.length > 0 && (
+                <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
+                  <Trash2 size={13} /> Delete {selectedDates.length} selected
+                </Button>
+              )}
+              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+            </div>
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
@@ -549,11 +571,9 @@ function FxPricesTab() {
               quickFilterText={fxSearch}
               rowSelection="multiple"
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
-              columnDefs={[
-                { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-                { field: 'date', headerName: 'Date', width: 130, sort: 'desc' },
-                { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 6) : '' },
-              ]}
+              onColumnMoved={gridCols.onColumnMoved}
+              onColumnResized={gridCols.onColumnResized}
+              columnDefs={gridCols.colDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
             />
           </div>
@@ -631,7 +651,19 @@ function FxPricesTab() {
 }
 
 // ── Securities Prices tab: history chart + manual entry ───────────────────────
+const SECURITIES_PRICES_COLS = [
+  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { field: 'date', headerName: 'Date', width: 110, sort: 'desc' as const },
+  { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
+  { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+  { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+  { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toLocaleString() : '—' },
+  { field: 'source', headerName: 'Source', width: 110 },
+  { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
+]
+
 function SecuritiesPricesTab() {
+  const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const [secId, setSecId] = useState<number | null>(null)
@@ -802,11 +834,14 @@ function SecuritiesPricesTab() {
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
             </div>
-            {selectedDates.length > 0 && (
-              <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
-                <Trash2 size={13} /> Delete {selectedDates.length} selected
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {selectedDates.length > 0 && (
+                <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
+                  <Trash2 size={13} /> Delete {selectedDates.length} selected
+                </Button>
+              )}
+              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+            </div>
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
@@ -814,16 +849,9 @@ function SecuritiesPricesTab() {
               quickFilterText={priceSearch}
               rowSelection="multiple"
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
-              columnDefs={[
-                { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-                { field: 'date', headerName: 'Date', width: 110, sort: 'desc' },
-                { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
-                { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-                { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-                { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toLocaleString() : '—' },
-                { field: 'source', headerName: 'Source', width: 110 },
-                { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
-              ]}
+              onColumnMoved={gridCols.onColumnMoved}
+              onColumnResized={gridCols.onColumnResized}
+              columnDefs={gridCols.colDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
             />
           </div>
@@ -1382,6 +1410,7 @@ export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
   const [search, setSearch] = useState('')
+  const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
     queryKey: ['price-anomalies'],
@@ -1412,9 +1441,16 @@ export default function MarketData() {
             {tab === 'Downloads' && <DownloadsTab />}
             {tab === 'Anomalies' && (
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
-                <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-                  <AgGridReact rowData={anomalies} columnDefs={ANOMALY_COLS}
-                    defaultColDef={{ resizable: true, sortable: true, filter: true }} />
+                <div>
+                  <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+                    <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
+                  </div>
+                  <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+                    <AgGridReact rowData={anomalies} columnDefs={anomalyGridCols.colDefs}
+                      defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                      onColumnMoved={anomalyGridCols.onColumnMoved}
+                      onColumnResized={anomalyGridCols.onColumnResized} />
+                  </div>
                 </div>
               )
             )}

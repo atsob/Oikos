@@ -4,6 +4,7 @@ from typing import Optional
 import math
 import pandas as pd
 from database.connection import get_db, get_connection
+from api.routers.register import _refresh_balance
 
 router = APIRouter()
 
@@ -340,6 +341,12 @@ def generate_drafts():
                 # Transfers aren't categorised (matches create_transfer, and
                 # Splits are excluded from category reports for transfer rows
                 # anyway), so no Splits are copied for either leg.
+                if is_auto:
+                    # Both legs carry Accounts_Id_Target, so the balance-maintaining
+                    # trigger (written for an older single-row transfer model)
+                    # double-applies the amount to each account when inserted
+                    # already-confirmed — same fix as create_transfer.
+                    _refresh_balance(cur, tmpl["accounts_id"], target_account)
             else:
                 # Insert draft (or confirmed if auto_confirm)
                 cur.execute("""

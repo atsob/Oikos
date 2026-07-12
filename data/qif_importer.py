@@ -18,6 +18,22 @@ from database.crud import (
 )
 from database.queries import get_nwr_account_selection
 
+# Suggested Oikos Accounts_Type per QIF AccountType — QIF can't distinguish
+# Checking from Savings (both are just "Bank"), so that split is always a
+# manual override in the Map/Define wizard step, never something the parser
+# can infer.
+_QIF_TO_OIKOS_TYPE = {
+    'Cash': 'Cash', 'Bank': 'Checking', 'CCard': 'Credit Card',
+    'Oth A': 'Asset', 'Oth L': 'Liability', 'Invst': 'Brokerage',
+    'Invoice': 'Other', 'Unknown': 'Other',
+}
+# UI-bucket grouping for the wizard's account list (display only).
+_QIF_TYPE_TO_GROUP = {
+    'Cash': 'cash', 'Bank': 'cash', 'CCard': 'credit',
+    'Oth A': 'asset_liability', 'Oth L': 'asset_liability', 'Invst': 'investment',
+    'Invoice': 'other', 'Unknown': 'other',
+}
+
 class QIFImporter:
     """Handles QIF file import operations"""
     
@@ -383,34 +399,118 @@ class QIFImporter:
                 sec_count += 1
         
         st.success(f"✅ Imported {sec_count} new securities!")
-    
-    def import_accounts_and_transactions(self, qif):
-        """Import accounts and transactions from QIF object"""
+
+    def _resolve_account(self, name, account_map, default_currency_id):
+        """Resolve a QIF account name to an Oikos Accounts_Id — the single choke
+        point replacing what used to be 4 separate inline get_or_create_id calls.
+        Memoized per-instance (self._account_resolution_cache) so repeated
+        references to the same name (transfer/split/X-type targets) resolve once.
+
+        account_map is the wizard's Map/Define-step output: {qif_name: {'action':
+        'skip'|'map'|'create', 'oikos_account_id': int|None, 'new_name': str|None,
+        'new_type': str|None}}, or None for the legacy no-wizard call path.
+
+        A 'skip' entry only prevents that account's own transactions from being
+        imported (handled by the caller, before this method is ever invoked for
+        that account's own top-level loop turn) — it does NOT stop this method
+        from resolving the same name when it's referenced as someone else's
+        transfer/split/X-type-cash-leg target. In that case, like any name with
+        no map/create entry, it safety-net auto-creates as Checking, exactly
+        matching pre-wizard behavior, so a transfer never silently loses a leg.
+        """
+        if not hasattr(self, '_account_resolution_cache'):
+            self._account_resolution_cache = {}
+        if name in self._account_resolution_cache:
+            return self._account_resolution_cache[name]
+
+        entry = (account_map or {}).get(name)
+        if entry and entry.get('action') == 'map':
+            acc_id = self.clean_id(entry['oikos_account_id'])
+        elif entry and entry.get('action') == 'create':
+            acc_id = self.clean_id(self.get_or_create_id(
+                "Accounts", "Accounts_Id", "Accounts_Name", entry['new_name'],
+                {"Accounts_Type": entry['new_type'], "Currencies_Id": default_currency_id}
+            ))
+        else:
+            acc_id = self.clean_id(self.get_or_create_id(
+                "Accounts", "Accounts_Id", "Accounts_Name", name,
+                {"Accounts_Type": "Checking", "Currencies_Id": default_currency_id}
+            ))
+
+        self._account_resolution_cache[name] = acc_id
+        return acc_id
+
+    def import_accounts_and_transactions(self, qif, account_map=None, date_from=None, date_to=None):
+        """Import accounts and transactions from QIF object.
+
+        account_map: optional wizard Map/Define output (see _resolve_account) —
+        None means the legacy behavior (every account auto-created as Checking).
+        date_from/date_to: optional datetime.date bounds (inclusive) — transactions
+        outside the range are skipped entirely, on both the bank and investment
+        branches.
+
+        Returns a summary dict (accounts_created/mapped/skipped/fallback,
+        bank_tx_count, inv_tx_count, has_bank_tx, has_inv_tx) rather than the old
+        (bool, bool) tuple — this method has exactly one caller (import_full_qif).
+        """
         st.info("💰 Importing Accounts and Transactions...")
-        
+
         acc_count = 0
         bank_tx_count = 0
         inv_tx_count = 0
+        accounts_created = 0
+        accounts_mapped = 0
+        accounts_skipped = 0
+        accounts_fallback = 0
 
-
-        
+        # Pre-pass: resolve (get-or-create) every non-skipped account BEFORE any
+        # transaction is processed. Without this, an account first touched as a
+        # transfer TARGET from another account (which can happen before its own
+        # turn in the loop below) would get silently auto-created as Checking via
+        # the old inline get_or_create_id calls, and its real QIF type / the
+        # user's chosen map-or-create type would never take effect — get_or_create
+        # is get-OR-create, so whatever type wins on first creation sticks forever.
+        self._account_resolution_cache = {}
         for acc_name, acc_obj in qif.accounts.items():
+            entry = (account_map or {}).get(acc_name) if account_map is not None else None
+            action = entry.get('action') if entry else None
+
+            if action == 'skip':
+                accounts_skipped += 1
+                continue
+            elif action == 'map':
+                accounts_mapped += 1
+            elif action == 'create':
+                accounts_created += 1
+            else:
+                accounts_fallback += 1
+
+            qif_currency = getattr(acc_obj, 'currency', 'EUR')
+            curr_id = self.get_or_create_id(
+                'Currencies', 'Currencies_Id', 'Currencies_ShortName', qif_currency,
+                {'Currencies_Name': qif_currency}
+            )
+            self._resolve_account(acc_name, account_map, curr_id)
+        self.conn.commit()
+
+        for acc_name, acc_obj in qif.accounts.items():
+            entry = (account_map or {}).get(acc_name) if account_map is not None else None
+            if entry and entry.get('action') == 'skip':
+                continue
+
             # Get currency
             qif_currency = getattr(acc_obj, 'currency', 'EUR')
-            
+
             # Create/Get Currency
             curr_id = self.get_or_create_id(
                 'Currencies', 'Currencies_Id', 'Currencies_ShortName', qif_currency,
                 {'Currencies_Name': qif_currency}
             )
-            
-            # Create/Get Account
-            acc_id = self.get_or_create_id(
-                'Accounts', 'Accounts_Id', 'Accounts_Name', acc_name,
-                {'Accounts_Type': 'Checking', 'Currencies_Id': curr_id}
-            )
+
+            # Resolve Account (already created in the pre-pass above — cache hit)
+            acc_id = self._resolve_account(acc_name, account_map, curr_id)
             acc_count += 1
-            
+
             c_acc_id = self.clean_id(acc_id)
 
             # 1. Πρώτα ανακτούμε το Currencies_Id του τρέχοντος λογαριασμού
@@ -437,6 +537,11 @@ class QIFImporter:
 
                     # Bank Transaction
                     if hasattr(tx, 'payee'):
+                        if date_from and tx.date.date() < date_from:
+                            continue
+                        if date_to and tx.date.date() > date_to:
+                            continue
+
                         # Παράλειψη αν το συνολικό ποσό της συναλλαγής είναι 0 (προαιρετικό, ανάλογα με τη λογική σας)
                         if tx.amount == 0:
                             continue
@@ -466,10 +571,7 @@ class QIFImporter:
                                 target_acc_name = raw_cat[1:-1]
 
                         if target_acc_name:
-                            resolved_target_id = self.clean_id(self.get_or_create_id(
-                                "Accounts", "Accounts_Id", "Accounts_Name", target_acc_name,
-                                {"Accounts_Type": "Checking", "Currencies_Id": account_currency_id}
-                            ))
+                            resolved_target_id = self._resolve_account(target_acc_name, account_map, account_currency_id)
                             # Skip self-transfers (L field points to the current account)
                             if resolved_target_id != c_acc_id:
                                 is_transfer = True
@@ -606,10 +708,7 @@ class QIFImporter:
 
                             for split in _tr_splits:
                                 s_target_name = split.to_account.strip().strip('[]')
-                                s_target_id = self.clean_id(self.get_or_create_id(
-                                    "Accounts", "Accounts_Id", "Accounts_Name", s_target_name,
-                                    {"Accounts_Type": "Checking", "Currencies_Id": account_currency_id}
-                                ))
+                                s_target_id = self._resolve_account(s_target_name, account_map, account_currency_id)
                                 if s_target_id == c_acc_id:
                                     continue
 
@@ -863,6 +962,11 @@ class QIFImporter:
 
                     # Investment Transaction
                     elif hasattr(tx, 'security'):
+                        if date_from and tx.date.date() < date_from:
+                            continue
+                        if date_to and tx.date.date() > date_to:
+                            continue
+
                         ticker_val = (tx.security or "UNKNOWN")[:255]
                         
                         # Attempt to find security by name
@@ -968,14 +1072,8 @@ class QIFImporter:
                                 cash_amt = amt
 
                             if raw_transfer and cash_amt:
-                                # Get or create the linked cash account.
-                                # Must supply Accounts_Type (NOT NULL) and a default currency.
-                                cash_acc_id = self.clean_id(
-                                    self.get_or_create_id(
-                                        "Accounts", "Accounts_Id", "Accounts_Name", raw_transfer,
-                                        {"Accounts_Type": "Checking", "Currencies_Id": account_currency_id}
-                                    )
-                                )
+                                # Resolve the linked cash account (map/create/fallback).
+                                cash_acc_id = self._resolve_account(raw_transfer, account_map, account_currency_id)
 
                                 # When L resolves to the SAME account, the buy/sell is
                                 # internally funded (no external cash account involved).
@@ -1148,9 +1246,17 @@ class QIFImporter:
             self.conn.commit()
         
         st.success(f"✅ Imported {acc_count} accounts, {bank_tx_count} bank transactions, {inv_tx_count} investment transactions!")
-        
-        # Return flags indicating what was imported
-        return bank_tx_count > 0, inv_tx_count > 0
+
+        return {
+            'accounts_created': accounts_created,
+            'accounts_mapped': accounts_mapped,
+            'accounts_skipped': accounts_skipped,
+            'accounts_fallback': accounts_fallback,
+            'bank_tx_count': bank_tx_count,
+            'inv_tx_count': inv_tx_count,
+            'has_bank_tx': bank_tx_count > 0,
+            'has_inv_tx': inv_tx_count > 0,
+        }
     
     def import_prices_from_qif(self, qif_file_path):
         """Import historical prices from QIF file"""
@@ -1193,9 +1299,261 @@ class QIFImporter:
         self.conn.commit()
         st.success(f"✅ Imported {price_count} historical prices!")
     
+    def _parse_qif_file(self, qif_file_path):
+        """Pre-clean and parse a QIF file into a quiffen.Qif object. Read-only —
+        never touches self.conn/self.cur or the database. Shared by both
+        import_full_qif and preview_qif so the two always parse identically."""
+        # Handles two classes of malformed transactions that crash quiffen:
+        #   1. Amount fields (T/U/O/$) with no digits -> replaced with 0.00
+        #   2. Transaction blocks with no D (date) line -> dropped entirely
+        import re as _re, tempfile as _tempfile, os as _os
+        _amount_line_re = _re.compile(r'^([TUO$])(.*)$')
+        _valid_decimal_re = _re.compile(r'[0-9]')
+
+        with open(qif_file_path, 'r', encoding='latin-1') as _f:
+            _raw_lines = _f.readlines()
+
+        # Split into transaction blocks (separated by ^), clean each one,
+        # then drop blocks that have no date line.
+        _cleaned_lines = []
+        _current_block = []
+        for _line in _raw_lines:
+            _stripped = _line.rstrip('\n\r')
+            if _stripped == '^':
+                # End of block — validate and flush
+                _has_date = any(l.startswith('D') for l in _current_block)
+                _is_header = any(l.startswith('!') for l in _current_block)
+                if _is_header or _has_date:
+                    # Fix any bad amount lines before keeping
+                    _fixed_block = []
+                    for _bl in _current_block:
+                        _m = _amount_line_re.match(_bl.rstrip('\n\r'))
+                        if _m:
+                            _prefix, _val = _m.group(1), _m.group(2)
+                            if not _valid_decimal_re.search(_val):
+                                _bl = _prefix + '0.00\n'
+                        _fixed_block.append(_bl)
+                    _cleaned_lines.extend(_fixed_block)
+                    _cleaned_lines.append('^\n')
+                # else: silently drop the dateless block
+                _current_block = []
+            else:
+                _current_block.append(_line)
+        # Flush any trailing lines after last ^
+        if _current_block:
+            _cleaned_lines.extend(_current_block)
+
+        # Remove stray !Type: lines that appear immediately before !Account.
+        # This QIF format emits !Type:<x> between every pair of !Account blocks
+        # as a separator, but quiffen misinterprets them as setting the type
+        # context for the PREVIOUS account, causing transactions to be attributed
+        # to the wrong account. Strip them out entirely.
+        _stripped_lines = []
+        _n = len(_cleaned_lines)
+        for _i, _cl in enumerate(_cleaned_lines):
+            if _cl.rstrip('\n\r').startswith('!Type:'):
+                # Look ahead (skip blank lines) for next non-blank line
+                _j = _i + 1
+                while _j < _n and _cleaned_lines[_j].strip() == '':
+                    _j += 1
+                if _j < _n and _cleaned_lines[_j].strip() == '!Account':
+                    continue  # drop this stray !Type: line
+            _stripped_lines.append(_cl)
+        _cleaned_lines = _stripped_lines
+
+        with _tempfile.NamedTemporaryFile(mode='w', encoding='latin-1',
+                                          suffix='.qif', delete=False) as _tmp:
+            _tmp.writelines(_cleaned_lines)
+            _clean_path = _tmp.name
+
+        try:
+            # Monkey-patch quiffen's Transaction.from_list to skip dateless/invalid
+            # transactions instead of raising ValidationError. Handles QIF files where
+            # a missing ^ separator causes quiffen to see a no-date sub-block.
+            import quiffen.core.transaction as _qtx
+            from pydantic import ValidationError as _ValErr
+
+            _orig_from_list = _qtx.Transaction.from_list.__func__
+
+            import datetime as _dt
+
+            @classmethod
+            def _safe_from_list(cls, lst, day_first=False, line_number=0):
+                try:
+                    return _orig_from_list(cls, lst, day_first=day_first, line_number=line_number)
+                except Exception as _e:
+                    # Catch any transaction-level parse failure and return a sentinel
+                    # that the import loop will recognise and skip:
+                    #   - Missing date field      (ValidationError: "field required")
+                    #   - Unparseable date value  (ParserError: "unknown string format")
+                    #   - Bad amount value        (InvalidOperation / ConversionSyntax)
+                    _sentinel = cls(
+                        date=_dt.datetime(1, 1, 1),
+                        amount=0,
+                        memo='__QIF_SKIP__'
+                    )
+                    return _sentinel, {}
+
+            _qtx.Transaction.from_list = _safe_from_list
+
+            # Patch ALL quiffen from_list methods that can crash on malformed QIF data.
+            # Each returns a minimal sentinel/placeholder so parse_string can continue.
+            import quiffen.core.category as _qcat
+            import quiffen.core.investment as _qinv
+            import quiffen.core.class_type as _qcls
+            import quiffen.core.security as _qsec
+
+            _orig_cat_from_list = _qcat.Category.from_list.__func__
+            _orig_inv_from_list = _qinv.Investment.from_list.__func__
+            _orig_cls_from_list = _qcls.Class.from_list.__func__
+            _orig_sec_from_list = _qsec.Security.from_list.__func__
+
+            @classmethod
+            def _safe_cat_from_list(cls, lst):
+                try:
+                    return _orig_cat_from_list(cls, lst)
+                except Exception:
+                    return cls(name='__INVALID_CATEGORY__')
+
+            @classmethod
+            def _safe_inv_from_list(cls, lst, day_first=False, line_number=0):
+                try:
+                    return _orig_inv_from_list(cls, lst, day_first=day_first, line_number=line_number)
+                except Exception:
+                    return cls(date=_dt.datetime(1, 1, 1), memo='__QIF_SKIP__')
+
+            @classmethod
+            def _safe_cls_from_list(cls, lst):
+                try:
+                    return _orig_cls_from_list(cls, lst)
+                except Exception:
+                    return cls(name='__INVALID_CLASS__')
+
+            @classmethod
+            def _safe_sec_from_list(cls, lst, line_number=0):
+                try:
+                    return _orig_sec_from_list(cls, lst, line_number=line_number)
+                except Exception:
+                    return cls(name='__INVALID_SECURITY__')
+
+            _qcat.Category.from_list = _safe_cat_from_list
+            _qinv.Investment.from_list = _safe_inv_from_list
+            _qcls.Class.from_list = _safe_cls_from_list
+            _qsec.Security.from_list = _safe_sec_from_list
+
+            qif = quiffen.Qif.parse(_clean_path, day_first=False, encoding='latin-1')
+        finally:
+            _os.unlink(_clean_path)
+            # Restore all patched methods
+            try:
+                _qtx.Transaction.from_list = classmethod(_orig_from_list)
+                _qcat.Category.from_list = classmethod(_orig_cat_from_list)
+                _qinv.Investment.from_list = classmethod(_orig_inv_from_list)
+                _qcls.Class.from_list = classmethod(_orig_cls_from_list)
+                _qsec.Security.from_list = classmethod(_orig_sec_from_list)
+            except Exception:
+                pass
+        return qif
+
+    def preview_qif(self, qif_file_path):
+        """Read-only Parse-step preview: parses the file and returns a per-account
+        summary (QIF type, suggested Oikos type/group, transaction counts, date
+        range, existing-account-name match) plus a global date range and totals.
+        Never writes, never disables triggers, never clears tables — only issues
+        read-only SELECTs (existing-name lookups) against the database."""
+        self.connect()
+        try:
+            qif = self._parse_qif_file(qif_file_path)
+
+            accounts = []
+            global_min = None
+            global_max = None
+            total_bank_tx = 0
+            total_inv_tx = 0
+
+            for acc_name, acc_obj in qif.accounts.items():
+                # acc_obj.account_type (from the !Account block's own T line) isn't
+                # reliably populated by quiffen in practice — but the AccountType
+                # keys of acc_obj.transactions (set from each !Type:X transaction
+                # section header) are, so prefer those; account_type is only a
+                # fallback for the edge case of an account with zero transactions.
+                txn_type_keys = [k for k in acc_obj.transactions.keys()
+                                  if (k.value if hasattr(k, 'value') else str(k)) != 'Unknown']
+                if txn_type_keys:
+                    qif_type = txn_type_keys[0].value if hasattr(txn_type_keys[0], 'value') else str(txn_type_keys[0])
+                else:
+                    qif_type_raw = getattr(acc_obj, 'account_type', None)
+                    qif_type = qif_type_raw.value if hasattr(qif_type_raw, 'value') else (str(qif_type_raw) if qif_type_raw else 'Unknown')
+                if qif_type not in _QIF_TO_OIKOS_TYPE:
+                    qif_type = 'Unknown'
+
+                bank_tx_count = 0
+                inv_tx_count = 0
+                acc_min = None
+                acc_max = None
+
+                for tx_list in acc_obj.transactions.values():
+                    for tx in tx_list:
+                        if getattr(tx, 'memo', None) == '__QIF_SKIP__':
+                            continue
+                        if not (hasattr(tx, 'payee') or hasattr(tx, 'security')):
+                            continue
+                        if hasattr(tx, 'payee'):
+                            bank_tx_count += 1
+                        else:
+                            inv_tx_count += 1
+                        tx_date = tx.date.date()
+                        if acc_min is None or tx_date < acc_min:
+                            acc_min = tx_date
+                        if acc_max is None or tx_date > acc_max:
+                            acc_max = tx_date
+
+                if acc_min and (global_min is None or acc_min < global_min):
+                    global_min = acc_min
+                if acc_max and (global_max is None or acc_max > global_max):
+                    global_max = acc_max
+                total_bank_tx += bank_tx_count
+                total_inv_tx += inv_tx_count
+
+                self.cur.execute(
+                    "SELECT Accounts_Id, Accounts_Type FROM Accounts WHERE Accounts_Name = %s", (acc_name,)
+                )
+                existing = self.cur.fetchone()
+
+                accounts.append({
+                    'qif_name': acc_name,
+                    'qif_type': qif_type,
+                    'suggested_oikos_type': _QIF_TO_OIKOS_TYPE.get(qif_type, 'Other'),
+                    'suggested_group': _QIF_TYPE_TO_GROUP.get(qif_type, 'other'),
+                    'bank_tx_count': bank_tx_count,
+                    'inv_tx_count': inv_tx_count,
+                    'min_date': acc_min.isoformat() if acc_min else None,
+                    'max_date': acc_max.isoformat() if acc_max else None,
+                    'existing_match_id': existing[0] if existing else None,
+                    'existing_match_type': existing[1] if existing else None,
+                })
+
+            return {
+                'accounts': accounts,
+                'date_range': {
+                    'min': global_min.isoformat() if global_min else None,
+                    'max': global_max.isoformat() if global_max else None,
+                },
+                'totals': {
+                    'accounts': len(accounts),
+                    'bank_tx': total_bank_tx,
+                    'inv_tx': total_inv_tx,
+                },
+            }
+        finally:
+            self.disconnect()
+
     def import_full_qif(self, qif_file_path, tables_to_clear, import_options,
                         exclude_bank_account_ids=None,
-                        exclude_inv_account_ids=None):
+                        exclude_inv_account_ids=None,
+                        account_map=None,
+                        date_from=None,
+                        date_to=None):
         """Complete QIF import process"""
         try:
             self.connect()
@@ -1213,183 +1571,36 @@ class QIFImporter:
                     exclude_bank_account_ids=exclude_bank_account_ids,
                     exclude_inv_account_ids=exclude_inv_account_ids,
                 )
-            
+
             # Parse QIF file
             st.info("📄 Parsing QIF file...")
-
-            # Pre-clean the QIF file before parsing.
-            # Handles two classes of malformed transactions that crash quiffen:
-            #   1. Amount fields (T/U/O/$) with no digits -> replaced with 0.00
-            #   2. Transaction blocks with no D (date) line -> dropped entirely
-            import re as _re, tempfile as _tempfile, os as _os
-            _amount_line_re = _re.compile(r'^([TUO$])(.*)$')
-            _valid_decimal_re = _re.compile(r'[0-9]')
-
-            with open(qif_file_path, 'r', encoding='latin-1') as _f:
-                _raw_lines = _f.readlines()
-
-            # Split into transaction blocks (separated by ^), clean each one,
-            # then drop blocks that have no date line.
-            _cleaned_lines = []
-            _current_block = []
-            for _line in _raw_lines:
-                _stripped = _line.rstrip('\n\r')
-                if _stripped == '^':
-                    # End of block — validate and flush
-                    _has_date = any(l.startswith('D') for l in _current_block)
-                    _is_header = any(l.startswith('!') for l in _current_block)
-                    if _is_header or _has_date:
-                        # Fix any bad amount lines before keeping
-                        _fixed_block = []
-                        for _bl in _current_block:
-                            _m = _amount_line_re.match(_bl.rstrip('\n\r'))
-                            if _m:
-                                _prefix, _val = _m.group(1), _m.group(2)
-                                if not _valid_decimal_re.search(_val):
-                                    _bl = _prefix + '0.00\n'
-                            _fixed_block.append(_bl)
-                        _cleaned_lines.extend(_fixed_block)
-                        _cleaned_lines.append('^\n')
-                    # else: silently drop the dateless block
-                    _current_block = []
-                else:
-                    _current_block.append(_line)
-            # Flush any trailing lines after last ^
-            if _current_block:
-                _cleaned_lines.extend(_current_block)
-
-            # Remove stray !Type: lines that appear immediately before !Account.
-            # This QIF format emits !Type:<x> between every pair of !Account blocks
-            # as a separator, but quiffen misinterprets them as setting the type
-            # context for the PREVIOUS account, causing transactions to be attributed
-            # to the wrong account. Strip them out entirely.
-            _stripped_lines = []
-            _n = len(_cleaned_lines)
-            for _i, _cl in enumerate(_cleaned_lines):
-                if _cl.rstrip('\n\r').startswith('!Type:'):
-                    # Look ahead (skip blank lines) for next non-blank line
-                    _j = _i + 1
-                    while _j < _n and _cleaned_lines[_j].strip() == '':
-                        _j += 1
-                    if _j < _n and _cleaned_lines[_j].strip() == '!Account':
-                        continue  # drop this stray !Type: line
-                _stripped_lines.append(_cl)
-            _cleaned_lines = _stripped_lines
-
-            with _tempfile.NamedTemporaryFile(mode='w', encoding='latin-1',
-                                              suffix='.qif', delete=False) as _tmp:
-                _tmp.writelines(_cleaned_lines)
-                _clean_path = _tmp.name
-
-            try:
-                # Monkey-patch quiffen's Transaction.from_list to skip dateless/invalid
-                # transactions instead of raising ValidationError. Handles QIF files where
-                # a missing ^ separator causes quiffen to see a no-date sub-block.
-                import quiffen.core.transaction as _qtx
-                from pydantic import ValidationError as _ValErr
-
-                _orig_from_list = _qtx.Transaction.from_list.__func__
-
-                import datetime as _dt
-
-                @classmethod
-                def _safe_from_list(cls, lst, day_first=False, line_number=0):
-                    try:
-                        return _orig_from_list(cls, lst, day_first=day_first, line_number=line_number)
-                    except Exception as _e:
-                        # Catch any transaction-level parse failure and return a sentinel
-                        # that the import loop will recognise and skip:
-                        #   - Missing date field      (ValidationError: "field required")
-                        #   - Unparseable date value  (ParserError: "unknown string format")
-                        #   - Bad amount value        (InvalidOperation / ConversionSyntax)
-                        _sentinel = cls(
-                            date=_dt.datetime(1, 1, 1),
-                            amount=0,
-                            memo='__QIF_SKIP__'
-                        )
-                        return _sentinel, {}
-
-                _qtx.Transaction.from_list = _safe_from_list
-
-                # Patch ALL quiffen from_list methods that can crash on malformed QIF data.
-                # Each returns a minimal sentinel/placeholder so parse_string can continue.
-                import quiffen.core.category as _qcat
-                import quiffen.core.investment as _qinv
-                import quiffen.core.class_type as _qcls
-                import quiffen.core.security as _qsec
-
-                _orig_cat_from_list = _qcat.Category.from_list.__func__
-                _orig_inv_from_list = _qinv.Investment.from_list.__func__
-                _orig_cls_from_list = _qcls.Class.from_list.__func__
-                _orig_sec_from_list = _qsec.Security.from_list.__func__
-
-                @classmethod
-                def _safe_cat_from_list(cls, lst):
-                    try:
-                        return _orig_cat_from_list(cls, lst)
-                    except Exception:
-                        return cls(name='__INVALID_CATEGORY__')
-
-                @classmethod
-                def _safe_inv_from_list(cls, lst, day_first=False, line_number=0):
-                    try:
-                        return _orig_inv_from_list(cls, lst, day_first=day_first, line_number=line_number)
-                    except Exception:
-                        return cls(date=_dt.datetime(1, 1, 1), memo='__QIF_SKIP__')
-
-                @classmethod
-                def _safe_cls_from_list(cls, lst):
-                    try:
-                        return _orig_cls_from_list(cls, lst)
-                    except Exception:
-                        return cls(name='__INVALID_CLASS__')
-
-                @classmethod
-                def _safe_sec_from_list(cls, lst, line_number=0):
-                    try:
-                        return _orig_sec_from_list(cls, lst, line_number=line_number)
-                    except Exception:
-                        return cls(name='__INVALID_SECURITY__')
-
-                _qcat.Category.from_list = _safe_cat_from_list
-                _qinv.Investment.from_list = _safe_inv_from_list
-                _qcls.Class.from_list = _safe_cls_from_list
-                _qsec.Security.from_list = _safe_sec_from_list
-
-                qif = quiffen.Qif.parse(_clean_path, day_first=False, encoding='latin-1')
-            finally:
-                _os.unlink(_clean_path)
-                # Restore all patched methods
-                try:
-                    _qtx.Transaction.from_list = classmethod(_orig_from_list)
-                    _qcat.Category.from_list = classmethod(_orig_cat_from_list)
-                    _qinv.Investment.from_list = classmethod(_orig_inv_from_list)
-                    _qcls.Class.from_list = classmethod(_orig_cls_from_list)
-                    _qsec.Security.from_list = classmethod(_orig_sec_from_list)
-                except Exception:
-                    pass
+            qif = self._parse_qif_file(qif_file_path)
             st.success("✅ QIF file parsed successfully!")
-            
+
             # Track what was imported
             has_bank_tx = False
             has_inv_tx = False
-            
+            summary = {}
+
             # Import based on selections
             if import_options.get('import_categories', True):
                 self.import_categories_from_qif(qif_file_path)
-            
+
             if import_options.get('import_securities', True):
                 self.import_securities(qif)
-            
+
             if import_options.get('import_accounts', True):
-                has_bank_tx, has_inv_tx = self.import_accounts_and_transactions(qif)
+                summary = self.import_accounts_and_transactions(
+                    qif, account_map=account_map, date_from=date_from, date_to=date_to
+                )
+                has_bank_tx, has_inv_tx = summary['has_bank_tx'], summary['has_inv_tx']
                 issue_count = self.scan_date_mismatched_transfers()
                 if issue_count:
                     st.warning(f"⚠️ {issue_count} transfer(s) flagged with date mismatches — review in Transfer Issues.")
-            
+
             if import_options.get('import_prices', True):
                 self.import_prices_from_qif(qif_file_path)
-            
+
             # Automatic post-processing based on what was imported
             st.info("🔄 Automatically updating database statistics...")
             update_db_stats()
@@ -1400,16 +1611,17 @@ class QIFImporter:
                 update_pension_balances()
                 st.info("🔄 Automatically updating investment cash balances...")
                 update_investment_balances()
-            
+
             if has_inv_tx or import_options.get('force_update_holdings', False):
                 st.info("🔄 Automatically updating holdings...")
                 update_holdings()
-            
+
             # Re-enable triggers
             self.enable_triggers()
-            
+
             st.success("✅ QIF import completed successfully!")
-            
+            return summary
+
         except Exception as e:
             st.error(f"❌ Error during import: {str(e)}")
             raise e

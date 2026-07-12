@@ -366,6 +366,32 @@ CREATE        INDEX IF NOT EXISTS idx_splits_category ON Splits(Categories_Id) W
 
 -- Draft transactions (Is_Draft = TRUE) never affect account balances until
 -- they are confirmed (Is_Draft flipped to FALSE).
+-- The Accounts_Id_Target branches below fire only when Total_Amount_Target is
+-- explicitly set, not merely whenever Accounts_Id_Target is set. This
+-- distinguishes two coexisting transfer representations:
+--   - Single-row model (e.g. an investment's linked cash leg, api/routers/
+--     investments.py _upsert_cash_transaction): one row carries both sides,
+--     with Total_Amount_Target holding the amount to apply to the target
+--     account. This branch is the only thing that updates that account's
+--     balance in real time, so it must keep firing for these rows.
+--   - Two-row model (e.g. Cash Register / recurring-template transfers,
+--     api/routers/register.py create_transfer, create_transaction): two
+--     separate rows, each already correctly updating its own account via its
+--     own Total_Amount; Accounts_Id_Target is set on each purely for display/
+--     lookup (which account the transfer went to/from), with Total_Amount_
+--     Target left NULL. Before this fix, the old COALESCE(Total_Amount_
+--     Target, -Total_Amount) fallback meant this branch fired for these too,
+--     double-applying the transfer amount to both accounts on every insert/
+--     update/delete (see api/routers/register.py create_transfer and
+--     database/queries.py _confirm_draft_row for the application-level
+--     workarounds this necessitated). Gating on Total_Amount_Target IS NOT
+--     NULL makes two-row transfers rely solely on each row's own Total_Amount,
+--     eliminating the double-count, while leaving the single-row model
+--     unchanged.
+-- Note: some older/bulk-imported transfers (e.g. via the QIF importer) set
+-- Total_Amount_Target on genuine two-row pairs too, and would still
+-- double-count on any future INSERT/UPDATE/DELETE of those specific rows —
+-- this fix does not cover that importer-specific pattern.
 CREATE OR REPLACE FUNCTION public.update_accounts_balance_with_transfer()
     RETURNS trigger
     LANGUAGE plpgsql
@@ -376,9 +402,9 @@ BEGIN
         UPDATE Accounts
            SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
          WHERE Accounts_Id = NEW.Accounts_Id;
-        IF NEW.Accounts_Id_Target IS NOT NULL THEN
+        IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
             UPDATE Accounts
-               SET Accounts_Balance = Accounts_Balance + COALESCE(NEW.Total_Amount_Target, -NEW.Total_Amount)
+               SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
              WHERE Accounts_Id = NEW.Accounts_Id_Target;
         END IF;
 
@@ -387,9 +413,9 @@ BEGIN
         UPDATE Accounts
            SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
          WHERE Accounts_Id = OLD.Accounts_Id;
-        IF OLD.Accounts_Id_Target IS NOT NULL THEN
+        IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
             UPDATE Accounts
-               SET Accounts_Balance = Accounts_Balance - COALESCE(OLD.Total_Amount_Target, -OLD.Total_Amount)
+               SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
              WHERE Accounts_Id = OLD.Accounts_Id_Target;
         END IF;
 
@@ -401,9 +427,9 @@ BEGIN
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
              WHERE Accounts_Id = NEW.Accounts_Id;
-            IF NEW.Accounts_Id_Target IS NOT NULL THEN
+            IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
                 UPDATE Accounts
-                   SET Accounts_Balance = Accounts_Balance + COALESCE(NEW.Total_Amount_Target, -NEW.Total_Amount)
+                   SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
                  WHERE Accounts_Id = NEW.Accounts_Id_Target;
             END IF;
         ELSIF NOT OLD.Is_Draft AND NEW.Is_Draft THEN
@@ -411,9 +437,9 @@ BEGIN
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
              WHERE Accounts_Id = OLD.Accounts_Id;
-            IF OLD.Accounts_Id_Target IS NOT NULL THEN
+            IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
                 UPDATE Accounts
-                   SET Accounts_Balance = Accounts_Balance - COALESCE(OLD.Total_Amount_Target, -OLD.Total_Amount)
+                   SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
                  WHERE Accounts_Id = OLD.Accounts_Id_Target;
             END IF;
         ELSE

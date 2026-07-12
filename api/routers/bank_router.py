@@ -5,7 +5,9 @@ import io
 import math
 import pandas as pd
 from datetime import date as _date
+from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from pydantic import BaseModel
 from database.connection import get_connection, get_db
 
 router = APIRouter()
@@ -1539,3 +1541,309 @@ async def revolut_trading_import(
         return counts
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── QIF Importer ──────────────────────────────────────────────────────────────
+# A bulk migration tool (import historical data from Quicken/other finance apps
+# into a fresh install), not an incremental connector like the importers above —
+# hence the different shape: no per-row preview/selection, just file-level
+# options (which tables to optionally wipe first, which data types to import)
+# confirmed once up front.
+
+# The only table names ever allowed into clear_tables()'s f-string-built TRUNCATE
+# statement — anything else is rejected before it reaches SQL.
+_QIF_CLEARABLE_TABLES = {"Categories", "Transactions", "Splits", "Investments", "Holdings"}
+
+
+def _qif_fk_cascade_closure(cur, seed_tables: set) -> set:
+    """Tables Postgres's TRUNCATE ... CASCADE would also truncate, starting from
+    *seed_tables* (lowercase table names) — computed from the live pg_constraint
+    catalog rather than hardcoded, since TRUNCATE CASCADE ignores each foreign
+    key's own ON DELETE behavior and always truncates every referencing table,
+    recursively. This is what clear_tables() actually does for any table with no
+    exclusion list applied (Categories always; Transactions/Splits/Investments
+    when no account-exclusions are given for them)."""
+    cur.execute("""
+        SELECT conrelid::regclass::text AS referencing_table,
+               confrelid::regclass::text AS referenced_table
+        FROM pg_constraint
+        WHERE contype = 'f'
+    """)
+    edges = cur.fetchall()
+    closure = set(seed_tables)
+    changed = True
+    while changed:
+        changed = False
+        for referencing, referenced in edges:
+            if referenced in closure and referencing not in closure:
+                closure.add(referencing)
+                changed = True
+    return closure
+
+
+class QifClearImpactRequest(BaseModel):
+    tables_to_clear: List[str] = []
+    exclude_bank_account_ids: Optional[List[int]] = None
+    exclude_inv_account_ids: Optional[List[int]] = None
+
+
+@router.post("/qif-clear-impact")
+def qif_clear_impact(req: QifClearImpactRequest):
+    """The *real* set of tables that would be cleared for the given selections —
+    going beyond the 5 checkboxes shown in the UI to the full foreign-key cascade
+    closure, with row counts, so the user sees exactly what will happen before
+    confirming. Mirrors QIFImporter.clear_tables()'s exact branching: a table
+    with an account-exclusion list applied uses a scoped DELETE (no cascade);
+    every other checked table is an unqualified TRUNCATE ... CASCADE."""
+    bad = set(req.tables_to_clear) - _QIF_CLEARABLE_TABLES
+    if bad:
+        raise HTTPException(400, f"Unknown table(s): {', '.join(sorted(bad))}")
+
+    excl_bank = req.exclude_bank_account_ids or []
+    excl_inv = req.exclude_inv_account_ids or []
+
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+
+            truncate_seed = set()
+            scoped = []
+            splits_handled_directly = "Splits" in req.tables_to_clear and bool(excl_bank)
+            for t in req.tables_to_clear:
+                if t == "Transactions" and excl_bank:
+                    cur.execute("SELECT COUNT(*) FROM Transactions WHERE Accounts_Id NOT IN %s", (tuple(excl_bank),))
+                    to_delete = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM Transactions WHERE Accounts_Id IN %s", (tuple(excl_bank),))
+                    preserved = cur.fetchone()[0]
+                    scoped.append({"table": "Transactions", "rows_to_delete": to_delete, "rows_preserved": preserved, "cascade": False})
+
+                    # Deleting Transactions is a plain DELETE (not TRUNCATE), so it respects
+                    # each FK's own ON DELETE clause individually — unlike the TRUNCATE CASCADE
+                    # path below. Splits.Transactions_Id and Transfer_Issues.Transactions_Id_A/B
+                    # are ON DELETE CASCADE, so those rows are removed too, scoped to only the
+                    # transactions being deleted. Investments.Transactions_Id has no ON DELETE
+                    # clause, so clear_tables() nulls it out first rather than deleting the row.
+                    if not splits_handled_directly:
+                        cur.execute("""
+                            SELECT COUNT(*) FROM Splits WHERE Transactions_Id IN (
+                                SELECT Transactions_Id FROM Transactions WHERE Accounts_Id NOT IN %s
+                            )
+                        """, (tuple(excl_bank),))
+                        splits_cascade = cur.fetchone()[0]
+                        scoped.append({"table": "Splits", "rows_to_delete": splits_cascade, "rows_preserved": None, "cascade": True})
+
+                    cur.execute("""
+                        SELECT COUNT(*) FROM Transfer_Issues WHERE
+                            Transactions_Id_A IN (SELECT Transactions_Id FROM Transactions WHERE Accounts_Id NOT IN %s)
+                            OR Transactions_Id_B IN (SELECT Transactions_Id FROM Transactions WHERE Accounts_Id NOT IN %s)
+                    """, (tuple(excl_bank), tuple(excl_bank)))
+                    ti_cascade = cur.fetchone()[0]
+                    if ti_cascade:
+                        scoped.append({"table": "Transfer_Issues", "rows_to_delete": ti_cascade, "rows_preserved": None, "cascade": True})
+
+                    cur.execute("""
+                        SELECT COUNT(*) FROM Investments WHERE Transactions_Id IN (
+                            SELECT Transactions_Id FROM Transactions WHERE Accounts_Id NOT IN %s
+                        )
+                    """, (tuple(excl_bank),))
+                    inv_unlink = cur.fetchone()[0]
+                    if inv_unlink:
+                        scoped.append({"table": "Investments", "rows_to_delete": 0, "rows_preserved": None, "rows_unlinked": inv_unlink, "cascade": True})
+                elif t == "Splits" and excl_bank:
+                    cur.execute("""
+                        SELECT COUNT(*) FROM Splits WHERE Transactions_Id IN (
+                            SELECT Transactions_Id FROM Transactions WHERE Accounts_Id NOT IN %s
+                        )
+                    """, (tuple(excl_bank),))
+                    to_delete = cur.fetchone()[0]
+                    scoped.append({"table": "Splits", "rows_to_delete": to_delete, "rows_preserved": None, "cascade": False})
+                elif t == "Investments" and excl_inv:
+                    cur.execute("SELECT COUNT(*) FROM Investments WHERE Accounts_Id NOT IN %s", (tuple(excl_inv),))
+                    to_delete = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM Investments WHERE Accounts_Id IN %s", (tuple(excl_inv),))
+                    preserved = cur.fetchone()[0]
+                    scoped.append({"table": "Investments", "rows_to_delete": to_delete, "rows_preserved": preserved, "cascade": False})
+                else:
+                    truncate_seed.add(t.lower())
+
+            closure = _qif_fk_cascade_closure(cur, truncate_seed) if truncate_seed else set()
+
+            truncated = []
+            for t in sorted(closure):
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {t}")
+                    cnt = cur.fetchone()[0]
+                except Exception:
+                    cnt = None
+                truncated.append({"table": t, "row_count": cnt, "checked_directly": t in truncate_seed})
+
+        return {"truncated_tables": truncated, "scoped_delete_tables": scoped}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/qif-parse")
+async def qif_parse(file: UploadFile = File(...)):
+    """Read-only Parse step of the QIF wizard — no DB writes to import data,
+    only read-only existing-account-name lookups. Returns the account list
+    (QIF type, suggested Oikos type/group, tx counts, date range, existing
+    match) plus a global date range and totals, for the Map/Define step."""
+    import tempfile
+    import os as _os
+
+    file_bytes = await file.read()
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".qif", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        from data.qif_importer import QIFImporter
+        return QIFImporter().preview_qif(tmp_path)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        if tmp_path:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@router.get("/qif-options")
+def qif_options():
+    """Account lists (for the clear-table exclusion pickers) + previously saved
+    exclusion selections, so the QIF Importer tab can render its options without
+    needing the file uploaded yet."""
+    from database.queries import get_nwr_account_selection
+    try:
+        with get_db() as conn:
+            all_accs = pd.read_sql(
+                "SELECT Accounts_Id AS id, Accounts_Name AS name FROM Accounts ORDER BY Accounts_Name", conn
+            )
+            inv_accs = pd.read_sql("""
+                SELECT DISTINCT a.Accounts_Id AS id, a.Accounts_Name AS name
+                FROM Accounts a
+                JOIN Investments i ON i.Accounts_Id = a.Accounts_Id
+                ORDER BY a.Accounts_Name
+            """, conn)
+        all_ids = set(all_accs["id"])
+        inv_ids = set(inv_accs["id"])
+        saved_bank = [i for i in (get_nwr_account_selection('qif_exclude_bank_accs') or []) if i in all_ids]
+        saved_inv = [i for i in (get_nwr_account_selection('qif_exclude_inv_accs') or []) if i in inv_ids]
+        return {
+            "all_accounts": _df(all_accs),
+            "investment_accounts": _df(inv_accs),
+            "saved_exclude_bank_ids": saved_bank,
+            "saved_exclude_inv_ids": saved_inv,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/qif-import")
+async def qif_import(
+    file: UploadFile = File(...),
+    tables_to_clear: str = Query("[]"),           # JSON list, e.g. ["Transactions","Splits"] — empty by default (nothing cleared)
+    import_options: str = Query("{}"),            # JSON dict — import_categories/import_securities/import_accounts/import_prices/force_update_balances/force_update_holdings
+    exclude_bank_account_ids: str = Query(None),   # JSON list of account ids to preserve when clearing Transactions/Splits
+    exclude_inv_account_ids: str = Query(None),    # JSON list of account ids to preserve when clearing Investments
+    save_exclusions: bool = Query(False),
+    account_map: str = Query("{}"),                # JSON dict: {qif_name: {action: skip|map|create, oikos_account_id?, new_name?, new_type?}}
+    date_from: str = Query(None),                   # "YYYY-MM-DD", inclusive
+    date_to: str = Query(None),                      # "YYYY-MM-DD", inclusive
+):
+    """Run a full QIF import. Table-clearing is explicit and opt-in — pass an
+    empty tables_to_clear (the default) to append data without deleting anything."""
+    import json
+    import tempfile
+    import os as _os
+    from datetime import date as _date
+
+    try:
+        clear_list = json.loads(tables_to_clear) or []
+        opts = json.loads(import_options) or {}
+        excl_bank = json.loads(exclude_bank_account_ids) if exclude_bank_account_ids else None
+        excl_inv = json.loads(exclude_inv_account_ids) if exclude_inv_account_ids else None
+        account_map_dict = json.loads(account_map) or {}
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"Invalid options: {e}")
+
+    bad_tables = set(clear_list) - _QIF_CLEARABLE_TABLES
+    if bad_tables:
+        raise HTTPException(400, f"Unknown table(s): {', '.join(sorted(bad_tables))}")
+
+    try:
+        date_from_parsed = _date.fromisoformat(date_from) if date_from else None
+        date_to_parsed = _date.fromisoformat(date_to) if date_to else None
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid date: {e}")
+
+    # Validate the account map before touching the importer, so a bad mapping
+    # 400s immediately instead of failing partway through a piecemeal-committed
+    # import (see qif_importer.py — import_full_qif isn't fully transactional).
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT unnest(enum_range(NULL::Accounts_Type))::text")
+        valid_account_types = {r[0] for r in cur.fetchall()}
+
+        mapped_ids = set()
+        for qname, entry in account_map_dict.items():
+            action = entry.get('action') if isinstance(entry, dict) else None
+            if action not in ('skip', 'map', 'create'):
+                raise HTTPException(400, f"Invalid action for '{qname}': {action!r}")
+            if action == 'map':
+                acc_id = entry.get('oikos_account_id')
+                if not acc_id:
+                    raise HTTPException(400, f"'{qname}' is mapped but has no oikos_account_id")
+                mapped_ids.add(acc_id)
+            elif action == 'create':
+                if not str(entry.get('new_name') or '').strip():
+                    raise HTTPException(400, f"'{qname}' create action needs a non-empty new_name")
+                if entry.get('new_type') not in valid_account_types:
+                    raise HTTPException(400, f"'{qname}' has invalid new_type: {entry.get('new_type')!r}")
+
+        if mapped_ids:
+            cur.execute("SELECT Accounts_Id FROM Accounts WHERE Accounts_Id = ANY(%s)", (list(mapped_ids),))
+            found_ids = {r[0] for r in cur.fetchall()}
+            missing = mapped_ids - found_ids
+            if missing:
+                raise HTTPException(400, f"Mapped account id(s) not found: {sorted(missing)}")
+
+    file_bytes = await file.read()
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".qif", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        from data.qif_importer import QIFImporter
+        from database.crud import save_nwr_account_selection
+
+        importer = QIFImporter()
+        summary = importer.import_full_qif(
+            tmp_path, clear_list, opts,
+            exclude_bank_account_ids=excl_bank,
+            exclude_inv_account_ids=excl_inv,
+            account_map=account_map_dict or None,
+            date_from=date_from_parsed,
+            date_to=date_to_parsed,
+        )
+
+        if save_exclusions:
+            save_nwr_account_selection(excl_bank or [], 'qif_exclude_bank_accs')
+            save_nwr_account_selection(excl_inv or [], 'qif_exclude_inv_accs')
+
+        return {"message": "QIF import completed successfully.", **(summary or {})}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        if tmp_path:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass

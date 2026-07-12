@@ -7,6 +7,7 @@ import {
 } from '@/lib/api'
 import { Input, Button, useEscapeKey } from '@/components/ui'
 import { fmtEur, cn } from '@/lib/utils'
+import { getSettings } from '@/lib/settings'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -333,6 +334,27 @@ export function TxModal({
   useEscapeKey(onClose)
   const set = (k: keyof TxForm, v: unknown) => onFormChange({ ...form, [k]: v })
 
+  // Switching to Transfer auto-fills the configured default payee (Settings →
+  // Transfers) when none is chosen yet, so most transfers need no payee typing
+  // at all. Never overrides a payee the user already picked.
+  const handleTransferToggle = async () => {
+    if (form.payees_id) { set('is_transfer', true); return }
+    const defaultName = getSettings().defaultTransferPayeeName?.trim()
+    if (!defaultName) { set('is_transfer', true); return }
+    const existing = payees.find(p => String(p.name).toLowerCase() === defaultName.toLowerCase())
+    if (existing) {
+      onFormChange({ ...form, is_transfer: true, payees_id: String(existing.id) })
+      return
+    }
+    try {
+      const res = await api.post('/static-data/payees', { name: defaultName })
+      onPayeeCreated({ id: res.data.id, name: defaultName })
+      onFormChange({ ...form, is_transfer: true, payees_id: String(res.data.id) })
+    } catch {
+      set('is_transfer', true)
+    }
+  }
+
   const payeeId = form.payees_id ? Number(form.payees_id) : null
   const { data: topCats = [] } = useQuery({
     queryKey: ['payee-top-categories', payeeId],
@@ -383,7 +405,7 @@ export function TxModal({
             </button>
             <button
               type="button"
-              onClick={() => set('is_transfer', true)}
+              onClick={handleTransferToggle}
               className={`flex-1 py-1.5 text-sm rounded-md border transition-colors flex items-center justify-center gap-1.5 ${form.is_transfer ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}
             >
               <ArrowLeftRight size={13} /> Transfer
@@ -709,6 +731,19 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
       }
     }
 
+    // Only transfers move money without a spending/income category — everything
+    // else must be categorized, or it silently falls out of every spending report.
+    // Drafts are exempt — they're explicitly pending review before being confirmed.
+    if (!form.is_transfer && !form.is_draft) {
+      const hasCategory = useSplits
+        ? splits.some(s => s.amount !== '' && s.amount !== '0' && s.categories_id)
+        : !!form.categories_id
+      if (!hasCategory) {
+        setSaveError('Choose a category before saving — only transfers can be left uncategorized')
+        return
+      }
+    }
+
     setSaving(true); setSaveError(null)
     try {
       const statusFields = { is_draft: form.is_draft, cleared: form.cleared, reconciled: form.reconciled }
@@ -738,7 +773,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
         const baseDesc = form.description || ''
         const splitPayload = useSplits
           ? splits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
-          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || null }]
+          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || form.description || null }]
         if (useSplits) {
           const splitsTotal = splitPayload.reduce((sum, s) => sum + s.amount, 0)
           const txTotal = parseFloat(form.total_amount)
@@ -765,7 +800,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
         const baseDesc = form.description || ''
         const splitPayload = useSplits
           ? splits.filter(s => s.amount !== '' && s.amount !== '0').map(s => ({ categories_id: s.categories_id ? Number(s.categories_id) : null, amount: parseFloat(s.amount), memo: s.memo || null }))
-          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || null }]
+          : [{ categories_id: form.categories_id ? Number(form.categories_id) : null, amount: parseFloat(form.total_amount), memo: form.memo || form.description || null }]
         if (useSplits) {
           const splitsTotal = splitPayload.reduce((sum, s) => sum + s.amount, 0)
           const txTotal = parseFloat(form.total_amount)
@@ -824,7 +859,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
           : [{
               categories_id: form.categories_id ? Number(form.categories_id) : null,
               amount: parseFloat(form.total_amount),
-              memo: form.memo || null,
+              memo: form.memo || form.description || null,
             }]
         if (!useSplits || finalSplits.length > 0) await upsertSplits(txId, finalSplits)
 

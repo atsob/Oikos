@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useGridColumnState } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -12,7 +12,7 @@ import {
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, useEscapeKey } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
@@ -124,6 +124,24 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     finally { setMerging(false) }
   }
 
+  const payeeColDefs = [
+    { field: 'id', headerName: 'ID', width: 70 },
+    { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
+    { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
+    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
+    { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: (p: { value: string | null }) => p.value?.slice(0, 10) ?? '—' },
+    {
+      headerName: '', width: 80, sortable: false, filter: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex gap-1 items-center h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+          <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+        </div>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('static-data-payees', payeeColDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -144,28 +162,16 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
           <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
             <ArrowRightLeft size={13} /> Merge Payees
           </Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
-            { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
-            { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' },
-            { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
       </div>
@@ -330,6 +336,24 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     finally { setMerging(false) }
   }
 
+  const categoryColDefs = [
+    { field: 'id', headerName: 'ID', width: 70 },
+    { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
+    { field: 'type', headerName: 'Type', width: 120 },
+    { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' as const },
+    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
+    {
+      headerName: '', width: 80, sortable: false, filter: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex gap-1 items-center h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+          <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+        </div>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('static-data-categories', categoryColDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const catList = categories as Record<string, unknown>[]
@@ -350,28 +374,16 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
             <ArrowRightLeft size={13} /> Merge Categories
           </Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
-            { field: 'type', headerName: 'Type', width: 120 },
-            { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' },
-            { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
       </div>
@@ -534,6 +546,28 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
 
   const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
 
+  const accountColDefs = [
+    { field: 'id', headerName: 'ID', width: 70 },
+    { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
+    { field: 'type', headerName: 'Type', width: 130 },
+    { field: 'currency', headerName: 'Currency', width: 90 },
+    { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
+    { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
+    { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
+    { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
+    { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
+    {
+      headerName: '', width: 80, sortable: false, filter: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex gap-1 items-center h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+          <button onClick={() => handleDeactivate(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
+        </div>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const instList = institutions as Record<string, unknown>[]
@@ -551,32 +585,18 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} accounts · double-click to edit</span>
         </div>
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
-            { field: 'type', headerName: 'Type', width: 130 },
-            { field: 'currency', headerName: 'Currency', width: 90 },
-            { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
-            { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
-            { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
-            { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
-            { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDeactivate(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
       </div>
@@ -700,6 +720,28 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const institutionColDefs = [
+    { field: 'id', headerName: 'ID', width: 70 },
+    { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
+    { field: 'type', headerName: 'Type', width: 130 },
+    { field: 'bic', headerName: 'BIC', width: 110 },
+    { field: 'moodys', headerName: "Moody's", width: 90 },
+    { field: 'sp', headerName: 'S&P', width: 80 },
+    { field: 'fitch', headerName: 'Fitch', width: 80 },
+    { field: 'website', headerName: 'Website', flex: 1, minWidth: 140 },
+    { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120 },
+    {
+      headerName: '', width: 80, sortable: false, filter: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex gap-1 items-center h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+          <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+        </div>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -713,32 +755,18 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} institutions · double-click to edit</span>
         </div>
-        <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
-          columnDefs={[
-            { field: 'id', headerName: 'ID', width: 70 },
-            { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
-            { field: 'type', headerName: 'Type', width: 130 },
-            { field: 'bic', headerName: 'BIC', width: 110 },
-            { field: 'moodys', headerName: "Moody's", width: 90 },
-            { field: 'sp', headerName: 'S&P', width: 80 },
-            { field: 'fitch', headerName: 'Fitch', width: 80 },
-            { field: 'website', headerName: 'Website', flex: 1, minWidth: 140 },
-            { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120 },
-            {
-              headerName: '', width: 80, sortable: false, filter: false,
-              cellRenderer: (p: { data: Record<string, unknown> }) => (
-                <div className="flex gap-1 items-center h-full">
-                  <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-                  <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-                </div>
-              ),
-            },
-          ]}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
         />
       </div>

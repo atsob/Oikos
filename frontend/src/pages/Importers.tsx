@@ -22,6 +22,8 @@ import {
   capitalcomParse, capitalcomImport,
   fxproParse, fxproImport,
   getSecurities,
+  getQifOptions, qifParse, qifImport, qifClearImpact,
+  type QifAccountAction,
 } from '@/lib/api'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -3322,38 +3324,539 @@ function FxProTab() {
 }
 
 // ── QIF Importer ──────────────────────────────────────────────────────────────
+// A bulk migration tool (import historical data from Quicken/other finance apps
+// into a fresh install), not an incremental connector like the tabs above — so
+// instead of a per-row preview/selection step, it confirms file-level options
+// up front: which tables to optionally clear first (all unchecked/safe by
+// default — nothing is cleared unless explicitly opted into), which accounts
+// to preserve when clearing, and which data types to import.
+//
+// "Clear this table" isn't as scoped as the checkbox implies: Postgres's
+// TRUNCATE ... CASCADE (which is what a clear with no account-exclusions
+// applies) also truncates every other table with a foreign key pointing at
+// it, recursively — e.g. clearing just Categories cascades all the way through
+// Payees and Transactions to Splits and Investments. The impact preview below
+// queries the actual foreign-key graph (via qif-clear-impact) rather than
+// guessing, and the 5 checkboxes auto-check (and lock) themselves whenever
+// another selection's cascade would wipe them anyway, so the checked state
+// never understates what will really happen.
+
+const QIF_TABLE_LABELS: Record<string, string> = {
+  categories: 'Categories', transactions: 'Bank Transactions', splits: 'Bank Transaction Splits',
+  investments: 'Investment Transactions', holdings: 'Holdings',
+  payees: 'Payees', recurring_templates: 'Recurring Templates', recurring_template_splits: 'Recurring Template Splits',
+  budgets: 'Budgets', annual_budgets: 'Annual Budgets', payee_rules: 'Payee Rules',
+  import_statement_history: 'Import Statement History', transfer_issues: 'Transfer Issues',
+}
+const qifTableLabel = (t: string) => QIF_TABLE_LABELS[t] ?? t
+
+// Duplicated from StaticData.tsx's ACCOUNT_TYPES (this file already duplicates
+// rather than imports account-type lists/filters elsewhere) for the QIF
+// wizard's "create new account" type dropdown.
+const QIF_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
+
+const QIF_GROUP_LABELS: Record<string, string> = {
+  cash: 'Cash / Bank', credit: 'Credit', investment: 'Investment',
+  asset_liability: 'Asset / Liability', other: 'Other',
+}
+const QIF_GROUP_ORDER = ['cash', 'credit', 'investment', 'asset_liability', 'other']
+
+/** Step 2's per-account resolution table — one row per account found in the QIF
+ * file, grouped by suggested_group, each with a Skip/Map/Create choice. */
+function AccountMappingTable({ accounts, accountMap, onChange, allAccounts }: {
+  accounts: Record<string, unknown>[]
+  accountMap: Record<string, QifAccountAction>
+  onChange: (qifName: string, action: QifAccountAction) => void
+  allAccounts: { id: number; name: string }[]
+}) {
+  const byGroup: Record<string, Record<string, unknown>[]> = {}
+  for (const a of accounts) {
+    const g = (a.suggested_group as string) ?? 'other'
+    ;(byGroup[g] ??= []).push(a)
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500">
+        QIF can't distinguish Checking from Savings (both are just "Bank") — pick the actual type when creating a new account below.
+      </p>
+      {QIF_GROUP_ORDER.filter(g => byGroup[g]?.length).map(g => (
+        <div key={g}>
+          <p className="text-xs font-semibold text-slate-600 mb-1">{QIF_GROUP_LABELS[g]}</p>
+          <div className="border border-slate-200 rounded divide-y divide-slate-100">
+            {byGroup[g].map(a => {
+              const qifName = a.qif_name as string
+              const act: QifAccountAction = accountMap[qifName] ?? { action: 'create', new_name: qifName, new_type: a.suggested_oikos_type as string }
+              const totalTx = (a.bank_tx_count as number) + (a.inv_tx_count as number)
+              return (
+                <div key={qifName} className="p-2 flex flex-wrap items-center gap-3 text-sm">
+                  <div className="min-w-[160px]">
+                    <div className="font-medium">{qifName}</div>
+                    <div className="text-xs text-slate-400">
+                      {a.qif_type as string} · {totalTx} tx
+                      {a.min_date ? ` · ${a.min_date as string} → ${a.max_date as string}` : ''}
+                    </div>
+                  </div>
+                  <select
+                    value={act.action}
+                    onChange={e => {
+                      const action = e.target.value as QifAccountAction['action']
+                      if (action === 'map') onChange(qifName, { action, oikos_account_id: (a.existing_match_id as number) ?? null })
+                      else if (action === 'create') onChange(qifName, { action, new_name: qifName, new_type: a.suggested_oikos_type as string })
+                      else onChange(qifName, { action })
+                    }}
+                    className="text-xs border border-slate-300 rounded px-2 py-1"
+                  >
+                    <option value="skip">Skip</option>
+                    <option value="map">Map to existing</option>
+                    <option value="create">Create new</option>
+                  </select>
+                  {act.action === 'map' && (
+                    <select
+                      value={act.oikos_account_id ?? ''}
+                      onChange={e => onChange(qifName, { ...act, oikos_account_id: e.target.value ? Number(e.target.value) : null })}
+                      className="text-xs border border-slate-300 rounded px-2 py-1 flex-1 min-w-[160px]"
+                    >
+                      <option value="">— select account —</option>
+                      {allAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                    </select>
+                  )}
+                  {act.action === 'create' && (
+                    <>
+                      <input
+                        type="text" value={act.new_name ?? ''}
+                        onChange={e => onChange(qifName, { ...act, new_name: e.target.value })}
+                        className="text-xs border border-slate-300 rounded px-2 py-1 flex-1 min-w-[140px]"
+                      />
+                      <select
+                        value={act.new_type ?? ''}
+                        onChange={e => onChange(qifName, { ...act, new_type: e.target.value })}
+                        className="text-xs border border-slate-300 rounded px-2 py-1"
+                      >
+                        {QIF_ACCOUNT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function QIFTab() {
+  const [step, setStep] = useState(1)
   const [file, setFile] = useState<File | null>(null)
+  const [filePreview, setFilePreview] = useState('')
+  const [showPreview, setShowPreview] = useState(false)
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
+
+  const { data: opts } = useQuery({ queryKey: ['qif-options'], queryFn: getQifOptions })
+  const allAccounts = (opts?.all_accounts ?? []) as { id: number; name: string }[]
+  const invAccounts = (opts?.investment_accounts ?? []) as { id: number; name: string }[]
+
+  const [clearCategories, setClearCategories] = useState(false)
+  const [clearBankTx, setClearBankTx] = useState(false)
+  const [clearBankSplits, setClearBankSplits] = useState(false)
+  const [clearInvTx, setClearInvTx] = useState(false)
+  const [clearHoldings, setClearHoldings] = useState(false)
+
+  const [exclBank, setExclBank] = useState<number[]>([])
+  const [exclInv, setExclInv] = useState<number[]>([])
+  const [saveExclusions, setSaveExclusions] = useState(false)
+
+  // Seed exclusion pickers from previously saved settings, once loaded.
+  useEffect(() => {
+    if (!opts) return
+    setExclBank((opts.saved_exclude_bank_ids ?? []) as number[])
+    setExclInv((opts.saved_exclude_inv_ids ?? []) as number[])
+  }, [opts])
+
+  const [importCategories, setImportCategories] = useState(true)
+  const [importSecurities, setImportSecurities] = useState(true)
+  const [importAccounts, setImportAccounts] = useState(true)
+  const [importPrices, setImportPrices] = useState(true)
+  const [forceBalances, setForceBalances] = useState(true)
+  const [forceHoldings, setForceHoldings] = useState(true)
+
+  // Step 1 → 2: Parse-step output feeding the Map/Define step.
+  const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
+  const [accountMap, setAccountMap] = useState<Record<string, QifAccountAction>>({})
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  const handleFile = async (f: File) => {
+    setFile(f)
+    setParseResult(null)
+    setResult(null)
+    try {
+      const text = await f.text()
+      setFilePreview(text.split('\n').slice(0, 50).join('\n'))
+    } catch { setFilePreview('') }
+  }
+
+  const parseMut = useMutation({
+    mutationFn: () => qifParse(file!),
+    onSuccess: (data) => {
+      setParseResult(data)
+      const accounts = (data.accounts ?? []) as Record<string, unknown>[]
+      setAccountMap(Object.fromEntries(accounts.map(a => [
+        a.qif_name as string,
+        a.existing_match_id != null
+          ? { action: 'map' as const, oikos_account_id: a.existing_match_id as number }
+          : { action: 'create' as const, new_name: a.qif_name as string, new_type: a.suggested_oikos_type as string },
+      ])))
+      const range = (data.date_range ?? {}) as Record<string, unknown>
+      setDateFrom((range.min as string) ?? '')
+      setDateTo((range.max as string) ?? '')
+      setStep(2)
+    },
+  })
+
+  const setAccountAction = (qifName: string, action: QifAccountAction) =>
+    setAccountMap(prev => ({ ...prev, [qifName]: action }))
+
+  const toggleId = (list: number[], setList: (v: number[]) => void, id: number) =>
+    setList(list.includes(id) ? list.filter(x => x !== id) : [...list, id])
+
+  // The 5 checkboxes as the user directly set them — this (not the auto-checked
+  // effective state below) is what's actually sent to the impact/import calls,
+  // since the backend recomputes the true cascade closure from these itself.
+  const directTablesToClear = [
+    clearCategories && 'Categories',
+    clearBankTx && 'Transactions',
+    clearBankSplits && 'Splits',
+    clearInvTx && 'Investments',
+    clearHoldings && 'Holdings',
+  ].filter((t): t is string => Boolean(t))
+
+  const { data: impact } = useQuery({
+    queryKey: ['qif-clear-impact', directTablesToClear, exclBank, exclInv],
+    queryFn: () => qifClearImpact(
+      directTablesToClear,
+      (clearBankTx || clearBankSplits) ? exclBank : null,
+      clearInvTx ? exclInv : null,
+    ),
+    enabled: directTablesToClear.length > 0,
+  })
+  const truncatedTables = (impact?.truncated_tables ?? []) as { table: string; row_count: number | null; checked_directly: boolean }[]
+  const scopedTables = (impact?.scoped_delete_tables ?? []) as { table: string; rows_to_delete: number; rows_preserved: number | null; rows_unlinked?: number; cascade?: boolean }[]
+  // A table can be "forced" either via a full TRUNCATE CASCADE closure, or —
+  // when account exclusions route Transactions into a scoped DELETE instead —
+  // via that DELETE's own ON DELETE CASCADE (e.g. Splits, which really is
+  // deleted, just scoped to the doomed transactions rather than wiped whole).
+  const forced = new Set([
+    ...truncatedTables.filter(t => !t.checked_directly).map(t => t.table),
+    ...scopedTables.filter(t => t.cascade && t.rows_unlinked == null).map(t => t.table.toLowerCase()),
+  ])
+  const extraTables = truncatedTables.filter(t => !['categories', 'transactions', 'splits', 'investments', 'holdings'].includes(t.table))
+
+  // Categories has no exclusion mechanism at all, and its cascade reaches
+  // Transactions/Investments unconditionally — so once it's checked, any
+  // account exclusions below are moot for the cascade-forced portion.
+  const exclusionsMoot = clearCategories
+
+  const parsedAccounts = (parseResult?.accounts ?? []) as Record<string, unknown>[]
+  const step2Valid = parsedAccounts.every(a => {
+    const act = accountMap[a.qif_name as string]
+    if (!act) return false
+    if (act.action === 'map') return !!act.oikos_account_id
+    if (act.action === 'create') return !!(act.new_name && act.new_name.trim())
+    return true
+  })
+  const mapCount = parsedAccounts.filter(a => accountMap[a.qif_name as string]?.action === 'map').length
+  const createCount = parsedAccounts.filter(a => accountMap[a.qif_name as string]?.action === 'create').length
+  const skipCount = parsedAccounts.filter(a => accountMap[a.qif_name as string]?.action === 'skip').length
+
   const importMut = useMutation({
-    mutationFn: () => { const fd = new FormData(); fd.append('file', file!); return importFile('qif', fd) },
+    mutationFn: () => qifImport(
+      file!,
+      directTablesToClear,
+      {
+        import_categories: importCategories,
+        import_securities: importSecurities,
+        import_accounts: importAccounts,
+        import_prices: importPrices,
+        force_update_balances: forceBalances,
+        force_update_holdings: forceHoldings,
+      },
+      (clearBankTx || clearBankSplits) ? exclBank : null,
+      clearInvTx ? exclInv : null,
+      saveExclusions,
+      accountMap,
+      dateFrom || null,
+      dateTo || null,
+    ),
     onSuccess: setResult,
   })
+
+  const clearCheckbox = (label: string, checked: boolean, direct: boolean, onChange: (v: boolean) => void) => (
+    <label className={`flex items-center gap-2 ${!direct && checked ? 'text-slate-400' : ''}`}>
+      <input type="checkbox" checked={checked} disabled={!direct && checked} onChange={e => onChange(e.target.checked)} />
+      {label}{!direct && checked && <span className="text-xs italic">(forced by cascade)</span>}
+    </label>
+  )
+
+  const startOver = () => {
+    setStep(1); setFile(null); setFilePreview(''); setParseResult(null); setAccountMap({}); setResult(null)
+  }
+
+  const totals = (parseResult?.totals ?? {}) as Record<string, unknown>
+
   return (
     <div className="space-y-4">
       <InfoBox>
         Import transactions from a <strong>QIF</strong> (Quicken Interchange Format) file.<br />
         Most personal finance apps (Quicken, MS Money, Banktivity) support QIF export.
       </InfoBox>
-      <Card>
-        <CardBody className="space-y-4">
-          {file ? (
-            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
-              <CheckCircle size={16} className="text-green-500" />
-              <span className="text-sm font-medium">{file.name}</span>
-              <button className="ml-auto text-xs text-red-500" onClick={() => setFile(null)}>Remove</button>
-            </div>
-          ) : (
-            <FileDropZone accept=".qif" onChange={setFile} label="Upload QIF file" />
+      <div className="bg-amber-50 text-amber-800 rounded-lg p-3 text-sm flex gap-2">
+        <XCircle size={16} className="shrink-0 mt-0.5" />
+        This is a bulk import tool that can add or delete a large amount of data at once. Back up your
+        database first, especially if you plan to clear any tables below.
+      </div>
+
+      <div className="flex items-center gap-2 text-sm">
+        {([[1, 'Parse'], [2, 'Map / Define'], [3, 'Import']] as [number, string][]).map(([n, label]) => (
+          <div key={n} className={`px-3 py-1 rounded-full font-medium ${
+            step === n ? 'bg-blue-600 text-white' : step > n ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-400'
+          }`}>
+            {n}. {label}
+          </div>
+        ))}
+      </div>
+
+      {/* Step 1 — Upload & Parse */}
+      {step === 1 && (
+        <Card>
+          <CardBody className="space-y-4">
+            {file ? (
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-200">
+                <CheckCircle size={16} className="text-green-500" />
+                <span className="text-sm font-medium">{file.name}</span>
+                <button className="ml-auto text-xs text-red-500" onClick={() => { setFile(null); setFilePreview(''); setResult(null) }}>Remove</button>
+              </div>
+            ) : (
+              <FileDropZone accept=".qif" onChange={handleFile} label="Upload QIF file" />
+            )}
+
+            {file && filePreview && (
+              <div>
+                <button className="text-xs text-blue-600 hover:underline" onClick={() => setShowPreview(s => !s)}>
+                  {showPreview ? 'Hide' : 'Show'} file preview (first 50 lines)
+                </button>
+                {showPreview && (
+                  <pre className="mt-2 bg-slate-900 text-slate-100 text-xs p-3 rounded max-h-64 overflow-auto whitespace-pre-wrap">{filePreview}</pre>
+                )}
+              </div>
+            )}
+
+            <Button onClick={() => parseMut.mutate()} disabled={!file || parseMut.isPending}>
+              {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>Parse File →</>}
+            </Button>
+            {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Step 2 — Map & Define */}
+      {step === 2 && parseResult && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Map Accounts ({parsedAccounts.length})</CardTitle>
+            </CardHeader>
+            <CardBody>
+              <AccountMappingTable
+                accounts={parsedAccounts}
+                accountMap={accountMap}
+                onChange={setAccountAction}
+                allAccounts={allAccounts}
+              />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Date Range</CardTitle></CardHeader>
+            <CardBody>
+              <p className="text-xs text-slate-500 mb-3">
+                Only transactions within this range are imported. Defaults to the full range found in the file
+                ({(totals.bank_tx as number) ?? 0} bank tx, {(totals.inv_tx as number) ?? 0} investment tx).
+              </p>
+              <div className="flex gap-4 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
+                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
+                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardBody className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-700 mb-1">🗑️ Tables to Clear Before Import</p>
+                <p className="text-xs text-red-600 mb-3">
+                  Clearing a table permanently deletes its existing data — and, in Postgres, cascades to every
+                  other table that references it (see the impact list below). Leave everything unchecked to
+                  append instead.
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {clearCheckbox('Categories', clearCategories, true, setClearCategories)}
+                  {clearCheckbox('Investment Transactions', clearInvTx || forced.has('investments'), clearInvTx, setClearInvTx)}
+                  {clearCheckbox('Bank Transactions', clearBankTx || forced.has('transactions'), clearBankTx, setClearBankTx)}
+                  {clearCheckbox('Holdings', clearHoldings, true, setClearHoldings)}
+                  {clearCheckbox('Bank Transaction Splits', clearBankSplits || forced.has('splits'), clearBankSplits, setClearBankSplits)}
+                </div>
+              </div>
+
+              {truncatedTables.length > 0 && (
+                <div className="border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-red-700 mb-1">⚠️ Tables that will be completely wiped</p>
+                  <p className="text-xs text-slate-500 mb-2">
+                    Computed from the actual foreign-key relationships in the database, not just the checkboxes above.
+                  </p>
+                  <div className="border border-red-200 bg-red-50 rounded p-2 text-xs space-y-0.5 max-h-40 overflow-y-auto">
+                    {truncatedTables.map(t => (
+                      <div key={t.table} className="flex justify-between">
+                        <span>{qifTableLabel(t.table)}{!t.checked_directly && <span className="text-slate-400 italic"> — cascade</span>}</span>
+                        <span className="tabular-nums text-red-700 font-medium">{t.row_count ?? '—'} rows</span>
+                      </div>
+                    ))}
+                  </div>
+                  {extraTables.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      {extraTables.map(t => qifTableLabel(t.table)).join(', ')} have no checkbox of their own — they're
+                      swept in automatically because they reference one of the tables above.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {scopedTables.length > 0 && (
+                <div className="border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-amber-700 mb-1">Rows that will be deleted (excluded accounts preserved)</p>
+                  <p className="text-xs text-slate-500 mb-2">
+                    Includes rows cascaded from a scoped delete above, even for tables without their own checkbox checked.
+                  </p>
+                  <div className="border border-amber-200 bg-amber-50 rounded p-2 text-xs space-y-0.5">
+                    {scopedTables.map((t, i) => (
+                      <div key={`${t.table}-${i}`} className="flex justify-between">
+                        <span>{qifTableLabel(t.table.toLowerCase())}{t.cascade && <span className="text-slate-400 italic"> — cascade</span>}</span>
+                        <span className="tabular-nums text-amber-700 font-medium">
+                          {t.rows_unlinked != null
+                            ? `${t.rows_unlinked} unlinked (not deleted)`
+                            : `${t.rows_to_delete} deleted${t.rows_preserved != null ? `, ${t.rows_preserved} preserved` : ''}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(clearBankTx || clearBankSplits || clearInvTx) && (
+                <div className="border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-slate-700 mb-1">🔒 Preserve These Accounts When Clearing</p>
+                  {exclusionsMoot ? (
+                    <p className="text-xs text-red-600 mb-3">
+                      Categories is checked, which wipes these tables via cascade regardless of any exclusions —
+                      account selections below won't have any effect while Categories is checked.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mb-3">Data for selected accounts will not be deleted by the clear above.</p>
+                  )}
+                  <div className="grid grid-cols-2 gap-4">
+                    {(clearBankTx || clearBankSplits) && (
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 mb-1">Bank TX &amp; Splits</p>
+                        <div className="border border-slate-200 rounded max-h-40 overflow-y-auto p-2 space-y-1">
+                          {allAccounts.map(a => (
+                            <label key={a.id} className="flex items-center gap-2 text-xs">
+                              <input type="checkbox" checked={exclBank.includes(a.id)} onChange={() => toggleId(exclBank, setExclBank, a.id)} />
+                              {a.name}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {clearInvTx && (
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 mb-1">Investment TX</p>
+                        <div className="border border-slate-200 rounded max-h-40 overflow-y-auto p-2 space-y-1">
+                          {invAccounts.map(a => (
+                            <label key={a.id} className="flex items-center gap-2 text-xs">
+                              <input type="checkbox" checked={exclInv.includes(a.id)} onChange={() => toggleId(exclInv, setExclInv, a.id)} />
+                              {a.name}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-slate-500 mt-2">
+                    <input type="checkbox" checked={saveExclusions} onChange={e => setSaveExclusions(e.target.checked)} />
+                    Remember these exclusions for next time
+                  </label>
+                </div>
+              )}
+
+              <div className="border-t border-slate-200 pt-4">
+                <p className="text-sm font-semibold text-slate-700 mb-3">📥 Import Options</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={importCategories} onChange={e => setImportCategories(e.target.checked)} /> Categories</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={importPrices} onChange={e => setImportPrices(e.target.checked)} /> Historical Prices</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={importSecurities} onChange={e => setImportSecurities(e.target.checked)} /> Securities</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={forceBalances} onChange={e => setForceBalances(e.target.checked)} /> Force update balances</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={importAccounts} onChange={e => setImportAccounts(e.target.checked)} /> Accounts &amp; Transactions</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={forceHoldings} onChange={e => setForceHoldings(e.target.checked)} /> Force update holdings</label>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
+            <Button onClick={() => setStep(3)} disabled={!step2Valid}>Next: Review &amp; Import →</Button>
+          </div>
+          {!step2Valid && (
+            <p className="text-xs text-red-600">Every account needs a target: pick an existing account for "Map to existing", or a name for "Create new".</p>
           )}
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending}>
-            {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Import</>}
-          </Button>
+        </>
+      )}
+
+      {/* Step 3 — Review & Import */}
+      {step === 3 && (
+        <>
+          <Card>
+            <CardHeader><CardTitle>Review</CardTitle></CardHeader>
+            <CardBody className="space-y-2 text-sm">
+              <p>{mapCount} account(s) mapped to existing accounts, {createCount} new account(s) will be created, {skipCount} account(s) skipped.</p>
+              <p>Date range: {dateFrom || 'earliest'} → {dateTo || 'latest'}.</p>
+              <p>Tables to clear: {directTablesToClear.length ? directTablesToClear.map(qifTableLabel).join(', ') : 'none (appending only)'}.</p>
+            </CardBody>
+          </Card>
+
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setStep(2)}>← Back</Button>
+            <Button onClick={() => importMut.mutate()} disabled={importMut.isPending}>
+              {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>Start QIF Import</>}
+            </Button>
+          </div>
           {importMut.isError && <ErrorBox msg={apiErrorMsg(importMut.error)} />}
-          {result && <SuccessBox msg={result.message as string ?? `Imported ${result.imported ?? 0}, skipped ${result.skipped ?? 0}`} />}
-        </CardBody>
-      </Card>
+          {result && (
+            <>
+              <SuccessBox msg={result.message as string ?? 'Import completed.'} />
+              <Button variant="secondary" onClick={startOver}>Start New Import</Button>
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }

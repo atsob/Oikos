@@ -375,6 +375,17 @@ def upsert_splits(tx_id: int, splits: list[dict]):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # A non-transfer, non-draft transaction must end up with at least one
+        # categorized split — otherwise it'd silently fall out of every spending
+        # report. Transfers move money rather than categorize it, and drafts are
+        # explicitly pending review, so both are exempt.
+        cur.execute("SELECT Transfers_Id, Accounts_Id_Target, Is_Draft FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+        row = cur.fetchone()
+        is_transfer = row is not None and (row[0] is not None or row[1] is not None)
+        is_draft = row is not None and bool(row[2])
+        if not is_transfer and not is_draft and not any(sp.get("categories_id") is not None for sp in splits):
+            raise HTTPException(400, "Choose a category before saving — only transfers can be left uncategorized")
+
         # Delete existing splits and re-insert
         cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (tx_id,))
         for sp in splits:
@@ -384,6 +395,9 @@ def upsert_splits(tx_id: int, splits: list[dict]):
             )
         conn.commit()
         return {"updated": tx_id}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -478,6 +492,13 @@ def create_transfer(data: dict):
         """, (to_account, date, description, abs(amount), payees_id, cleared, reconciled, is_draft, from_account, shared_tid))
         to_id = cur.fetchone()[0]
 
+        # Both legs carry Accounts_Id_Target, so the balance-maintaining trigger (which
+        # predates this two-row transfer model) double-applies the transfer amount to
+        # each account — once via the row's own Total_Amount, once via the other row's
+        # Accounts_Id_Target branch. An explicit recompute overwrites that with the
+        # correct SUM(), same as every other balance-affecting endpoint in this file.
+        if not is_draft:
+            _refresh_balance(cur, from_account, to_account)
         conn.commit()
         return {"from_id": from_id, "to_id": to_id}
     except Exception as e:
