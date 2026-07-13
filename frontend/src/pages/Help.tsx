@@ -515,6 +515,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           positions. Interest income
           (including Stock Yield Enhancement Program payments) is booked against one placeholder security per
           settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
+          A dividend's withholding tax — which IB reports as its own separate line — is merged into that
+          dividend's own row instead of importing as a second, disconnected record; the preview table's
+          "Tax (€)" column shows it before you confirm.
         </Note>
         <Note>
           <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no

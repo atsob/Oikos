@@ -1515,6 +1515,7 @@ function IBFlexTab() {
                       <th className="py-1 px-2 text-right">Qty</th>
                       <th className="py-1 px-2 text-right">Price</th>
                       <th className="py-1 px-2 text-right">Total (€)</th>
+                      <th className="py-1 px-2 text-right">Tax (€)</th>
                     </tr></thead>
                     <tbody>
                       {visibleInv.slice(0, 100).map((r, i) => (
@@ -1530,6 +1531,7 @@ function IBFlexTab() {
                           <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
                           <td className="py-1 px-2 text-right">{fmtNum(Number(r.price ?? 0), 4)}</td>
                           <td className="py-1 px-2 text-right">{fmtNum(Number(r.total_eur ?? 0), 2)}</td>
+                          <td className="py-1 px-2 text-right text-red-600">{r.tax_amount_eur != null ? fmtNum(Number(r.tax_amount_eur), 2) : ''}</td>
                         </tr>
                       ))}
                     </tbody>

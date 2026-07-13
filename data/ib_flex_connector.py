@@ -68,14 +68,24 @@ def is_fx_spot_record(rec: dict) -> bool:
     """True for investment records that are IB's own currency-conversion trades."""
     return str(rec.get("asset_category") or "").upper() in _FX_SPOT_CATEGORIES
 
-# CashTransaction.type → Investments.Action
+# CashTransaction.type → Investments.Action. Matched case-insensitively (via
+# .lower() at the call site) — IB's Flex API is inconsistent about
+# capitalization of this field across reports/accounts (e.g. "Payment in Lieu
+# of Dividends" vs "Payment In Lieu Of Dividends"), and an exact-case dict
+# lookup used to silently drop the whole record whenever the casing didn't
+# match, with no error and no trace in the preview.
 _CASH_INV_MAP: dict[str, str] = {
-    "Dividends":                    "Dividend",
-    "Payment in Lieu of Dividends": "Dividend",
-    "Broker Interest Received":     "IntInc",
-    "Broker Interest Paid":         "MiscExp",
-    "Withholding Tax":              "MiscExp",   # negative — reduces income
+    "dividends":                    "Dividend",
+    "payment in lieu of dividends": "Dividend",
+    "broker interest received":     "IntInc",
+    "broker interest paid":         "MiscExp",
+    "withholding tax":              "MiscExp",   # only when it can't be merged into a dividend — see _parse_cash_transactions
 }
+
+# Dividend-shaped cash-transaction types eligible to have a same-event
+# Withholding Tax entry merged into them (see _parse_cash_transactions).
+_DIVIDEND_CASH_TYPES: set[str] = {"dividends", "payment in lieu of dividends"}
+_WITHHOLDING_TAX_TYPE = "withholding tax"
 
 # Cash-transaction types that are account-level cash flow, not tied to any real,
 # individually-held security — e.g. interest on idle cash, or Stock Yield
@@ -91,7 +101,7 @@ _CASH_INV_MAP: dict[str, str] = {
 # underlying thing (e.g. "Thomson Reuters Corp (USD)" / "(GBP)" / "(CAD)") —
 # so a USD interest payment doesn't get mislabeled under a security whose
 # currency is actually EUR or GBP.
-_ACCOUNT_LEVEL_CASH_TYPES: set[str] = {"Broker Interest Received", "Broker Interest Paid"}
+_ACCOUNT_LEVEL_CASH_TYPES: set[str] = {"broker interest received", "broker interest paid"}
 
 
 def _ib_cash_symbol(currency: str) -> str:
@@ -377,7 +387,18 @@ def _parse_trades(statement: ET.Element) -> tuple[list, int]:
 # ---------------------------------------------------------------------------
 
 def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
-    """Return (inv_records, tx_records, raw_element_count)."""
+    """Return (inv_records, tx_records, raw_element_count).
+
+    A Withholding Tax entry is merged into its matching Dividend / Payment in
+    Lieu of Dividends entry (same symbol, isin, and dateTime — IB always posts
+    a dividend and its withholding tax under that identical triple) into a
+    single Investments row with Tax_Amount populated, rather than two
+    disconnected rows with no link between them. Matching happens in a
+    dedicated pass before any record is emitted, so it doesn't matter whether
+    IB lists the tax line before or after the dividend line in the XML. A
+    Withholding Tax entry with no matching dividend in this statement (e.g.
+    tax on something else) still imports on its own as a MiscExp row.
+    """
     inv_records: list[dict] = []
     tx_records:  list[dict] = []
 
@@ -387,25 +408,59 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
 
     all_cash_els = cash_el.findall(".//CashTransaction")   # catches nested variants
 
+    parsed: list[dict] = []
     for ct in all_cash_els:
-        tx_type  = _s(ct, "type")
-        currency = _s(ct, "currency")
-        fx_rate  = _f(ct, "fxRateToBase", 1.0)
-        amount   = _f(ct, "amount")
-        symbol   = _s(ct, "symbol") or _s(ct, "conid")
-        name     = _s(ct, "description")
-        isin     = _s(ct, "isin")
-        tx_date  = _parse_ib_date(_s(ct, "dateTime"))
-
+        tx_type = _s(ct, "type")
+        tx_date = _parse_ib_date(_s(ct, "dateTime"))
+        amount  = _f(ct, "amount")
         if not tx_date or amount == 0:
             continue
+        parsed.append({
+            "tx_type":     tx_type,
+            "tx_type_key": tx_type.lower(),
+            "currency":    _s(ct, "currency"),
+            "fx_rate":     _f(ct, "fxRateToBase", 1.0),
+            "amount":      amount,
+            "symbol":      _s(ct, "symbol") or _s(ct, "conid"),
+            "name":        _s(ct, "description"),
+            "isin":        _s(ct, "isin"),
+            "date":        tx_date,
+        })
+
+    # Resolve all dividend/tax merges up front (see docstring for why this
+    # can't be interleaved with emission below).
+    tax_by_key: dict[tuple, list[int]] = {}
+    for i, p in enumerate(parsed):
+        if p["tx_type_key"] == _WITHHOLDING_TAX_TYPE:
+            tax_by_key.setdefault((p["symbol"], p["isin"], p["date"]), []).append(i)
+
+    tax_amount_for_dividend: dict[int, float] = {}   # dividend index -> merged tax (EUR/acc-cur)
+    consumed_tax_idx: set[int] = set()
+    for i, p in enumerate(parsed):
+        if p["tx_type_key"] not in _DIVIDEND_CASH_TYPES:
+            continue
+        candidates = [j for j in tax_by_key.get((p["symbol"], p["isin"], p["date"]), [])
+                      if j not in consumed_tax_idx]
+        if candidates:
+            tax_amount_for_dividend[i] = round(
+                sum(parsed[j]["amount"] * parsed[j]["fx_rate"] for j in candidates), 2
+            )
+            consumed_tax_idx.update(candidates)
+
+    for i, p in enumerate(parsed):
+        tx_type, tx_type_key = p["tx_type"], p["tx_type_key"]
+        currency, fx_rate, amount = p["currency"], p["fx_rate"], p["amount"]
+        symbol, name, isin, tx_date = p["symbol"], p["name"], p["isin"], p["date"]
+
+        if tx_type_key == _WITHHOLDING_TAX_TYPE and i in consumed_tax_idx:
+            continue   # merged into its dividend above — don't emit separately
 
         amount_eur = amount * fx_rate
         key = f"{_IB_PREFIX}CASH|{tx_date}|{tx_type}|{symbol}|{amount}"
 
-        if tx_type in _CASH_INV_MAP:
-            action = _CASH_INV_MAP[tx_type]
-            is_account_level = tx_type in _ACCOUNT_LEVEL_CASH_TYPES
+        if tx_type_key in _CASH_INV_MAP:
+            action = _CASH_INV_MAP[tx_type_key]
+            is_account_level = tx_type_key in _ACCOUNT_LEVEL_CASH_TYPES
             inv_records.append({
                 "record_type":    "investment",
                 "source":         "IB",
@@ -422,10 +477,11 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
                 "price":          round(abs(amount_eur), 4),
                 "commission":     0.0,
                 "total_eur":      round(abs(amount_eur), 2),
+                "tax_amount_eur": tax_amount_for_dividend.get(i),
                 "exchange":       "",
             })
 
-        elif tx_type == "Deposits/Withdrawals":
+        elif tx_type_key == "deposits/withdrawals":
             tx_records.append({
                 "record_type": "transaction",
                 "source":      "IB",
@@ -436,7 +492,7 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
                 "currency":    currency,
             })
 
-        elif tx_type in ("Fees Paid", "Other Fees", "Commission Adjustments"):
+        elif tx_type_key in ("fees paid", "other fees", "commission adjustments"):
             tx_records.append({
                 "record_type": "transaction",
                 "source":      "IB",
@@ -835,13 +891,13 @@ def run_import(
                            (Accounts_Id, Securities_Id, Date, Action, Quantity,
                             Price_Per_Share, Commission,
                             Total_Amount_AccCur, Total_Amount_SecCur, FX_Rate,
-                            Description)
-                       VALUES (%s, %s, %s, %s::investments_action, %s, %s, %s, %s, %s, %s, %s)""",
+                            Description, Tax_Amount)
+                       VALUES (%s, %s, %s, %s::investments_action, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (account_id, sec_id, rec["date"], rec["action"],
                      rec["quantity"], rec["price"],
                      rec.get("commission") or None,
                      rec["total_eur"], _ib_sec_amt, _ib_fx,
-                     rec["desc"]),
+                     rec["desc"], rec.get("tax_amount_eur")),
                 )
                 counts["investments"] += 1
             done += 1
