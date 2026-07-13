@@ -833,6 +833,27 @@ def preview_security_matches(inv_records: list) -> dict[str, tuple[int | None, s
     return result
 
 
+def _quantity_held_as_of(cur, account_id: int, securities_id: int, as_of_date) -> float:
+    """Net signed quantity held in (account_id, securities_id) as of as_of_date
+    (inclusive). Used to give a Dividend row its real per-share basis instead
+    of a placeholder quantity of 1 — sees this same transaction's own
+    already-executed (not yet committed) INSERTs too, which is why this must
+    be called after Trades have been inserted (see run_import: trade_records
+    always precede cash-derived records in inv_records, so by the time a
+    Dividend row is processed, every trade dated on/before it — from this
+    import or a previous one — is already visible to this query)."""
+    cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN Quantity
+                 WHEN Action IN ('Sell', 'ShrOut') THEN -Quantity
+                 ELSE 0 END
+        ), 0)
+        FROM Investments
+        WHERE Accounts_Id = %s AND Securities_Id = %s AND Date <= %s
+    """, (account_id, securities_id, as_of_date))
+    return float(cur.fetchone()[0] or 0)
+
+
 def run_import(
     inv_records: list,
     tx_records:  list,
@@ -886,6 +907,24 @@ def run_import(
                 _ib_fx       = float(rec.get("fx_rate") or 1.0)
                 _ib_sec_amt  = (round(rec["total_eur"] / _ib_fx, 18)
                                 if _ib_fx else rec["total_eur"])
+
+                _quantity, _price = rec["quantity"], rec["price"]
+                if rec["action"] == "Dividend":
+                    # The cash-transaction parser has no notion of how many
+                    # shares were actually held — replace its quantity=1
+                    # placeholder with the real position size as of the
+                    # dividend date, and re-derive a true per-share amount
+                    # accordingly. Total_Amount_AccCur (below) is what
+                    # actually drives every downstream P&L/cash-flow
+                    # calculation for this row — see api/routers/reports.py,
+                    # which only falls back to Quantity * Price_Per_Share when
+                    # Total_Amount_AccCur is NULL/zero — so this is purely
+                    # cosmetic/informational and can't skew any report.
+                    _held = _quantity_held_as_of(cur, account_id, sec_id, rec["date"])
+                    if _held > 0:
+                        _quantity = _held
+                        _price = round(rec["total_eur"] / _held, 6)
+
                 cur.execute(
                     """INSERT INTO Investments
                            (Accounts_Id, Securities_Id, Date, Action, Quantity,
@@ -894,7 +933,7 @@ def run_import(
                             Description, Tax_Amount)
                        VALUES (%s, %s, %s, %s::investments_action, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (account_id, sec_id, rec["date"], rec["action"],
-                     rec["quantity"], rec["price"],
+                     _quantity, _price,
                      rec.get("commission") or None,
                      rec["total_eur"], _ib_sec_amt, _ib_fx,
                      rec["desc"], rec.get("tax_amount_eur")),

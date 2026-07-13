@@ -517,7 +517,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
-          "Tax (€)" column shows it before you confirm.
+          "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual
+          position size held on that date (based on already-imported trades) rather than a placeholder of 1 —
+          this only applies at the moment of import, so the preview table still shows the placeholder.
         </Note>
         <Note>
           <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no
