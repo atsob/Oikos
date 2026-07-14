@@ -525,6 +525,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no
           underlying security, so they're linked to a single <b>Charge Payee</b> instead — configurable in that
           section, defaulting to auto-creating a "Saxo Bank" payee the first time you import if left unset.
+          A dividend's Quantity is filled in from the actual position held on that date, same as Interactive
+          Brokers — but Saxo's own dividend figure already has withholding tax deducted before it reaches the
+          statement, reported only as a period total rather than per-dividend, so there's no separate tax
+          amount to record on the row.
         </Note>
         <Note>
           <b>Saxo Bank → Authentication</b>: after authorizing with Saxo, the redirect back to Oikos carries the

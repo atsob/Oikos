@@ -1808,6 +1808,25 @@ def apply_pdf_commissions(
     return updated, warnings
 
 
+def _quantity_held_as_of(cur, account_id: int, securities_id: int, as_of_date) -> float:
+    """Net signed quantity held in (account_id, securities_id) as of as_of_date
+    (inclusive). Used to give a Dividend charge row its real per-share basis
+    instead of leaving Quantity NULL — mirrors the same fix in
+    data/ib_flex_connector.py. Sees this same transaction's own
+    already-executed (not yet committed) INSERTs too, so it's safe to call
+    once trades for this run have already been inserted earlier."""
+    cur.execute("""
+        SELECT COALESCE(SUM(
+            CASE WHEN Action IN ('Buy', 'Reinvest', 'ShrIn') THEN Quantity
+                 WHEN Action IN ('Sell', 'ShrOut') THEN -Quantity
+                 ELSE 0 END
+        ), 0)
+        FROM Investments
+        WHERE Accounts_Id = %s AND Securities_Id = %s AND Date <= %s
+    """, (account_id, securities_id, as_of_date))
+    return float(cur.fetchone()[0] or 0)
+
+
 def run_charges_import(
     charge_records: list,
     account_map:    "dict[str, int]",
@@ -2007,6 +2026,21 @@ def run_charges_import(
                 else:
                     _sec_amt_chg, _fx_chg = None, 1.0
 
+                # Charge records carry no share count of their own (Quantity
+                # was always inserted as NULL) — for a Dividend tied to a real
+                # security, look up the actual position size held as of that
+                # date instead, and derive a true per-share amount to match.
+                # Unlike IB, Saxo's own dividend figure is already net of any
+                # withholding tax (it's only reported as an aggregate on the
+                # statement, never attributable to one specific dividend), so
+                # there's no tax to merge in here — just Quantity/Price.
+                _qty_chg, _price_chg = None, None
+                if rec["action"] == "Dividend" and sec_id is not None and _total_acc_chg is not None:
+                    _held = _quantity_held_as_of(cur, _db_acc_id_int, sec_id, rec["date"])
+                    if _held > 0:
+                        _qty_chg = _held
+                        _price_chg = round(abs(_total_acc_chg) / _held, 6)
+
                 cur.execute(
                     """INSERT INTO Investments
                            (Accounts_Id, Securities_Id, Date, Action,
@@ -2014,12 +2048,14 @@ def run_charges_import(
                             Total_Amount_AccCur, Total_Amount_SecCur, FX_Rate,
                             Description, Instrument_Type)
                        VALUES (%s, %s, %s, %s::investments_action,
-                               NULL, NULL, NULL, %s, %s, %s, %s, NULL)""",
+                               %s, %s, NULL, %s, %s, %s, %s, NULL)""",
                     (
                         _db_acc_id_int,
                         sec_id,
                         rec["date"],
                         rec["action"],
+                        _qty_chg,
+                        _price_chg,
                         _total_acc_chg,
                         _sec_amt_chg,
                         _fx_chg,
