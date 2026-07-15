@@ -1449,7 +1449,7 @@ function PnlReport() {
                         const pct = r.pnl_pct != null ? Number(r.pnl_pct) : null
                         return (
                           <td className={`px-3 py-2 text-right tabular-nums ${pct == null ? 'text-slate-400' : pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {pct != null ? fmtPct(pct) : '—'}
+                            {pct != null ? fmtPct(pct, 2) : '—'}
                           </td>
                         )
                       })()}
@@ -1499,7 +1499,7 @@ function PnlReport() {
                     <td className="px-3 py-2 font-medium text-blue-700 hover:underline">{a.name}{a.closed && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{fmtEur(a.value)}</td>
                     <PnlCell val={a.pnl} />
-                    {showPct && <td className={`px-3 py-2 text-right tabular-nums text-xs ${a.pnl_pct == null ? 'text-slate-400' : a.pnl_pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{a.pnl_pct != null ? fmtPct(a.pnl_pct) : '—'}</td>}
+                    {showPct && <td className={`px-3 py-2 text-right tabular-nums text-xs ${a.pnl_pct == null ? 'text-slate-400' : a.pnl_pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{a.pnl_pct != null ? fmtPct(a.pnl_pct, 2) : '—'}</td>}
                     {showFxSplit && mktKey && <><PnlCell val={a.market ?? 0} /><PnlCell val={a.fx ?? 0} /></>}
                     <td className={`px-3 py-2 text-right tabular-nums ${a.unrealized >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                       {fmtEur(a.unrealized)}

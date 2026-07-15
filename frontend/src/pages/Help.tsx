@@ -398,7 +398,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
-          account and security level, available for every window (D/W/M/Q/YTD/All). A fee-free, same-security
+          account and security level, available for every window (D/W/M/Q/YTD/All), shown to two decimal places.
+          A fee-free, same-security
           transfer between your own accounts (see Investments → Transfer) keeps <b>P&amp;L %</b> flat for both
           accounts on the transfer date — but <b>Unrealized %</b> relocates: it drops to zero for the source
           account and appears in the destination, reflecting the position's whole accrued history rather than

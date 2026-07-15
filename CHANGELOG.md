@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-15
+
+### Changed
+- **Inv. Performance → P&L tab — the P&L % column now shows two decimal places** (e.g. `-0.53%` instead of `-0.5%`), at both the account level and the security-level drill-down, matching the precision already used by the Unrealized % column next to it.
+
 ## 2026-07-13
 
 ### Fixed
