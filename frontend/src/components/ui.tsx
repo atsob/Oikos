@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { RefreshCcw, ChevronDown, Columns3 } from 'lucide-react'
+import { usePersist } from '@/lib/hooks'
 
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
 export function useEscapeKey(onClose: () => void) {
@@ -379,6 +380,22 @@ export function ColumnsMenu({ columns, onToggle }: {
 }
 
 // ── useSortTable ───────────────────────────────────────────────────────────────
+function _sortRows<T>(data: T[], sortKey: string | null, sortDir: 'asc' | 'desc'): T[] {
+  if (!sortKey) return data
+  return [...data].sort((a, b) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const av = (a as any)[sortKey], bv = (b as any)[sortKey]
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    if (typeof av === 'number' && typeof bv === 'number')
+      return sortDir === 'asc' ? av - bv : bv - av
+    return sortDir === 'asc'
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av))
+  })
+}
+
 export function useSortTable<T>(
   data: T[],
   defaultKey: string | null = null,
@@ -392,21 +409,30 @@ export function useSortTable<T>(
     setSortDir(d => sortKey === key ? (d === 'asc' ? 'desc' : 'asc') : 'asc')
   }, [sortKey])
 
-  const sorted = useMemo(() => {
-    if (!sortKey) return data
-    return [...data].sort((a, b) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const av = (a as any)[sortKey], bv = (b as any)[sortKey]
-      if (av == null && bv == null) return 0
-      if (av == null) return 1
-      if (bv == null) return -1
-      if (typeof av === 'number' && typeof bv === 'number')
-        return sortDir === 'asc' ? av - bv : bv - av
-      return sortDir === 'asc'
-        ? String(av).localeCompare(String(bv))
-        : String(bv).localeCompare(String(av))
-    })
-  }, [data, sortKey, sortDir])
+  const sorted = useMemo(() => _sortRows(data, sortKey, sortDir), [data, sortKey, sortDir])
+
+  return { sorted, sortKey, sortDir, toggleSort }
+}
+
+// Same as useSortTable, but the sort column/direction is saved server-side (via
+// usePersist) under `persistKey` instead of living in component state — so it
+// survives navigating away (e.g. clicking into a Security Detail page) and back,
+// instead of resetting to defaultKey/defaultDir on every remount.
+export function useSortTablePersisted<T>(
+  data: T[],
+  persistKey: string,
+  defaultKey: string | null = null,
+  defaultDir: 'asc' | 'desc' = 'asc'
+) {
+  const [sortKey, setSortKey] = usePersist<string | null>(`${persistKey}:key`, defaultKey)
+  const [sortDir, setSortDir] = usePersist<'asc' | 'desc'>(`${persistKey}:dir`, defaultDir)
+
+  const toggleSort = useCallback((key: string) => {
+    setSortDir(sortKey === key ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc')
+    setSortKey(key)
+  }, [sortKey, sortDir, setSortKey, setSortDir])
+
+  const sorted = useMemo(() => _sortRows(data, sortKey, sortDir), [data, sortKey, sortDir])
 
   return { sorted, sortKey, sortDir, toggleSort }
 }

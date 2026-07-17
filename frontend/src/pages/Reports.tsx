@@ -26,7 +26,7 @@ import {
   getTransactionById,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable, useSortTablePersisted } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, fmt, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
@@ -1081,7 +1081,7 @@ function AllocationReport() {
 function HoldingsSnapshotTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary'], queryFn: getPortfolioSummary })
   const rows = data as Row[]
-  const { sorted: holdSorted, sortKey: holdSK, sortDir: holdSD, toggleSort: holdSort } = useSortTable(rows, 'value_eur', 'desc')
+  const { sorted: holdSorted, sortKey: holdSK, sortDir: holdSD, toggleSort: holdSort } = useSortTablePersisted(rows, 'holdings-snapshot-sort', 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const total = rows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
   return (
@@ -1137,7 +1137,7 @@ function DetailAnalysisTab({ asOf }: { asOf: string }) {
     enabled: !!snapshotDate,
   })
   const rows = data as Row[]
-  const { sorted, sortKey: sk, sortDir: sd, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
+  const { sorted, sortKey: sk, sortDir: sd, toggleSort } = useSortTablePersisted(rows, 'detail-analysis-sort', 'value_eur', 'desc')
   const total = rows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
   return (
     <div className="space-y-3">
@@ -1351,8 +1351,8 @@ function PnlReport() {
         })
     : null
 
-  const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTable(accounts, 'value', 'desc')
-  const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTable(drillRows ?? [], 'current_value_eur', 'desc')
+  const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTablePersisted(accounts, 'pnl-accounts-sort', 'value', 'desc')
+  const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTablePersisted(drillRows ?? [], 'pnl-drill-sort', 'current_value_eur', 'desc')
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -1866,7 +1866,7 @@ function DividendTrackerTab() {
     if (r.effective_yield_pct < recMinYield) return false
     return true
   }), [recRows, recType, recHolding, recMinYield])
-  const { sorted: recSorted, sortKey: recSK, sortDir: recSD, toggleSort: recSort } = useSortTable(filteredRec, 'composite_score', 'desc')
+  const { sorted: recSorted, sortKey: recSK, sortDir: recSD, toggleSort: recSort } = useSortTablePersisted(filteredRec, 'div-tracker-recommendations-sort', 'composite_score', 'desc')
 
   type TrackerResult = {
     period_label: string
@@ -1886,8 +1886,8 @@ function DividendTrackerTab() {
   const result   = data   as TrackerResult  | undefined
   const fcResult = fcData as ForecastResult | undefined
 
-  const { sorted: divSorted,  sortKey: divSK,  sortDir: divSD,  toggleSort: divSort  } = useSortTable(result?.by_security   ?? [], 'period_income_eur',    'desc')
-  const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTable(fcResult?.by_security ?? [], 'annual_forecast_eur',  'desc')
+  const { sorted: divSorted,  sortKey: divSK,  sortDir: divSD,  toggleSort: divSort  } = useSortTablePersisted(result?.by_security   ?? [], 'div-tracker-actual-sort', 'period_income_eur',    'desc')
+  const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTablePersisted(fcResult?.by_security ?? [], 'div-tracker-forecast-sort', 'annual_forecast_eur',  'desc')
 
   // ── View toggle ───────────────────────────────────────────────────────────────
   const VIEW_LABELS: Record<string, string> = { actual: '📋 Actual', forecast: '🔮 Forecast', recommendations: '💡 Recommendations' }
@@ -2689,7 +2689,7 @@ function BondScheduleTab() {
   const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
   const rows = data as Row[]
-  const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTable(rows, 'days_to_maturity', 'asc')
+  const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTablePersisted(rows, 'bond-schedule-sort', 'days_to_maturity', 'asc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   if (!rows.length) return <p className="text-slate-400 text-sm py-8 text-center">No bond holdings found.</p>
 
@@ -3328,7 +3328,7 @@ function InvestmentSignalsTab() {
     .sort((a, b) => Number(b.sharpe_ratio) - Number(a.sharpe_ratio))
     .slice(0, 20)
 
-  const { sorted: sortedTopPicks, sortKey: tpSK, sortDir: tpSD, toggleSort: tpSort } = useSortTable(topPicks, 'sharpe_ratio', 'desc')
+  const { sorted: sortedTopPicks, sortKey: tpSK, sortDir: tpSD, toggleSort: tpSort } = useSortTablePersisted(topPicks, 'investment-signals-sort', 'sharpe_ratio', 'desc')
 
   const sharpeValues = chartRows.map(r => r.sharpe_ratio ?? 0)
   const minSharpe = Math.min(...sharpeValues)
@@ -3478,7 +3478,7 @@ function PortfolioActionSignalsTab() {
     ? filtered.filter(r => String(r.securities_name).toLowerCase().includes(search.trim().toLowerCase()))
     : filtered
 
-  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTable(searchFiltered, 'final_signal', 'asc')
+  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTablePersisted(searchFiltered, 'portfolio-action-signals-sort', 'final_signal', 'asc')
 
   const signalStyle = (sig: string | null): string => {
     if (!sig) return ''

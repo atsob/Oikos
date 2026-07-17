@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-07-17
 
+### Fixed
+- **Sorting any table with a link to a security's own detail page reset back to the default sort as soon as you left and came back** — the sort column/direction lived in plain component state, which resets on every remount, and clicking into Security Detail always unmounts the page you came from. Affected the Inv. Performance → P&L tab (accounts list and the per-account security drill-down), Inv. Positions (Holdings Snapshot and Detail Analysis), Dividend Tracker (recommendations, actual, and forecast views), Bond Schedule, Securities Analysis' Investment Signals and Portfolio Action Signals tabs, and the Investments page's Holdings table. All now save their sort the same way other saved view settings already do (server-side, via the existing preferences store), so it survives navigating away and back, and reloads.
+
 ### Added
 - **New News page**, in two tiers. Securities currently held or on the Market Data Watchlist get automatic, ticker-based news from Yahoo Finance. Institutions you have an active account with, and payees explicitly opted in via a new "Track for news" checkbox on Static Data → Payees (e.g. an employer paying your salary), get news from a web news search on the name instead (DuckDuckGo, Bing, and Yahoo News, combined) — noisier than the ticker feed, but the only option for things without a ticker. A new `News_Items` table stores results (deduped by URL) with read/unread tracking; a new **News Fetch** scheduled job refreshes it every 4 hours, or on demand via the page's Refresh button.
 - **News page search box**: look up news for any security, institution, or company by name — including ones you don't track — independent of the tracked feed. Matches a known security first (Yahoo Finance quality); otherwise falls back to the same live web news search. Results aren't saved.

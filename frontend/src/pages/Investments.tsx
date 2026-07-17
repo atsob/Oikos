@@ -10,7 +10,7 @@ import {
   getTransactions, getPayees, getCategories,
   syncBalances,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTable, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -111,7 +111,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
-  const { sorted: sortedHoldings, sortKey: hSK, sortDir: hSD, toggleSort: hSort } = useSortTable(holdings, 'value_eur', 'desc')
+  const { sorted: sortedHoldings, sortKey: hSK, sortDir: hSD, toggleSort: hSort } = useSortTablePersisted(holdings, 'investments-holdings-sort', 'value_eur', 'desc')
 
   const getEdit = (row: Record<string, unknown>): HoldingEdit =>
     edits[Number(row.id)] ?? { quantity: String(row.quantity ?? ''), staking: Boolean(row.staking) }
