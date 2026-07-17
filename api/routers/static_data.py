@@ -90,13 +90,14 @@ def get_payees(search: Optional[str] = Query(None)):
             SELECT p.Payees_Id AS id, p.Payees_Name AS name,
                    p.Categories_Id_Default AS categories_id,
                    ch.full_path AS default_category,
+                   p.Track_For_News AS track_for_news,
                    COUNT(t.Transactions_Id) AS transactions_count,
                    MAX(t.Date) AS last_transaction
             FROM Payees p
             LEFT JOIN Transactions t ON t.Payees_Id = p.Payees_Id
             LEFT JOIN ch ON ch.Categories_Id = p.Categories_Id_Default
             WHERE 1=1 {clause}
-            GROUP BY p.Payees_Id, p.Payees_Name, ch.full_path
+            GROUP BY p.Payees_Id, p.Payees_Name, ch.full_path, p.Track_For_News
             ORDER BY p.Payees_Name ASC
         """, conn, params=params if params else None)
     return _df(df)
@@ -177,15 +178,16 @@ def upsert_payee(data: dict):
         pid = data.get('id')
         name = data.get('name', '')
         cat_id = data.get('categories_id') or None
+        track_for_news = bool(data.get('track_for_news', False))
         if pid:
             cur.execute(
-                "UPDATE Payees SET Payees_Name=%s, Categories_Id_Default=%s WHERE Payees_Id=%s",
-                (name, cat_id, pid)
+                "UPDATE Payees SET Payees_Name=%s, Categories_Id_Default=%s, Track_For_News=%s WHERE Payees_Id=%s",
+                (name, cat_id, track_for_news, pid)
             )
         else:
             cur.execute(
-                "INSERT INTO Payees (Payees_Name, Categories_Id_Default) VALUES (%s, %s) RETURNING Payees_Id",
-                (name, cat_id)
+                "INSERT INTO Payees (Payees_Name, Categories_Id_Default, Track_For_News) VALUES (%s, %s, %s) RETURNING Payees_Id",
+                (name, cat_id, track_for_news)
             )
             pid = cur.fetchone()[0]
         conn_obj.commit()

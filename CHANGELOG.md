@@ -2,6 +2,19 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-17
+
+### Added
+- **New News page**, in two tiers. Securities currently held or on the Market Data Watchlist get automatic, ticker-based news from Yahoo Finance. Institutions you have an active account with, and payees explicitly opted in via a new "Track for news" checkbox on Static Data → Payees (e.g. an employer paying your salary), get news from a web news search on the name instead (DuckDuckGo, Bing, and Yahoo News, combined) — noisier than the ticker feed, but the only option for things without a ticker. A new `News_Items` table stores results (deduped by URL) with read/unread tracking; a new **News Fetch** scheduled job refreshes it every 4 hours, or on demand via the page's Refresh button.
+- **News page search box**: look up news for any security, institution, or company by name — including ones you don't track — independent of the tracked feed. Matches a known security first (Yahoo Finance quality); otherwise falls back to the same live web news search. Results aren't saved.
+- **Security Detail → News tab**: the same news feed, pre-filtered to just that security.
+
+### Fixed
+- **News Fetch could silently return zero results for institutions or payees that run later in the same batch** (e.g. two salary-payer payees, Teciem and Finastra, despite both being correctly opted in) — DuckDuckGo's unofficial search API rate-limits after a handful of queries in quick succession, and whichever tier happened to run last (Payees, after Securities and Institutions) absorbed the failures with no visible error. The pause between DuckDuckGo queries is now longer (0.5s → 3s), and a failed query (rate-limit, timeout, or otherwise) retries twice with backoff (15s, then 30s) before giving up — reduces but doesn't eliminate the risk, since the unofficial API can still throttle for longer than that under heavy use.
+- **`duckduckgo_search`, the package News Fetch and the AI Assistant's web search both depend on, is unmaintained and was failing outright** (connection timeouts hitting duckduckgo.com, on top of the rate-limiting above) — the project renamed itself to `ddgs` some time ago and the old package name no longer works reliably. Migrated both to `ddgs` (`requirements.txt`, `ai/news_fetch.py`, `ai/web_search.py`). **Requires `pip install -r requirements.txt` (or a Docker rebuild) to pick up the new dependency** — until then, News search/refresh and the AI Assistant's web search will fail with a server error, though the stored News feed itself keeps working.
+- **One malformed news item could silently wipe out every institution/payee queued after it in the same News Fetch run**: `ddgs` aggregates results across several search engines (DuckDuckGo, Bing, Yahoo News), and they don't agree on date format — one engine returns a raw label like `"Opinion6 days ago"` instead of a real date, which failed the database insert and left that shared connection's transaction aborted for the rest of the run (every institution/payee queried after the bad one silently got zero results too, logged only as an opaque "current transaction is aborted" error). Each news item now commits (or rolls back) independently, so one bad row can no longer take down the rest of the batch, and any date that isn't a genuine parseable timestamp is now stored as unknown (falls back to the fetch time for display) instead of being force-fed into the database.
+- **News Fetch repeatedly tried (and failed) to fetch security news for Hellenic T-Bills**, since they have no real Yahoo Finance ticker and their `Yahoo_Ticker` field holds their ISIN instead — Yahoo correctly rejected it as an invalid ticker every single run. These (any 12-character `Yahoo_Ticker`, which no genuine ticker symbol ever is) are now skipped up front.
+
 ## 2026-07-15
 
 ### Changed

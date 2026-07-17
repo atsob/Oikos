@@ -23,11 +23,14 @@ import {
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals,
+  getNews, markNewsRead,
 } from '@/lib/api'
 import { InvTransactionModal, emptyInvForm, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
+import { NewsList } from '@/pages/News'
+import type { NewsItem } from '@/pages/News'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
 const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
@@ -1450,8 +1453,33 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
   )
 }
 
+function NewsTab({ secId }: { secId: number }) {
+  const qc = useQueryClient()
+  const { data: items = [], isLoading } = useQuery<NewsItem[]>({
+    queryKey: ['news', 'Security', secId],
+    queryFn: () => getNews({ source_type: 'Security', source_id: secId, limit: 100 }),
+  })
+
+  const handleOpen = (item: NewsItem) => {
+    if (item.id != null && !item.is_read) {
+      markNewsRead(item.id, true).then(() => qc.invalidateQueries({ queryKey: ['news'] }))
+    }
+    window.open(item.url, '_blank', 'noopener,noreferrer')
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (items.length === 0) {
+    return <p className="text-sm text-slate-400 text-center py-12">No news yet for this security. It'll appear here once the News Fetch job runs, or check the News page's Refresh button.</p>
+  }
+  return (
+    <div className="p-4">
+      <NewsList items={items} onOpen={handleOpen} />
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'Downloads'] as const
+const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Downloads'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -1519,6 +1547,7 @@ export default function SecurityDetail() {
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}
               {tab === 'Dividends' && <DividendsTab secId={secId} security={security} />}
               {tab === 'Corporate Actions' && <CorporateActionsTab secId={secId} security={security} />}
+              {tab === 'News' && <NewsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
             </CardBody>
           </Card>

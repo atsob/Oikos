@@ -1261,7 +1261,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "recurring_drafts",
+    "dividend_history", "recurring_drafts", "news_fetch",
 }
 
 _SEED_JOBS = [
@@ -1274,6 +1274,7 @@ _SEED_JOBS = [
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and records any changes for dashboard notifications.",               "Every 30 min, 24×7",             True),
+    ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
 ]
 
 
@@ -1355,6 +1356,9 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "signal_notifications":
             from database.queries import refresh_signal_notifications
             refresh_signal_notifications()
+        elif job_id == "news_fetch":
+            from ai.news_fetch import run as run_news_fetch
+            run_news_fetch()
         else:
             raise ValueError(f"No runnable function for custom job '{job_id}'")
         # Record success

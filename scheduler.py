@@ -9,6 +9,8 @@ Jobs
 • Morning maint.    : 06:15 AM — VACUUM ANALYZE + full embedding update.
 • Weekly summary    : Monday 07:00 — also fires at startup if missing for this week.
 • Securities info   : once per calendar day (at startup).
+• News fetch        : every NEWS_FETCH_INTERVAL_MINUTES (24 × 7).
+                      Held/watchlisted securities, institutions, and opted-in payees.
 """
 
 import warnings
@@ -24,6 +26,7 @@ from datetime import date, datetime, timedelta
 
 from ai.weekly_summary import run as run_weekly_summary
 from ai.monthly_summary import run as run_monthly_summary
+from ai.news_fetch import run as run_news_fetch
 from data.downloaders import (
     download_historical_prices_from_yahoo,
     download_historical_prices_from_tradingview,
@@ -69,6 +72,7 @@ DIVIDEND_HISTORY_WEEKDAY = 6  # Sunday at 06:30
 DIVIDEND_HISTORY_HOUR    = 6
 DIVIDEND_HISTORY_MINUTE  = 30
 SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
+NEWS_FETCH_INTERVAL_MINUTES = 240     # Every 4 hours, 24×7
 
 # Tick interval — the scheduler wakes up this often to check all jobs.
 TICK_SECONDS = 60
@@ -345,6 +349,19 @@ def _signal_notifications_job():
         _record_job("signal_notifications", "error", str(e))
 
 
+def _news_fetch_job():
+    logging.info("Running news fetch…")
+    try:
+        counts = run_news_fetch()
+        logging.info(f"News fetch completed: {counts}")
+        _record_job("news_fetch", "success",
+                     f"{sum(counts.values())} new item(s) "
+                     f"(security {counts['security']}, institution {counts['institution']}, payee {counts['payee']})")
+    except Exception as e:
+        logging.error(f"News fetch failed: {e}", exc_info=True)
+        _record_job("news_fetch", "error", str(e))
+
+
 def _morning_maintenance_job():
     """VACUUM ANALYZE the database, then refresh all embeddings."""
     errors = []
@@ -436,6 +453,9 @@ if __name__ == "__main__":
     # Signal notifications: first run deferred to tick loop
     _last_signal_refresh: datetime = datetime.min
 
+    # News fetch: first run deferred to tick loop
+    _last_news_fetch: datetime = datetime.min
+
     # Morning maintenance: skip if already past the scheduled window today
     _last_maintenance_date: date = date.min
     _now_startup = datetime.now()
@@ -501,3 +521,9 @@ if __name__ == "__main__":
         if minutes_since_signal >= _parse_interval(sc.get('signal_notifications', ''), SIGNAL_REFRESH_INTERVAL_MINUTES):
             _signal_notifications_job()
             _last_signal_refresh = now
+
+        # ── News fetch: every N minutes ───────────────────────────────────────
+        minutes_since_news = (now - _last_news_fetch).total_seconds() / 60
+        if minutes_since_news >= _parse_interval(sc.get('news_fetch', ''), NEWS_FETCH_INTERVAL_MINUTES):
+            _news_fetch_job()
+            _last_news_fetch = now

@@ -263,6 +263,7 @@ CREATE TABLE Payees (
     Payees_Name         VARCHAR(255) UNIQUE NOT NULL,
     Categories_Id_Default INTEGER REFERENCES Categories(Categories_Id),
     Notes               TEXT,
+    Track_For_News      BOOLEAN DEFAULT FALSE,  -- opt-in: fetch news for this payee (e.g. an employer)
     embedding           vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payees_id   ON Payees(Payees_Id);
@@ -873,6 +874,26 @@ CREATE TABLE IF NOT EXISTS Watchlist (
     Added_Date    DATE DEFAULT CURRENT_DATE,
     UNIQUE(Securities_Id)
 );
+
+-- =============================================================================
+-- NEWS
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS News_Items (
+    News_Id      SERIAL PRIMARY KEY,
+    Source_Type  VARCHAR(20) NOT NULL CHECK (Source_Type IN ('Security', 'Institution', 'Payee')),
+    Source_Id    INTEGER NOT NULL,  -- Securities_Id / Institutions_Id / Payees_Id, matching Source_Type
+    Title        TEXT NOT NULL,
+    Url          TEXT NOT NULL,
+    Publisher    VARCHAR(150),
+    Summary      TEXT,
+    Published_At TIMESTAMPTZ,
+    Fetched_At   TIMESTAMPTZ DEFAULT NOW(),
+    Is_Read      BOOLEAN DEFAULT FALSE,
+    UNIQUE(Source_Type, Source_Id, Url)
+);
+CREATE INDEX IF NOT EXISTS idx_news_items_source    ON News_Items(Source_Type, Source_Id);
+CREATE INDEX IF NOT EXISTS idx_news_items_published ON News_Items(Published_At DESC);
 
 CREATE TABLE IF NOT EXISTS Alerts (
     Alert_Id      SERIAL PRIMARY KEY,

@@ -62,6 +62,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [editName, setEditName] = useState('')
   const [editCatId, setEditCatId] = useState('')
+  const [editTrackForNews, setEditTrackForNews] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mergeOpen, setMergeOpen] = useState(false)
@@ -88,6 +89,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     setEditRow(row)
     setEditName(String(row.name ?? ''))
     setEditCatId(row.categories_id != null ? String(row.categories_id) : '')
+    setEditTrackForNews(Boolean(row.track_for_news))
     setError(null)
   }
 
@@ -95,7 +97,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     if (!editRow) return
     setSaving(true); setError(null)
     try {
-      await upsertPayee({ id: editRow.id ?? undefined, name: editName, categories_id: editCatId ? Number(editCatId) : null })
+      await upsertPayee({ id: editRow.id ?? undefined, name: editName, categories_id: editCatId ? Number(editCatId) : null, track_for_news: editTrackForNews })
       qc.invalidateQueries({ queryKey: ['payees'] })
       setEditRow(null)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
@@ -128,6 +130,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
     { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
+    { field: 'track_for_news', headerName: 'News', width: 70, valueFormatter: (p: { value: boolean }) => p.value ? 'Yes' : '—' },
     { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
     { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: (p: { value: string | null }) => p.value?.slice(0, 10) ?? '—' },
     {
@@ -195,6 +198,10 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
               ))}
             </select>
           </Field>
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mt-1">
+            <input type="checkbox" checked={editTrackForNews} onChange={e => setEditTrackForNews(e.target.checked)} className="rounded" />
+            Track for news (e.g. an employer — shows up on the News page)
+          </label>
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
       )}

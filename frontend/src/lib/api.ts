@@ -300,6 +300,19 @@ export const upsertWatchlistItem = (data: Record<string, unknown>) =>
 export const deleteWatchlistItem = (id: number) =>
   api.delete(`/market-data/watchlist/${id}`).then(r => r.data)
 
+// ── News ─────────────────────────────────────────────────────────────────────
+export const getNews = (params?: { source_type?: string; source_id?: number; unread_only?: boolean; limit?: number }) =>
+  api.get('/news', { params }).then(r => r.data)
+
+export const searchNews = (q: string, limit = 15) =>
+  api.get('/news/search', { params: { q, limit } }).then(r => r.data)
+
+export const generateNews = () =>
+  api.post('/news/generate').then(r => r.data)
+
+export const markNewsRead = (id: number, isRead = true) =>
+  api.patch(`/news/${id}/read`, { is_read: isRead }).then(r => r.data)
+
 export const getAlertsDefinitions = () =>
   api.get('/market-data/alerts').then(r => r.data)
 

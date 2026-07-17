@@ -28,6 +28,7 @@ import Register from '@/pages/Register'
 import Reports from '@/pages/Reports'
 import StaticData from '@/pages/StaticData'
 import MarketData from '@/pages/MarketData'
+import News from '@/pages/News'
 import Importers from '@/pages/Importers'
 import Tools from '@/pages/Tools'
 import AIAssistant from '@/pages/AIAssistant'
@@ -74,6 +75,7 @@ export default function App() {
             <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
             <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
             <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
+            <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
             <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
             <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
             <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />

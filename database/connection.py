@@ -149,6 +149,23 @@ def _run_startup_migrations():
         "CREATE INDEX IF NOT EXISTS idx_price_source ON Historical_Prices(Source)",
         # Holdings: staking flag (migration 004)
         "ALTER TABLE Holdings ADD COLUMN IF NOT EXISTS Staking BOOLEAN DEFAULT FALSE",
+        # News: opt-in per-payee tracking flag, and the News_Items table itself
+        "ALTER TABLE Payees ADD COLUMN IF NOT EXISTS Track_For_News BOOLEAN DEFAULT FALSE",
+        """CREATE TABLE IF NOT EXISTS News_Items (
+               News_Id      SERIAL PRIMARY KEY,
+               Source_Type  VARCHAR(20) NOT NULL CHECK (Source_Type IN ('Security', 'Institution', 'Payee')),
+               Source_Id    INTEGER NOT NULL,
+               Title        TEXT NOT NULL,
+               Url          TEXT NOT NULL,
+               Publisher    VARCHAR(150),
+               Summary      TEXT,
+               Published_At TIMESTAMPTZ,
+               Fetched_At   TIMESTAMPTZ DEFAULT NOW(),
+               Is_Read      BOOLEAN DEFAULT FALSE,
+               UNIQUE(Source_Type, Source_Id, Url)
+           )""",
+        "CREATE INDEX IF NOT EXISTS idx_news_items_source    ON News_Items(Source_Type, Source_Id)",
+        "CREATE INDEX IF NOT EXISTS idx_news_items_published ON News_Items(Published_At DESC)",
         # AI helper view: transactions with amounts converted to EUR via latest FX rate
         """CREATE OR REPLACE VIEW v_transactions_eur AS
            SELECT

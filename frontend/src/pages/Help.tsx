@@ -470,6 +470,45 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     ),
   },
   {
+    id: 'news',
+    label: 'News',
+    body: (
+      <>
+        <H2>News</H2>
+        <P>
+          A single feed of news relevant to your finances, filterable by <b>Securities</b>, <b>Institutions</b>, and{' '}
+          <b>Companies</b>. Clicking an item marks it read and opens the source article in a new tab. A{' '}
+          <b>Refresh</b> button on the page triggers an immediate fetch; otherwise it refreshes automatically in
+          the background (see System → Scheduled Tasks, job <b>News Fetch</b>). A <b>Security Detail</b> page's{' '}
+          own <b>News</b> tab shows the same feed pre-filtered to just that security.
+        </P>
+        <Ul>
+          <li><b>Securities</b> — every security currently held or on your Market Data → Watchlist, sourced from Yahoo Finance.</li>
+          <li><b>Institutions</b> — every bank/broker/exchange you have an active account with (Static Data → Institutions), sourced from a web news search on the institution's name (DuckDuckGo, Bing, and Yahoo News, combined).</li>
+          <li>
+            <b>Companies</b> — payees explicitly opted in via a <b>Track for news</b> checkbox on Static Data →{' '}
+            Payees (e.g. an employer paying your salary) — nothing is tracked automatically. Also sourced from
+            the same web news search.
+          </li>
+        </Ul>
+        <P>
+          The <b>search box</b> at the top of the page looks up news for anything, tracked or not — type a
+          security, ticker, institution, or company name and press <b>Search</b>. If it matches a known security
+          it uses Yahoo Finance (same quality as the tracked feed); otherwise it runs the same live web news
+          search on whatever you typed. Search results aren't saved to the tracked feed. <b>Clear</b> returns to
+          the normal filtered view.
+        </P>
+        <Note>
+          Institution and company news — and any search that falls back to a web search — comes from a
+          name-based query across several general search engines rather than a dedicated news API, so it's
+          noisier and less reliable than the ticker-based securities news, and any one of those engines can
+          occasionally time out or rate-limit under heavy use (the News Fetch job already paces its own requests
+          and retries automatically; a manual search that fails is usually worth just retrying a bit later).
+        </Note>
+      </>
+    ),
+  },
+  {
     id: 'importers',
     label: 'Importers',
     body: (

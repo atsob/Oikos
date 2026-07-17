@@ -5,7 +5,7 @@ import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
 import {
   LayoutDashboard, BookOpen, RefreshCw, BarChart2,
-  Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart,
+  Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
   Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X,
 } from 'lucide-react'
 
@@ -23,6 +23,7 @@ const nav = [
   { to: '/reports', label: 'Reports', icon: BarChart2 },
   { to: '/static-data', label: 'Static Data', icon: Database },
   { to: '/market-data', label: 'Market Data', icon: TrendingUp },
+  { to: '/news', label: 'News', icon: Newspaper },
   { to: '/importers', label: 'Importers', icon: Upload },
   { to: '/tools', label: 'Tools', icon: Wrench },
   { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
