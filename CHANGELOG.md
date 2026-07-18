@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-18
+
+### Added
+- **Inv. Performance → P&L tab — the Price column in an account's security drill-down is now editable**: type a new price and press Enter (or click away) to save it as today's price for that security. This upserts today's row in `Historical_Prices` — the same table normal price downloads write to — so it's overwritten again the next time an automatic refresh runs, making it a same-day override rather than a permanent historical edit. The P&L totals for the row, the account, and the portfolio all recompute immediately.
+
 ## 2026-07-17
 
 ### Fixed

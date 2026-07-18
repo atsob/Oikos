@@ -24,10 +24,11 @@ import {
   getCustomReportFilterData, runCustomReport, runCustomReportDrillDown, runCustomReportInvestmentDrillDown,
   updateTransaction, upsertSplits, getSplits, getCategories, getPayees, deleteTransaction,
   getTransactionById,
+  addPrice,
   api,
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable, useSortTablePersisted } from '@/components/ui'
-import { fmtEur, fmtPct, fmtNum, fmt, plotLayout } from '@/lib/utils'
+import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
@@ -1255,6 +1256,47 @@ function PnlCell({ val, pct }: { val: number; pct?: number | null }) {
   )
 }
 
+// Lets you type a manual price directly into the P&L drill-down table; on Enter/blur it's
+// saved as today's Historical_Prices row for that security (upsert — overwrites any price
+// already recorded for today) and the P&L numbers refetch to reflect it.
+function EditablePriceCell({ securitiesId, price, currency, onSaved }: {
+  securitiesId: unknown; price: number | null; currency: string; onSaved: () => void
+}) {
+  const [value, setValue] = useState(price != null ? String(price) : '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setValue(price != null ? String(price) : '') }, [price])
+
+  const save = async () => {
+    const num = Number(value)
+    if (!securitiesId || !value.trim() || isNaN(num) || num === price) return
+    setSaving(true)
+    try {
+      await addPrice({ security_id: Number(securitiesId), date: new Date().toISOString().slice(0, 10), close: num })
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <td className="px-2 py-1 text-right">
+      <div className="flex items-center justify-end gap-1">
+        <span className="text-slate-400 text-xs">{getCurrencySymbol(currency)}</span>
+        <input
+          type="number"
+          step="any"
+          value={value}
+          disabled={saving}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          onBlur={save}
+          className="w-20 text-right tabular-nums text-slate-700 bg-transparent border border-transparent hover:border-slate-200 focus:border-blue-400 focus:bg-white rounded px-1 py-0.5 text-sm outline-none disabled:opacity-50"
+        />
+      </div>
+    </td>
+  )
+}
+
 function ChkBox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
@@ -1265,6 +1307,7 @@ function ChkBox({ label, checked, onChange }: { label: string; checked: boolean;
 }
 
 function PnlReport() {
+  const qc = useQueryClient()
   const [win, setWin] = usePersist<PnlWindow>('pnl_win', 'ytd')
   const [showClosedAccounts, setShowClosedAccounts] = usePersist('pnl_showClosedAccounts', false)
   const [showFxSplit, setShowFxSplit] = usePersist('pnl_showFxSplit', false)
@@ -1442,7 +1485,12 @@ function PnlReport() {
                     <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
                       <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.price_today != null ? fmt(Number(r.price_today), 4, getCurrencySymbol(String(r.currency ?? 'EUR'))) : '—'}</td>
+                      <EditablePriceCell
+                        securitiesId={r.securities_id}
+                        price={r.price_today != null ? Number(r.price_today) : null}
+                        currency={String(r.currency ?? 'EUR')}
+                        onSaved={() => qc.invalidateQueries({ queryKey: ['pnl'] })}
+                      />
                       <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
                       <PnlCell val={Number(r[pk] ?? 0)} />
                       {showPct && (() => {

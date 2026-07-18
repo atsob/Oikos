@@ -406,6 +406,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           new gain or loss. A transfer fee or a cross-security conversion, by contrast, does create real, new
           gain or loss.
         </Note>
+        <Note>
+          In an account's security drill-down, the <b>Price</b> column is directly editable — type a value and
+          press Enter to save it as today's price for that security. This upserts today's row in{' '}
+          <b>Historical_Prices</b>, the same table automatic price downloads write to, so it's a same-day
+          override rather than a permanent edit: the next automatic refresh overwrites it again. Useful for
+          illiquid or manually-tracked securities where you already know today's real price ahead of the next
+          scheduled download.
+        </Note>
 
         <H3>🧾 Investment Tax</H3>
         <P>
