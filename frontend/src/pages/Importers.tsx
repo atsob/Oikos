@@ -2572,7 +2572,7 @@ function CoinbaseTab() {
           </label>
           <div className="flex gap-2">
             <Button onClick={() => testMut.mutate()} disabled={!apiKey || !apiSecret || testMut.isPending} size="sm">
-              {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Test Connection
+              {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Establish Connection
             </Button>
           </div>
           {testMut.isError && <ErrorBox msg={apiErrorMsg(testMut.error)} />}
@@ -2811,7 +2811,7 @@ function CryptoComTab() {
           </label>
           <div className="flex gap-2">
             <Button onClick={() => testMut.mutate()} disabled={!apiKey || !apiSecret || testMut.isPending} size="sm">
-              {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Test Connection
+              {testMut.isPending ? <Spinner size={12} /> : null} 🔌 Establish Connection
             </Button>
           </div>
           {testMut.isError && <ErrorBox msg={apiErrorMsg(testMut.error)} />}

@@ -2470,7 +2470,7 @@ For App transactions, export a CSV from the App and use a CSV importer.
         st.info("Enter your API Key and Secret Key above to continue.")
         return
 
-    _test_btn  = st.button("🔌 Test Connection", key="cdc_test")
+    _test_btn  = st.button("🔌 Establish Connection", key="cdc_test")
     _fetch_btn = st.button("📡 Fetch & Preview", key="cdc_fetch",
                            type="primary", disabled=acc_id is None)
 
@@ -2965,7 +2965,7 @@ detects the format automatically.
         st.info("Enter your API Key and Secret above to continue.")
         return
 
-    _test_btn  = st.button("🔌 Test Connection", key="cb_test")
+    _test_btn  = st.button("🔌 Establish Connection", key="cb_test")
     _fetch_btn = st.button("📡 Fetch & Preview", key="cb_fetch",
                            type="primary", disabled=acc_id is None)
 
