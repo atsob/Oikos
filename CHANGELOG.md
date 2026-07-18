@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Added
 - **Inv. Performance → P&L tab — the Price column in an account's security drill-down is now editable**: type a new price and press Enter (or click away) to save it as today's price for that security. This upserts today's row in `Historical_Prices` — the same table normal price downloads write to — so it's overwritten again the next time an automatic refresh runs, making it a same-day override rather than a permanent historical edit. The P&L totals for the row, the account, and the portfolio all recompute immediately.
+- **Every account-selection dropdown now groups accounts by type** (Cash, Checking, Savings, Credit Card, Brokerage, Pension, …), the way Cash Register's account picker already did — instead of one long flat list. Applied consistently across the app: Importers (Bank → Import & Reconcile, Import History, Revolut Personal/Savings/Trading, IB Flex, Saxo, Coinbase, Crypto.com, Capital.com, FxPro, QIF account mapping), Investments' account filter, Recurring's template/occurrence editors, the transaction editor's Transfer To Account field, the investment transaction/transfer modals, and Static Data's Accounts → Linked Account picker. Two account-list endpoints (`/bank/reconciliation-history-accounts`, `/bank/qif-options`) were missing the account type entirely and now return it.
 
 ## 2026-07-17
 

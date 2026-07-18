@@ -8,7 +8,7 @@ import {
   clearAccount, reconcileAccount, searchAllTransactions,
   syncBalances,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, AccountOptions } from '@/components/ui'
 import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
@@ -242,19 +242,7 @@ export default function Register() {
           setOffset(0)
         }}>
           <option value="">— Select account —</option>
-          {CASH_ACCOUNT_TYPES.map(type => {
-            const group = cashAccounts.filter(a => String(a.type ?? '') === type)
-            if (!group.length) return null
-            return (
-              <optgroup key={type} label={type}>
-                {group.map(a => (
-                  <option key={String(a.id)} value={String(a.id)}>
-                    {String(a.name)}{!a.is_active ? ' (inactive)' : ''}
-                  </option>
-                ))}
-              </optgroup>
-            )
-          })}
+          <AccountOptions accounts={cashAccounts} />
         </Select>
         <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} className="rounded" />

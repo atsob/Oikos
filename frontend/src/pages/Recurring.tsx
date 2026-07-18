@@ -9,7 +9,7 @@ import {
   getAccounts, getPayees, getCategories, getSplits, getPayeeTopCategories,
   getRecentTransactionsForTemplate, createTemplateFromTransaction,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey } from '@/components/ui'
+import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
 
@@ -94,7 +94,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
               <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => set('accounts_id', e.target.value)}>
                 <option value="">— select —</option>
-                {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
               </select>
             </div>
             <div>
@@ -143,7 +143,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
             <label className="text-xs font-medium text-slate-500 block mb-1">Transfer to Account (optional)</label>
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id_target} onChange={e => set('accounts_id_target', e.target.value)}>
               <option value="">— none —</option>
-              {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
             </select>
           </div>
 
@@ -354,7 +354,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
               <label className="text-xs font-medium text-slate-500 block mb-1">Account</label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => set('accounts_id', e.target.value)}>
                 <option value="">— select —</option>
-                {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
               </select>
             </div>
             <div>
@@ -364,7 +364,7 @@ function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSave
               </label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id_target} onChange={e => { set('accounts_id_target', e.target.value); if (e.target.value) set('payees_id', '') }}>
                 <option value="">— none (not a transfer) —</option>
-                {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
               </select>
             </div>
           </div>

@@ -369,7 +369,7 @@ def apply_import(data: dict):
 def get_reconciliation_history_accounts():
     with get_db() as conn:
         df = pd.read_sql("""
-            SELECT DISTINCT a.accounts_id AS id, a.accounts_name AS name
+            SELECT DISTINCT a.accounts_id AS id, a.accounts_name AS name, a.accounts_type AS type
             FROM Reconciliation_Sessions rs
             JOIN accounts a ON a.accounts_id = rs.Accounts_Id
             ORDER BY a.accounts_name
@@ -1721,7 +1721,7 @@ def qif_options():
     try:
         with get_db() as conn:
             all_accs = pd.read_sql(
-                "SELECT Accounts_Id AS id, Accounts_Name AS name FROM Accounts ORDER BY Accounts_Name", conn
+                "SELECT Accounts_Id AS id, Accounts_Name AS name, Accounts_Type AS type FROM Accounts ORDER BY Accounts_Name", conn
             )
             inv_accs = pd.read_sql("""
                 SELECT DISTINCT a.Accounts_Id AS id, a.Accounts_Name AS name

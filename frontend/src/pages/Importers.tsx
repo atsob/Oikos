@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable,
+  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions,
 } from '@/components/ui'
 import { Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { fmtNum } from '@/lib/utils'
@@ -280,9 +280,7 @@ function ImportReconcileTab() {
                 <label className="block text-xs font-medium text-slate-600 mb-1">Account</label>
                 <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
                   <option value="">— select account —</option>
-                  {(accounts as Record<string, unknown>[]).map(a => (
-                    <option key={a.id as number} value={a.id as number}>{a.name as string} ({a.type as string})</option>
-                  ))}
+                  <AccountOptions accounts={accounts as Record<string, unknown>[]} />
                 </Select>
               </div>
               <div>
@@ -778,9 +776,7 @@ function ImportHistoryTab() {
               <label className="block text-xs font-medium text-slate-600 mb-1">Account</label>
               <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
                 <option value="">— select account —</option>
-                {(accounts as Record<string, unknown>[]).map(a => (
-                  <option key={a.id as number} value={a.id as number}>{a.name as string}</option>
-                ))}
+                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
               </Select>
             </div>
           </div>
@@ -891,7 +887,7 @@ function RevolutPersonalTab() {
             <label className="block text-xs font-medium text-slate-600 mb-1">Target Account</label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {(accounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
             </Select>
           </div>
           {file ? (
@@ -991,7 +987,7 @@ function RevolutSavingsTab() {
             </label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {accounts.map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
             </Select>
           </div>
           {file ? (
@@ -1388,14 +1384,14 @@ function IBFlexTab() {
               <label className="block text-xs font-medium text-slate-600 mb-1">Import into account (investments)</label>
               <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
                 <option value="">— select account —</option>
-                {brokerAccounts.map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+                <AccountOptions accounts={brokerAccounts as Record<string, unknown>[]} />
               </Select>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Cash account for deposits/fees (optional)</label>
               <Select value={cashAccountId ?? ''} onChange={e => setCashAccountId(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">— None (use margin account) —</option>
-                {cashAccounts.map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+                <AccountOptions accounts={cashAccounts as Record<string, unknown>[]} />
               </Select>
             </div>
           </div>
@@ -1688,7 +1684,7 @@ function RevolutTradingTab() {
             <label className="block text-xs font-medium text-slate-600 mb-1">Import into account</label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {brokerAccounts.map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              <AccountOptions accounts={brokerAccounts as Record<string, unknown>[]} />
             </Select>
           </div>
           {file ? (
@@ -2172,9 +2168,7 @@ function SaxoTab() {
                           setSaxoAccounts(prev => prev.map((a, j) => j === i ? { ...a, app_account_id: v } : a))
                         }}>
                           <option value="">— not mapped —</option>
-                          {(allAccounts.data || []).map((a: { id: number; name: string }) => (
-                            <option key={a.id} value={a.id}>{a.name}</option>
-                          ))}
+                          <AccountOptions accounts={(allAccounts.data || []) as Record<string, unknown>[]} />
                         </Select>
                       </td>
                     </tr>
@@ -2354,7 +2348,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
             <label className="block text-xs font-medium text-slate-600 mb-1">Target App Account</label>
             <Select value={effectiveAccountId} onChange={e => setPdfAccountId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">— select account —</option>
-              {allAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
             </Select>
           </div>
           <div className="flex items-end">
@@ -2593,14 +2587,14 @@ function CoinbaseTab() {
               <label className="block text-xs font-medium text-slate-600 mb-1">Investment account (buys, sells, staking)</label>
               <Select value={accountId} onChange={e => setAccountId(e.target.value ? Number(e.target.value) : '')}>
                 <option value="">— select account —</option>
-                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                <AccountOptions accounts={(allAccounts.data || []) as Record<string, unknown>[]} />
               </Select>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Cash account <span className="text-slate-400">(optional — fiat deposits/withdrawals)</span></label>
               <Select value={cashAccountId} onChange={e => setCashAccountId(e.target.value ? Number(e.target.value) : '')}>
                 <option value="">— none (use investment account) —</option>
-                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                <AccountOptions accounts={(allAccounts.data || []) as Record<string, unknown>[]} />
               </Select>
             </div>
           </div>
@@ -2832,14 +2826,14 @@ function CryptoComTab() {
               <label className="block text-xs font-medium text-slate-600 mb-1">Investment account (buys, sells, transfers)</label>
               <Select value={accountId} onChange={e => setAccountId(e.target.value ? Number(e.target.value) : '')}>
                 <option value="">— select account —</option>
-                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                <AccountOptions accounts={(allAccounts.data || []) as Record<string, unknown>[]} />
               </Select>
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Cash account <span className="text-slate-400">(optional — fiat deposits/withdrawals)</span></label>
               <Select value={cashAccountId} onChange={e => setCashAccountId(e.target.value ? Number(e.target.value) : '')}>
                 <option value="">— none (use investment account) —</option>
-                {(allAccounts.data || []).map((a: { id: number; name: string }) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                <AccountOptions accounts={(allAccounts.data || []) as Record<string, unknown>[]} />
               </Select>
             </div>
           </div>
@@ -2976,7 +2970,7 @@ function CapitalComTab() {
             <label className="block text-xs font-medium text-slate-600 mb-1">Target Account</label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {(allAccounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
             </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -3189,7 +3183,7 @@ function FxProTab() {
             <label className="block text-xs font-medium text-slate-600 mb-1">Target Account</label>
             <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
               <option value="">— select account —</option>
-              {(allAccounts as Record<string, unknown>[]).map(a => <option key={a.id as number} value={a.id as number}>{a.name as string}</option>)}
+              <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
             </Select>
           </div>
           {file ? (
@@ -3369,7 +3363,7 @@ function AccountMappingTable({ accounts, accountMap, onChange, allAccounts }: {
   accounts: Record<string, unknown>[]
   accountMap: Record<string, QifAccountAction>
   onChange: (qifName: string, action: QifAccountAction) => void
-  allAccounts: { id: number; name: string }[]
+  allAccounts: { id: number; name: string; type?: string }[]
 }) {
   const byGroup: Record<string, Record<string, unknown>[]> = {}
   for (const a of accounts) {
@@ -3420,7 +3414,7 @@ function AccountMappingTable({ accounts, accountMap, onChange, allAccounts }: {
                       className="text-xs border border-slate-300 rounded px-2 py-1 flex-1 min-w-[160px]"
                     >
                       <option value="">— select account —</option>
-                      {allAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.name}</option>)}
+                      <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
                     </select>
                   )}
                   {act.action === 'create' && (
@@ -3457,7 +3451,7 @@ function QIFTab() {
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
 
   const { data: opts } = useQuery({ queryKey: ['qif-options'], queryFn: getQifOptions })
-  const allAccounts = (opts?.all_accounts ?? []) as { id: number; name: string }[]
+  const allAccounts = (opts?.all_accounts ?? []) as { id: number; name: string; type?: string }[]
   const invAccounts = (opts?.investment_accounts ?? []) as { id: number; name: string }[]
 
   const [clearCategories, setClearCategories] = useState(false)

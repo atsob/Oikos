@@ -176,6 +176,46 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
 )
 Select.displayName = 'Select'
 
+// ── AccountOptions ────────────────────────────────────────────────────────────
+// Canonical account-type order, matching the Accounts_Type Postgres enum.
+export const ACCOUNT_TYPE_ORDER = [
+  'Cash', 'Checking', 'Savings', 'Credit Card',
+  'Brokerage', 'Pension', 'Other Investment', 'Margin',
+  'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other',
+]
+
+// Renders <optgroup> blocks (one per account type present, in canonical order) for a
+// native <select>/<Select> — drop-in replacement for `accounts.map(a => <option>...)`
+// wherever a dropdown lists accounts, so every account picker in the app groups them
+// the same way (Cash Register was first; this makes it consistent everywhere else).
+// Any type not in ACCOUNT_TYPE_ORDER still gets its own group, appended at the end,
+// so an account is never silently dropped just because its type is unrecognized.
+export function AccountOptions({ accounts }: { accounts: Record<string, unknown>[] }) {
+  const byType = new Map<string, Record<string, unknown>[]>()
+  for (const a of accounts) {
+    const t = String(a.type ?? 'Other')
+    if (!byType.has(t)) byType.set(t, [])
+    byType.get(t)!.push(a)
+  }
+  const orderedTypes = [
+    ...ACCOUNT_TYPE_ORDER.filter(t => byType.has(t)),
+    ...[...byType.keys()].filter(t => !ACCOUNT_TYPE_ORDER.includes(t)),
+  ]
+  return (
+    <>
+      {orderedTypes.map(type => (
+        <optgroup key={type} label={type}>
+          {byType.get(type)!.map(a => (
+            <option key={String(a.id)} value={String(a.id)}>
+              {String(a.name)}{a.is_active === false ? ' (inactive)' : ''}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </>
+  )
+}
+
 // ── SearchableSelect ──────────────────────────────────────────────────────────
 export interface SearchableOption { value: string; label: string; disabled?: boolean }
 

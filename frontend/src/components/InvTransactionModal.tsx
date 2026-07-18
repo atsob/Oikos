@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getFxRates, getLinkedAccount, getHoldings } from '@/lib/api'
 import { api } from '@/lib/api'
-import { Input, Button, useEscapeKey } from '@/components/ui'
+import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
 import { X, Save } from 'lucide-react'
 
 export const ACTIONS = [
@@ -226,7 +226,7 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => onAccountChange(e.target.value)}>
               <option value="">— select —</option>
-              {accounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
             </select>
           </div>
 
@@ -235,7 +235,7 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
               <label className="text-xs font-medium text-slate-500 block mb-1">Cash Account (linked transaction)</label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.cash_account_id} onChange={e => set('cash_account_id', e.target.value)}>
                 <option value="">— none —</option>
-                {allAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
               </select>
             </div>
           )}

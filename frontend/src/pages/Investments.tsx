@@ -10,7 +10,7 @@ import {
   getTransactions, getPayees, getCategories,
   syncBalances,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, AccountOptions } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -491,11 +491,7 @@ export default function Investments() {
         <div className="flex items-center gap-3 flex-wrap">
           <select className="w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => { setAccountId(Number(e.target.value) || null); setOffset(0) }}>
             <option value="">All accounts</option>
-            {investmentAccounts.map(a => (
-              <option key={String(a.id)} value={String(a.id)}>
-                {String(a.name)}{!a.is_active ? ' (inactive)' : ''}
-              </option>
-            ))}
+            <AccountOptions accounts={investmentAccounts as Record<string, unknown>[]} />
           </select>
           <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
             <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} className="rounded" />

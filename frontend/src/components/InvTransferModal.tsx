@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getHoldings, getSecurities, previewInvestmentTransfer, executeInvestmentTransfer } from '@/lib/api'
-import { Button, Select, Input, SearchableSelect, Spinner, useEscapeKey } from '@/components/ui'
+import { Button, Select, Input, SearchableSelect, Spinner, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtCur, fmtQty } from '@/lib/utils'
 import { X, ArrowRight, AlertTriangle } from 'lucide-react'
 import { INVESTMENT_ACCOUNT_TYPES } from '@/pages/Investments'
@@ -163,7 +163,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
                 <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
                 <Select value={fromAccountId} onChange={e => { setFromAccountId(e.target.value); setFromSecuritiesId(''); setPreview(null) }}>
                   <option value="">— select —</option>
-                  {investmentAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                  <AccountOptions accounts={investmentAccounts as Record<string, unknown>[]} />
                 </Select>
               </div>
               <div>
@@ -201,7 +201,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
                 <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
                 <Select value={toAccountId} onChange={e => { setToAccountId(e.target.value); setPreview(null) }}>
                   <option value="">— select —</option>
-                  {investmentAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                  <AccountOptions accounts={investmentAccounts as Record<string, unknown>[]} />
                 </Select>
               </div>
               <div>
@@ -244,7 +244,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
                   <label className="text-xs font-medium text-slate-500 block mb-1">Paid from account</label>
                   <Select value={feeCashAccountId} onChange={e => { setFeeCashAccountId(e.target.value); setPreview(null) }}>
                     <option value="">— select —</option>
-                    {feeCashAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                    <AccountOptions accounts={feeCashAccounts as Record<string, unknown>[]} />
                   </Select>
                 </div>
               </div>

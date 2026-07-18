@@ -5,7 +5,7 @@ import {
   createTransaction, updateTransaction, deleteTransaction,
   createTransfer, createRecurringTemplate,
 } from '@/lib/api'
-import { Input, Button, useEscapeKey } from '@/components/ui'
+import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtEur, cn } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
@@ -443,7 +443,7 @@ export function TxModal({
                   onChange={e => set('transfer_account_id', e.target.value)}
                 >
                   <option value="">— select target account —</option>
-                  {otherAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                  <AccountOptions accounts={otherAccounts as Record<string, unknown>[]} />
                 </select>
               </div>
               <div>

@@ -12,7 +12,7 @@ import {
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, AccountOptions } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
@@ -654,7 +654,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             <Field label="Linked Account">
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
                 <option value="">— none —</option>
-                {acctList.filter(a => String(a.id) !== String(form.id) && !['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? ''))).map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+                <AccountOptions accounts={acctList.filter(a => String(a.id) !== String(form.id) && !['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? ''))) as Record<string, unknown>[]} />
               </select>
             </Field>
             <div className="col-span-2">
