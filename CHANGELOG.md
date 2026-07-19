@@ -2,11 +2,16 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
-## 2026-07-18
+## 2026-07-19
+
+### Fixed
+- **Cash Register was slow to load an account's transactions.** The transaction-list query's `split_agg` CTE had no `WHERE` clause at all — it recomputed a JSON aggregate over every split for every transaction in the entire database on every single request, regardless of which account or date range was actually requested (confirmed by timing: narrowing the visible range from 3,780 transactions down to 57 barely changed the response time, since the dominant cost wasn't tied to the account at all). Scoped it to the requested account and date range: **~1.8s → ~0.4s** for a full-history page load, **~1.5s → ~0.25s** for a narrow date range, with byte-identical output.
+- **The payee list — loaded on Cash Register, Recurring, and other payee-picker dropdowns — always computed each payee's transaction count and last-used date**, a join against the entire Transactions table, even though only the Static Data admin grid actually displays those two columns. Added a `stats` flag (default on, unchanged everywhere else) so plain pickers can skip that join+aggregate entirely; Cash Register now requests the lightweight version: **~0.8s → ~0.25s**.
 
 ### Added
 - **Inv. Performance → P&L tab — the Price column in an account's security drill-down is now editable**: type a new price and press Enter (or click away) to save it as today's price for that security. This upserts today's row in `Historical_Prices` — the same table normal price downloads write to — so it's overwritten again the next time an automatic refresh runs, making it a same-day override rather than a permanent historical edit. The P&L totals for the row, the account, and the portfolio all recompute immediately.
 - **Every account-selection dropdown now groups accounts by type** (Cash, Checking, Savings, Credit Card, Brokerage, Pension, …), the way Cash Register's account picker already did — instead of one long flat list. Applied consistently across the app: Importers (Bank → Import & Reconcile, Import History, Revolut Personal/Savings/Trading, IB Flex, Saxo, Coinbase, Crypto.com, Capital.com, FxPro, QIF account mapping), Investments' account filter, Recurring's template/occurrence editors, the transaction editor's Transfer To Account field, the investment transaction/transfer modals, and Static Data's Accounts → Linked Account picker. Two account-list endpoints (`/bank/reconciliation-history-accounts`, `/bank/qif-options`) were missing the account type entirely and now return it.
+- **Cash Register — replaced "Page 1 of 26"-style numbered pagination with scroll-as-you-go loading.** Transactions now stream in automatically as you scroll instead of clicking through pages, and column-header sorting (Date, Payee, Category, Amount) is done server-side across the whole account rather than just the currently-loaded page.
 
 ## 2026-07-17
 

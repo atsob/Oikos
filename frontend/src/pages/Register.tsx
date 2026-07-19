@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { usePersist, useGridColumnState } from '@/lib/hooks'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
-import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent } from 'ag-grid-community'
+import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
   getAccounts, getTransactions, getPayees, getCategories,
   clearAccount, reconcileAccount, searchAllTransactions,
@@ -36,14 +36,18 @@ function BalanceCell({ value, currency }: { value: number; currency?: string }) 
   return <span className={`tabular-nums ${value < 0 ? 'text-red-600' : 'text-slate-800'}`}>{fmtCur(value, currency)}</span>
 }
 type SplitDetail = { category: string | null; amount: number }
-function CategoryCell({ value, data, currency }: { value: string; data: Record<string, unknown>; currency?: string }) {
+// data is undefined while the infinite row model is still fetching the block
+// that will contain this row — AG Grid renders a loading placeholder for it.
+function CategoryCell({ value, data, currency }: { value: string; data?: Record<string, unknown>; currency?: string }) {
+  if (!data) return null
   const splitCount = Number(data.split_count ?? 0)
   if (splitCount <= 1) return <span>{value ?? ''}</span>
   const splits = (data.splits as SplitDetail[]) ?? []
   const tooltip = splits.map(s => `${s.category ?? '(no category)'}: ${fmtCur(s.amount, currency)}`).join('\n')
   return <span className="italic text-slate-500 cursor-help" title={tooltip}>Split</span>
 }
-function ClearedCell({ data }: { data: Record<string, unknown> }) {
+function ClearedCell({ data }: { data?: Record<string, unknown> }) {
+  if (!data) return null
   if (data.is_draft) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">Draft</span>
   if (!data.cleared && !data.reconciled) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 text-yellow-700">Pending</span>
   return (
@@ -54,16 +58,20 @@ function ClearedCell({ data }: { data: Record<string, unknown> }) {
   )
 }
 
+// Sortable columns must match the backend's _SORTABLE_COLUMNS whitelist (register.py)
+// — sorting is done server-side across the whole account now, not just the loaded
+// rows, so a column with no server-side mapping is marked unsortable rather than
+// silently sorting by date instead and looking broken.
 const makeColDefs = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140, cellRenderer: CategoryCell, cellRendererParams: { currency } },
-  { field: 'target_account', headerName: 'Transfer To', width: 130 },
-  { field: 'memo', headerName: 'Memo', width: 140 },
+  { field: 'target_account', headerName: 'Transfer To', width: 130, sortable: false },
+  { field: 'memo', headerName: 'Memo', width: 140, sortable: false },
   { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
-  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, cellRendererParams: { currency }, type: 'numericColumn' },
-  { headerName: 'Status', width: 170, cellRenderer: ClearedCell },
+  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, cellRendererParams: { currency }, type: 'numericColumn', sortable: false },
+  { headerName: 'Status', width: 170, cellRenderer: ClearedCell, sortable: false },
 ]
 
 
@@ -90,11 +98,16 @@ export default function Register() {
   const [fromDate, setFromDate] = useState(monthsAgo(1))
   const [toDate, setToDate] = useState(DEFAULT_TO_DATE)
   const [activePeriod, setActivePeriod] = useState<string>('1M')
-  const [offset, setOffset] = useState(0)
+
+  // Grid refresh (server-side, so no more query-cache invalidation for transactions —
+  // just tell the infinite row model's currently-loaded blocks to refetch themselves).
+  const refreshGrid = useCallback(() => {
+    gridRef.current?.api?.refreshInfiniteCache()
+  }, [])
 
   const tx = useTxModal({
     onSaved: () => {
-      qc.invalidateQueries({ queryKey: ['transactions'] })
+      refreshGrid()
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
     },
   })
@@ -102,7 +115,10 @@ export default function Register() {
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('')
   const [globalOpen, setGlobalOpen] = useState(false)
-  const [focusTxId, setFocusTxId] = useState<number | null>(null)
+  // A pending "jump to this transaction" request from a global search hit — imperative,
+  // not React state, since it's consumed once inside the datasource's getRows callback
+  // rather than driving a render.
+  const focusTxIdRef = useRef<number | null>(null)
 
   // Clear state
   const [clearOpen, setClearOpen] = useState(false)
@@ -121,11 +137,55 @@ export default function Register() {
   const cashAccounts = (accounts as Record<string, unknown>[])
     .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
     .filter(a => showInactive || Boolean(a.is_active))
-  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees', 'lite'], queryFn: () => getPayees(undefined, false) })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
 
-  const queryParams = { account_id: accountId, search: search || undefined, from_date: fromDate, to_date: toDate, limit: PAGE_SIZE, offset }
-  const txQuery = useQuery({ queryKey: ['transactions', queryParams], queryFn: () => getTransactions(queryParams), enabled: !!accountId, placeholderData: keepPreviousData })
+  // Transaction count for the "N transactions" label — updated from whatever the
+  // datasource's most recent response said; reset on any filter change below so a
+  // stale count from the previous account/date range/search doesn't linger.
+  const [totalCount, setTotalCount] = useState<number | null>(null)
+  useEffect(() => { setTotalCount(null) }, [accountId, search, fromDate, toDate])
+
+  // AG Grid Infinite Row Model datasource: fetches one block of rows at a time as the
+  // user scrolls, with sorting done server-side (see register.py's whitelist) rather
+  // than only sorting whatever page happened to already be loaded. Recreated whenever
+  // the account/search/date range changes, which — since it's a new object — is what
+  // tells the grid to throw away its cache and reload from scratch.
+  const datasource = useMemo<IDatasource>(() => ({
+    getRows: (params: IGetRowsParams) => {
+      const sortModel = params.sortModel[0]
+      getTransactions({
+        account_id: accountId,
+        search: search || undefined,
+        from_date: fromDate,
+        to_date: toDate,
+        limit: params.endRow - params.startRow,
+        offset: params.startRow,
+        sort_by: sortModel?.colId,
+        sort_dir: sortModel?.sort,
+      }).then(result => {
+        setTotalCount(result.total)
+        const lastRow = result.total <= params.endRow ? result.total : -1
+        params.successCallback(result.transactions, lastRow)
+
+        // If a global-search result asked us to land on a specific transaction, the
+        // narrowed date range (see the search result's onClick) guarantees it's the
+        // newest row in range, so it should be in this very first block — check once
+        // and give up silently if not found, same as the old page-based version did.
+        const wantedId = focusTxIdRef.current
+        if (wantedId != null && params.startRow === 0) {
+          focusTxIdRef.current = null
+          requestAnimationFrame(() => {
+            const node = gridRef.current?.api?.getRowNode(String(wantedId))
+            if (node) {
+              gridRef.current?.api.ensureNodeVisible(node, 'middle')
+              node.setSelected(true, true)
+            }
+          })
+        }
+      }).catch(() => params.failCallback())
+    },
+  }), [accountId, search, fromDate, toDate])
 
   const globalQ = globalSearch.trim()
   const globalSearchQuery = useQuery({
@@ -147,24 +207,6 @@ export default function Register() {
     e.api.autoSizeAllColumns()
   }, [])
 
-  // After navigating in from global search, jump to and select the target transaction
-  // once its page of data has loaded (the account's date filter was just narrowed to
-  // cover it — see the search result's onClick — but the row still needs locating).
-  // Gated on isFetching (not just txQuery.data): with keepPreviousData, the query key
-  // changing to the new account/dates fires this effect once immediately with the old,
-  // still-displayed dataset (nothing found yet) before the real fetch resolves — acting
-  // on that premature firing would clear focusTxId before the actual data ever arrives.
-  useEffect(() => {
-    if (!focusTxId || !txQuery.data || txQuery.isFetching) return
-    const api = gridRef.current?.api
-    const node = api?.getRowNode(String(focusTxId))
-    if (node) {
-      api!.ensureNodeVisible(node, 'middle')
-      node.setSelected(true, true)
-    }
-    setFocusTxId(null)
-  }, [txQuery.data, focusTxId, txQuery.isFetching])
-
   const setPeriod = (label: string, from: string) => {
     setFromDate(from)
     // A period shortcut always means "from X up to now" — reset the upper bound too, in
@@ -172,7 +214,6 @@ export default function Register() {
     // otherwise clash with the new lower bound and show nothing.
     setToDate(DEFAULT_TO_DATE)
     setActivePeriod(label)
-    setOffset(0)
   }
 
   const onRowClicked = (e: RowClickedEvent) => {
@@ -225,7 +266,7 @@ export default function Register() {
               onSync={async target => {
                 await syncBalances(target)
                 await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-                await qc.invalidateQueries({ queryKey: ['transactions'], exact: false })
+                refreshGrid()
               }}
             />
           </div>
@@ -239,7 +280,6 @@ export default function Register() {
           // Same reasoning as setPeriod: don't carry over an upper bound narrowed by a
           // previous global-search jump — a fresh account should start from a normal view.
           setToDate(DEFAULT_TO_DATE)
-          setOffset(0)
         }}>
           <option value="">— Select account —</option>
           <AccountOptions accounts={cashAccounts} />
@@ -332,45 +372,38 @@ export default function Register() {
       <div className="px-6 py-4 flex-1">
         {!accountId ? (
           <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Select an account to view transactions</div>
-        ) : txQuery.isLoading ? (
-          <div className="flex items-center justify-center h-64"><Spinner /></div>
         ) : (
           <Card className="overflow-hidden">
             <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="relative">
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => { setSearch(e.target.value); setOffset(0) }} />
+                  <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
-                <span className="text-xs text-slate-400 whitespace-nowrap">{txQuery.data?.total != null ? `${txQuery.data.total.toLocaleString()} transactions` : ''}</span>
+                <span className="text-xs text-slate-400 whitespace-nowrap">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</span>
               </div>
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
             </div>
+            {/* Infinite row model: rows stream in as you scroll instead of clicking through
+                numbered pages — see the `datasource` above for how blocks are fetched. */}
             <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
               <AgGridReact
                 ref={gridRef}
-                rowData={txQuery.data?.transactions ?? []}
+                rowModelType="infinite"
+                datasource={datasource}
+                cacheBlockSize={PAGE_SIZE}
                 columnDefs={gridCols.colDefs}
                 onGridReady={onGridReady}
                 onRowClicked={onRowClicked}
                 onColumnMoved={gridCols.onColumnMoved}
                 onColumnResized={gridCols.onColumnResized}
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
-                onRowDataUpdated={e => e.api.sizeColumnsToFit()}
-                defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                defaultColDef={{ resizable: true, sortable: true }}
                 rowSelection="single"
                 suppressCellFocus={false}
-                getRowId={p => p.data.id}
+                getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}
               />
             </div>
-
-            {txQuery.data?.total > PAGE_SIZE && (
-              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100 text-sm text-slate-600">
-                <Button variant="secondary" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
-                <span>Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.ceil(txQuery.data.total / PAGE_SIZE)}</span>
-                <Button variant="secondary" size="sm" disabled={offset + PAGE_SIZE >= txQuery.data.total} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</Button>
-              </div>
-            )}
           </Card>
         )}
       </div>
@@ -438,18 +471,20 @@ export default function Register() {
                   onClick={() => {
                     setAccountId(Number(row.accounts_id))
                     // The account's own date filter (default: last month) usually won't cover an
-                    // arbitrary search hit — and the transaction list is always sorted newest-first,
-                    // capped to the first page, so simply widening "from" to the beginning of time
-                    // isn't enough on an active account: anything newer than the target still fills
-                    // up that first page and pushes it off-screen. Capping "to" at the target's own
-                    // date instead guarantees it's the newest (or tied-newest) row in range, so it's
-                    // always on page one.
+                    // arbitrary search hit — and the transaction list needs to be sorted newest-first,
+                    // capped to the first loaded block, so simply widening "from" to the beginning of
+                    // time isn't enough on an active account: anything newer than the target still
+                    // fills up that first block and pushes it off-screen. Capping "to" at the target's
+                    // own date instead guarantees it's the newest (or tied-newest) row in range, so
+                    // it's always in the first block the grid loads — but only if the grid is actually
+                    // sorted by date; a user-applied sort on another column (e.g. Amount) would break
+                    // that guarantee, so force it back to the default date-desc sort here too.
+                    gridRef.current?.api?.applyColumnState({ state: [{ colId: 'date', sort: 'desc' }], defaultState: { sort: null } })
                     setFromDate('1900-01-01')
                     setToDate(String(row.date))
                     setActivePeriod('All')
                     setSearch('')
-                    setOffset(0)
-                    setFocusTxId(Number(row.id))
+                    focusTxIdRef.current = Number(row.id)
                     setGlobalOpen(false)
                     setGlobalSearch('')
                   }}
@@ -505,7 +540,7 @@ export default function Register() {
                   try {
                     const result = await clearAccount(accountId, clearDate)
                     setClearMsg(`✓ ${result.cleared} transaction${result.cleared !== 1 ? 's' : ''} marked as cleared.`)
-                    qc.invalidateQueries({ queryKey: ['transactions'] })
+                    refreshGrid()
                   } catch (e: unknown) {
                     setClearMsg(`Error: ${e instanceof Error ? e.message : 'Failed'}`)
                   } finally { setClearing(false) }
@@ -548,7 +583,7 @@ export default function Register() {
                   try {
                     const result = await reconcileAccount(accountId, reconcileDate)
                     setReconcileMsg(`✓ ${result.reconciled} transaction${result.reconciled !== 1 ? 's' : ''} marked as reconciled.`)
-                    qc.invalidateQueries({ queryKey: ['transactions'] })
+                    refreshGrid()
                   } catch (e: unknown) {
                     setReconcileMsg(`Error: ${e instanceof Error ? e.message : 'Failed'}`)
                   } finally { setReconciling(false) }

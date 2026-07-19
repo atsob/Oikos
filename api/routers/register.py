@@ -33,6 +33,19 @@ def _refresh_balance(cur, *account_ids: int) -> None:
         """, (acc_id, acc_id))
 
 
+# Whitelisted so sort_by can never be interpolated as raw SQL — maps the grid's
+# column id to the actual expression to order by. running_balance/status aren't
+# included: a running balance is inherently tied to chronological order, and the
+# status column has no single backing field (cleared/reconciled/draft combined).
+_SORTABLE_COLUMNS = {
+    "date": "t.date",
+    "payee": "p.payees_name",
+    "description": "t.description",
+    "category": "ct.full_path",
+    "amount": "t.total_amount",
+}
+
+
 @router.get("/transactions")
 def get_transactions(
     account_id: int = Query(...),
@@ -42,6 +55,8 @@ def get_transactions(
     search: Optional[str] = Query(None),
     limit: int = Query(200),
     offset: int = Query(0),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: str = Query("desc"),
 ):
     """Paginated transaction list with running balance for one account."""
     status_clause = ""
@@ -55,6 +70,10 @@ def get_transactions(
     if search:
         search_clause = "AND (t.description ILIKE %(search)s OR p.payees_name ILIKE %(search)s)"
         search_param = f"%{search}%"
+
+    sort_expr = _SORTABLE_COLUMNS.get(sort_by, "t.date")
+    sort_direction = "ASC" if sort_dir == "asc" else "DESC"
+    order_clause = f"{sort_expr} {sort_direction}, t.transactions_id {sort_direction}"
 
     query = f"""
         WITH RECURSIVE cat_tree AS (
@@ -88,6 +107,13 @@ def get_transactions(
                     ORDER BY s.splits_id
                 )::text AS splits_detail
             FROM Splits s
+            -- Scoped to this account/date range instead of aggregating every split in the
+            -- database on every request — this CTE previously had no WHERE clause at all,
+            -- so it recomputed JSON_AGG over the whole Splits table regardless of which
+            -- account or page was being viewed (the single biggest cost in this query).
+            JOIN Transactions st ON st.transactions_id = s.transactions_id
+                AND st.accounts_id = %(account_id)s
+                AND st.date BETWEEN %(from_date)s AND %(to_date)s
             LEFT JOIN cat_tree sct ON sct.categories_id = s.categories_id
             GROUP BY s.transactions_id
         )
@@ -120,7 +146,7 @@ def get_transactions(
           AND t.date BETWEEN %(from_date)s AND %(to_date)s
           {status_clause}
           {search_clause}
-        ORDER BY t.date DESC, t.transactions_id DESC
+        ORDER BY {order_clause}
         LIMIT %(limit)s OFFSET %(offset)s
     """
     params = {

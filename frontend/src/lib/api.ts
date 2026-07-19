@@ -187,8 +187,11 @@ export const getInstitutions = (search?: string) =>
 export const getCategories = (search?: string) =>
   api.get('/static-data/categories', { params: search ? { search } : {} }).then(r => r.data)
 
-export const getPayees = (search?: string) =>
-  api.get('/static-data/payees', { params: search ? { search } : {} }).then(r => r.data)
+// stats=false skips the join+aggregate that computes # Txns / Last Used — pass it for
+// plain payee pickers (dropdowns/autocomplete) that don't display those columns; only
+// the Static Data admin grid needs the default stats=true.
+export const getPayees = (search?: string, stats = true) =>
+  api.get('/static-data/payees', { params: { ...(search ? { search } : {}), stats } }).then(r => r.data)
 
 export const getAccountsMaster = (search?: string) =>
   api.get('/static-data/accounts-master', { params: search ? { search } : {} }).then(r => r.data)

@@ -73,11 +73,23 @@ def get_categories(search: Optional[str] = Query(None)):
 
 
 @router.get("/payees")
-def get_payees(search: Optional[str] = Query(None)):
+def get_payees(search: Optional[str] = Query(None), stats: bool = Query(True)):
+    """`stats=True` (default) joins every payee against the whole Transactions table to
+    compute # Txns / Last Used — only the Static Data admin grid actually shows those.
+    Callers that just need a payee picker (id/name) should pass `stats=False` to skip
+    that join+aggregate entirely; it's the most expensive part of this query."""
     clause = "AND LOWER(p.Payees_Name) LIKE %(s)s" if search else ""
     params: dict = {}
     if search:
         params["s"] = f"%{search.lower()}%"
+    if stats:
+        stats_select = "COUNT(t.Transactions_Id) AS transactions_count, MAX(t.Date) AS last_transaction"
+        stats_join = "LEFT JOIN Transactions t ON t.Payees_Id = p.Payees_Id"
+        group_by = "GROUP BY p.Payees_Id, p.Payees_Name, ch.full_path, p.Track_For_News"
+    else:
+        stats_select = "NULL::bigint AS transactions_count, NULL::date AS last_transaction"
+        stats_join = ""
+        group_by = ""
     with get_db() as conn:
         df = pd.read_sql(f"""
             WITH RECURSIVE ch AS (
@@ -91,13 +103,12 @@ def get_payees(search: Optional[str] = Query(None)):
                    p.Categories_Id_Default AS categories_id,
                    ch.full_path AS default_category,
                    p.Track_For_News AS track_for_news,
-                   COUNT(t.Transactions_Id) AS transactions_count,
-                   MAX(t.Date) AS last_transaction
+                   {stats_select}
             FROM Payees p
-            LEFT JOIN Transactions t ON t.Payees_Id = p.Payees_Id
+            {stats_join}
             LEFT JOIN ch ON ch.Categories_Id = p.Categories_Id_Default
             WHERE 1=1 {clause}
-            GROUP BY p.Payees_Id, p.Payees_Name, ch.full_path, p.Track_For_News
+            {group_by}
             ORDER BY p.Payees_Name ASC
         """, conn, params=params if params else None)
     return _df(df)
