@@ -2247,6 +2247,14 @@ function DividendTrackerTab() {
         <p className="text-slate-400 text-sm py-8 text-center">No dividend or interest income found for the selected period.</p>
       ) : (
         <>
+          <h4 className="text-sm font-semibold text-slate-700">Income by Security — {result.period_label}</h4>
+          <div className="grid grid-cols-4 gap-4">
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total dividend and interest income received in the selected period, in EUR.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.total_income_eur ?? 0))}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total income for the selected period divided by the number of months it spans.">Monthly Average</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.avg_monthly_income_eur ?? 0))}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities that paid dividends or interest in the selected period.">Securities paying</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.securities_paying ?? 0)}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average annualised Yield on Cost across all paying securities — income received divided by your cost basis, scaled to a yearly rate.">Avg Ann. YOC</Tooltip></p><p className="text-xl font-bold">{result.summary.avg_yoc_pct != null ? `${Number(result.summary.avg_yoc_pct).toFixed(2)}%` : 'N/A'}</p></div>
+          </div>
+
           <Plot
             data={[{ x: result.monthly.map(m => m.month), y: result.monthly.map(m => m.income_eur), type: 'bar', marker: { color: '#2ecc71' } }]}
             layout={{
@@ -2257,13 +2265,6 @@ function DividendTrackerTab() {
             }}
             config={{ displayModeBar: false }} style={{ width: '100%' }}
           />
-
-          <h4 className="text-sm font-semibold text-slate-700">Income by Security — {result.period_label}</h4>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total dividend and interest income received in the selected period, in EUR.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.total_income_eur ?? 0))}</p></div>
-            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities that paid dividends or interest in the selected period.">Securities paying</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.securities_paying ?? 0)}</p></div>
-            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average annualised Yield on Cost across all paying securities — income received divided by your cost basis, scaled to a yearly rate.">Avg Ann. YOC</Tooltip></p><p className="text-xl font-bold">{result.summary.avg_yoc_pct != null ? `${Number(result.summary.avg_yoc_pct).toFixed(2)}%` : 'N/A'}</p></div>
-          </div>
 
           <WithCopy>
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">

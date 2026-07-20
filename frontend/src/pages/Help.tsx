@@ -216,6 +216,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           and it's scrolled to and highlighted.
         </Note>
         <Note>
+          The <b>Transfer To Account</b> field, when recording a transfer, hides inactive accounts by
+          default — check <b>Show inactive</b> next to it to bring them back if you need to transfer to one.
+          An inactive account already set as the target (when editing an existing transfer) always stays
+          visible regardless of the checkbox.
+        </Note>
+        <Note>
           <b>Installment series</b>: when creating a new transaction, "Create installment series" generates
           every installment immediately, dated forward at whatever frequency you pick, with the description
           suffixed <code>(1/N)</code>, <code>(2/N)</code>, etc. When editing an <i>existing</i> transaction,

@@ -1196,10 +1196,15 @@ def get_dividends_tracker(
         .reset_index().sort_values("period_income_eur", ascending=False)
     )
 
+    # Inclusive month count spanned by the period (e.g. Jan-Jul = 7), matching the
+    # number of bars shown in the monthly chart, not just the months that had income.
+    months_in_period = max((ed.year - sd.year) * 12 + (ed.month - sd.month) + 1, 1)
+
     summary = {
         "total_income_eur": round(total_income, 2),
         "securities_paying": len(df_t12),
         "avg_yoc_pct": round(avg_yoc, 4) if avg_yoc is not None else None,
+        "avg_monthly_income_eur": round(total_income / months_in_period, 2),
     }
 
     disp_cols = ["securities_id", "securities_name", "securities_type", "period_income_eur", "cost_basis_eur",

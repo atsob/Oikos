@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-20
+
+### Changed
+- **Inv. Performance → Dividend Tracker — the Actual view's layout now matches Forecast's**: the summary KPI cards (Total, Monthly Average, Securities paying, Avg Ann. YOC) appear above the monthly income chart instead of below it, and a new **Monthly Average** card shows the period's total income divided by the number of months it spans.
+- **Transfer To Account, in the transaction editor, no longer lists inactive accounts by default** — previously every inactive account (including old currency sub-accounts you'd never transfer to) cluttered the dropdown regardless of the page's own "Show inactive" setting. A **Show inactive** checkbox next to the field reveals them again when needed; an inactive account already selected (when editing an existing transfer) still shows up so editing never breaks.
+
 ## 2026-07-19
 
 ### Fixed

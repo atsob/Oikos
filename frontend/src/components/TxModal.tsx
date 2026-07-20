@@ -333,6 +333,7 @@ export function TxModal({
 }: ModalProps) {
   useEscapeKey(onClose)
   const set = (k: keyof TxForm, v: unknown) => onFormChange({ ...form, [k]: v })
+  const [showInactiveTargets, setShowInactiveTargets] = useState(false)
 
   // Switching to Transfer auto-fills the configured default payee (Settings →
   // Transfers) when none is chosen yet, so most transfers need no payee typing
@@ -383,7 +384,11 @@ export function TxModal({
   const setSplit = (i: number, k: keyof SplitRow, v: string) =>
     onSplitsChange(splits.map((s, j) => j === i ? { ...s, [k]: v } : s))
 
-  const otherAccounts = accounts.filter(a => a.id !== form.accounts_id && CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
+  const otherAccounts = accounts.filter(a =>
+    a.id !== form.accounts_id &&
+    CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')) &&
+    (showInactiveTargets || a.is_active !== false || String(a.id) === String(form.transfer_account_id))
+  )
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -436,7 +441,18 @@ export function TxModal({
           {form.is_transfer ? (
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-slate-500 block mb-1">Transfer To Account *</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-500">Transfer To Account *</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={showInactiveTargets}
+                      onChange={e => setShowInactiveTargets(e.target.checked)}
+                    />
+                    <span className="text-xs text-slate-500">Show inactive</span>
+                  </label>
+                </div>
                 <select
                   className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
                   value={form.transfer_account_id}
