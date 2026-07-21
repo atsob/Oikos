@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-22
+
+### Added
+- **Cash Register's generic search (top-right header) now shows a summary above the results**: a count and income/expense/net total for the matched transactions, grouped by currency (each shown in its own native currency, not converted or netted together). If a search matches 50 or more transactions, a note flags that the totals only cover the shown results.
+
 ## 2026-07-20
 
 ### Added

@@ -219,7 +219,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           The <b>search box in the top-right header</b> (separate from the account-scoped search below the
           filters) searches every account at once. Clicking a result jumps to that account and transaction
           directly — the date range narrows automatically to make sure the transaction is actually on screen,
-          and it's scrolled to and highlighted.
+          and it's scrolled to and highlighted. Above the results, a summary shows the count and
+          income/expense/net total for what matched, grouped by currency (each account's own, not converted) —
+          if 50 or more transactions match, a note flags that the totals only cover the ones shown.
         </Note>
         <Note>
           The <b>Transfer To Account</b> field, when recording a transfer, hides inactive accounts by

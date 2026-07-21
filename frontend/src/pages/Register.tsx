@@ -194,6 +194,23 @@ export default function Register() {
     enabled: globalQ.length >= 2,
     staleTime: 30_000,
   })
+  const globalResults = (globalSearchQuery.data as Record<string, unknown>[] | undefined) ?? []
+  // Grouped by currency rather than netted into one figure — these amounts are each in
+  // their own account's native currency (see the currency note elsewhere on this page),
+  // so summing across currencies without a conversion would just be a meaningless number.
+  const globalSummary = useMemo(() => {
+    const byCurrency = new Map<string, { count: number; income: number; expense: number }>()
+    for (const row of globalResults) {
+      const currency = String(row.currency ?? 'EUR')
+      const amount = Number(row.amount ?? 0)
+      const entry = byCurrency.get(currency) ?? { count: 0, income: 0, expense: 0 }
+      entry.count++
+      if (amount >= 0) entry.income += amount
+      else entry.expense += amount
+      byCurrency.set(currency, entry)
+    }
+    return [...byCurrency.entries()]
+  }, [globalResults])
 
   // Escape closes whichever inline overlay is open
   useEscapeKey(useCallback(() => {
@@ -459,12 +476,27 @@ export default function Register() {
               />
               <button onClick={() => setGlobalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
             </div>
+            {globalResults.length > 0 && (
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs">
+                {globalSummary.map(([currency, s]) => (
+                  <div key={currency} className="flex items-center gap-3">
+                    <span className="font-semibold text-slate-600">{s.count} {globalSummary.length > 1 ? currency : ''} {s.count === 1 ? 'result' : 'results'}</span>
+                    {s.income > 0 && <span className="text-green-700 tabular-nums">+{fmtCur(s.income, currency)}</span>}
+                    {s.expense < 0 && <span className="text-red-600 tabular-nums">{fmtCur(s.expense, currency)}</span>}
+                    <span className="text-slate-500 tabular-nums">net {fmtCur(s.income + s.expense, currency)}</span>
+                  </div>
+                ))}
+                {globalResults.length >= 50 && (
+                  <span className="text-slate-400 italic">first 50 matches only — totals may be incomplete</span>
+                )}
+              </div>
+            )}
             <div className="overflow-y-auto">
               {globalSearchQuery.isLoading && <div className="flex justify-center py-8"><Spinner /></div>}
               {!globalSearchQuery.isLoading && (!globalSearchQuery.data?.length) && (
                 <div className="text-center text-sm text-slate-400 py-10">No results for "{globalQ}"</div>
               )}
-              {(globalSearchQuery.data as Record<string, unknown>[] ?? []).map((row, i) => (
+              {globalResults.map((row, i) => (
                 <button
                   key={i}
                   className="w-full flex items-center gap-4 px-4 py-3 hover:bg-slate-50 border-b border-slate-100 last:border-0 text-left"
