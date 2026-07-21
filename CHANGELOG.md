@@ -4,6 +4,10 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-07-20
 
+### Fixed
+- **Market Data → Securities (and Currencies) — resizing a column snapped it back to its original width** as soon as anything else on the page re-rendered (typing in the search box, saving an edit, etc.) — the table's column definitions were being rebuilt from scratch on every render instead of staying a stable reference, so ag-Grid treated each render as a brand-new set of columns and reset them to their default widths. Column widths are now also written into the same saved layout that already remembered column order and show/hide state, so a resize sticks across renders, reloads, and future reorders — this fixes the underlying issue for every other table in the app using the same shared column-state mechanism, not just Securities.
+- **Market Data → Securities — the Columns show/hide menu only listed 18 of the 31 fields available on a security**, so Tax Category, Sector, Industry, Coupon Frequency, Dividend Rate/Frequency, Ex-Dividend/Pay Date, Payout Ratio, 5Y Avg Yield, Analyst Rating, Target Price, and # Investments (all editable on the security itself) had no way to be displayed as columns. All are now toggleable from the menu (hidden by default, to keep the table's default view uncluttered).
+
 ### Changed
 - **Inv. Performance → Dividend Tracker — the Actual view's layout now matches Forecast's**: the summary KPI cards (Total, Monthly Average, Securities paying, Avg Ann. YOC) appear above the monthly income chart instead of below it, and a new **Monthly Average** card shows the period's total income divided by the number of months it spans.
 - **Transfer To Account, in the transaction editor, no longer lists inactive accounts by default** — previously every inactive account (including old currency sub-accounts you'd never transfer to) cluttered the dropdown regardless of the page's own "Show inactive" setting. A **Show inactive** checkbox next to the field reveals them again when needed; an inactive account already selected (when editing an existing transfer) still shows up so editing never breaks.

@@ -54,7 +54,7 @@ export function usePersist<T>(key: string, defaultVal: T) {
  * these same events with finished:true but a non-"ui" source; saving those would
  * silently overwrite the user's real layout with whatever size the auto-fit produced.
  */
-export function useGridColumnState<T extends { colId?: string; field?: string; hide?: boolean | null; headerName?: string }>(key: string, colDefs: T[]) {
+export function useGridColumnState<T extends { colId?: string; field?: string; hide?: boolean | null; width?: number | null; headerName?: string }>(key: string, colDefs: T[]) {
   const [state, setState] = usePersist<ColumnState[] | null>(`grid_cols_${key}`, null)
 
   const idOf = useCallback((d: T) => d.colId ?? d.field ?? '', [])
@@ -65,7 +65,13 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
     const ordered: T[] = []
     for (const s of state) {
       const d = remaining.get(s.colId)
-      if (d) { ordered.push(s.hide != null ? { ...d, hide: s.hide } : d); remaining.delete(s.colId) }
+      if (d) {
+        const overrides: Partial<T> = {}
+        if (s.hide != null) overrides.hide = s.hide as T['hide']
+        if (s.width != null) overrides.width = s.width as T['width']
+        ordered.push(Object.keys(overrides).length ? { ...d, ...overrides } : d)
+        remaining.delete(s.colId)
+      }
     }
     return [...ordered, ...remaining.values()]
   }, [colDefs, state, idOf])

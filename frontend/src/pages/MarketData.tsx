@@ -170,7 +170,12 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
-  const colDefs: ColDef[] = [
+  // A stable reference matters here: onColumnResized/onColumnMoved persist column
+  // state, which re-renders this component — a fresh array literal on every render
+  // would make ag-Grid treat columnDefs as "changed" and reset it back to these
+  // literal widths, undoing any resize the user just made.
+  const colDefs = useMemo(() => {
+    const cols: ColDef[] = [
     { field: 'ticker', headerName: 'Ticker Symbol', width: 120, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
     { field: 'name', headerName: 'Security Name', flex: 2, minWidth: 180,
       cellRenderer: (p: { value: string; data: Record<string, unknown> }) => (
@@ -179,20 +184,33 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
       ) },
     { field: 'is_active', headerName: 'Is Active', width: 90, cellRenderer: (p: {value: unknown}) => <input type="checkbox" readOnly checked={!!p.value} className="mt-2.5" /> },
     { field: 'is_tax_exempt', headerName: 'Tax Exempt', width: 100, cellRenderer: (p: {value: unknown}) => <input type="checkbox" readOnly checked={!!p.value} className="mt-2.5" /> },
+    { field: 'tax_category', headerName: 'Tax Category', width: 130, hide: true },
+    { field: 'sector', headerName: 'Sector', width: 140, hide: true },
+    { field: 'industry', headerName: 'Industry', width: 140, hide: true },
     { field: 'yahoo_ticker', headerName: 'Yahoo Ticker', width: 110, cellStyle: { fontFamily: 'monospace' } },
     { field: 'tv_symbol', headerName: 'TV Symbol', width: 100 },
     { field: 'tv_exchange', headerName: 'TV Exchange', width: 110 },
     { field: 'isin', headerName: 'ISIN', width: 130 },
     { field: 'maturity_date', headerName: 'Maturity Date', width: 115, valueFormatter: p => p.value?.slice(0, 10) ?? '' },
     { field: 'coupon_rate', headerName: 'Coupon Rate', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
+    { field: 'coupon_frequency', headerName: 'Coupon Frequency', width: 130, hide: true },
     { field: 'face_value', headerName: 'Face Value', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '' },
     { field: 'type', headerName: 'Type', width: 110 },
     { field: 'currency', headerName: 'Ccy', width: 65 },
     { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
     { field: 'price_date', headerName: 'Price Date', width: 100, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
     { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
+    { field: 'dividend_rate', headerName: 'Dividend Rate', width: 110, type: 'numericColumn', hide: true, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '' },
+    { field: 'dividend_frequency', headerName: 'Dividend Frequency', width: 140, hide: true },
+    { field: 'ex_dividend_date', headerName: 'Ex-Dividend Date', width: 130, hide: true, valueFormatter: p => p.value?.slice(0, 10) ?? '' },
+    { field: 'dividend_pay_date', headerName: 'Dividend Pay Date', width: 140, hide: true, valueFormatter: p => p.value?.slice(0, 10) ?? '' },
+    { field: 'payout_ratio', headerName: 'Payout Ratio', width: 110, type: 'numericColumn', hide: true, valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
+    { field: 'five_year_avg_yield', headerName: '5Y Avg Yield', width: 110, type: 'numericColumn', hide: true, valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
+    { field: 'analyst_rating', headerName: 'Analyst Rating', width: 120, hide: true },
+    { field: 'analyst_target_price', headerName: 'Target Price', width: 110, type: 'numericColumn', hide: true, valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '' },
     { field: 'price_records', headerName: '# Prices', width: 80, type: 'numericColumn' },
     { field: 'held_quantity', headerName: 'Held Qty', width: 80, type: 'numericColumn' },
+    { field: 'investment_count', headerName: '# Investments', width: 100, type: 'numericColumn', hide: true },
     {
       headerName: '', width: 70, sortable: false, filter: false, pinned: 'right',
       cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -202,7 +220,9 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       ),
     },
-  ]
+    ]
+    return cols
+  }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-securities', colDefs)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -337,22 +357,26 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
-  const colDefs: ColDef[] = [
-    { field: 'code', headerName: 'Code', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-    { field: 'name', headerName: 'Currency', flex: 2 },
-    { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-    { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
-    { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
-    {
-      headerName: '', width: 80, sortable: false, filter: false,
-      cellRenderer: (p: { data: Record<string, unknown> }) => (
-        <div className="flex gap-1 items-center h-full">
-          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
-          <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
-        </div>
-      ),
-    },
-  ]
+  // Stable reference — see the identical note in SecuritiesTab's colDefs above.
+  const colDefs = useMemo(() => {
+    const cols: ColDef[] = [
+      { field: 'code', headerName: 'Code', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
+      { field: 'name', headerName: 'Currency', flex: 2 },
+      { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
+      { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
+      { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
+      {
+        headerName: '', width: 80, sortable: false, filter: false,
+        cellRenderer: (p: { data: Record<string, unknown> }) => (
+          <div className="flex gap-1 items-center h-full">
+            <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+            <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+          </div>
+        ),
+      },
+    ]
+    return cols
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-currencies', colDefs)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
