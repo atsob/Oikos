@@ -7,6 +7,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Changed
 - **Inv. Performance → Dividend Tracker — the Actual view's layout now matches Forecast's**: the summary KPI cards (Total, Monthly Average, Securities paying, Avg Ann. YOC) appear above the monthly income chart instead of below it, and a new **Monthly Average** card shows the period's total income divided by the number of months it spans.
 - **Transfer To Account, in the transaction editor, no longer lists inactive accounts by default** — previously every inactive account (including old currency sub-accounts you'd never transfer to) cluttered the dropdown regardless of the page's own "Show inactive" setting. A **Show inactive** checkbox next to the field reveals them again when needed; an inactive account already selected (when editing an existing transfer) still shows up so editing never breaks.
+- **Market Data / Security Detail → editing a security — Coupon Frequency and Dividend Frequency are now dropdowns** (Annual, Semi-Annual, Quarterly, Monthly, plus At Maturity for coupons) instead of free-text fields, so a manually entered or updated security can't end up with an inconsistent value like "quarterly" or "Qtr" that the rest of the app's calculations (bond coupon schedule, dividend yield-on-cost annualization) wouldn't recognize.
 
 ## 2026-07-19
 

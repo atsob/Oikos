@@ -3,6 +3,10 @@ import { Input } from '@/components/ui'
 
 export const SECURITY_TYPES = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Option', 'Commodity', 'PF_Unit', 'CD', 'Emp. Stock Opt.', 'FX Spot', 'Market Index', 'CFD', 'Closed-End Fund', 'Other']
 
+// 'At Maturity' only makes sense for a coupon (a lump-sum bond payout) — dividends never work that way.
+export const COUPON_FREQUENCIES = ['Annual', 'Semi-Annual', 'Quarterly', 'Monthly', 'At Maturity']
+export const DIVIDEND_FREQUENCIES = ['Annual', 'Semi-Annual', 'Quarterly', 'Monthly']
+
 export const EMPTY_SECURITY_FORM: Record<string, string> = {
   ticker: '', name: '', type: 'Stock', currencies_id: '', is_active: 'true', is_tax_exempt: 'false',
   isin: '', sector: '', industry: '', yahoo_ticker: '', tv_symbol: '', tv_exchange: '',
@@ -81,13 +85,23 @@ export function SecurityFormFields({ form, set, currencies, taxRules }: {
       <FormSection>Fixed Income</FormSection>
       <FormField label="Maturity Date"><Input type="date" value={form.maturity_date} onChange={e => set('maturity_date', e.target.value)} /></FormField>
       <FormField label="Coupon Rate %"><Input type="number" step="0.001" value={form.coupon_rate} onChange={e => set('coupon_rate', e.target.value)} placeholder="0.000" /></FormField>
-      <FormField label="Coupon Frequency"><Input value={form.coupon_frequency} onChange={e => set('coupon_frequency', e.target.value)} placeholder="Annual" /></FormField>
+      <FormField label="Coupon Frequency">
+        <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.coupon_frequency ?? ''} onChange={e => set('coupon_frequency', e.target.value)}>
+          <option value="">— not set —</option>
+          {COUPON_FREQUENCIES.map(f => <option key={f}>{f}</option>)}
+        </select>
+      </FormField>
       <FormField label="Face Value"><Input type="number" step="0.01" value={form.face_value} onChange={e => set('face_value', e.target.value)} placeholder="1000.00" /></FormField>
 
       <FormSection>Dividends</FormSection>
       <FormField label="Dividend Yield %"><Input type="number" step="0.0001" value={form.dividend_yield} onChange={e => set('dividend_yield', e.target.value)} placeholder="0.0000" /></FormField>
       <FormField label="Dividend Rate"><Input type="number" step="0.0001" value={form.dividend_rate} onChange={e => set('dividend_rate', e.target.value)} placeholder="0.0000" /></FormField>
-      <FormField label="Dividend Frequency"><Input value={form.dividend_frequency} onChange={e => set('dividend_frequency', e.target.value)} placeholder="Quarterly" /></FormField>
+      <FormField label="Dividend Frequency">
+        <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.dividend_frequency ?? ''} onChange={e => set('dividend_frequency', e.target.value)}>
+          <option value="">— not set —</option>
+          {DIVIDEND_FREQUENCIES.map(f => <option key={f}>{f}</option>)}
+        </select>
+      </FormField>
       <FormField label="Ex-Dividend Date"><Input type="date" value={form.ex_dividend_date} onChange={e => set('ex_dividend_date', e.target.value)} /></FormField>
       <FormField label="Dividend Pay Date"><Input type="date" value={form.dividend_pay_date} onChange={e => set('dividend_pay_date', e.target.value)} /></FormField>
       <FormField label="Payout Ratio %"><Input type="number" step="0.01" value={form.payout_ratio} onChange={e => set('payout_ratio', e.target.value)} placeholder="0.00" /></FormField>
