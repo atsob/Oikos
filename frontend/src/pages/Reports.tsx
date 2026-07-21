@@ -3789,8 +3789,11 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
   const ytdStart = `${new Date().getFullYear()}-01-01`
-  const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
-  const [endDate, setEndDate] = usePersist('ie_end_date', today)
+  // Not persisted, unlike the other filters below: an absolute saved date would go stale
+  // the moment "today" changes, silently no longer showing YTD. Always opens fresh on the
+  // current year-to-date range instead, matching Net Worth's live-recomputed YTD.
+  const [startDate, setStartDate] = useState(ytdStart)
+  const [endDate, setEndDate] = useState(today)
   const [reportType, setReportType] = usePersist<ReportType>('ie_report_type', 'Total Summary')
   const [periodType, setPeriodType] = usePersist<PeriodType>('ie_period_type', 'Monthly')
   const [cashTypes, setCashTypes] = useState<string[]>(DEFAULT_CASH_TYPES)
