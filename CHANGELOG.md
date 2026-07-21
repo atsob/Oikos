@@ -7,6 +7,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **Cash Register's generic search (top-right header) now shows a summary above the results**: a count and income/expense/net total for the matched transactions, grouped by currency (each shown in its own native currency, not converted or netted together). If a search matches 50 or more transactions, a note flags that the totals only cover the shown results.
 
+### Fixed
+- **Weekly/Monthly AI summaries and the AI Assistant could hang indefinitely waiting on the local Ollama server**, occasionally surfacing as a "Generation timed out" message for no clear reason (confirmed while investigating a report that a specific week's summary "failed" — the data and generation were both fine, it just took ~9 minutes, close enough to the Dashboard's 10-minute give-up window to tip over under slightly heavier load). The configured 180-second timeout was silently doing nothing — `ChatOllama` has no `timeout` field of its own, so it was quietly ignored, leaving the real underlying timeout at "wait forever." Fixed by setting it through `client_kwargs`, the parameter that actually reaches the HTTP client, at 600 seconds — comfortably above this model's normal response time on this hardware, but no longer infinite.
+
 ## 2026-07-20
 
 ### Added
