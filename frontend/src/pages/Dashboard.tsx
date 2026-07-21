@@ -1,4 +1,5 @@
 import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 import {
@@ -13,6 +14,7 @@ import { TxModal, useTxModal } from '@/components/TxModal'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
+import { setPref } from '@/lib/preferences'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
 import {
@@ -710,6 +712,7 @@ function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChang
 export default function Dashboard() {
   const { isDark } = useTheme()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [opts, setOptsState] = React.useState<DashOpts>(loadOpts)
 
   const setOpts = (o: DashOpts) => { setOptsState(o); saveOpts(o) }
@@ -816,6 +819,13 @@ export default function Dashboard() {
   const totalInv      = sumByType(INV_TYPES)
   const totalPension  = sumByType(PEN_TYPES)
   const totalAssets   = sumByType(ASSET_TYPES)
+
+  // The account carrying the largest balance among pension-type accounts — there can be
+  // several (old/inactive plans with a zero balance), but only one is ever the one this
+  // KPI's value is really about, so that's the one the KPI links through to.
+  const pensionAccount = included
+    .filter(a => PEN_TYPES.has(String(a.type)))
+    .sort((a, b) => Math.abs(Number(b.balance_eur ?? b.balance ?? 0)) - Math.abs(Number(a.balance_eur ?? a.balance ?? 0)))[0]
   const totalNetWorth = totalCash + totalInv + totalPension + totalAssets
 
   // For trend chart — use backend data (all accounts)
@@ -908,6 +918,7 @@ export default function Dashboard() {
               deltaPrevMonth != null ? { text: `${fmtDelta(deltaPrevMonth)} vs prev month`, color: deltaColor(deltaPrevMonth) } : { text: '— vs prev month' },
               deltaYTD != null ? { text: `${fmtDelta(deltaYTD)} YTD`, color: deltaColor(deltaYTD) } : { text: '— YTD' },
             ]}
+            onClick={() => { setPref('reports_active_tab', 'net-worth'); navigate('/reports') }}
           />
           <StatCard
             compact
@@ -917,6 +928,7 @@ export default function Dashboard() {
               deltaCashPrevMonth != null ? { text: `${fmtDelta(deltaCashPrevMonth)} vs prev month`, color: deltaColor(deltaCashPrevMonth) } : { text: '— vs prev month' },
               deltaCashYTD != null ? { text: `${fmtDelta(deltaCashYTD)} YTD`, color: deltaColor(deltaCashYTD) } : { text: '— YTD' },
             ]}
+            onClick={() => navigate('/register')}
           />
           <StatCard
             compact
@@ -926,6 +938,7 @@ export default function Dashboard() {
               deltaInvDaily != null ? { text: `${fmtDelta(deltaInvDaily)} daily`, color: deltaColor(deltaInvDaily) } : { text: '— daily' },
               deltaInvYTD != null ? { text: `${fmtDelta(deltaInvYTD)} YTD`, color: deltaColor(deltaInvYTD) } : { text: '— YTD' },
             ]}
+            onClick={() => { setPref('reports_active_tab', 'inv-performance'); setPref('inv_perf_tab', 'P&L'); navigate('/reports') }}
           />
           <StatCard
             compact
@@ -935,6 +948,11 @@ export default function Dashboard() {
               deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
               deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
             ]}
+            onClick={pensionAccount ? () => {
+              setPref('investments_tab', 'transactions')
+              setPref('investments_accountId', Number(pensionAccount.id))
+              navigate('/investments')
+            } : undefined}
           />
           <StatCard
             compact
@@ -944,6 +962,7 @@ export default function Dashboard() {
               deltaAssetsPrevMonth != null ? { text: `${fmtDelta(deltaAssetsPrevMonth)} vs prev month`, color: deltaColor(deltaAssetsPrevMonth) } : { text: '— vs prev month' },
               deltaAssetsYTD != null ? { text: `${fmtDelta(deltaAssetsYTD)} YTD`, color: deltaColor(deltaAssetsYTD) } : { text: '— YTD' },
             ]}
+            onClick={() => navigate('/register')}
           />
         </div>
 

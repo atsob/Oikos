@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-07-20
 
+### Added
+- **Dashboard's five KPI cards are now clickable shortcuts** to where that number comes from: Net Worth → Reports → Net Worth, Investments → Reports → Inv. Performance → P&L, Cash & Savings and Assets → Cash Register, Pension → Investments → Transactions, pre-filtered to the pension account.
+
 ### Fixed
 - **Market Data → Securities (and Currencies) — resizing a column snapped it back to its original width** as soon as anything else on the page re-rendered (typing in the search box, saving an edit, etc.) — the table's column definitions were being rebuilt from scratch on every render instead of staying a stable reference, so ag-Grid treated each render as a brand-new set of columns and reset them to their default widths. Column widths are now also written into the same saved layout that already remembered column order and show/hide state, so a resize sticks across renders, reloads, and future reorders. A follow-up case of the same bug: columns defined with a proportional `flex` width (like Security Name) kept recalculating from that ratio and ignoring the saved width, because ag-Grid clears a resized column's flex to signal "this one's fixed now" and that signal wasn't being carried over either — it is now. Both fixes live in the shared column-state mechanism, so they apply to every other table in the app, not just Securities.
 - **Market Data → Securities — the Columns show/hide menu only listed 18 of the 31 fields available on a security**, so Tax Category, Sector, Industry, Coupon Frequency, Dividend Rate/Frequency, Ex-Dividend/Pay Date, Payout Ratio, 5Y Avg Yield, Analyst Rating, Target Price, and # Investments (all editable on the security itself) had no way to be displayed as columns. All are now toggleable from the menu (hidden by default, to keep the table's default view uncluttered).

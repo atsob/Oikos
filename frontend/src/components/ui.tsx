@@ -319,18 +319,25 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
-export function StatCard({ label, value, sub, color, subs, compact }: {
+export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
   label: string; value: string; sub?: string; color?: string
-  subs?: { text: string; color?: string }[]; compact?: boolean
+  subs?: { text: string; color?: string }[]; compact?: boolean; onClick?: () => void
 }) {
-  return (
-    <div className={cn('bg-white rounded-xl border border-slate-200 shadow-sm', compact ? 'p-2.5' : 'p-4')}>
+  const content = (
+    <>
       <p className={cn('font-medium text-slate-500 uppercase tracking-wide', compact ? 'text-xs' : 'text-xs')}>{label}</p>
       <p className={cn('font-bold mt-1', compact ? 'text-lg' : 'text-2xl', color ?? 'text-slate-900')}>{value}</p>
       {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs truncate' : 'text-xs', s.color ?? 'text-slate-400')}>{s.text}</p>)}
       {!subs && sub && <p className={cn('mt-0.5 text-slate-400 text-xs')}>{sub}</p>}
-    </div>
+    </>
   )
+  const className = cn(
+    'bg-white rounded-xl border border-slate-200 shadow-sm',
+    compact ? 'p-2.5' : 'p-4',
+    onClick && 'text-left w-full hover:border-blue-300 hover:shadow-md transition-shadow cursor-pointer'
+  )
+  if (onClick) return <button onClick={onClick} className={className}>{content}</button>
+  return <div className={className}>{content}</div>
 }
 
 // ── Tooltip ────────────────────────────────────────────────────────────────────

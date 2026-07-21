@@ -143,6 +143,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "YTD" (or "daily" for Investments) change. Net Worth is the sum of the other four.
         </P>
         <Note>
+          Each card is a shortcut to where that number comes from: <b>Net Worth</b> opens Reports → Net Worth,{' '}
+          <b>Investments</b> opens Reports → Inv. Performance → P&amp;L, <b>Cash &amp; Savings</b> and{' '}
+          <b>Assets</b> open Cash Register, and <b>Pension</b> opens Investments → Transactions, pre-filtered to
+          the pension account.
+        </Note>
+        <Note>
           The <b>Options &amp; Account Selection</b> panel lets you include/exclude specific accounts and
           toggle "Show Disabled" for closed accounts — both the current totals and the historical baseline used
           for the deltas respect this same selection, so what you see stays internally consistent.
