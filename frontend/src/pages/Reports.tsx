@@ -3789,11 +3789,15 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const qc = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
   const ytdStart = `${new Date().getFullYear()}-01-01`
-  // Not persisted, unlike the other filters below: an absolute saved date would go stale
-  // the moment "today" changes, silently no longer showing YTD. Always opens fresh on the
-  // current year-to-date range instead, matching Net Worth's live-recomputed YTD.
-  const [startDate, setStartDate] = useState(ytdStart)
-  const [endDate, setEndDate] = useState(today)
+  // YTD mode (default on, like Net Worth's) recomputes start/end fresh on every render
+  // instead of trusting the persisted dates below, which would otherwise go stale — "today"
+  // saved from a week ago is no longer today. Turning it off falls back to those persisted
+  // dates, so a deliberately-picked custom range still survives a reload.
+  const [ytdMode, setYtdMode] = usePersist('ie_ytd_mode', true)
+  const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
+  const [endDate, setEndDate] = usePersist('ie_end_date', today)
+  const effStart = ytdMode ? ytdStart : startDate
+  const effEnd   = ytdMode ? today    : endDate
   const [reportType, setReportType] = usePersist<ReportType>('ie_report_type', 'Total Summary')
   const [periodType, setPeriodType] = usePersist<PeriodType>('ie_period_type', 'Monthly')
   const [cashTypes, setCashTypes] = useState<string[]>(DEFAULT_CASH_TYPES)
@@ -3804,12 +3808,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const [drillPayee, setDrillPayee] = useState<string>('All Payees')
 
   // Committed params — query only runs when user clicks "Update"
-  const [qStart, setQStart] = useState(startDate)
-  const [qEnd, setQEnd] = useState(endDate)
+  const [qStart, setQStart] = useState(effStart)
+  const [qEnd, setQEnd] = useState(effEnd)
   const [qCash, setQCash] = useState<string[]>(cashTypes)
   const [qInv, setQInv] = useState<string[]>(invTypes)
-  const isDirty = startDate !== qStart || endDate !== qEnd || cashTypes.join(',') !== qCash.join(',') || invTypes.join(',') !== qInv.join(',')
-  const commitParams = () => { setQStart(startDate); setQEnd(endDate); setQCash([...cashTypes]); setQInv([...invTypes]) }
+  const isDirty = effStart !== qStart || effEnd !== qEnd || cashTypes.join(',') !== qCash.join(',') || invTypes.join(',') !== qInv.join(',')
+  const commitParams = () => { setQStart(effStart); setQEnd(effEnd); setQCash([...cashTypes]); setQInv([...invTypes]) }
 
   // Drill-down state
   const [drillCell, setDrillCell] = useState<IEDrillCell>(null)
@@ -4070,14 +4074,17 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center">
-        <div>
+        <div className="mt-4">
+          <ChkBox label="YTD" checked={ytdMode} onChange={setYtdMode} />
+        </div>
+        <div className={ytdMode ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">Start Date</label>
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+          <input type="date" value={effStart} onChange={e => setStartDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
-        <div>
+        <div className={ytdMode ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">End Date</label>
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+          <input type="date" value={effEnd} onChange={e => setEndDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
         <div>
@@ -4103,7 +4110,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             value={invTypes} onChange={setInvTypes} />
         </div>
         <button onClick={() => {
-          setStartDate(ytdStart); setEndDate(today)
+          setYtdMode(true); setStartDate(ytdStart); setEndDate(today)
           setReportType('Total Summary'); setPeriodType('Monthly')
           setCashTypes(DEFAULT_CASH_TYPES); setInvTypes(DEFAULT_INV_TYPES)
           setQStart(ytdStart); setQEnd(today); setQCash(DEFAULT_CASH_TYPES); setQInv(DEFAULT_INV_TYPES)
