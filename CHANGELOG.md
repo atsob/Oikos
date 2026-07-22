@@ -9,7 +9,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Security Detail now has an Alerts tab**, showing and letting you add/edit/delete price-above and price-below alerts for that specific security — the same alerts already managed on Market Data → Alerts, just pre-scoped and pre-filled to the security you're already looking at instead of picking it from a dropdown.
 
 ### Changed
-- **Market Data → Securities — the table no longer has a fixed height that could run off the bottom of the screen** on shorter windows. It now sizes itself to the available space instead, the same way Cash Register's grid already does.
+- **Market Data → Securities and Anomalies — neither table has a fixed height anymore that could run off the bottom of the screen** on shorter windows. Both size themselves to the available space instead, the same way Cash Register's grid already does.
 
 ### Fixed
 - **Market Data → Securities — the search filter was silently dropped after clicking into a security's Security Detail page and hitting Back.** The filter text lived in plain component state, which resets whenever the page remounts (exactly what happens navigating away and back), unlike the tab selection next to it which was already persisted. Now persisted the same way, so it survives the round trip — still clears normally when you switch tabs, since that's a deliberate reset, not a remount.

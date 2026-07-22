@@ -1473,7 +1473,7 @@ export default function MarketData() {
                   <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
                     <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
                   </div>
-                  <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+                  <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
                     <AgGridReact rowData={anomalies} columnDefs={anomalyGridCols.colDefs}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       onColumnMoved={anomalyGridCols.onColumnMoved}
