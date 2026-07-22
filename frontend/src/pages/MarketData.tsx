@@ -243,7 +243,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
         </div>
       </div>
-      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
         <AgGridReact rowData={securities} columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
           onColumnMoved={gridCols.onColumnMoved}
