@@ -1433,7 +1433,11 @@ function AlertsTab() {
 export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
-  const [search, setSearch] = useState('')
+  // Persisted like `tab` above — plain useState would reset on remount, which is exactly
+  // what happens when you drill into a security's own Security Detail page and hit Back,
+  // silently dropping a filter you'd just typed. Still cleared explicitly on tab switches
+  // below, same as before; this only fixes it surviving a navigate-away-and-back.
+  const [search, setSearch] = usePersist('market_data_search', '')
   const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
