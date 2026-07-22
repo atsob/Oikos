@@ -140,7 +140,38 @@ html.dark .border-amber-300 { border-color: #92400e !important; }
 html.dark .border-red-300   { border-color: #991b1b !important; }
 html.dark .border-blue-300  { border-color: #211a58 !important; }
 html.dark .border-green-300 { border-color: #166534 !important; }
-html.dark .text-orange-700  { color: #fb923c !important; }
+html.dark .border-red-200   { border-color: #7f1d1d !important; }
+html.dark .border-red-100   { border-color: #5c1414 !important; }
+html.dark .border-green-200 { border-color: #14532d !important; }
+html.dark .border-green-100 { border-color: #0d3a1f !important; }
+
+/* Semantic status text (P&L figures, success/error messages, warnings) — same
+   gap as the brand blue/indigo above: Tailwind's stock 600/700/800/900 stops
+   are dark, saturated shades meant for a white page and read as barely-there
+   on a dark background. 400/500 are already light enough to leave alone. */
+html.dark .text-red-600 { color: #f87171 !important; }
+html.dark .text-red-700 { color: #fca5a5 !important; }
+html.dark .text-red-800 { color: #fecaca !important; }
+html.dark .text-red-900 { color: #fee2e2 !important; }
+html.dark .text-green-600 { color: #4ade80 !important; }
+html.dark .text-green-700 { color: #86efac !important; }
+html.dark .text-green-800 { color: #bbf7d0 !important; }
+html.dark .text-green-900 { color: #dcfce7 !important; }
+html.dark .text-amber-600 { color: #fbbf24 !important; }
+html.dark .text-amber-700 { color: #fcd34d !important; }
+html.dark .text-amber-800 { color: #fde68a !important; }
+html.dark .text-amber-900 { color: #fef3c7 !important; }
+html.dark .text-yellow-600 { color: #facc15 !important; }
+html.dark .text-yellow-700 { color: #fde047 !important; }
+html.dark .text-yellow-800 { color: #fef08a !important; }
+html.dark .text-orange-600 { color: #fb923c !important; }
+html.dark .text-orange-700 { color: #fdba74 !important; }
+html.dark .text-emerald-600 { color: #34d399 !important; }
+html.dark .text-emerald-700 { color: #6ee7b7 !important; }
+html.dark .text-purple-700 { color: #d8b4fe !important; }
+html.dark .text-indigo-600 { color: #818cf8 !important; }
+html.dark .text-indigo-800 { color: #c7d2fe !important; }
+html.dark .text-teal-700 { color: #5eead4 !important; }
 
 /* Plotly charts */
 html.dark .js-plotly-plot .bg                          { fill: #1e293b !important; }
