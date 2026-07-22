@@ -66,7 +66,10 @@ def get_fx_rates(
 
 @router.get("/securities")
 def get_securities(search: Optional[str] = Query(None)):
-    clause = "AND (LOWER(s.Securities_Name) LIKE %(s)s OR LOWER(s.Ticker) LIKE %(s)s)" if search else ""
+    clause = (
+        "AND (LOWER(s.Securities_Name) LIKE %(s)s OR LOWER(s.Ticker) LIKE %(s)s "
+        "OR LOWER(s.ISIN) LIKE %(s)s OR LOWER(s.Yahoo_Ticker) LIKE %(s)s OR LOWER(s.TV_Symbol) LIKE %(s)s)"
+    ) if search else ""
     params: dict = {}
     if search:
         params["s"] = f"%{search.lower()}%"
