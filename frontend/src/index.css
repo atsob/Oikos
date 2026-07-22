@@ -72,11 +72,29 @@ html.dark .text-slate-600 { color: #94a3b8 !important; }
 html.dark .text-slate-500 { color: #64748b !important; }
 html.dark .text-slate-400 { color: #475569 !important; }
 
+/* Brand blue/indigo text — the light-mode scale (see @theme above) is a dark
+   indigo meant to sit on a white page; used verbatim as plain text (account
+   name links, KPI emphasis) it nearly disappears against a dark background.
+   Solid fills (bg-blue-600 buttons etc.) aren't touched — white text on a
+   mid-dark indigo button reads fine regardless of page theme, this is only
+   about indigo text/accent-lines sitting directly on the dark background. */
+html.dark .text-blue-400 { color: #7b73b3 !important; }
+html.dark .text-blue-500 { color: #9089cc !important; }
+html.dark .text-blue-600 { color: #a89fdb !important; }
+html.dark .text-blue-700 { color: #bcb4e8 !important; }
+html.dark .text-blue-800 { color: #d2cbf2 !important; }
+html.dark .border-blue-600 { border-color: #a89fdb !important; }
+html.dark .border-blue-700 { border-color: #bcb4e8 !important; }
+
 /* Hover states */
 html.dark .hover\:bg-slate-50:hover  { background-color: #293548 !important; }
 html.dark .hover\:bg-slate-100:hover { background-color: #334155 !important; }
 html.dark .hover\:bg-slate-200:hover { background-color: #3e4f66 !important; }
 html.dark .hover\:bg-blue-50:hover   { background-color: #211a58 !important; }
+html.dark .hover\:text-blue-600:hover { color: #a89fdb !important; }
+html.dark .hover\:text-blue-700:hover { color: #bcb4e8 !important; }
+html.dark .hover\:text-blue-800:hover { color: #d2cbf2 !important; }
+html.dark .hover\:text-blue-400:hover { color: #7b73b3 !important; }
 
 /* Form controls */
 html.dark input,
