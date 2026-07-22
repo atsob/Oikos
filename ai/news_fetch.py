@@ -17,6 +17,7 @@ Usage:
 """
 
 import logging
+import re
 import time
 import warnings
 from datetime import datetime, timezone
@@ -107,6 +108,32 @@ def _normalize_yf_news_item(raw: dict) -> dict | None:
     return {"title": title, "url": url, "publisher": publisher, "summary": summary, "published_at": _parse_published_at(published_at)}
 
 
+_GENERIC_NAME_WORDS = {
+    "corp", "corporation", "inc", "incorporated", "company", "co", "plc", "ltd",
+    "limited", "holdings", "holding", "group", "sa", "ag", "nv", "the", "and",
+    "international", "industries", "industrial", "class",
+}
+
+
+def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
+    """yfinance's per-ticker news feed isn't reliably scoped to that company —
+    observed in practice: a Thomson Reuters (TRI) feed included Intuit (INTU)
+    articles and generic "consumer stocks" sector roundups, with no ticker
+    metadata in the response to filter on (checked: no `relatedTickers` field
+    exists in either the flat or nested yfinance news shape). Falls back to a
+    keyword check instead — keep the item only if the ticker or a
+    distinguishing word from the company name actually appears in its title
+    or summary, rather than trusting Yahoo's own per-ticker scoping.
+    """
+    text = f"{item.get('title') or ''} {item.get('summary') or ''}".lower()
+    ticker_base = re.sub(r"\..*$", "", ticker).lower()
+    if ticker_base and re.search(rf"\b{re.escape(ticker_base)}\b", text):
+        return True
+    name_words = [w.strip(".,()") for w in re.split(r"\s+", name.lower())]
+    name_words = [w for w in name_words if len(w) > 2 and w not in _GENERIC_NAME_WORDS]
+    return any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words[:3])
+
+
 def _normalize_ddg_news_item(raw: dict) -> dict | None:
     title = raw.get("title")
     url = raw.get("url")
@@ -166,7 +193,7 @@ def fetch_security_news(max_per_security: int = 8) -> int:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT DISTINCT s.Securities_Id, s.Yahoo_Ticker
+                SELECT DISTINCT s.Securities_Id, s.Yahoo_Ticker, s.Securities_Name
                 FROM Securities s
                 WHERE s.Yahoo_Ticker IS NOT NULL AND s.Yahoo_Ticker <> ''
                   -- Excludes ISINs stored in Yahoo_Ticker in place of a real ticker (e.g. Hellenic
@@ -181,10 +208,11 @@ def fetch_security_news(max_per_security: int = 8) -> int:
             targets = cur.fetchall()
 
         session = get_custom_session()
-        for sec_id, ticker in targets:
+        for sec_id, ticker, name in targets:
             try:
                 raw_items = yf.Ticker(ticker, session=session).news or []
-                items = [x for x in (_normalize_yf_news_item(r) for r in raw_items) if x][:max_per_security]
+                items = [x for x in (_normalize_yf_news_item(r) for r in raw_items) if x]
+                items = [x for x in items if _is_relevant_to_security(x, ticker, name)][:max_per_security]
                 n = _upsert_news_items(conn, "Security", sec_id, items)
                 total += n
             except Exception as exc:

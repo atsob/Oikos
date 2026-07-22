@@ -136,6 +136,18 @@ html.dark .bg-amber-50  { background-color: #2d1a00 !important; }
 html.dark .bg-red-50    { background-color: #2d0a0a !important; }
 html.dark .bg-blue-50   { background-color: #191444 !important; }
 html.dark .bg-green-50  { background-color: #052e16 !important; }
+
+/* Badge/pill backgrounds (bg-COLOR-100 + text-COLOR-700) — the -100 tint never
+   got a dark-mode pairing, so once the 700-weight text above was lightened for
+   legibility on the page background, badges ended up with equally-light text
+   sitting on an equally-light (still not-dark-mode-adjusted) pill background —
+   readable on the page, unreadable against its own badge. */
+html.dark .bg-red-100    { background-color: #4a1414 !important; }
+html.dark .bg-green-100  { background-color: #0f3d24 !important; }
+html.dark .bg-blue-100   { background-color: #241d5c !important; }
+html.dark .bg-yellow-100 { background-color: #422b02 !important; }
+html.dark .bg-amber-100  { background-color: #432703 !important; }
+html.dark .bg-orange-100 { background-color: #4a2308 !important; }
 html.dark .border-amber-300 { border-color: #92400e !important; }
 html.dark .border-red-300   { border-color: #991b1b !important; }
 html.dark .border-blue-300  { border-color: #211a58 !important; }
