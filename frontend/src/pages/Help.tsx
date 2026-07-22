@@ -480,13 +480,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
           page — Setup, Prices, Investment Transactions (with a <b>New Transaction</b> button and a Tax column
-          for withholding tax), Price Anomalies, Dividends, Corporate Actions, and Downloads, all for that one
-          security.
+          for withholding tax), Price Anomalies, Dividends, Corporate Actions, News, Alerts, and Downloads, all
+          for that one security.
         </P>
         <Note>
           The Investment Transactions tab's KPI row also shows <b>Sharpe Ratio</b>, <b>Agent Signal</b>, and{' '}
           <b>Analyst Target</b> (with upside %) for the security, when available — the same figures as the
           Securities Analysis → Portfolio Action Signals report, at a glance without leaving the security.
+        </Note>
+        <Note>
+          A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,
+          pre-scoped to that security — adding one here skips picking it from a dropdown. Allocation-drift
+          alerts (tied to an asset type, not one security) only show up on the Market Data page.
         </Note>
       </>
     ),

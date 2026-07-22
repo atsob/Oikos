@@ -24,6 +24,7 @@ import {
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals,
   getNews, markNewsRead,
+  getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert,
 } from '@/lib/api'
 import { InvTransactionModal, emptyInvForm, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -1478,8 +1479,154 @@ function NewsTab({ secId }: { secId: number }) {
   )
 }
 
+function AlertsTab({ secId }: { secId: number }) {
+  const qc = useQueryClient()
+  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions })
+  // Price alerts are the only kind tied to a single security (allocation-drift alerts are
+  // asset-type-wide and belong on the Market Data page instead).
+  const rows = (data as Record<string, unknown>[]).filter(r =>
+    (r.alert_type === 'price_above' || r.alert_type === 'price_below') && Number(r.securities_id) === secId
+  )
+
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ alert_type: 'price_above', threshold: '', note: '' })
+  const [editId, setEditId] = useState<number | null>(null)
+  const [err, setErr] = useState('')
+
+  const extractError = (e: unknown) =>
+    (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+    (e instanceof Error ? e.message : 'Error')
+
+  const saveMut = useMutation({
+    mutationFn: saveAlert,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['alert-definitions'] }); setShowForm(false); setEditId(null); setErr('') },
+    onError: (e: unknown) => setErr(extractError(e)),
+  })
+  const toggleMut = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) => toggleAlert(id, is_active),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
+  })
+  const deleteMut = useMutation({
+    mutationFn: deleteAlert,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
+  })
+
+  const openAdd = () => { setForm({ alert_type: 'price_above', threshold: '', note: '' }); setEditId(null); setErr(''); setShowForm(true) }
+  const openEdit = (row: Record<string, unknown>) => {
+    setForm({ alert_type: String(row.alert_type ?? 'price_above'), threshold: String(row.threshold ?? ''), note: String(row.note ?? '') })
+    setEditId(Number(row.alert_id))
+    setErr('')
+    setShowForm(true)
+  }
+
+  const doSave = () => {
+    if (!form.threshold) { setErr('Threshold is required'); return }
+    saveMut.mutate({
+      alert_id: editId ?? undefined,
+      alert_type: form.alert_type,
+      securities_id: secId,
+      asset_type: null,
+      threshold: Number(form.threshold),
+      direction: form.alert_type === 'price_above' ? 'above' : 'below',
+      note: form.note || null,
+    })
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-slate-500">{rows.length} alert{rows.length !== 1 ? 's' : ''} for this security</p>
+        <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Alert</Button>
+      </div>
+
+      {showForm && (
+        <div className="border border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50">
+          <p className="text-sm font-semibold text-slate-700">{editId ? 'Edit Alert' : 'New Alert'}</p>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Alert Type *</label>
+              <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                value={form.alert_type} onChange={e => setForm(f => ({ ...f, alert_type: e.target.value }))}>
+                <option value="price_above">▲ Price Above Threshold</option>
+                <option value="price_below">▼ Price Below Threshold</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Price Threshold *</label>
+              <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Note</label>
+            <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="secondary" onClick={() => { setShowForm(false); setErr('') }}>Cancel</Button>
+            <Button size="sm" onClick={doSave} disabled={saveMut.isPending}>Save</Button>
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-200">
+            <th className="px-3 py-2 text-left font-medium">Status</th>
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-right font-medium">Threshold</th>
+            <th className="px-3 py-2 text-right font-medium">Current Price</th>
+            <th className="px-3 py-2 text-left font-medium">Note</th>
+            <th className="px-3 py-2 text-left font-medium">Created</th>
+            <th className="px-3 py-2"></th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(row => {
+              const isActive = Boolean(row.is_active)
+              const triggered = row.current_price != null && row.threshold != null && (
+                (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
+                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
+              )
+              return (
+                <tr key={String(row.alert_id)} className={`hover:bg-slate-50 ${!isActive ? 'opacity-50' : ''}`}>
+                  <td className="px-3 py-2">
+                    <button onClick={() => toggleMut.mutate({ id: Number(row.alert_id), is_active: !isActive })}
+                      className={`w-8 h-4 rounded-full transition-colors ${isActive ? 'bg-blue-500' : 'bg-slate-300'} relative`}>
+                      <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${isActive ? 'left-4.5' : 'left-0.5'}`} />
+                    </button>
+                    {triggered && <span className="ml-1.5 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-medium">🔔 triggered</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.alert_type === 'price_above' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {row.alert_type === 'price_above' ? '▲ Price Above' : '▼ Price Below'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? fmtNum(Number(row.threshold), 4) : '—'}</td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${triggered ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+                    {row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-slate-400 text-xs">{row.note != null ? String(row.note) : ''}</td>
+                  <td className="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">{row.created_at != null ? String(row.created_at).slice(0, 16) : '—'}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(row)} className="p-1 text-slate-400 hover:text-blue-600"><Pencil size={13} /></button>
+                      <button onClick={() => deleteMut.mutate(Number(row.alert_id))} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={13} /></button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+            {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400 text-sm">No price alerts defined for this security yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Downloads'] as const
+const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -1548,6 +1695,7 @@ export default function SecurityDetail() {
               {tab === 'Dividends' && <DividendsTab secId={secId} security={security} />}
               {tab === 'Corporate Actions' && <CorporateActionsTab secId={secId} security={security} />}
               {tab === 'News' && <NewsTab secId={secId} />}
+              {tab === 'Alerts' && <AlertsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
             </CardBody>
           </Card>
