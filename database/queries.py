@@ -5976,12 +5976,30 @@ def _compute_current_signals() -> pd.DataFrame:
         conn.close()
 
 
-def _get_bond_event_alerts(lead_days: int = 7) -> list:
+def _get_bond_event_alerts(lead_days: int = None) -> list:
     """Maturity/coupon heads-up for every currently held bond — no per-bond
     setup required, unlike price/drift Alerts, since Maturity_Date/Coupon_Rate/
     Coupon_Frequency already fully describe the schedule for a held bond.
+
+    lead_days defaults to the user's Tools → System → App Settings
+    "Bond Alerts" value (Pref_Key='app-settings'.bondAlertLeadDays), falling
+    back to 7 if unset — kept as an explicit override param for callers/tests.
     """
     from dateutil.relativedelta import relativedelta
+
+    if lead_days is None:
+        lead_days = 7
+        try:
+            conn0 = get_connection()
+            _ensure_user_preferences_table(conn0)
+            with conn0.cursor() as cur:
+                cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+                row = cur.fetchone()
+            conn0.close()
+            if row and row[0] and row[0].get('bondAlertLeadDays') is not None:
+                lead_days = int(row[0]['bondAlertLeadDays'])
+        except Exception:
+            pass
 
     conn = get_connection()
     try:

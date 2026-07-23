@@ -1991,6 +1991,17 @@ function AppSettingsPanel() {
             </p>
           </div>
 
+          {/* Bond alerts */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Bond Alerts</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Days of advance notice</label>
+            <input type="number" min={0} max={365} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.bondAlertLeadDays} onChange={e => set('bondAlertLeadDays', Math.max(0, Number(e.target.value) || 0))} />
+            <p className="mt-2 text-xs text-slate-400">
+              How many days before a held bond's maturity or coupon date the Dashboard alert shows up.
+            </p>
+          </div>
+
           {/* Reporting currency */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Reporting Currency</h3>

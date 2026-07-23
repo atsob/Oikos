@@ -7,6 +7,7 @@ export interface AppSettings {
   weekStartDay: number     // 0 = Sunday, 1 = Monday
   reportingCurrency: string // 'EUR' — display-only, does not affect stored data
   defaultTransferPayeeName: string // auto-filled as the Payee when a new transaction is marked Transfer, if left blank
+  bondAlertLeadDays: number // Dashboard heads-up window for bond maturity/coupon dates
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -16,6 +17,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   weekStartDay: 1,
   reportingCurrency: 'EUR',
   defaultTransferPayeeName: 'Transfer Money',
+  bondAlertLeadDays: 7,
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone
