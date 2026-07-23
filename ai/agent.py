@@ -72,7 +72,11 @@ def create_ai_agent(llm, db, rag_engine):
         description=(
             "Use for anything requiring current, real-world information not in the user's "
             "database or the Financial_Knowledge_Base — e.g. today's price of a stock/crypto, "
-            "recent news, or general facts. Input is a plain-text search query."
+            "recent news, or general facts. Input is a plain-text search query sent to an "
+            "external, non-private search engine — NEVER include specific amounts, balances, "
+            "account/card numbers, or personal names from the user's data. Search only for "
+            "generic public information (e.g. 'AAPL stock price today', not '$4,532.10 AAPL "
+            "position value')."
         ),
     )
 
@@ -92,6 +96,7 @@ DATABASE SCHEMA:
 {schema_info}
 
 RULES:
+- Privacy: Web_Search sends its input to an external search engine, not the user's private database. NEVER put specific amounts, balances, account/card numbers, or personal names from the database into a Web_Search query — only generic public terms (e.g. a ticker, a company name, a general topic).
 - Use only SELECT statements — never INSERT, UPDATE, DELETE, DROP, or DDL.
 - NEVER use SELECT * — always list explicit column names.
 - NEVER select the 'embedding' column — it is a 768-float vector that will overflow your context window.
