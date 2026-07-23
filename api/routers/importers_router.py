@@ -38,13 +38,9 @@ async def import_file(
     tmp_path = await _save_tmp(file)
     try:
         if source == "bank_csv":
-            from data.revolut_importer import parse_revolut_csv  # noqa — generic CSV fallback
-            # Try generic bank CSV
-            try:
-                from ui.bank_import import parse_bank_csv
-                result = parse_bank_csv(tmp_path)
-            except Exception:
-                result = {"message": "Bank CSV import ran (check logs for details)"}
+            # No generic bank-CSV parser is wired up yet — use one of the
+            # dedicated sources below (Revolut, Saxo, etc.) instead.
+            result = {"message": "Generic bank CSV import is not yet implemented — use a specific source."}
 
         elif source == "revolut":
             from data.revolut_importer import import_revolut

@@ -1,4 +1,2 @@
 # Data module
 from data.downloaders import download_historical_fx, download_historical_prices_from_yahoo
-from data.qif_importer import render_qif_importer
-from data.transfer_issues import render_transfer_issues
