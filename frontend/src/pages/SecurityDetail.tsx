@@ -98,6 +98,12 @@ function PricesTab({ secId }: { secId: number }) {
     queryKey: ['price-history', secId, fromDate],
     queryFn: () => getPriceHistory(secId, fromDate),
   })
+  // Shares the ['sec-transactions', secId] query with InvestmentTransactionsTab —
+  // switching tabs doesn't re-fetch.
+  const { data: txHistory = [] } = useQuery({
+    queryKey: ['sec-transactions', secId],
+    queryFn: () => getSecurityTransactions(secId),
+  })
 
   const importMut = useMutation({
     mutationFn: () => importPricesFromFile(importFile!, secId, importConflict),
@@ -170,6 +176,25 @@ function PricesTab({ secId }: { secId: number }) {
     return ((last - first) / first) * 100
   })()
 
+  // Markers for Buy/Sell (and equivalent) investment transactions, plotted on
+  // top of the price line so it's obvious where in time a trade happened.
+  const txMarkers = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    const closeByDate = new Map(h.map(r => [String(r.date).slice(0, 10), Number(r.close)]))
+    const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Reinvest', 'Grant', 'Vest', 'Exercise'])
+    const SELL_LIKE = new Set(['Sell', 'ShrOut', 'Expire'])
+    const toPoint = (r: Record<string, unknown>) => {
+      const d = String(r.date).slice(0, 10)
+      const y = r.price_per_share != null ? Number(r.price_per_share) : (closeByDate.get(d) ?? null)
+      return { d, y, action: String(r.action ?? ''), quantity: r.quantity, price: r.price_per_share }
+    }
+    const inRange = (txHistory as Record<string, unknown>[]).filter(r => String(r.date).slice(0, 10) >= fromDate)
+    return {
+      buys: inRange.filter(r => BUY_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+      sells: inRange.filter(r => SELL_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+    }
+  }, [history, txHistory, fromDate])
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-3">
@@ -214,6 +239,24 @@ function PricesTab({ secId }: { secId: number }) {
               marker: { color: 'rgba(148,163,184,0.4)' },
               yaxis: 'y2',
               hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
+            },
+            {
+              x: txMarkers.buys.map(p => p.d),
+              y: txMarkers.buys.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Buy',
+              marker: { color: '#22c55e', size: 11, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+            {
+              x: txMarkers.sells.map(p => p.d),
+              y: txMarkers.sells.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Sell',
+              marker: { color: '#ef4444', size: 11, symbol: 'triangle-down', line: { color: '#b91c1c', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
             },
           ]}
           layout={{
