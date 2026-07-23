@@ -87,7 +87,10 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
   const [shortSell, setShortSell] = useState(false)
   const onActionChange = (v: string) => {
     if (v !== 'Sell') setShortSell(false)
-    set('action', v)
+    // Buy vs Sell (etc.) changes whether commission adds to or subtracts from
+    // the total — recalculate rather than just setting the field, so totals
+    // stay correct even if Action is changed after Quantity/Price are already filled.
+    autoCalc('action', v)
   }
 
   // For actions that require an already-outstanding position (Sell, Dividend, …),
@@ -183,8 +186,11 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
     const fx = parseFloat(next.fx_rate) || 1
     if (qty && price) {
       const isIncome = ['Dividend', 'Reinvest', 'IntInc', 'ShrIn', 'MiscInc', 'RtrnCap'].includes(next.action)
+      // Sell (and equivalents) reduce the position and pay out proceeds net of
+      // commission — the opposite of Buy, where commission adds to the cost.
+      const isReducing = ['Sell', 'ShrOut', 'Expire'].includes(next.action)
       const baseSec = qty * price
-      const totalSec = isIncome ? baseSec : baseSec + comm
+      const totalSec = isIncome ? baseSec : isReducing ? baseSec - comm : baseSec + comm
       next.total_amount_seccur = totalSec.toFixed(8)
       next.total_amount_acccur = (totalSec * fx).toFixed(2)
     }
