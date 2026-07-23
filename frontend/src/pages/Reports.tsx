@@ -2385,16 +2385,20 @@ function PerformanceTab() {
     const list: (Record<string, number> & { securities_name: string })[] =
       Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name }) as Record<string, number> & { securities_name: string })
     for (const v of list) {
-      const prev = v.current_value_eur - (v.pnl_dtd_eur ?? 0)
-      v.pnl_dtd_pct = prev !== 0 ? (v.pnl_dtd_eur ?? 0) / prev * 100 : NaN
       const inv = v.gross_invested_all_time_eur
       if (inv) {
+        // % of total capital ever invested in this security — not "vs. yesterday's
+        // value", which breaks the moment a position is fully closed within the
+        // period (current value drops to 0, making that denominator meaningless
+        // and the result always exactly -100% regardless of the real P&L).
+        v.pnl_dtd_pct = v.pnl_dtd_eur / inv * 100
         v.pnl_net_all_time_percent = v.pnl_net_all_time_eur / inv * 100
         v.pnl_ytd_percent = v.pnl_ytd_eur / inv * 100
         v.pnl_wtd_pct = v.pnl_wtd_eur / inv * 100
         v.pnl_mtd_pct = v.pnl_mtd_eur / inv * 100
         v.pnl_qtd_pct = v.pnl_qtd_eur / inv * 100
       } else {
+        v.pnl_dtd_pct = NaN
         v.pnl_net_all_time_percent = NaN; v.pnl_ytd_percent = NaN
         v.pnl_wtd_pct = NaN; v.pnl_mtd_pct = NaN; v.pnl_qtd_pct = NaN
       }
