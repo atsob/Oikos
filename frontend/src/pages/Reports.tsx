@@ -1442,6 +1442,7 @@ function PnlReport() {
       {drillRows ? (() => {
         const drillValue    = drillRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
         const drillPnl      = drillRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
+        const drillPnlPct   = drillValue !== 0 ? (drillPnl / drillValue) * 100 : null
         const drillUnreal   = drillRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
         const drillCost     = drillValue - drillUnreal
         const drillUnrealPct = drillCost !== 0 ? (drillUnreal / drillCost) * 100 : null
@@ -1458,7 +1459,7 @@ function PnlReport() {
           <div className="flex flex-wrap gap-x-6 gap-y-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
             <span className="text-slate-500 font-medium">Totals:</span>
             <span className="tabular-nums">Value: <strong>{fmtEur(drillValue)}</strong></span>
-            <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong></span>
+            <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong>{drillPnlPct != null && <span className="ml-1 opacity-75">({drillPnlPct >= 0 ? '+' : ''}{drillPnlPct.toFixed(2)}%)</span>}</span>
             {drillMkt != null && <span className={`tabular-nums ${drillMkt >= 0 ? 'text-green-700' : 'text-red-600'}`}>Mkt: <strong>{fmtEur(drillMkt)}</strong></span>}
             {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
             <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
