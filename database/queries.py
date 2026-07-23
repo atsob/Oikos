@@ -5976,6 +5976,25 @@ def _compute_current_signals() -> pd.DataFrame:
         conn.close()
 
 
+def _get_app_setting_lead_days(setting_key: str, default: int) -> int:
+    """Read a numeric lead-days value out of the 'app-settings' preference
+    blob (Tools → System → App Settings), falling back to *default* if the
+    preference row, table, or key doesn't exist yet.
+    """
+    try:
+        conn = get_connection()
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+            row = cur.fetchone()
+        conn.close()
+        if row and row[0] and row[0].get(setting_key) is not None:
+            return int(row[0][setting_key])
+    except Exception:
+        pass
+    return default
+
+
 def _get_bond_event_alerts(lead_days: int = None) -> list:
     """Maturity/coupon heads-up for every currently held bond — no per-bond
     setup required, unlike price/drift Alerts, since Maturity_Date/Coupon_Rate/
@@ -5988,18 +6007,7 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
     from dateutil.relativedelta import relativedelta
 
     if lead_days is None:
-        lead_days = 7
-        try:
-            conn0 = get_connection()
-            _ensure_user_preferences_table(conn0)
-            with conn0.cursor() as cur:
-                cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
-                row = cur.fetchone()
-            conn0.close()
-            if row and row[0] and row[0].get('bondAlertLeadDays') is not None:
-                lead_days = int(row[0]['bondAlertLeadDays'])
-        except Exception:
-            pass
+        lead_days = _get_app_setting_lead_days('bondAlertLeadDays', 7)
 
     conn = get_connection()
     try:
@@ -6060,6 +6068,73 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
                     'securities_id': int(row['securities_id']),
                     'type': 'bond_coupon',
                 })
+    return results
+
+
+def _get_dividend_alerts(lead_days: int = None) -> list:
+    """Upcoming-payment heads-up for every currently held dividend-paying
+    security — no per-security setup required, same rationale as bonds.
+    Dividend_Pay_Date on Securities is the last date a payment was seen
+    (from Yahoo's `dividendDate`), projected forward by Dividend_Frequency
+    until it lands on or after today, since Yahoo doesn't expose a full
+    forward dividend calendar.
+
+    lead_days defaults to the user's Tools → System → App Settings
+    "Dividend Alerts" value (Pref_Key='app-settings'.dividendAlertLeadDays),
+    falling back to 3 if unset.
+    """
+    from dateutil.relativedelta import relativedelta
+
+    if lead_days is None:
+        lead_days = _get_app_setting_lead_days('dividendAlertLeadDays', 3)
+
+    conn = get_connection()
+    try:
+        df = pd.read_sql("""
+            WITH fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            )
+            SELECT h.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+                   h.Quantity AS quantity, s.Dividend_Rate AS dividend_rate,
+                   s.Dividend_Frequency AS dividend_frequency,
+                   s.Dividend_Pay_Date AS dividend_pay_date,
+                   c.Currencies_ShortName AS currency, COALESCE(fx.FX_Rate, 1) AS fx_rate
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id = h.Securities_Id
+            JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+            WHERE h.Quantity > 0 AND s.Dividend_Pay_Date IS NOT NULL
+              AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL
+        """, conn)
+    finally:
+        conn.close()
+
+    if df.empty:
+        return []
+
+    today = datetime.now().date()
+    period_months = {'Semi-Annual': 6, 'Quarterly': 3, 'Monthly': 1}
+    results = []
+    for _, row in df.iterrows():
+        last_pay = pd.Timestamp(row['dividend_pay_date']).date()
+        freq = row['dividend_frequency']
+        months = period_months.get(freq, 12)  # default Annual
+        next_pay = last_pay
+        while next_pay < today:
+            next_pay += relativedelta(months=months)
+        days_until = (next_pay - today).days
+        if 0 <= days_until <= lead_days:
+            frac = {'Semi-Annual': 0.5, 'Quarterly': 0.25, 'Monthly': 1.0 / 12}.get(freq, 1.0)
+            amount_eur = float(row['quantity']) * float(row['dividend_rate']) * frac * float(row['fx_rate'])
+            when = 'today' if days_until == 0 else f"in {days_until} day{'s' if days_until != 1 else ''}"
+            results.append({
+                'level': 'info',
+                'message': (f"💵 **Dividend Payment** — {row['securities_name']} pays a dividend {when} "
+                            f"({next_pay.strftime('%d %b %Y')}), ≈€{amount_eur:,.2f}."),
+                'securities_id': int(row['securities_id']),
+                'type': 'dividend_payment',
+            })
     return results
 
 
@@ -6184,6 +6259,12 @@ def check_triggered_alerts() -> list:
         # ── bond maturity/coupon heads-up (live-computed, no per-bond setup) ───
         try:
             results.extend(_get_bond_event_alerts())
+        except Exception:
+            pass
+
+        # ── dividend payment heads-up (live-computed, no per-security setup) ───
+        try:
+            results.extend(_get_dividend_alerts())
         except Exception:
             pass
 

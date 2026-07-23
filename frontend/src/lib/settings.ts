@@ -8,6 +8,7 @@ export interface AppSettings {
   reportingCurrency: string // 'EUR' — display-only, does not affect stored data
   defaultTransferPayeeName: string // auto-filled as the Payee when a new transaction is marked Transfer, if left blank
   bondAlertLeadDays: number // Dashboard heads-up window for bond maturity/coupon dates
+  dividendAlertLeadDays: number // Dashboard heads-up window for security dividend payments
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -18,6 +19,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   reportingCurrency: 'EUR',
   defaultTransferPayeeName: 'Transfer Money',
   bondAlertLeadDays: 7,
+  dividendAlertLeadDays: 3,
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone
