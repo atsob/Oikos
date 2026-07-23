@@ -5976,6 +5976,75 @@ def _compute_current_signals() -> pd.DataFrame:
         conn.close()
 
 
+def _get_bond_event_alerts(lead_days: int = 7) -> list:
+    """Maturity/coupon heads-up for every currently held bond — no per-bond
+    setup required, unlike price/drift Alerts, since Maturity_Date/Coupon_Rate/
+    Coupon_Frequency already fully describe the schedule for a held bond.
+    """
+    from dateutil.relativedelta import relativedelta
+
+    conn = get_connection()
+    try:
+        df = pd.read_sql("""
+            WITH fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            )
+            SELECT h.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+                   h.Quantity AS quantity, s.Face_Value AS face_value,
+                   s.Coupon_Rate AS coupon_rate, s.Coupon_Frequency AS coupon_frequency,
+                   s.Maturity_Date AS maturity_date, c.Currencies_ShortName AS currency,
+                   COALESCE(fx.FX_Rate, 1) AS fx_rate
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id = h.Securities_Id
+            JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL
+        """, conn)
+    finally:
+        conn.close()
+
+    if df.empty:
+        return []
+
+    today = datetime.now().date()
+    period_months = {'Semi-Annual': 6, 'Quarterly': 3, 'Monthly': 1}
+    results = []
+    for _, row in df.iterrows():
+        maturity = pd.Timestamp(row['maturity_date']).date()
+        name = row['securities_name']
+        days_to_maturity = (maturity - today).days
+        if 0 <= days_to_maturity <= lead_days:
+            when = 'today' if days_to_maturity == 0 else f"in {days_to_maturity} day{'s' if days_to_maturity != 1 else ''}"
+            results.append({
+                'level': 'warning',
+                'message': f"📅 **Bond Maturity** — {name} matures {when} ({maturity.strftime('%d %b %Y')}).",
+                'securities_id': int(row['securities_id']),
+                'type': 'bond_maturity',
+            })
+
+        freq = row['coupon_frequency']
+        rate = row['coupon_rate']
+        if freq and freq != 'At Maturity' and rate is not None and maturity >= today:
+            months = period_months.get(freq, 12)  # default Annual
+            next_coupon = maturity
+            while next_coupon - relativedelta(months=months) >= today:
+                next_coupon -= relativedelta(months=months)
+            days_until = (next_coupon - today).days
+            if 0 <= days_until <= lead_days:
+                frac = {'Semi-Annual': 0.5, 'Quarterly': 0.25, 'Monthly': 1.0 / 12}.get(freq, 1.0)
+                amount_eur = float(row['quantity']) * float(row['face_value'] or 0) * float(rate) / 100 * frac * float(row['fx_rate'])
+                when = 'today' if days_until == 0 else f"in {days_until} day{'s' if days_until != 1 else ''}"
+                results.append({
+                    'level': 'info',
+                    'message': (f"💰 **Bond Coupon** — {name} pays a coupon {when} "
+                                f"({next_coupon.strftime('%d %b %Y')}), ≈€{amount_eur:,.2f}."),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'bond_coupon',
+                })
+    return results
+
+
 def check_triggered_alerts() -> list:
     """Return list of triggered alert dicts ({level, message}).
     Never raises — returns [] on any error.
@@ -5987,8 +6056,6 @@ def check_triggered_alerts() -> list:
         alerts_df = pd.read_sql(
             "SELECT * FROM Alerts WHERE Is_Active = TRUE", conn)
         conn.close()
-        if alerts_df.empty:
-            return []
 
         results = []
 
@@ -6093,6 +6160,12 @@ def check_triggered_alerts() -> list:
                     'securities_id': int(row['securities_id']),
                     'type': 'signal_change',
                 })
+        except Exception:
+            pass
+
+        # ── bond maturity/coupon heads-up (live-computed, no per-bond setup) ───
+        try:
+            results.extend(_get_bond_event_alerts())
         except Exception:
             pass
 

@@ -156,7 +156,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>Insights &amp; Alerts</H3>
         <P>
           Auto-generated observations (unusual spending, upcoming bills, low balances, etc.) and any alert
-          rules you've triggered, both collapsible.
+          rules you've triggered, both collapsible. <b>Bond maturity and coupon alerts appear automatically</b> for
+          every bond you currently hold — no setup needed, unlike price/allocation alerts — once the event is
+          within 7 days.
         </P>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
