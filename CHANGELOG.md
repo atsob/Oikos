@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-24
+
+### Removed
+- **Trimmed 7 unused Python packages from `requirements.txt`**: `plotly`, `llama-index`, `llama-index-embeddings-ollama`, `llama-index-llms-ollama`, and `llama-index-readers-database` (the RAG engine was rewritten to talk to pgvector/Ollama directly — see `ai/rag.py` — with zero remaining imports of any of these anywhere in the codebase), plus `aiofiles` (never imported at all) and the explicit `urllib3` pin (only ever used by the Streamlit-only warnings helper removed in yesterday's cleanup — still installed transitively via `requests`, just no longer needs its own top-level entry). Verified by installing the trimmed file into a fresh virtualenv and confirming every module — including both real entry points, `api.main` and `scheduler` — still imports cleanly. `Dockerfile`'s system packages were all confirmed still necessary (`postgresql-client-18` backs the in-app DB backup/restore feature; the rest are needed just to add that package's apt repo) and left as-is.
+
 ## 2026-07-23
 
 ### Added
