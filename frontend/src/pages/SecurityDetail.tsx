@@ -178,10 +178,14 @@ function PricesTab({ secId }: { secId: number }) {
 
   // Markers for Buy/Sell (and equivalent) investment transactions, plotted on
   // top of the price line so it's obvious where in time a trade happened.
+  // Reinvest gets its own marker rather than being lumped in with Buy — it
+  // still adds to the position, but it's funded by a dividend rather than
+  // fresh cash, which is worth being able to tell apart at a glance.
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
     const closeByDate = new Map(h.map(r => [String(r.date).slice(0, 10), Number(r.close)]))
-    const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Reinvest', 'Grant', 'Vest', 'Exercise'])
+    const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Grant', 'Vest', 'Exercise'])
+    const REINVEST_LIKE = new Set(['Reinvest'])
     const SELL_LIKE = new Set(['Sell', 'ShrOut', 'Expire'])
     const toPoint = (r: Record<string, unknown>) => {
       const d = String(r.date).slice(0, 10)
@@ -191,6 +195,7 @@ function PricesTab({ secId }: { secId: number }) {
     const inRange = (txHistory as Record<string, unknown>[]).filter(r => String(r.date).slice(0, 10) >= fromDate)
     return {
       buys: inRange.filter(r => BUY_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+      reinvests: inRange.filter(r => REINVEST_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
       sells: inRange.filter(r => SELL_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
     }
   }, [history, txHistory, fromDate])
@@ -247,6 +252,15 @@ function PricesTab({ secId }: { secId: number }) {
               marker: { color: '#22c55e', size: 11, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
               yaxis: 'y',
               text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+            {
+              x: txMarkers.reinvests.map(p => p.d),
+              y: txMarkers.reinvests.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Reinvest',
+              marker: { color: '#14b8a6', size: 10, symbol: 'diamond', line: { color: '#0f766e', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
