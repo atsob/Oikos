@@ -3,6 +3,8 @@ from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_core.tools import Tool
 
+from ai.web_search import web_search
+
 
 def _compact_schema(db) -> str:
     """Return a concise schema string: Table(col1, col2, ...) — one line per table.
@@ -64,6 +66,16 @@ def create_ai_agent(llm, db, rag_engine):
         description="Use for financial concepts, definitions, or qualitative analysis not answerable from the database.",
     )
 
+    web_search_tool = Tool(
+        name="Web_Search",
+        func=lambda q: web_search(q),
+        description=(
+            "Use for anything requiring current, real-world information not in the user's "
+            "database or the Financial_Knowledge_Base — e.g. today's price of a stock/crypto, "
+            "recent news, or general facts. Input is a plain-text search query."
+        ),
+    )
+
     # IMPORTANT: zero-shot-react-description uses plain ReAct format, NOT JSON.
     # Format must be:
     #   Action: <tool_name>
@@ -107,7 +119,7 @@ Question: {input}
     agent_executor = create_sql_agent(
         llm=llm,
         db=db,
-        extra_tools=[rag_tool],
+        extra_tools=[rag_tool, web_search_tool],
         agent_type="zero-shot-react-description",
         verbose=True,
         prefix=custom_prefix,

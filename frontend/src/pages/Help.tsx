@@ -664,7 +664,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A chat interface for asking questions about your finances in plain language — e.g. "What was my
           total spending last month?" or "How has my net worth changed over the last 12 months?". It reasons
           over your data using tools (visible via the collapsible "reasoning steps" under each answer) rather
-          than guessing.
+          than guessing. It can also search the web for anything not in your database or its financial
+          knowledge base — current stock/crypto prices, recent news, general facts.
         </P>
         <P>
           The same underlying engine also generates the scheduled <b>Monthly</b> and <b>Weekly AI Summary</b>{' '}

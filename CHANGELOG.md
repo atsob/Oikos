@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-23
+
+### Added
+- **AI Assistant can now search the web** for anything not answerable from the database (current stock/crypto prices, recent news, general facts) via a new `Web_Search` tool (DuckDuckGo, same backend the News page's institution/payee search already uses). This re-wires `ai/web_search.py` — previously only ever called from the old Streamlit AI assistant page and removed with it — into the current agent instead.
+
+### Removed
+- **Deleted the entire legacy Streamlit codebase** (`app.py` and the whole `ui/` package — dashboard, register, reports, market data, importers, static data, recurring, tools, AI assistant, insights, and the bank/broker/Salt Edge/GoCardless import pages): none of it has run since the React + FastAPI rewrite (production only ever runs `uvicorn api.main:app` and `python scheduler.py` — confirmed via `Dockerfile`/`docker-compose.yml`), and a full import-graph trace from both real entry points confirmed zero live code still depended on any of it. Also removed the now-pointless `utils/` package (Streamlit `session_state` init and a warnings filter written specifically for a Streamlit `data_editor` bug), `ai/test.py` and `ai/web_search.py` (an early throwaway prototype and a working DuckDuckGo search helper that was only ever wired into the old Streamlit AI assistant page — never ported to the current agent), `data/gocardless.py` and `data/qif_importer_NO_TRANSFER.py` and `data/transfer_issues.py` (dead/superseded importers), and `database/backup_local.py` and `database/backup_script.py` (a superseded local-backup variant and an unused standalone script). ~29,800 lines removed in total.
+- **Stripped the same dead Streamlit code out of three files that are still very much live**: `database/crud.py` and `database/backup.py` each had an entire unused Streamlit-editor/UI-rendering function (plus a couple of stray, harmless `st.*` calls) sitting alongside the DB logic that FastAPI routers and the scheduler actually call — removed, along with the now-unneeded `import streamlit`. `api/routers/importers_router.py`'s generic "Bank CSV" import source referenced a function (`ui.bank_import.parse_bank_csv`) that never actually existed, so it silently no-op'd on every use; replaced with an explicit "not yet implemented" message. `data/qif_importer.py`'s `QIFImporter` class (used by the live QIF import feature) still has some harmless dead `st.*` calls scattered through it — left alone rather than risk a scattered edit across financial-data-writing code, so `streamlit` stays a dependency for now.
+
 ## 2026-07-22
 
 ### Added
