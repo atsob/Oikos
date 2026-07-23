@@ -246,21 +246,25 @@ function PricesTab({ secId }: { secId: number }) {
               hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
             },
             {
-              x: txMarkers.buys.map(p => p.d),
-              y: txMarkers.buys.map(p => p.y),
-              type: 'scatter', mode: 'markers', name: 'Buy',
-              marker: { color: '#22c55e', size: 11, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
-              yaxis: 'y',
-              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
-              hovertemplate: '%{text}<extra></extra>',
-            },
-            {
+              // Drawn before Buy/Sell — Plotly stacks later traces on top, and
+              // Reinvest is by far the most frequent marker (a dividend reinvest
+              // can land on the same day as a real Buy/Sell), so it must sit
+              // underneath or it silently covers the rarer, more important ones.
               x: txMarkers.reinvests.map(p => p.d),
               y: txMarkers.reinvests.map(p => p.y),
               type: 'scatter', mode: 'markers', name: 'Reinvest',
               marker: { color: '#14b8a6', size: 10, symbol: 'diamond', line: { color: '#0f766e', width: 1 } },
               yaxis: 'y',
               text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+            {
+              x: txMarkers.buys.map(p => p.d),
+              y: txMarkers.buys.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Buy',
+              marker: { color: '#22c55e', size: 11, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
