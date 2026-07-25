@@ -63,7 +63,7 @@ function ClearedCell({ data }: { data?: Record<string, unknown> }) {
 // rows, so a column with no server-side mapping is marked unsortable rather than
 // silently sorting by date instead and looking broken.
 const makeColDefs = (currency: string): ColDef[] => [
-  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left', sortable: false, filter: false, resizable: false },
+  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left', sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },

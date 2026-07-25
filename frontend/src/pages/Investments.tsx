@@ -357,13 +357,13 @@ export default function Investments() {
 
   const selectedAccount = investmentAccounts.find(a => Number(a.id) === accountId)
   const cashColDefs = useMemo(() => [
-    { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+    { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
     ...makeCashCols(String(selectedAccount?.currency ?? 'EUR')),
   ], [selectedAccount])
   const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
 
   const txColDefs = useMemo(() => [
-    { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+    { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
     ...makeInvCols(navigate),
     { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, pinned: 'right' as const,
       cellRenderer: CashBalanceCell,
