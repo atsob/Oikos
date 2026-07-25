@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-07-25
 
+### Added
+- **Investments → Transactions now supports batch editing**: select multiple rows (checkbox column) and either **Move to Account…** (reassigns them to a different investment account) or **Change Cash Account…** (repoints their linked cash transaction) in one action, instead of editing each row individually. Keeps the linked cash transaction's account and both old/new account balances correct for every row in the batch, same as the single-row fix below. If moving a Sell/Dividend/etc. row into an account with no matching prior holding would leave a negative position there, the move still applies but a warning banner lists exactly which security/account ended up negative.
+
 ### Changed
 - **Static Data → New/Edit Account — Linked Account was limited to Checking accounts only**, but an investment account's cash settlement account can just as validly be a Savings or Credit Card account. Broadened to any bank/cash-like type (Cash, Checking, Savings, Credit Card) — still excludes investment-type accounts (Brokerage, Pension, Other Investment, Margin), which was the point of scoping it in the first place.
 

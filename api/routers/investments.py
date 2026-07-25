@@ -312,6 +312,120 @@ def update_investment(inv_id: int, data: dict):
         conn.close()
 
 
+@router.post("/transactions/batch-update")
+def batch_update_investments(data: dict):
+    """Move several Investments rows to a different investment account and/or
+    linked cash account in one go (Investments → Transactions row selection).
+
+    Reuses the same _upsert_cash_transaction call as the single-row PUT above so
+    Transactions.Accounts_Id_Target always stays in sync with Investments.Accounts_Id
+    (the app already has a maintenance tool, /tools/fix-inv-account-target, for
+    fixing this pairing after the fact — this keeps it correct going forward instead).
+    """
+    from database.connection import get_connection
+    from fastapi import HTTPException
+    ids = [int(i) for i in (data.get("ids") or [])]
+    new_accounts_id = data.get("accounts_id")
+    new_cash_account_id = data.get("cash_account_id")
+    if not ids or (new_accounts_id is None and new_cash_account_id is None):
+        raise HTTPException(400, "ids and at least one of accounts_id/cash_account_id are required")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        touched_cash_accounts: set[int] = set()
+        touched_pairs: set[tuple[int, int]] = set()
+
+        for inv_id in ids:
+            cur.execute("""
+                SELECT Accounts_Id, Securities_Id, Date, Action, Quantity, Price_Per_Share,
+                       Total_Amount_AccCur, Transactions_Id, Tax_Amount
+                FROM Investments WHERE Investments_Id = %s
+            """, (inv_id,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            (cur_accounts_id, sec_id, date, action, qty, price,
+             total_acc_cur, existing_tx_id, tax_amount) = row
+
+            target_accounts_id = int(new_accounts_id) if new_accounts_id is not None else cur_accounts_id
+            if new_accounts_id is not None and int(new_accounts_id) != cur_accounts_id:
+                cur.execute("UPDATE Investments SET Accounts_Id = %s WHERE Investments_Id = %s", (target_accounts_id, inv_id))
+
+            if sec_id:
+                touched_pairs.add((int(target_accounts_id), int(sec_id)))
+
+            # Same reasoning as update_investment above: capture the linked
+            # transaction's current cash account before _upsert_cash_transaction
+            # can move it, so it can be balance-refreshed too.
+            old_cash_account_id = None
+            if existing_tx_id:
+                cur.execute("SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (existing_tx_id,))
+                r = cur.fetchone()
+                old_cash_account_id = r[0] if r else None
+
+            # Falls back to the row's existing cash account (rather than skipping)
+            # so that moving only the investment account still re-syncs
+            # Accounts_Id_Target on the linked Transactions row via the upsert below.
+            target_cash_account_id = int(new_cash_account_id) if new_cash_account_id is not None else old_cash_account_id
+
+            if target_cash_account_id:
+                sec_name, ticker = None, None
+                if sec_id:
+                    cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (sec_id,))
+                    sec_row = cur.fetchone()
+                    if sec_row:
+                        sec_name, ticker = sec_row
+                payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
+                cash_desc = _build_inv_description(action, sec_name, ticker, qty, price)
+                _upsert_cash_transaction(
+                    cur, inv_id, target_cash_account_id, target_accounts_id,
+                    date, action, total_acc_cur or 0,
+                    cash_desc, existing_tx_id, payee_id,
+                    tax_amount=float(tax_amount or 0),
+                )
+                touched_cash_accounts.add(target_cash_account_id)
+                if old_cash_account_id:
+                    touched_cash_accounts.add(int(old_cash_account_id))
+
+        if touched_cash_accounts:
+            _refresh_balance(cur, *touched_cash_accounts)
+
+        conn.commit()
+
+        from database.crud import update_holdings
+        update_holdings()
+
+        # Non-blocking heads-up: a Sell/ShrOut/etc. row moved into an account with
+        # no matching prior holding can leave that (account, security) negative —
+        # applied anyway (per product decision), just surfaced here.
+        warnings: list[dict] = []
+        if touched_pairs:
+            cur2 = conn.cursor()
+            for acc_id, pair_sec_id in touched_pairs:
+                cur2.execute("""
+                    SELECT h.Quantity, a.Accounts_Name, s.Securities_Name
+                    FROM Holdings h
+                    JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
+                    JOIN Securities s ON s.Securities_Id = h.Securities_Id
+                    WHERE h.Accounts_Id = %s AND h.Securities_Id = %s AND h.Quantity < 0
+                """, (acc_id, pair_sec_id))
+                r = cur2.fetchone()
+                if r:
+                    qty_val, acc_name, sec_name = r
+                    warnings.append({"account": acc_name, "security": sec_name, "quantity": float(qty_val)})
+            cur2.close()
+
+        return {"updated": len(ids), "warnings": warnings}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.delete("/transactions/{inv_id}")
 def delete_investment(inv_id: int):
     from database.connection import get_connection

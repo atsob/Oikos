@@ -25,7 +25,7 @@ const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'M
 // CASH_ACCOUNT_TYPES used elsewhere (Register/TxModal), which also includes
 // Loan/Real Estate/Vehicle/Asset — none of which make sense as a linked
 // settlement account for an investment.
-const LINKABLE_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card']
+export const LINKABLE_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
 

@@ -94,6 +94,9 @@ export const updateHolding = (id: number, data: Record<string, unknown>) =>
 export const getLinkedAccount = (accountId: number) =>
   api.get(`/investments/linked-account/${accountId}`).then(r => r.data)
 
+export const batchUpdateInvestments = (ids: number[], changes: { accounts_id?: number; cash_account_id?: number }): Promise<{ updated: number; warnings: { account: string; security: string; quantity: number }[] }> =>
+  api.post('/investments/transactions/batch-update', { ids, ...changes }).then(r => r.data)
+
 export const previewInvestmentTransfer = (data: Record<string, unknown>) =>
   api.post('/investments/transfer/preview', data).then(r => r.data)
 export const executeInvestmentTransfer = (data: Record<string, unknown>) =>

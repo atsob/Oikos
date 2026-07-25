@@ -273,6 +273,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Sync Balances</b> (top-right) refreshes Investments, Pension, and Holdings — the account types this
           page manages (not Bank &amp; Cash).
         </P>
+        <Note>
+          In Transactions, select multiple rows with the checkbox column to batch-apply <b>Move to Account…</b>{' '}
+          (reassigns them to a different investment account) or <b>Change Cash Account…</b> (repoints their linked
+          cash transaction) — a quick way to fix a batch of rows entered against the wrong account, instead of
+          editing each one individually. Both keep account balances correct across the whole selection; moving a
+          Sell/Dividend/etc. row into an account with no matching prior holding still applies but flags the
+          resulting negative position in a warning.
+        </Note>
         <P>
           <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a
           holding from one account to another: the <b>same security</b> — a pure custody transfer, cost basis
