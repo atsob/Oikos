@@ -426,6 +426,62 @@ def batch_update_investments(data: dict):
         conn.close()
 
 
+@router.post("/transactions/batch-delete")
+def batch_delete_investments(data: dict):
+    """Delete several Investments rows at once (Investments → Transactions row selection).
+
+    Mirrors delete_investment below, batched: one balance refresh and one
+    holdings recompute for the whole selection instead of once per row.
+    """
+    from database.connection import get_connection
+    from fastapi import HTTPException
+    ids = [int(i) for i in (data.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "ids required")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        touched_cash_accounts: set[int] = set()
+        deleted = 0
+
+        for inv_id in ids:
+            cur.execute("SELECT Transactions_Id FROM Investments WHERE Investments_Id = %s", (inv_id,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            linked_tx_id = row[0]
+
+            cur.execute("DELETE FROM Investments WHERE Investments_Id = %s", (inv_id,))
+
+            if linked_tx_id:
+                cur.execute("SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (linked_tx_id,))
+                tx_row = cur.fetchone()
+                cash_account_id = tx_row[0] if tx_row else None
+                cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (linked_tx_id,))
+                if cash_account_id:
+                    touched_cash_accounts.add(cash_account_id)
+
+            deleted += 1
+
+        if touched_cash_accounts:
+            _refresh_balance(cur, *touched_cash_accounts)
+
+        conn.commit()
+
+        from database.crud import update_holdings
+        update_holdings()
+
+        return {"deleted": deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.delete("/transactions/{inv_id}")
 def delete_investment(inv_id: int):
     from database.connection import get_connection

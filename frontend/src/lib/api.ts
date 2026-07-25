@@ -81,6 +81,12 @@ export const updateTransaction = (id: number, data: Record<string, unknown>) =>
 export const deleteTransaction = (id: number) =>
   api.delete(`/register/transactions/${id}`)
 
+export const batchDeleteTransactions = (ids: number[]): Promise<{ deleted: number; skipped: { id: number; reason: string }[] }> =>
+  api.post('/register/transactions/batch-delete', { ids }).then(r => r.data)
+
+export const batchMoveTransactions = (ids: number[], accountsId: number): Promise<{ moved: number }> =>
+  api.post('/register/transactions/batch-move', { ids, accounts_id: accountsId }).then(r => r.data)
+
 // ── Investments ───────────────────────────────────────────────────────────────
 export const getInvestments = (params: Record<string, unknown>) =>
   api.get('/investments/list', { params }).then(r => r.data)
@@ -96,6 +102,9 @@ export const getLinkedAccount = (accountId: number) =>
 
 export const batchUpdateInvestments = (ids: number[], changes: { accounts_id?: number; cash_account_id?: number }): Promise<{ updated: number; warnings: { account: string; security: string; quantity: number }[] }> =>
   api.post('/investments/transactions/batch-update', { ids, ...changes }).then(r => r.data)
+
+export const batchDeleteInvestments = (ids: number[]): Promise<{ deleted: number }> =>
+  api.post('/investments/transactions/batch-delete', { ids }).then(r => r.data)
 
 export const previewInvestmentTransfer = (data: Record<string, unknown>) =>
   api.post('/investments/transfer/preview', data).then(r => r.data)

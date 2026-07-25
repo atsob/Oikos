@@ -8,9 +8,10 @@ import {
   getHoldings, getInvestments, getAccounts, getSecurities,
   updateHolding, stakingReinvest, getLinkedAccount,
   getTransactions, getPayees, getCategories,
-  syncBalances, batchUpdateInvestments,
+  syncBalances, batchUpdateInvestments, batchDeleteInvestments,
+  batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, AccountOptions } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -18,6 +19,7 @@ import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInv
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { LINKABLE_ACCOUNT_TYPES } from '@/pages/StaticData'
+import { CASH_ACCOUNT_TYPES } from '@/pages/Register'
 
 export const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
 
@@ -244,44 +246,6 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 }
 
 
-// ── Batch account picker (Transactions tab, multi-row select) ────────────────
-function BatchAccountPicker({ title, count, accounts, saving, onCancel, onApply }: {
-  title: string
-  count: number
-  accounts: Record<string, unknown>[]
-  saving: boolean
-  onCancel: () => void
-  onApply: (accountId: number) => void
-}) {
-  const [target, setTarget] = useState('')
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
-          <h2 className="text-base font-semibold">{title}</h2>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
-        </div>
-        <div className="px-5 py-3 space-y-3">
-          <p className="text-sm text-slate-600">{count} transaction{count === 1 ? '' : 's'} selected.</p>
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Target account *</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={target} onChange={e => setTarget(e.target.value)}>
-              <option value="">— select —</option>
-              <AccountOptions accounts={accounts} />
-            </select>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">
-          <Button variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
-          <Button size="sm" disabled={!target || saving} onClick={() => onApply(Number(target))}>
-            {saving ? 'Applying…' : 'Apply'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {
   const navigate = useNavigate()
@@ -313,6 +277,12 @@ export default function Investments() {
   const [batchWarnings, setBatchWarnings] = useState<{ account: string; security: string; quantity: number }[]>([])
   const txGridRef = useRef<AgGridReact>(null)
 
+  const [selectedCashIds, setSelectedCashIds] = useState<number[]>([])
+  const [cashBatchMoveOpen, setCashBatchMoveOpen] = useState(false)
+  const [cashBatchSaving, setCashBatchSaving] = useState(false)
+  const [cashBatchMsg, setCashBatchMsg] = useState<string | null>(null)
+  const cashGridRef = useRef<AgGridReact>(null)
+
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
 
@@ -325,6 +295,14 @@ export default function Investments() {
   // Savings, Credit Card): the types that make sense as a cash settlement account.
   const cashAccountsForBatch = (accounts as Record<string, unknown>[])
     .filter(a => LINKABLE_ACCOUNT_TYPES.includes(String(a.type ?? '')))
+    .filter(a => Boolean(a.is_active))
+
+  // Cash tab's own "Move to Account" target list — the full cash-type universe
+  // (same as Cash Register's own account picker), broader than the narrower
+  // LINKABLE_ACCOUNT_TYPES above (which scopes an investment account's own
+  // settlement-account setting, not general cash-transaction account moves).
+  const cashMoveAccounts = (accounts as Record<string, unknown>[])
+    .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
     .filter(a => Boolean(a.is_active))
 
   // The transaction being edited may belong to an inactive account that's
@@ -378,7 +356,10 @@ export default function Investments() {
     s + Number(h.quantity) * (Number(h.last_price ?? 0) - Number(h.fifo_avg_price ?? h.simple_avg_price ?? 0)) * Number(h.fx_rate ?? 1), 0)
 
   const selectedAccount = investmentAccounts.find(a => Number(a.id) === accountId)
-  const cashColDefs = useMemo(() => makeCashCols(String(selectedAccount?.currency ?? 'EUR')), [selectedAccount])
+  const cashColDefs = useMemo(() => [
+    { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+    ...makeCashCols(String(selectedAccount?.currency ?? 'EUR')),
+  ], [selectedAccount])
   const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
 
   const txColDefs = useMemo(() => [
@@ -468,6 +449,59 @@ export default function Investments() {
     } catch (e: unknown) {
       setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch update failed')
     } finally { setBatchSaving(false) }
+  }
+
+  const handleBatchDelete = async () => {
+    if (!confirm(`Delete ${selectedTxIds.length} investment transaction${selectedTxIds.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    setBatchSaving(true); setBatchMsg(null)
+    try {
+      const res = await batchDeleteInvestments(selectedTxIds)
+      qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+      qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+      qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+      qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
+      txGridRef.current?.api.deselectAll()
+      setSelectedTxIds([])
+      setBatchWarnings([])
+      setBatchMsg(`Deleted ${res.deleted} transaction${res.deleted === 1 ? '' : 's'}.`)
+    } catch (e: unknown) {
+      setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch delete failed')
+    } finally { setBatchSaving(false) }
+  }
+
+  const cashBatchInvalidate = () => {
+    qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
+    qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+  }
+
+  const handleCashBatchMove = async (targetAccountId: number) => {
+    setCashBatchSaving(true); setCashBatchMsg(null)
+    try {
+      const res = await batchMoveTransactions(selectedCashIds, targetAccountId)
+      cashBatchInvalidate()
+      cashGridRef.current?.api.deselectAll()
+      setSelectedCashIds([])
+      setCashBatchMoveOpen(false)
+      setCashBatchMsg(`Moved ${res.moved} transaction${res.moved === 1 ? '' : 's'}.`)
+    } catch (e: unknown) {
+      setCashBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch move failed')
+    } finally { setCashBatchSaving(false) }
+  }
+
+  const handleCashBatchDelete = async () => {
+    if (!confirm(`Delete ${selectedCashIds.length} transaction${selectedCashIds.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    setCashBatchSaving(true); setCashBatchMsg(null)
+    try {
+      const res = await batchDeleteTransactions(selectedCashIds)
+      cashBatchInvalidate()
+      cashGridRef.current?.api.deselectAll()
+      setSelectedCashIds([])
+      const skippedMsg = res.skipped.length > 0 ? ` ${res.skipped.length} skipped: ${res.skipped.map(s => s.reason).join(' ')}` : ''
+      setCashBatchMsg(`Deleted ${res.deleted} transaction${res.deleted === 1 ? '' : 's'}.${skippedMsg}`)
+    } catch (e: unknown) {
+      setCashBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch delete failed')
+    } finally { setCashBatchSaving(false) }
   }
 
   const openEdit = useCallback((row: Record<string, unknown>) => {
@@ -658,6 +692,12 @@ export default function Investments() {
                 <div className="flex justify-center py-12"><Spinner /></div>
               ) : (
                 <>
+                  {cashBatchMsg && (
+                    <div className={`mx-4 mt-2 rounded-lg px-4 py-2 text-sm flex items-start justify-between gap-3 ${cashBatchMsg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                      <div>{cashBatchMsg}</div>
+                      <button onClick={() => setCashBatchMsg(null)} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={14} /></button>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
                     <div className="flex items-center gap-3 flex-wrap">
                       <div className="relative">
@@ -666,14 +706,26 @@ export default function Investments() {
                       </div>
                       <span className="text-xs text-slate-400 whitespace-nowrap">{cashRows.length} transactions</span>
                     </div>
-                    <ColumnsMenu columns={cashGridCols.columns} onToggle={cashGridCols.toggleColumn} />
+                    <div className="flex items-center gap-2">
+                      {selectedCashIds.length > 0 && (
+                        <>
+                          <span className="text-xs text-slate-500 whitespace-nowrap">{selectedCashIds.length} selected</span>
+                          <Button variant="secondary" size="sm" onClick={() => setCashBatchMoveOpen(true)}>Move to Account…</Button>
+                          <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>
+                        </>
+                      )}
+                      <ColumnsMenu columns={cashGridCols.columns} onToggle={cashGridCols.toggleColumn} />
+                    </div>
                   </div>
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                     <AgGridReact
+                      ref={cashGridRef}
                       rowData={cashRows}
                       quickFilterText={cashSearch}
                       columnDefs={cashGridCols.colDefs}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                      rowSelection="multiple"
+                      onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                       onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
                       onGridReady={e => e.api.autoSizeAllColumns()}
                       onColumnMoved={cashGridCols.onColumnMoved}
@@ -720,6 +772,7 @@ export default function Investments() {
                         <span className="text-xs text-slate-500 whitespace-nowrap">{selectedTxIds.length} selected</span>
                         <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>
                         <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>
+                        <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
                       </>
                     )}
                     <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
@@ -826,6 +879,17 @@ export default function Investments() {
           saving={batchSaving}
           onCancel={() => setBatchAction(null)}
           onApply={handleBatchApply}
+        />
+      )}
+
+      {cashBatchMoveOpen && (
+        <BatchAccountPicker
+          title="Move to Account"
+          count={selectedCashIds.length}
+          accounts={cashMoveAccounts}
+          saving={cashBatchSaving}
+          onCancel={() => setCashBatchMoveOpen(false)}
+          onApply={handleCashBatchMove}
         />
       )}
 

@@ -254,6 +254,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           transaction, leaving the split's Memo blank now reuses the transaction's own Description instead of
           saving an empty memo.
         </Note>
+        <Note>
+          Select multiple rows with the checkbox column to batch-apply <b>Move to Account…</b> or{' '}
+          <b>Delete Selected</b> instead of doing each one individually — including <b>Transfers</b>: deleting
+          either leg of a transfer removes both, and moving one leg keeps the other leg's "Transfer To" pointing
+          at the right account (only the leg you selected actually moves accounts). A row that's the cash side
+          of an investment transaction is skipped when deleting (with a reason shown) rather than removed —
+          delete it from Investments → Transactions instead, since removing it here would orphan the investment
+          row it belongs to.
+        </Note>
       </>
     ),
   },
@@ -275,11 +284,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <Note>
           In Transactions, select multiple rows with the checkbox column to batch-apply <b>Move to Account…</b>{' '}
-          (reassigns them to a different investment account) or <b>Change Cash Account…</b> (repoints their linked
-          cash transaction) — a quick way to fix a batch of rows entered against the wrong account, instead of
-          editing each one individually. Both keep account balances correct across the whole selection; moving a
-          Sell/Dividend/etc. row into an account with no matching prior holding still applies but flags the
-          resulting negative position in a warning.
+          (reassigns them to a different investment account), <b>Change Cash Account…</b> (repoints their linked
+          cash transaction), or <b>Delete Selected</b> — a quick way to fix or remove a batch of rows entered
+          against the wrong account, instead of doing each one individually. Move/Change keep account balances
+          correct across the whole selection; moving a Sell/Dividend/etc. row into an account with no matching
+          prior holding still applies but flags the resulting negative position in a warning. The Cash tab has
+          the same <b>Move to Account…</b>/<b>Delete Selected</b> batch actions — same as Cash Register, see the
+          Cash Register section for the details on how transfers are handled.
         </Note>
         <P>
           <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a

@@ -6,9 +6,9 @@ import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGe
 import {
   getAccounts, getTransactions, getPayees, getCategories,
   clearAccount, reconcileAccount, searchAllTransactions,
-  syncBalances,
+  syncBalances, batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, AccountOptions } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
@@ -16,7 +16,7 @@ import { TxModal, useTxModal, today } from '@/components/TxModal'
 const PAGE_SIZE = 200
 const DEFAULT_TO_DATE = '2099-12-31'   // "no upper bound" — includes future-dated/scheduled transactions
 
-const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
+export const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function monthsAgo(n: number) {
@@ -63,6 +63,7 @@ function ClearedCell({ data }: { data?: Record<string, unknown> }) {
 // rows, so a column with no server-side mapping is marked unsortable rather than
 // silently sorting by date instead and looking broken.
 const makeColDefs = (currency: string): ColDef[] => [
+  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left', sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
@@ -111,6 +112,46 @@ export default function Register() {
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
     },
   })
+
+  // Batch move/delete (multi-row selection toolbar)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [batchMoveOpen, setBatchMoveOpen] = useState(false)
+  const [batchSaving, setBatchSaving] = useState(false)
+  const [batchMsg, setBatchMsg] = useState<string | null>(null)
+
+  const batchInvalidate = () => {
+    refreshGrid()
+    qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+  }
+
+  const handleBatchMove = async (targetAccountId: number) => {
+    setBatchSaving(true); setBatchMsg(null)
+    try {
+      const res = await batchMoveTransactions(selectedIds, targetAccountId)
+      batchInvalidate()
+      gridRef.current?.api.deselectAll()
+      setSelectedIds([])
+      setBatchMoveOpen(false)
+      setBatchMsg(`Moved ${res.moved} transaction${res.moved === 1 ? '' : 's'}.`)
+    } catch (e: unknown) {
+      setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch move failed')
+    } finally { setBatchSaving(false) }
+  }
+
+  const handleBatchDelete = async () => {
+    if (!confirm(`Delete ${selectedIds.length} transaction${selectedIds.length === 1 ? '' : 's'}? This cannot be undone.`)) return
+    setBatchSaving(true); setBatchMsg(null)
+    try {
+      const res = await batchDeleteTransactions(selectedIds)
+      batchInvalidate()
+      gridRef.current?.api.deselectAll()
+      setSelectedIds([])
+      const skippedMsg = res.skipped.length > 0 ? ` ${res.skipped.length} skipped: ${res.skipped.map(s => s.reason).join(' ')}` : ''
+      setBatchMsg(`Deleted ${res.deleted} transaction${res.deleted === 1 ? '' : 's'}.${skippedMsg}`)
+    } catch (e: unknown) {
+      setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch delete failed')
+    } finally { setBatchSaving(false) }
+  }
 
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('')
@@ -391,6 +432,12 @@ export default function Register() {
           <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Select an account to view transactions</div>
         ) : (
           <Card className="overflow-hidden">
+            {batchMsg && (
+              <div className={`mx-4 mt-2 rounded-lg px-4 py-2 text-sm flex items-start justify-between gap-3 ${batchMsg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                <div>{batchMsg}</div>
+                <button onClick={() => setBatchMsg(null)} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={14} /></button>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="relative">
@@ -399,7 +446,16 @@ export default function Register() {
                 </div>
                 <span className="text-xs text-slate-400 whitespace-nowrap">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</span>
               </div>
-              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+              <div className="flex items-center gap-2">
+                {selectedIds.length > 0 && (
+                  <>
+                    <span className="text-xs text-slate-500 whitespace-nowrap">{selectedIds.length} selected</span>
+                    <Button variant="secondary" size="sm" onClick={() => setBatchMoveOpen(true)}>Move to Account…</Button>
+                    <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
+                  </>
+                )}
+                <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+              </div>
             </div>
             {/* Infinite row model: rows stream in as you scroll instead of clicking through
                 numbered pages — see the `datasource` above for how blocks are fetched. */}
@@ -417,7 +473,8 @@ export default function Register() {
                 onSortChanged={gridCols.onSortChanged}
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true }}
-                rowSelection="single"
+                rowSelection="multiple"
+                onSelectionChanged={e => setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                 suppressCellFocus={false}
                 getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}
               />
@@ -627,6 +684,17 @@ export default function Register() {
             </div>
           </div>
         </div>
+      )}
+
+      {batchMoveOpen && (
+        <BatchAccountPicker
+          title="Move to Account"
+          count={selectedIds.length}
+          accounts={cashAccounts}
+          saving={batchSaving}
+          onCancel={() => setBatchMoveOpen(false)}
+          onApply={handleBatchMove}
+        />
       )}
     </div>
   )

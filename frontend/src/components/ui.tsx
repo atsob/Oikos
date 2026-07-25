@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCcw, ChevronDown, Columns3 } from 'lucide-react'
+import { RefreshCcw, ChevronDown, Columns3, X } from 'lucide-react'
 import { usePersist } from '@/lib/hooks'
 
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
@@ -213,6 +213,47 @@ export function AccountOptions({ accounts }: { accounts: Record<string, unknown>
         </optgroup>
       ))}
     </>
+  )
+}
+
+// ── BatchAccountPicker (shared confirm popover for batch move actions) ────────
+// A small target-account picker used by grid multi-row-select "move to..." actions
+// (Investments Transactions/Cash, Cash Register) — lets the caller supply whatever
+// account list/title fits its own context (investment accounts, cash accounts, etc.).
+export function BatchAccountPicker({ title, count, accounts, saving, onCancel, onApply }: {
+  title: string
+  count: number
+  accounts: Record<string, unknown>[]
+  saving: boolean
+  onCancel: () => void
+  onApply: (accountId: number) => void
+}) {
+  const [target, setTarget] = useState('')
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
+          <h2 className="text-base font-semibold">{title}</h2>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+        <div className="px-5 py-3 space-y-3">
+          <p className="text-sm text-slate-600">{count} transaction{count === 1 ? '' : 's'} selected.</p>
+          <div>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Target account *</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={target} onChange={e => setTarget(e.target.value)}>
+              <option value="">— select —</option>
+              <AccountOptions accounts={accounts} />
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">
+          <Button variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
+          <Button size="sm" disabled={!target || saving} onClick={() => onApply(Number(target))}>
+            {saving ? 'Applying…' : 'Apply'}
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -431,6 +431,127 @@ def upsert_splits(tx_id: int, splits: list[dict]):
         conn.close()
 
 
+@router.post("/transactions/batch-delete")
+def batch_delete_transactions(data: dict):
+    """Delete several Transactions rows at once (Cash Register / Investments-Cash
+    row selection). Mirrors delete_transaction below per row, batched: a transfer's
+    paired leg is deleted alongside it and marked handled so selecting both legs of
+    the same transfer doesn't try to delete either one twice. A row still referenced
+    by Investments.Transactions_Id is skipped (deleting it directly would hit that
+    FK's default RESTRICT) rather than failing the whole batch.
+    """
+    ids = [int(i) for i in (data.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "ids required")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        handled: set[int] = set()
+        skipped: list[dict] = []
+        touched_accounts: set[int] = set()
+
+        for tx_id in ids:
+            if tx_id in handled:
+                continue
+
+            cur.execute("SELECT 1 FROM Investments WHERE Transactions_Id = %s", (tx_id,))
+            if cur.fetchone():
+                skipped.append({"id": tx_id, "reason": "Linked to an investment transaction — delete it from Investments → Transactions instead."})
+                continue
+
+            cur.execute("SELECT Transfers_Id FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            group_tid = row[0]
+
+            paired_id = None
+            if group_tid:
+                cur.execute(
+                    "SELECT Transactions_Id FROM Transactions WHERE Transfers_Id = %s AND Transactions_Id != %s LIMIT 1",
+                    (group_tid, tx_id),
+                )
+                prow = cur.fetchone()
+                paired_id = prow[0] if prow else None
+            if paired_id:
+                cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (paired_id,))
+                cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (paired_id,))
+                handled.add(paired_id)
+
+            cur.execute("SELECT Accounts_Id, Accounts_Id_Target FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+            tx_acc_row = cur.fetchone()
+            touched_accounts.update(a for a in (tx_acc_row or []) if a is not None)
+
+            cur.execute("DELETE FROM Splits WHERE Transactions_Id = %s", (tx_id,))
+            cur.execute("DELETE FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+            handled.add(tx_id)
+
+        if touched_accounts:
+            _refresh_balance(cur, *touched_accounts)
+
+        conn.commit()
+        return {"deleted": len(handled), "skipped": skipped}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/transactions/batch-move")
+def batch_move_transactions(data: dict):
+    """Move several Transactions rows to a different account at once. For a transfer
+    leg, only the selected leg's own Accounts_Id moves — the other leg's
+    Accounts_Id_Target (its "Transfer To" display) is updated to match so it still
+    correctly names where the money went; the moved leg's own Accounts_Id_Target is
+    untouched since the other side hasn't moved.
+    """
+    ids = [int(i) for i in (data.get("ids") or [])]
+    new_accounts_id = data.get("accounts_id")
+    if not ids or not new_accounts_id:
+        raise HTTPException(400, "ids and accounts_id are required")
+    new_accounts_id = int(new_accounts_id)
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        touched_accounts: set[int] = set()
+        moved = 0
+
+        for tx_id in ids:
+            cur.execute("SELECT Accounts_Id, Transfers_Id FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            old_accounts_id, transfers_id = row
+            if old_accounts_id == new_accounts_id:
+                continue
+
+            cur.execute("UPDATE Transactions SET Accounts_Id = %s WHERE Transactions_Id = %s", (new_accounts_id, tx_id))
+            touched_accounts.add(old_accounts_id)
+            touched_accounts.add(new_accounts_id)
+
+            if transfers_id:
+                cur.execute(
+                    "UPDATE Transactions SET Accounts_Id_Target = %s WHERE Transfers_Id = %s AND Transactions_Id != %s",
+                    (new_accounts_id, transfers_id, tx_id),
+                )
+
+            moved += 1
+
+        if touched_accounts:
+            _refresh_balance(cur, *touched_accounts)
+
+        conn.commit()
+        return {"moved": moved}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.delete("/transactions/{tx_id}")
 def delete_transaction(tx_id: int):
     conn = get_connection()
