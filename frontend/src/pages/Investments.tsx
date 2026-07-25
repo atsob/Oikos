@@ -605,6 +605,7 @@ export default function Investments() {
                       onGridReady={e => e.api.autoSizeAllColumns()}
                       onColumnMoved={cashGridCols.onColumnMoved}
                       onColumnResized={cashGridCols.onColumnResized}
+                      onSortChanged={cashGridCols.onSortChanged}
                       onFirstDataRendered={e => e.api.autoSizeAllColumns()}
                       onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                     />
@@ -637,6 +638,7 @@ export default function Investments() {
                     onGridReady={e => e.api.autoSizeAllColumns()}
                     onColumnMoved={txGridCols.onColumnMoved}
                     onColumnResized={txGridCols.onColumnResized}
+                    onSortChanged={txGridCols.onSortChanged}
                     onFirstDataRendered={e => e.api.autoSizeAllColumns()}
                     onRowDataUpdated={e => e.api.autoSizeAllColumns()}
                   />

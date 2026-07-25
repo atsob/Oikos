@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import { getSettings, saveSettings, subscribeSettings } from './settings'
 import type { AppSettings } from './settings'
 import { getPref, setPref, subscribePref } from './preferences'
-import type { GridApi, ColumnState, ColumnMovedEvent, ColumnResizedEvent } from 'ag-grid-community'
+import type { GridApi, ColumnState, ColumnMovedEvent, ColumnResizedEvent, SortChangedEvent } from 'ag-grid-community'
 
 export function useSettings(): [AppSettings, (s: AppSettings) => void] {
   const [settings, setSettings] = useState<AppSettings>(getSettings)
@@ -54,7 +54,7 @@ export function usePersist<T>(key: string, defaultVal: T) {
  * these same events with finished:true but a non-"ui" source; saving those would
  * silently overwrite the user's real layout with whatever size the auto-fit produced.
  */
-export function useGridColumnState<T extends { colId?: string; field?: string; hide?: boolean | null; width?: number | null; flex?: number | null; headerName?: string }>(key: string, colDefs: T[]) {
+export function useGridColumnState<T extends { colId?: string; field?: string; hide?: boolean | null; width?: number | null; flex?: number | null; headerName?: string; sort?: unknown; sortIndex?: unknown }>(key: string, colDefs: T[]) {
   const [state, setState] = usePersist<ColumnState[] | null>(`grid_cols_${key}`, null)
 
   const idOf = useCallback((d: T) => d.colId ?? d.field ?? '', [])
@@ -74,6 +74,15 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
         // null here is meaningful: leaving the original colDef's flex in place would
         // make ag-Grid keep recalculating the width from flex and ignore the resize.
         if ('flex' in d || s.flex !== undefined) overrides.flex = s.flex as T['flex']
+        // Same reasoning for sort: colDefs often hardcode an initial sort (e.g. Date
+        // desc) purely to pick a sane first-render order. Without baking the user's
+        // actual current sort back into colDefs, ag-Grid falls back to that hardcoded
+        // default any time it has to re-evaluate columnDefs from scratch — e.g. a
+        // full remount when the surrounding page swaps a loading spinner back in for
+        // the grid — silently discarding a sort (or an explicit "no sort") the user
+        // had chosen. Carried over unconditionally, same as flex, so "no sort" sticks
+        // too instead of reverting to the original default.
+        if ('sort' in d || s.sort !== undefined) { overrides.sort = s.sort as T['sort']; overrides.sortIndex = s.sortIndex as T['sortIndex'] }
         ordered.push(Object.keys(overrides).length ? { ...d, ...overrides } : d)
         remaining.delete(s.colId)
       }
@@ -89,6 +98,11 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
   const onColumnResized = useCallback((e: ColumnResizedEvent) => {
     if (e.finished && e.source.startsWith('ui')) saveColumnState(e.api)
   }, [saveColumnState])
+  // Unlike move/resize, ag-Grid never fires sortChanged on its own mid-render (no
+  // equivalent of an auto-fit call) — every event here is a real sort change, either
+  // the user clicking a header or code calling applyColumnState/setSortModel — so
+  // there's no spurious-source case to filter out before persisting it.
+  const onSortChanged = useCallback((e: SortChangedEvent) => saveColumnState(e.api), [saveColumnState])
 
   // Columns for a show/hide columns menu, in their current order. Utility columns
   // with no headerName (row-selection checkboxes, inline edit/delete action columns)
@@ -117,5 +131,5 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
     setState(base.map(s => s.colId === colId ? { ...s, hide: !s.hide } : s))
   }, [columns, state, colDefs, setState, idOf])
 
-  return { colDefs: orderedColDefs, onColumnMoved, onColumnResized, columns, toggleColumn }
+  return { colDefs: orderedColDefs, onColumnMoved, onColumnResized, onSortChanged, columns, toggleColumn }
 }

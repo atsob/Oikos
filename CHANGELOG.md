@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-25
+
+### Fixed
+- **Investments → Transactions (and Cash) — a manually-applied column sort (e.g. Date ascending) silently reverted to the default (Date descending) after switching accounts or filters**. The shared column-state mechanism (`useGridColumnState`, used by every ag-Grid table in the app) already persisted column order/width/visibility across a grid remount, but never sort — so whenever the surrounding page swapped its loading spinner back in for the grid (any account/date-range/filter change that triggers a fresh fetch), ag-Grid re-evaluated its column definitions from scratch and fell back to the hardcoded default sort baked into the Date column. Sort is now baked into the persisted column state the same way width already is, and kept up to date via a new `onSortChanged` handler. Wired up for both of Investments' grids; the same underlying gap likely affects the ~17 other tables sharing this hook (Market Data, Register, Static Data, Security Detail) — happy to roll it out to those too if you run into it elsewhere.
+
 ## 2026-07-24
 
 ### Changed
