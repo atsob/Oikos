@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { usePersist, useSettings } from '@/lib/hooks'
 import { SETTINGS_DEFAULTS } from '@/lib/settings'
 import type { AppSettings } from '@/lib/settings'
@@ -17,6 +17,7 @@ import {
   getTransferSignMismatches, fixTransferSign,
   getMissingInvCashLinks, fixInvCashLinks,
   getMissingInvAccountTarget, fixInvAccountTarget,
+  getDuplicateInvCashLinks, fixDuplicateInvCashLinks,
   getLogs,
   getCurrenciesMaster,
   getPayees,
@@ -1767,6 +1768,100 @@ function FixMissingInvCashLinks() {
   )
 }
 
+// ── Fix Duplicate Investment Cash Links ─────────────────────────────────────────
+function FixDuplicateInvCashLinks() {
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [confirm, setConfirm] = useState(false)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const { data: rows = [], isLoading, refetch } = useQuery({
+    queryKey: ['duplicate-inv-cash-links'], queryFn: getDuplicateInvCashLinks, staleTime: 30_000,
+  })
+
+  const { sorted, sortKey: sk, sortDir: sd, toggleSort } = useSortTable(rows as Row[], 'transactions_id', 'asc')
+
+  const COLS = ['investments_id', 'transactions_id', 'date', 'action', 'security', 'investment_account', 'inv_amount', 'tx_amount', 'tx_description', 'amount_matches']
+
+  // Rows whose sign/amount doesn't match the shared transaction are the ones that
+  // actually need detaching — default the checkboxes to just those, since the row
+  // that DOES match is presumably the transaction's real owner and should stay put.
+  const mismatchIds = useMemo(
+    () => new Set((rows as Row[]).filter(r => !r.amount_matches).map(r => r.investments_id as number)),
+    [rows],
+  )
+  useEffect(() => { setChecked(new Set(mismatchIds)) }, [mismatchIds])
+
+  const fixMut = useMutation({
+    mutationFn: (ids: number[]) => fixDuplicateInvCashLinks(ids),
+    onSuccess: (d: { fixed: number; errors: string[] }) => {
+      setMsg({ type: 'success', text: `✅ Fixed ${d.fixed} investment entr(y/ies) with a fresh cash transaction. ${d.errors.join(' ')}` })
+      setConfirm(false); refetch()
+    },
+    onError: () => { setMsg({ type: 'error', text: 'Fix failed.' }); setConfirm(false) },
+  })
+
+  if (isLoading) return <Spinner />
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>🧩 Fix Duplicate Investment Cash Links</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-xs text-slate-500">
+          Finds cash transactions claimed by more than one Investments row (e.g. a same-day CD
+          rollover whose Sell and Buy got cross-linked to a single cash entry instead of one each).
+          Detaches the selected row(s) and creates a brand-new, correctly-signed cash transaction for
+          each — the row you leave unchecked keeps the original transaction.
+        </p>
+
+        {(rows as Row[]).length === 0 ? (
+          <Alert type="success">✅ No duplicate links found.</Alert>
+        ) : (
+          <>
+            <Alert type="warning">⚠️ {(rows as Row[]).length} row(s) across {new Set((rows as Row[]).map(r => r.transactions_id)).size} shared transaction(s) found.</Alert>
+
+            {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+            {confirm && (
+              <ConfirmBanner
+                message={`Detach ${checked.size} selected row(s) and give each its own cash transaction? Cannot be undone.`}
+                onYes={() => fixMut.mutate([...checked])} onNo={() => setConfirm(false)}
+                yesLabel="✅ Yes, fix selected" isPending={fixMut.isPending} />
+            )}
+
+            <Button size="sm" disabled={checked.size === 0} onClick={() => setConfirm(true)}>
+              🔧 Fix {checked.size > 0 ? `${checked.size} selected` : 'selected'}
+            </Button>
+
+            <div className="overflow-auto border border-slate-200 rounded-lg max-h-72">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-2"></th>
+                    {COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={sk} currentDir={sd} onSort={toggleSort} className="px-3 py-2 text-left text-slate-600" />)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((row) => {
+                    const id = row.investments_id as number
+                    return (
+                      <tr key={id} className={cn(checked.has(id) ? 'bg-blue-50' : 'bg-white')}>
+                        <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(id)} onChange={() => {
+                          setChecked(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+                        }} /></td>
+                        {COLS.map(c => <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">{c === 'amount_matches' ? (row[c] ? '✓' : '✗ MISMATCH') : String(row[c] ?? '')}</td>)}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 // ── Log Viewer ─────────────────────────────────────────────────────────────────
 function LogViewer() {
   const [lines, setLines] = useState(500)
@@ -2346,6 +2441,7 @@ const CATEGORIES: Record<string, string[]> = {
     '🔄 Fix Missing Transfer Mirrors',
     '🔀 Fix Transfer Sign Mismatches',
     '🔗 Fix Missing Investment Cash Links',
+    '🧩 Fix Duplicate Investment Cash Links',
     '🏦 Fix Missing Investment Account on Cash Tx',
   ],
   '⚙️ System': [
@@ -2371,6 +2467,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
   '🔄 Fix Missing Transfer Mirrors': FixMissingTransferMirrors,
   '🔀 Fix Transfer Sign Mismatches': FixTransferSignMismatches,
   '🔗 Fix Missing Investment Cash Links': FixMissingInvCashLinks,
+  '🧩 Fix Duplicate Investment Cash Links': FixDuplicateInvCashLinks,
   '🏦 Fix Missing Investment Account on Cash Tx': FixInvAccountTarget,
   '📥 Fill Missing Prices': FillMissingPrices,
   '🔍 Price Quality': PriceQuality,

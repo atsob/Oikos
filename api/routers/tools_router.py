@@ -1197,6 +1197,133 @@ def fix_inv_account_target():
     return {"updated": updated}
 
 
+# ── Duplicate Investment Cash Links ─────────────────────────────────────────────
+# Two Investments rows can end up pointing at the same Transactions_Id (seen once
+# in production: a same-day, same-amount CD rollover — a maturing CD's Sell and the
+# new CD's Buy — got cross-linked to a single cash row instead of one each). Unlike
+# "Missing Investment Cash Links" above, the affected row's Transactions_Id is NOT
+# NULL, so that detector never sees it; this one specifically looks for the same
+# Transactions_Id claimed by more than one Investments row.
+
+_DUPLICATE_INV_CASH_SQL = """
+    WITH dup_tx AS (
+        SELECT Transactions_Id
+        FROM Investments
+        WHERE Transactions_Id IS NOT NULL
+        GROUP BY Transactions_Id
+        HAVING COUNT(*) > 1
+    )
+    SELECT
+        i.investments_id,
+        i.transactions_id,
+        i.date::text AS date,
+        i.action,
+        COALESCE(s.securities_name, '—') AS security,
+        a_inv.accounts_name AS investment_account,
+        ROUND(ABS(i.total_amount_acccur)::numeric, 2) AS inv_amount,
+        t.total_amount AS tx_amount,
+        t.description AS tx_description,
+        a_cash.accounts_name AS cash_account,
+        (
+            ROUND((CASE WHEN i.action IN ('Buy','MiscExp','CashOut') THEN -ABS(i.total_amount_acccur) ELSE ABS(i.total_amount_acccur) END)::numeric, 2)
+            = ROUND(t.total_amount::numeric, 2)
+        ) AS amount_matches
+    FROM Investments i
+    JOIN dup_tx d ON d.transactions_id = i.transactions_id
+    JOIN Transactions t ON t.transactions_id = i.transactions_id
+    JOIN Accounts a_inv ON a_inv.accounts_id = i.accounts_id
+    JOIN Accounts a_cash ON a_cash.accounts_id = t.accounts_id
+    LEFT JOIN Securities s ON s.securities_id = i.securities_id
+    ORDER BY i.transactions_id, i.investments_id
+"""
+
+@router.get("/duplicate-investment-cash-links")
+def duplicate_investment_cash_links():
+    with get_db() as conn:
+        df = pd.read_sql(_DUPLICATE_INV_CASH_SQL, conn)
+    return _df_records(df)
+
+
+class FixDuplicateInvCashLinksRequest(BaseModel):
+    investments_ids: List[int]  # rows to detach and give their own fresh cash transaction
+
+@router.post("/fix-duplicate-investment-cash-links")
+def fix_duplicate_investment_cash_links(req: FixDuplicateInvCashLinksRequest):
+    """Detach each selected Investments row from the shared Transactions row and
+    create a brand-new one for it (mirrors the single-row update path in
+    investments.py) — leaves whichever row wasn't selected still pointing at the
+    original, presumably-correct, transaction.
+    """
+    from api.routers.investments import _upsert_cash_transaction, _find_or_create_payee, _build_inv_description
+    from api.routers.register import _refresh_balance
+    from database.crud import update_holdings
+
+    fixed = 0
+    errors = []
+    touched_accounts: set = set()
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        for inv_id in req.investments_ids:
+            try:
+                cur.execute("""
+                    SELECT Accounts_Id, Securities_Id, Date, Action, Quantity, Price_Per_Share,
+                           Total_Amount_AccCur, Transactions_Id, Tax_Amount
+                    FROM Investments WHERE Investments_Id = %s
+                """, (inv_id,))
+                row = cur.fetchone()
+                if not row:
+                    errors.append(f"Inv #{inv_id}: not found")
+                    continue
+                (accounts_id, sec_id, date, action, qty, price, total_acc_cur, old_tx_id, tax_amount) = row
+                if not old_tx_id:
+                    errors.append(f"Inv #{inv_id}: no linked transaction to detach from")
+                    continue
+
+                cur.execute("SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (old_tx_id,))
+                cash_row = cur.fetchone()
+                if not cash_row:
+                    errors.append(f"Inv #{inv_id}: linked transaction #{old_tx_id} not found")
+                    continue
+                cash_account_id = cash_row[0]
+
+                cur.execute("UPDATE Investments SET Transactions_Id = NULL WHERE Investments_Id = %s", (inv_id,))
+
+                sec_name, ticker = None, None
+                if sec_id:
+                    cur.execute("SELECT Securities_Name, Ticker FROM Securities WHERE Securities_Id = %s", (sec_id,))
+                    sec_row = cur.fetchone()
+                    if sec_row:
+                        sec_name, ticker = sec_row
+                payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
+                cash_desc = _build_inv_description(action, sec_name, ticker, qty, price)
+
+                _upsert_cash_transaction(
+                    cur, inv_id, int(cash_account_id), int(accounts_id),
+                    date, action, total_acc_cur or 0,
+                    cash_desc, None, payee_id,
+                    tax_amount=float(tax_amount or 0),
+                )
+                touched_accounts.add(int(cash_account_id))
+                fixed += 1
+            except Exception as e:
+                errors.append(f"Inv #{inv_id}: {e}")
+
+        if touched_accounts:
+            _refresh_balance(cur, *touched_accounts)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+    if fixed:
+        update_holdings()
+
+    return {"fixed": fixed, "errors": errors}
+
+
 # ── Log Viewer ─────────────────────────────────────────────────────────────────
 
 @router.get("/logs")

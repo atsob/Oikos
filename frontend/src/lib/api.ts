@@ -675,6 +675,9 @@ export const fixInvCashLinks = (pairs: {investments_id: number, candidate_tx_id:
   api.post('/tools/fix-investment-cash-links', { pairs }).then(r => r.data)
 export const getMissingInvAccountTarget = () => api.get('/tools/missing-inv-account-target').then(r => r.data)
 export const fixInvAccountTarget = () => api.post('/tools/fix-inv-account-target').then(r => r.data as { updated: number })
+export const getDuplicateInvCashLinks = () => api.get('/tools/duplicate-investment-cash-links').then(r => r.data)
+export const fixDuplicateInvCashLinks = (investmentsIds: number[]) =>
+  api.post('/tools/fix-duplicate-investment-cash-links', { investments_ids: investmentsIds }).then(r => r.data as { fixed: number; errors: string[] })
 
 export const importPricesFromFile = (file: File, securitiesId: number, onConflict: 'skip' | 'overwrite') => {
   const fd = new FormData()
