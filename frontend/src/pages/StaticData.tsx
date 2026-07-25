@@ -498,6 +498,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showInactive, setShowInactive] = useState(false)
+  const [showInactiveLinked, setShowInactiveLinked] = useState(false)
 
   const { data: accounts = [], isLoading } = useQuery({ queryKey: ['accounts-master'], queryFn: () => getAccountsMaster() })
   const { data: institutions = [] } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
@@ -668,12 +669,22 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
               <Input type="number" step="0.01" value={String(form.credit_limit ?? '')} onChange={e => set('credit_limit', e.target.value)} placeholder="0.00" />
             </Field>
             {INVESTMENT_ACCOUNT_TYPES.includes(String(form.type ?? '')) && (
-              <Field label="Linked Account">
+              <div className="col-span-2">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-500">Linked Account</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" className="rounded" checked={showInactiveLinked} onChange={e => setShowInactiveLinked(e.target.checked)} />
+                    <span className="text-xs text-slate-500">Show inactive</span>
+                  </label>
+                </div>
                 <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
                   <option value="">— none —</option>
-                  <AccountOptions accounts={acctList.filter(a => String(a.id) !== String(form.id) && String(a.type ?? '') === 'Checking') as Record<string, unknown>[]} />
+                  <AccountOptions accounts={acctList.filter(a =>
+                    String(a.id) !== String(form.id) && String(a.type ?? '') === 'Checking' &&
+                    (showInactiveLinked || a.is_active !== false || String(a.id) === String(form.accounts_id_linked))
+                  ) as Record<string, unknown>[]} />
                 </select>
-              </Field>
+              </div>
             )}
             <div className="col-span-2">
               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
