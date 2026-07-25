@@ -200,12 +200,12 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
           <h2 className="text-base font-semibold">{editId ? 'Edit Investment Transaction' : 'New Investment Transaction'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
 
-        <div className="px-5 py-4 space-y-3">
+        <div className="px-5 py-3 space-y-2">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Date *</label>
@@ -228,23 +228,24 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             🔻 Short sell (sets Action to Sell and lists all securities, not just held ones)
           </label>
 
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => onAccountChange(e.target.value)}>
-              <option value="">— select —</option>
-              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
-            </select>
-          </div>
-
-          {CASH_ACTIONS.has(form.action) && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Cash Account (linked transaction)</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.cash_account_id} onChange={e => set('cash_account_id', e.target.value)}>
-                <option value="">— none —</option>
-                <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
+          <div className="grid grid-cols-2 gap-3">
+            <div className={CASH_ACTIONS.has(form.action) ? '' : 'col-span-2'}>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => onAccountChange(e.target.value)}>
+                <option value="">— select —</option>
+                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
               </select>
             </div>
-          )}
+            {CASH_ACTIONS.has(form.action) && (
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Cash Account</label>
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.cash_account_id} onChange={e => set('cash_account_id', e.target.value)}>
+                  <option value="">— none —</option>
+                  <AccountOptions accounts={allAccounts as Record<string, unknown>[]} />
+                </select>
+              </div>
+            )}
+          </div>
 
           <div>
             <label className="text-xs font-medium text-slate-500 block mb-1">Security *</label>
@@ -277,18 +278,20 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
           </div>
 
           {TAX_ACTIONS.has(form.action) && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">
-                Withholding Tax <span className="text-slate-400 font-normal">(acc. currency, negative — e.g. −15.00)</span>
-              </label>
-              <Input
-                type="number" step="any"
-                value={form.tax_amount}
-                onChange={e => set('tax_amount', e.target.value)}
-                placeholder="0.00"
-              />
+            <div className="grid grid-cols-2 gap-3 items-start">
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">
+                  Withholding Tax <span className="text-slate-400 font-normal">(negative)</span>
+                </label>
+                <Input
+                  type="number" step="any"
+                  value={form.tax_amount}
+                  onChange={e => set('tax_amount', e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
               {form.tax_amount && form.total_amount_acccur && (
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-slate-400 self-end pb-2">
                   Net received: {(parseFloat(form.total_amount_acccur) + parseFloat(form.tax_amount || '0')).toFixed(2)}
                 </p>
               )}
@@ -312,22 +315,23 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             </div>
           </div>
 
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Instrument Type</label>
-            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.instrument_type} onChange={e => set('instrument_type', e.target.value)}>
-              {INSTRUMENT_TYPES.map(t => <option key={t} value={t}>{t || '— none —'}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Notes</label>
-            <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Notes / description" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Instrument Type</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.instrument_type} onChange={e => set('instrument_type', e.target.value)}>
+                {INSTRUMENT_TYPES.map(t => <option key={t} value={t}>{t || '— none —'}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Notes</label>
+              <Input value={form.description} onChange={e => set('description', e.target.value)} placeholder="Notes / description" />
+            </div>
           </div>
 
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </div>
 
-        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200">
+        <div className="flex items-center justify-between px-5 py-2.5 border-t border-slate-200">
           <div>{editId && onDelete && <Button variant="destructive" size="sm" onClick={onDelete} disabled={saving}>Delete</Button>}</div>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
