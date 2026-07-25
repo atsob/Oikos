@@ -496,15 +496,20 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
   const [form, setForm] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showInactive, setShowInactive] = useState(false)
 
   const { data: accounts = [], isLoading } = useQuery({ queryKey: ['accounts-master'], queryFn: () => getAccountsMaster() })
   const { data: institutions = [] } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
 
+  const visible = showInactive
+    ? (accounts as Record<string, unknown>[])
+    : (accounts as Record<string, unknown>[]).filter(a => Boolean(a.is_active))
+
   const filtered = search
-    ? (accounts as Record<string, unknown>[]).filter(r =>
+    ? visible.filter(r =>
         Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
-    : accounts as Record<string, unknown>[]
+    : visible
 
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
@@ -589,6 +594,10 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+            <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} className="rounded" />
+            Show inactive
+          </label>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} accounts · double-click to edit</span>
         </div>
