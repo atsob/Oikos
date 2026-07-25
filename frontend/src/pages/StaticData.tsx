@@ -20,6 +20,12 @@ const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Tax Rules', '
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
+// Bank/cash-like account types eligible as an investment account's Linked Account
+// (its cash settlement account) — deliberately narrower than the broader
+// CASH_ACCOUNT_TYPES used elsewhere (Register/TxModal), which also includes
+// Loan/Real Estate/Vehicle/Asset — none of which make sense as a linked
+// settlement account for an investment.
+const LINKABLE_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
 
@@ -680,7 +686,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
                 <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
                   <option value="">— none —</option>
                   <AccountOptions accounts={acctList.filter(a =>
-                    String(a.id) !== String(form.id) && String(a.type ?? '') === 'Checking' &&
+                    String(a.id) !== String(form.id) && LINKABLE_ACCOUNT_TYPES.includes(String(a.type ?? '')) &&
                     (showInactiveLinked || a.is_active !== false || String(a.id) === String(form.accounts_id_linked))
                   ) as Record<string, unknown>[]} />
                 </select>

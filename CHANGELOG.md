@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-07-25
 
+### Changed
+- **Static Data → New/Edit Account — Linked Account was limited to Checking accounts only**, but an investment account's cash settlement account can just as validly be a Savings or Credit Card account. Broadened to any bank/cash-like type (Cash, Checking, Savings, Credit Card) — still excludes investment-type accounts (Brokerage, Pension, Other Investment, Margin), which was the point of scoping it in the first place.
+
 ### Fixed
 - **Investments → Transactions (and Cash), and Cash Register — a manually-applied column sort (e.g. Date ascending) never actually stuck**. The shared column-state mechanism (`useGridColumnState`, used by every ag-Grid table in the app) already persisted column order/width/visibility, but never sort — so a sort you applied wasn't even saved, and any time the grid re-evaluated its columns from scratch (switching accounts/filters, or just reloading the page) it fell back to the hardcoded default (Date descending). Sort is now baked into the same persisted column state as width, kept up to date via a new `onSortChanged` handler. Wired up for Cash Register and both of Investments' grids; the same underlying gap likely affects the ~15 other tables sharing this hook (Market Data, Static Data, Security Detail) — happy to roll it out to those too if you run into it elsewhere.
 
