@@ -186,6 +186,45 @@ def get_transactions(
     return {"total": int(total), "transactions": _df_to_list(df)}
 
 
+@router.get("/transactions/ids")
+def get_transaction_ids(
+    account_id: int = Query(...),
+    from_date: str = Query("2020-01-01"),
+    to_date: str = Query("2099-12-31"),
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+):
+    """All Transactions_Id matching the same filters as GET /transactions, with no
+    limit/offset — backs "Select all N filtered" for the Infinite Row Model grid,
+    which (unlike the Client-Side Row Model used elsewhere) can't select rows it
+    hasn't loaded, so the ids have to come from the server instead of the grid.
+    """
+    status_clause = ""
+    if status == "cleared":
+        status_clause = "AND t.cleared = TRUE"
+    elif status == "uncleared":
+        status_clause = "AND t.cleared = FALSE"
+
+    search_clause = ""
+    params = {"account_id": account_id, "from_date": from_date, "to_date": to_date}
+    if search:
+        search_clause = "AND (t.description ILIKE %(search)s OR p.payees_name ILIKE %(search)s)"
+        params["search"] = f"%{search}%"
+
+    query = f"""
+        SELECT t.transactions_id
+        FROM Transactions t
+        LEFT JOIN Payees p ON t.payees_id = p.payees_id
+        WHERE t.accounts_id = %(account_id)s
+          AND t.date BETWEEN %(from_date)s AND %(to_date)s
+          {status_clause}
+          {search_clause}
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn, params=params)
+    return {"ids": df["transactions_id"].tolist()}
+
+
 class TransactionIn(BaseModel):
     accounts_id: int
     date: str

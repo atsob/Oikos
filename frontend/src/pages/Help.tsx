@@ -261,7 +261,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           at the right account (only the leg you selected actually moves accounts). A row that's the cash side
           of an investment transaction is skipped when deleting (with a reason shown) rather than removed —
           delete it from Investments → Transactions instead, since removing it here would orphan the investment
-          row it belongs to.
+          row it belongs to. The checkbox in the column header selects <b>every</b> transaction matching your
+          current account/search/date filters — not just the ones currently scrolled into view — since this
+          table loads rows in blocks as you scroll rather than all at once.
         </Note>
       </>
     ),

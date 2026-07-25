@@ -69,6 +69,9 @@ export const deleteDraft = (id: number) =>
 export const getTransactions = (params: Record<string, unknown>) =>
   api.get('/register/transactions', { params }).then(r => r.data)
 
+export const getTransactionIds = (params: Record<string, unknown>): Promise<{ ids: number[] }> =>
+  api.get('/register/transactions/ids', { params }).then(r => r.data)
+
 export const getTransactionById = (id: number) =>
   api.get(`/register/transactions/${id}`).then(r => r.data)
 

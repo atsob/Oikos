@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
-  getAccounts, getTransactions, getPayees, getCategories,
+  getAccounts, getTransactions, getTransactionIds, getPayees, getCategories,
   clearAccount, reconcileAccount, searchAllTransactions,
   syncBalances, batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
@@ -58,12 +58,26 @@ function ClearedCell({ data }: { data?: Record<string, unknown> }) {
   )
 }
 
+// AG Grid hides its own built-in header checkbox for the Infinite Row Model (there's
+// no way for it to know about rows it hasn't fetched, so it can't offer a real
+// "select all"). This replaces it with our own, backed by /register/transactions/ids
+// (see handleToggleSelectAll) so "select all" can mean every row matching the current
+// account/search/date filters, not just whatever's currently loaded on screen.
+function SelectAllHeaderCheckbox({ checked, indeterminate, disabled, onToggle }: { checked: boolean; indeterminate: boolean; disabled?: boolean; onToggle: () => void }) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate }, [indeterminate])
+  return (
+    <div className="flex items-center justify-center h-full w-full">
+      <input ref={ref} type="checkbox" checked={checked} disabled={disabled} onChange={onToggle} />
+    </div>
+  )
+}
+
 // Sortable columns must match the backend's _SORTABLE_COLUMNS whitelist (register.py)
 // — sorting is done server-side across the whole account now, not just the loaded
 // rows, so a column with no server-side mapping is marked unsortable rather than
 // silently sorting by date instead and looking broken.
 const makeColDefs = (currency: string): ColDef[] => [
-  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left', sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
@@ -187,6 +201,36 @@ export default function Register() {
   const [totalCount, setTotalCount] = useState<number | null>(null)
   useEffect(() => { setTotalCount(null) }, [accountId, search, fromDate, toDate])
 
+  // "Select all N filtered" (the custom header checkbox above) — true once selectedIds
+  // covers every row matching the current filters, not just what's been scrolled past.
+  // Kept in a ref too so the datasource's getRows closure (recreated only when the
+  // filters themselves change, not on every selection change) can read the latest
+  // value without needing selectedIds/totalCount in its own dependency array — that
+  // would throw away the grid's loaded blocks and reload from scratch on every click.
+  const allFilteredSelected = totalCount != null && totalCount > 0 && selectedIds.length >= totalCount
+  const allFilteredSelectedRef = useRef(false)
+  useEffect(() => { allFilteredSelectedRef.current = allFilteredSelected }, [allFilteredSelected])
+  const [selectAllLoading, setSelectAllLoading] = useState(false)
+
+  const handleToggleSelectAll = useCallback(async () => {
+    if (allFilteredSelectedRef.current) {
+      gridRef.current?.api.deselectAll()
+      setSelectedIds([])
+      return
+    }
+    if (!accountId) return
+    setSelectAllLoading(true)
+    try {
+      const res = await getTransactionIds({ account_id: accountId, search: search || undefined, from_date: fromDate, to_date: toDate })
+      setSelectedIds(res.ids)
+      // 'api' source (see onSelectionChanged below) so this bulk sync doesn't get
+      // read back as "the user selected exactly these loaded rows" and clobber the
+      // full id list we just set.
+      const idSet = new Set(res.ids)
+      gridRef.current?.api.forEachNode(node => { if (node.data) node.setSelected(idSet.has(Number(node.data.id)), false, 'api') })
+    } finally { setSelectAllLoading(false) }
+  }, [accountId, search, fromDate, toDate])
+
   // AG Grid Infinite Row Model datasource: fetches one block of rows at a time as the
   // user scrolls, with sorting done server-side (see register.py's whitelist) rather
   // than only sorting whatever page happened to already be loaded. Recreated whenever
@@ -208,6 +252,17 @@ export default function Register() {
         setTotalCount(result.total)
         const lastRow = result.total <= params.endRow ? result.total : -1
         params.successCallback(result.transactions, lastRow)
+
+        // "Select all filtered" is active — every row belongs to the selection by
+        // definition (the datasource itself already applies the same filters), so
+        // newly-loaded blocks just need their checkboxes checked to match.
+        if (allFilteredSelectedRef.current) {
+          requestAnimationFrame(() => {
+            result.transactions.forEach((t: Record<string, unknown>) => {
+              gridRef.current?.api.getRowNode(String(t.id))?.setSelected(true, false, 'api')
+            })
+          })
+        }
 
         // If a global-search result asked us to land on a specific transaction, the
         // narrowed date range (see the search result's onClick) guarantees it's the
@@ -284,7 +339,19 @@ export default function Register() {
   const selectedAccountFuture = (accountsFuture as Record<string, unknown>[]).find(a => a.id === accountId)
   const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
   const accountCurrency = String(selectedAccount?.currency ?? 'EUR')
-  const colDefs = useMemo(() => makeColDefs(accountCurrency), [accountCurrency])
+  const colDefs = useMemo(() => [
+    {
+      colId: 'select', checkboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false,
+      headerComponent: SelectAllHeaderCheckbox,
+      headerComponentParams: {
+        checked: allFilteredSelected,
+        indeterminate: selectedIds.length > 0 && !allFilteredSelected,
+        disabled: selectAllLoading,
+        onToggle: handleToggleSelectAll,
+      },
+    },
+    ...makeColDefs(accountCurrency),
+  ], [accountCurrency, allFilteredSelected, selectedIds.length, selectAllLoading, handleToggleSelectAll])
   const gridCols = useGridColumnState('register', colDefs)
 
   return (
@@ -447,9 +514,12 @@ export default function Register() {
                 <span className="text-xs text-slate-400 whitespace-nowrap">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</span>
               </div>
               <div className="flex items-center gap-2">
+                {selectAllLoading && <span className="text-xs text-slate-400 whitespace-nowrap">Selecting…</span>}
                 {selectedIds.length > 0 && (
                   <>
-                    <span className="text-xs text-slate-500 whitespace-nowrap">{selectedIds.length} selected</span>
+                    <span className="text-xs text-slate-500 whitespace-nowrap">
+                      {allFilteredSelected ? `All ${selectedIds.length} selected` : `${selectedIds.length} selected`}
+                    </span>
                     <Button variant="secondary" size="sm" onClick={() => setBatchMoveOpen(true)}>Move to Account…</Button>
                     <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
                   </>
@@ -474,7 +544,7 @@ export default function Register() {
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true }}
                 rowSelection="multiple"
-                onSelectionChanged={e => setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
+                onSelectionChanged={e => { if (e.source !== 'api') setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id))) }}
                 suppressCellFocus={false}
                 getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}
               />
