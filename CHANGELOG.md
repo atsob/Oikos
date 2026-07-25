@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Changed
 - **Static Data → Accounts no longer lists inactive accounts by default** — 65 of them were cluttering the table alongside the 50 active ones. Added the same **Show inactive** checkbox already used on Cash Register and Investments; unchecked by default.
+- **Static Data → New/Edit Account — Linked Account now only appears for investment-type accounts** (Brokerage, Pension, Other Investment, Margin), since it's only meaningful there, and lists only Checking accounts instead of every non-investment type. Switching the Type away from an investment type now also clears any Linked Account already selected, instead of silently keeping a now-hidden value.
 
 ### Removed
 - **Deleted `api/requirements.txt`, `api/README.md`, and `api/How_to_run.txt`** — leftover scaffolding from an earlier, abandoned plan to pair the FastAPI backend with a separate React Native mobile app (the README described a `mobile/` directory that was never actually added to the repo). None of the three was referenced anywhere: the Dockerfile only ever installs the root `requirements.txt`, not `api/requirements.txt`.

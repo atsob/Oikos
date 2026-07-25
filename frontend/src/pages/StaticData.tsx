@@ -19,6 +19,7 @@ import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-re
 const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Tax Rules', 'Instrument Tax']
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
+const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
 
@@ -634,7 +635,13 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
               </Field>
             </div>
             <Field label="Type *">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.type ?? '')} onChange={e => set('type', e.target.value)}>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.type ?? '')} onChange={e => {
+                const t = e.target.value
+                // Linked Account only applies to investment accounts — drop any
+                // existing link rather than silently keep saving a now-hidden value.
+                if (!INVESTMENT_ACCOUNT_TYPES.includes(t)) setForm(f => ({ ...f, type: t, accounts_id_linked: '' }))
+                else set('type', t)
+              }}>
                 {ACCOUNT_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </Field>
@@ -660,12 +667,14 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             <Field label="Credit Limit">
               <Input type="number" step="0.01" value={String(form.credit_limit ?? '')} onChange={e => set('credit_limit', e.target.value)} placeholder="0.00" />
             </Field>
-            <Field label="Linked Account">
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
-                <option value="">— none —</option>
-                <AccountOptions accounts={acctList.filter(a => String(a.id) !== String(form.id) && !['Brokerage', 'Pension', 'Other Investment', 'Margin'].includes(String(a.type ?? ''))) as Record<string, unknown>[]} />
-              </select>
-            </Field>
+            {INVESTMENT_ACCOUNT_TYPES.includes(String(form.type ?? '')) && (
+              <Field label="Linked Account">
+                <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.accounts_id_linked ?? '')} onChange={e => set('accounts_id_linked', e.target.value)}>
+                  <option value="">— none —</option>
+                  <AccountOptions accounts={acctList.filter(a => String(a.id) !== String(form.id) && String(a.type ?? '') === 'Checking') as Record<string, unknown>[]} />
+                </select>
+              </Field>
+            )}
             <div className="col-span-2">
               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                 <input type="checkbox" checked={Boolean(form.is_active)} onChange={e => set('is_active', e.target.checked)} className="rounded" />
