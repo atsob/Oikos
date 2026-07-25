@@ -414,6 +414,7 @@ export default function Register() {
                 onRowClicked={onRowClicked}
                 onColumnMoved={gridCols.onColumnMoved}
                 onColumnResized={gridCols.onColumnResized}
+                onSortChanged={gridCols.onSortChanged}
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true }}
                 rowSelection="single"
