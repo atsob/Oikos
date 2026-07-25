@@ -61,9 +61,12 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
         # payee_id is only resolved here when the investment row has a security
         # (see caller); account-level entries (VAT, CustodyFee, ...) have none,
         # so preserve whatever payee is already linked instead of clearing it.
+        # Accounts_Id must be included — without it, changing the Cash Account on
+        # an existing transaction silently had no effect: the linked Transactions
+        # row stayed attached to whichever account it was originally created with.
         cur.execute(
-            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id_target=%s, payees_id=COALESCE(%s, payees_id), description=%s WHERE transactions_id=%s",
-            (date, signed, abs(net), inv_account_id, payee_id, description, existing_tx_id),
+            "UPDATE Transactions SET date=%s, total_amount=%s, total_amount_target=%s, accounts_id=%s, accounts_id_target=%s, payees_id=COALESCE(%s, payees_id), description=%s WHERE transactions_id=%s",
+            (date, signed, abs(net), cash_account_id, inv_account_id, payee_id, description, existing_tx_id),
         )
     else:
         cur.execute("""
@@ -264,6 +267,16 @@ def update_investment(inv_id: int, data: dict):
             raise HTTPException(404, "Not found")
         existing_tx_id = (cur.fetchone() or [None])[0]
 
+        # Capture the linked transaction's account BEFORE it's possibly moved to a
+        # different Cash Account below, so that account's balance can be refreshed
+        # too — otherwise it's left overstated by a transaction that no longer
+        # belongs to it.
+        old_cash_account_id = None
+        if existing_tx_id:
+            cur.execute("SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (existing_tx_id,))
+            row = cur.fetchone()
+            old_cash_account_id = row[0] if row else None
+
         cash_account_id = data.get("cash_account_id")
         if cash_account_id:
             sec_name, ticker = None, None
@@ -284,7 +297,7 @@ def update_investment(inv_id: int, data: dict):
                 cash_desc, existing_tx_id, payee_id,
                 tax_amount=float(data.get("tax_amount") or 0),
             )
-            _refresh_balance(cur, int(cash_account_id))
+            _refresh_balance(cur, int(cash_account_id), old_cash_account_id)
 
         conn.commit()
         from database.crud import update_holdings
