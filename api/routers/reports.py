@@ -337,9 +337,28 @@ def get_allocation_delta(scope: str = Query("investments"), account_ids: Optiona
 
 
 @router.get("/rebalancing-plan")
-def get_rebalancing_plan(account_ids: Optional[str] = Query(None)):
-    """Per-security rebalancing action plan proportional to current holdings weight."""
-    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
+def get_rebalancing_plan(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
+    """Per-security rebalancing action plan proportional to current holdings weight.
+
+    Trades are still only ever proposed for securities (cash isn't a security you can
+    buy/sell here), but under scope=all the portfolio total that actual/target percentages
+    are measured against includes the Cash & Savings bucket, matching /allocation-delta —
+    otherwise a security type looks overweight vs. its (whole-portfolio) target just because
+    cash was excluded from the denominator, which used to produce badly wrong buy/sell calls.
+    """
+    acct_ids = _parse_account_ids(account_ids)
+    acct_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
+    cash_cte = "SELECT 0::numeric AS cash_eur"
+    if scope == "all":
+        cash_cte = f"""
+            SELECT COALESCE(SUM(a.Accounts_Balance * COALESCE(
+                (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
+            )), 0) AS cash_eur
+            FROM Accounts a
+            WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND a.Is_Active = TRUE{cash_clause}
+        """
     with get_db() as conn:
         df = pd.read_sql(f"""
             WITH fx AS (
@@ -370,7 +389,8 @@ def get_rebalancing_plan(account_ids: Optional[str] = Query(None)):
                 GROUP BY s.Securities_Id, s.Securities_Name, s.Securities_Type,
                          s.Ticker, c.Currencies_ShortName, p.Close, fx.FX_Rate
             ),
-            grand AS (SELECT SUM(value_eur) AS total FROM holding_vals),
+            cash_bucket AS ({cash_cte}),
+            grand AS (SELECT SUM(hv.value_eur) + (SELECT cash_eur FROM cash_bucket) AS total FROM holding_vals hv),
             type_vals AS (
                 SELECT securities_type, SUM(value_eur) AS type_eur
                 FROM holding_vals GROUP BY securities_type
