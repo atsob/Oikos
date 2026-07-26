@@ -27,7 +27,7 @@ import {
   addPrice,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable, useSortTablePersisted } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
@@ -2946,6 +2946,7 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
   const [selPreset, setSelPreset] = usePersist(`preset_sel_${reportScope}`, FULL_PORTFOLIO)
   const [nameInput, setNameInput] = useState('')
   const [draftIds, setDraftIds] = useState<Set<number> | null>(null)
+  const [showInactive, setShowInactive] = useState(false)
 
   // A stable empty-array default matters here: while the query is still loading,
   // `data` is undefined — destructuring a fresh `[]` literal every render would give
@@ -2954,7 +2955,25 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
   const { data: accounts = EMPTY_PRESET_ROWS } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
   const { data: presets = EMPTY_PRESET_ROWS, refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets', reportScope], queryFn: () => getPortfolioPresets(reportScope) })
 
-  const eligibleAccounts = (accounts as Row[]).filter(a => eligibleTypes.includes(String(a.type)) && a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false')
+  // Inactive accounts stay selectable (an already-saved preset can still include one,
+  // even with the checkbox off) — showInactive only controls whether they're offered
+  // in the list for a *new* selection, matching the Show Inactive pattern used elsewhere.
+  const isActive = (a: Row) => a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false'
+  const eligibleAccounts = (accounts as Row[]).filter(a => eligibleTypes.includes(String(a.type)) && (showInactive || isActive(a)))
+  const groupedEligible = useMemo(() => {
+    const byType = new Map<string, Row[]>()
+    for (const a of eligibleAccounts) {
+      const t = String(a.type ?? 'Other')
+      if (!byType.has(t)) byType.set(t, [])
+      byType.get(t)!.push(a)
+    }
+    const orderedTypes = [
+      ...ACCOUNT_TYPE_ORDER.filter(t => byType.has(t)),
+      ...[...byType.keys()].filter(t => !ACCOUNT_TYPE_ORDER.includes(t)),
+    ]
+    return orderedTypes.map(t => [t, byType.get(t)!] as const)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, eligibleTypes, showInactive])
   const presetList = presets as { preset_id: number; preset_name: string; account_ids: number[] }[]
   const presetMap = useMemo(() => {
     const m: Record<string, number[]> = {}
@@ -3021,19 +3040,28 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
             <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
             <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
               className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+            <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none ml-auto">
+              <input type="checkbox" className="rounded" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
+              Show inactive
+            </label>
           </div>
-          <div className="max-h-48 overflow-y-auto border border-slate-200 rounded">
-            {eligibleAccounts.map(a => {
-              const id = Number(a.id)
-              const checked = selPreset === FULL_PORTFOLIO ? true : currentIds.has(id)
-              return (
-                <label key={id} className={`flex items-center gap-2 px-3 py-1.5 text-sm border-b border-slate-100 last:border-0 ${selPreset === FULL_PORTFOLIO ? 'opacity-50' : 'hover:bg-slate-50 cursor-pointer'}`}>
-                  <input type="checkbox" className="rounded" checked={checked} disabled={selPreset === FULL_PORTFOLIO} onChange={() => toggleAccount(id)} />
-                  <span>{String(a.name)}</span>
-                  <span className="text-xs text-slate-400">({String(a.type)})</span>
-                </label>
-              )
-            })}
+          <div className="max-h-60 overflow-y-auto border border-slate-200 rounded">
+            {groupedEligible.map(([type, accs]) => (
+              <div key={type}>
+                <div className="px-3 py-1 text-xs font-semibold text-slate-500 bg-slate-50 sticky top-0">{type}</div>
+                {accs.map(a => {
+                  const id = Number(a.id)
+                  const checked = selPreset === FULL_PORTFOLIO ? true : currentIds.has(id)
+                  return (
+                    <label key={id} className={`flex items-center gap-2 px-3 py-1.5 text-sm border-b border-slate-100 last:border-0 ${selPreset === FULL_PORTFOLIO ? 'opacity-50' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                      <input type="checkbox" className="rounded" checked={checked} disabled={selPreset === FULL_PORTFOLIO} onChange={() => toggleAccount(id)} />
+                      <span>{String(a.name)}</span>
+                      {a.is_active === false && <span className="text-xs text-slate-400">(inactive)</span>}
+                    </label>
+                  )
+                })}
+              </div>
+            ))}
           </div>
         </div>
       )}
