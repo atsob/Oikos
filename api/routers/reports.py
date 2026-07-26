@@ -16,6 +16,13 @@ def _df_to_list(df: pd.DataFrame) -> list:
     return [{k: None if isinstance(v, float) and math.isnan(v) else v for k, v in r.items()} for r in records]
 
 
+def _fnum(v, default: float = 0.0) -> float:
+    """float(v) but NaN/None-safe (unlike `float(v or default)`, which is wrong for NaN since NaN is truthy)."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return default
+    return float(v)
+
+
 @router.get("/income-expense")
 def get_income_expense(
     start_date: str = Query("2024-01-01"),
@@ -1331,13 +1338,13 @@ def get_dividends_forecast():
 
     rows = []
     for _, r in df.iterrows():
-        mv   = float(r.get("market_value_eur") or 0)
-        cost = float(r.get("cost_basis_eur")   or 0)
-        qty  = float(r.get("total_qty")         or 0)
-        fx   = float(r.get("fx_rate")           or 1)
+        mv   = _fnum(r.get("market_value_eur"))
+        cost = _fnum(r.get("cost_basis_eur"))
+        qty  = _fnum(r.get("total_qty"))
+        fx   = _fnum(r.get("fx_rate"), default=1.0)
         dr   = r.get("dividend_rate")
         dy   = r.get("dividend_yield")
-        t12  = float(r.get("trailing_12m_income_eur") or 0)
+        t12  = _fnum(r.get("trailing_12m_income_eur"))
 
         if pd.notna(dr) and float(dr) > 0 and qty > 0:
             # dr is in security currency; multiply by qty to get total in sec currency, then convert to EUR
@@ -3153,7 +3160,7 @@ def get_twr(
             d = row["cf_date"]
             if hasattr(d, 'date'):
                 d = d.date()
-            amt = float(row["amount_eur"] or 0)
+            amt = _fnum(row["amount_eur"])
             action = str(row["action"])
             # Buy/MiscExp/ShrIn = cash out (negative); everything else = cash in (positive)
             if action in ('Buy', 'MiscExp', 'ShrIn'):
@@ -3177,7 +3184,7 @@ def get_twr(
                 "action": str(row["action"]),
                 "account": str(row["account_name"]),
                 "security": str(row["security_name"]),
-                "amount_eur": float(row["amount_eur"] or 0),
+                "amount_eur": _fnum(row["amount_eur"]),
             })
 
     return {

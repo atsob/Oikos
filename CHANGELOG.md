@@ -9,6 +9,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Investment Position → Allocation can now include Cash/Bank accounts as a "Cash & Savings" slice** — the account preset picker there offers Cash, Checking, Savings, and Credit Card accounts alongside investment accounts, so a preset that includes a bank account actually shows its balance as part of the allocation instead of allocation being investment-accounts-only. Every other Investment Position sub-tab (Graph, Summary, Detail Analysis, Current Holdings, Sector & Industry, FX Exposure) is scoped by the same preset.
 - **The account preset picker (Net Worth, Investment Position, Investment Performance) now has a "Show inactive" checkbox** — inactive accounts were previously impossible to select at all, even to keep one already saved in an existing preset. Off by default, same as elsewhere in the app. The account list is also now grouped by account type (Cash, Checking, Savings, Brokerage, etc.) instead of one long flat list.
 
+### Fixed
+- **Reports → Investment Performance → TWR/MWR returned a 500 error for some account presets** (e.g. "ALL - Except Kids") instead of showing results. One of the scoped investment transactions had no usable amount (no `Total_Amount_AccCur` and no quantity/price to fall back on), which produced a missing value that a Python `... or 0` fallback doesn't actually catch — the missing value survived into the response and broke JSON serialization. Also fixed the same latent issue in the Dividend Tracker's forecast tab before it could cause the same crash there.
+
 ## 2026-07-25
 
 ### Added
