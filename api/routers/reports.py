@@ -275,9 +275,29 @@ def save_allocation_targets(payload: dict):
 
 
 @router.get("/allocation-delta")
-def get_allocation_delta(account_ids: Optional[str] = Query(None)):
-    """Current allocation vs targets + delta for the Rebalancing Delta table."""
-    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
+def get_allocation_delta(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
+    """Current allocation vs targets + delta for the Rebalancing Delta table.
+
+    scope=all mirrors /allocation's scope=all: unions in a "Cash & Savings" row
+    so this table and its Actual-vs-Target chart stay consistent with the donut,
+    instead of computing percentages against securities-only value.
+    """
+    acct_ids = _parse_account_ids(account_ids)
+    acct_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
+    cash_union = ""
+    if scope == "all":
+        cash_union = f"""
+                UNION ALL
+                SELECT
+                    'Cash & Savings' AS securities_type,
+                    SUM(a.Accounts_Balance * COALESCE(
+                        (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
+                    )) AS value_eur
+                FROM Accounts a
+                WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+                  AND a.Is_Active = TRUE{cash_clause}
+        """
     with get_db() as conn:
         df = pd.read_sql(f"""
             WITH fx AS (
@@ -298,6 +318,7 @@ def get_allocation_delta(account_ids: Optional[str] = Query(None)):
                 LEFT JOIN fx        ON fx.Currencies_Id_1 = s.Currencies_Id
                 WHERE h.Quantity > 0{acct_clause}
                 GROUP BY s.Securities_Type
+                {cash_union}
             ),
             total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
             SELECT

@@ -785,7 +785,7 @@ function AllocationReport({ accountIds }: { accountIds?: number[] }) {
 
   const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', scope, accountIds], queryFn: () => getAllocationReport(scope, accountIds) })
   const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['allocation-targets'], queryFn: getAllocationTargets })
-  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', accountIds], queryFn: () => getAllocationDelta(accountIds) })
+  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', scope, accountIds], queryFn: () => getAllocationDelta(scope, accountIds) })
   const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan', accountIds], queryFn: () => getRebalancingPlan(accountIds) })
 
   // Local editable target state

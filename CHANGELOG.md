@@ -11,6 +11,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Fixed
 - **Reports → Investment Performance → TWR/MWR returned a 500 error for some account presets** (e.g. "ALL - Except Kids") instead of showing results. One of the scoped investment transactions had no usable amount (no `Total_Amount_AccCur` and no quantity/price to fall back on), which produced a missing value that a Python `... or 0` fallback doesn't actually catch — the missing value survived into the response and broke JSON serialization. Also fixed the same latent issue in the Dividend Tracker's forecast tab before it could cause the same crash there.
+- **Investment Position → Allocation's "Actual vs. Target" chart and Rebalancing Delta table ignored Cash & Savings even when the donut above them included it** — they were computed from investment holdings only, so a preset with cash accounts showed the donut correctly at, say, 34.8% cash but the bar chart and table below it showed Stock/Bond/etc. percentages inflated as if cash didn't exist (e.g. Stock at 45% instead of the donut's true 29.5%). Both now include the same Cash & Savings bucket as the donut when a preset's accounts call for it, so all three stay consistent.
 
 ## 2026-07-25
 

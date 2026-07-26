@@ -148,8 +148,8 @@ export const getAllocationTargets = () =>
   api.get('/reports/allocation-targets').then(r => r.data)
 export const saveAllocationTargets = (payload: Record<string, number>) =>
   api.post('/reports/allocation-targets', payload).then(r => r.data)
-export const getAllocationDelta = (accountIds?: number[]) =>
-  api.get('/reports/allocation-delta', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+export const getAllocationDelta = (scope: 'investments' | 'all' = 'investments', accountIds?: number[]) =>
+  api.get('/reports/allocation-delta', { params: { scope, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 export const getRebalancingPlan = (accountIds?: number[]) =>
   api.get('/reports/rebalancing-plan', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
