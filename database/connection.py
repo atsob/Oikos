@@ -194,6 +194,12 @@ def _run_startup_migrations():
            JOIN accounts a    ON a.accounts_id    = t.accounts_id
            JOIN currencies c  ON c.currencies_id  = a.currencies_id
            LEFT JOIN payees p ON p.payees_id      = t.payees_id""",
+        # Portfolio_Presets: scope column so the same table can hold separately-named
+        # presets per report (Inv. Performance, Net Worth, Investment Position)
+        # instead of one global Preset_Name namespace.
+        "ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Report_Scope VARCHAR(32) NOT NULL DEFAULT 'inv_performance'",
+        "ALTER TABLE Portfolio_Presets DROP CONSTRAINT IF EXISTS portfolio_presets_preset_name_key",
+        "ALTER TABLE Portfolio_Presets ADD CONSTRAINT portfolio_presets_scope_name_unique UNIQUE (Report_Scope, Preset_Name)",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)

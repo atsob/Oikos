@@ -375,11 +375,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Type</b>, and <b>Detail Analysis</b> (breakdown for one period with a donut chart).
         </P>
         <Note>
-          <b>Account Selection</b> lets you include/exclude specific accounts. <b>Show inactive accounts</b>{' '}
-          (on by default here, since this is a historical report) controls whether closed accounts' past
-          balances count — turning it off will understate historical change if a closed account held real
-          money at some point in the range. <b>Show zero-balance accounts</b> just controls whether
-          currently-zero accounts are hidden from the table, not the totals.
+          <b>⚙️ Account Preset</b> lets you save a specific set of accounts under a name and switch between
+          them — pick "Full Portfolio" (the default) to include everything, or save your current checkbox
+          selection as a named preset to quickly re-apply it later. Presets are shared with Investment Position
+          but each report keeps its own separate list of saved names. <b>Show inactive accounts</b> (on by
+          default here, since this is a historical report) controls whether closed accounts' past balances
+          count — turning it off will understate historical change if a closed account held real money at some
+          point in the range. <b>Show zero-balance accounts</b> just controls whether currently-zero accounts
+          are hidden from the table, not the totals.
         </Note>
 
         <H3>💰 Income &amp; Expense</H3>
@@ -425,6 +428,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>📈 Inv. Positions</H3>
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
+        <Note>
+          <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
+          Holdings, Allocation, Sector &amp; Industry, FX Exposure) to a saved set of accounts — see the same
+          control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}
+          alongside investment accounts: include one in a preset and Allocation shows its balance as a{' '}
+          <b>Cash &amp; Savings</b> slice instead of only ever breaking down investment holdings.
+        </Note>
 
         <H3>💹 Inv. Performance</H3>
         <P>

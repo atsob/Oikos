@@ -514,9 +514,7 @@ function NetWorthSection() {
   const effStart   = ytdMode ? ytdStart : startDate
   const effEnd     = ytdMode ? today    : endDate
   const effGrouping: 'year'|'quarter'|'month' = ytdMode ? 'month' : grouping
-  const [savedSelection, setSavedSelection] = usePersist<Record<string, boolean>>('nw_account_selection', {})
-  const [draftSelection, setDraftSelection] = useState<Record<string, boolean> | null>(null)
-  const [selOpen, setSelOpen] = useState(false)
+  const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
 
   const { data: rawData = [], isLoading } = useQuery({
     queryKey: ['nw-by-account', effStart, effEnd, effGrouping],
@@ -534,11 +532,12 @@ function NetWorthSection() {
     for (const r of allRows) m[String(r.accounts_name)] = r.is_active !== false
     return m
   }, [allRows])
-  const allAccountNames = useMemo(() => Object.keys(accountMeta).sort(), [accountMeta])
   const allPeriods = useMemo(() => [...new Set(allRows.map(r => String(r.period)))].sort(), [allRows])
 
-  const isIncluded = useCallback((name: string, sel: Record<string, boolean>) =>
-    sel[name] === undefined ? true : sel[name], [])
+  // presetAccountIds === undefined means "Full Portfolio" (the preset bar's own
+  // sentinel) — include everything, matching this report's original default.
+  const isIncluded = useCallback((r: Row) =>
+    presetAccountIds === undefined || presetAccountIds.includes(Number(r.accounts_id)), [presetAccountIds])
 
   const accountTotals = useMemo(() => {
     const t: Record<string, number> = {}
@@ -550,19 +549,18 @@ function NetWorthSection() {
   const filteredRows = useMemo(() =>
     allRows.filter(r => {
       const n = String(r.accounts_name)
-      return isIncluded(n, savedSelection) && (showZeroBalance || !isZero(n)) && (showInactive || accountActive[n] !== false)
-    }), [allRows, savedSelection, showZeroBalance, showInactive, accountActive])
+      return isIncluded(r) && (showZeroBalance || !isZero(n)) && (showInactive || accountActive[n] !== false)
+    }), [allRows, isIncluded, showZeroBalance, showInactive, accountActive])
 
   const hiddenZeroCount = useMemo(() =>
-    allAccountNames.filter(n => isIncluded(n, savedSelection) && isZero(n) && (showInactive || accountActive[n] !== false)).length,
-    [allAccountNames, savedSelection, showZeroBalance, showInactive, accountActive])
+    allRows.filter((r, i, arr) => arr.findIndex(x => x.accounts_name === r.accounts_name) === i)
+      .filter(r => isIncluded(r) && isZero(String(r.accounts_name)) && (showInactive || accountActive[String(r.accounts_name)] !== false)).length,
+    [allRows, isIncluded, showZeroBalance, showInactive, accountActive])
 
   const hiddenInactiveCount = useMemo(() =>
-    allAccountNames.filter(n => isIncluded(n, savedSelection) && accountActive[n] === false).length,
-    [allAccountNames, savedSelection, accountActive])
-
-  const openSel = () => { setDraftSelection({ ...savedSelection }); setSelOpen(true) }
-  const saveSel = () => { setSavedSelection(draftSelection ?? {}); setSelOpen(false) }
+    allRows.filter((r, i, arr) => arr.findIndex(x => x.accounts_name === r.accounts_name) === i)
+      .filter(r => isIncluded(r) && accountActive[String(r.accounts_name)] === false).length,
+    [allRows, isIncluded, accountActive])
 
   return (
     <div className="space-y-3">
@@ -590,49 +588,7 @@ function NetWorthSection() {
       </div>
 
       {/* Account Selection */}
-      <div className="border border-slate-200 rounded-lg overflow-hidden">
-        <button onClick={() => selOpen ? setSelOpen(false) : openSel()}
-          className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
-          <span className="text-xs">{selOpen ? '▼' : '▶'}</span>
-          <span>⚙️ Account Selection</span>
-        </button>
-        {selOpen && draftSelection !== null && (
-          <div className="p-3 border-t border-slate-200">
-            <div className="max-h-60 overflow-y-auto border border-slate-200 rounded">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-slate-50">
-                  <tr>
-                    <th className="px-3 py-1.5 text-center w-20 text-slate-500">
-                      <button className="text-blue-600 hover:underline" onClick={() => { const a: Record<string,boolean>={};allAccountNames.forEach(n=>{a[n]=true});setDraftSelection(a) }}>All</button>
-                      {' / '}
-                      <button className="text-blue-600 hover:underline" onClick={() => { const a: Record<string,boolean>={};allAccountNames.forEach(n=>{a[n]=false});setDraftSelection(a) }}>None</button>
-                    </th>
-                    <th className="px-3 py-1.5 text-left font-semibold text-slate-500">Account</th>
-                    <th className="px-3 py-1.5 text-left font-semibold text-slate-500">Type</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {allAccountNames.map(name => (
-                    <tr key={name} className="hover:bg-slate-50">
-                      <td className="px-3 py-1.5 text-center">
-                        <input type="checkbox" className="rounded"
-                          checked={draftSelection[name] === undefined ? true : draftSelection[name]}
-                          onChange={e => setDraftSelection(prev => ({ ...prev!, [name]: e.target.checked }))} />
-                      </td>
-                      <td className="px-3 py-1.5">{name}{accountActive[name] === false && <span className="ml-1.5 text-slate-400">(inactive)</span>}</td>
-                      <td className="px-3 py-1.5 text-slate-500">{accountMeta[name]}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-2 flex gap-2">
-              <button onClick={saveSel} className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-slate-700 text-white text-xs font-medium hover:bg-slate-800">💾 Save Selection</button>
-              <button onClick={() => setSelOpen(false)} className="px-3 py-1.5 rounded border border-slate-300 text-xs text-slate-600 hover:bg-slate-50">Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
+      <PortfolioPresetBar reportScope="net_worth" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
 
       {/* Zero-balance warning */}
       {!showZeroBalance && hiddenZeroCount > 0 && (
@@ -669,11 +625,11 @@ function NetWorthSection() {
 // ════════════════════════════════════════════════════════════════════════════
 // 2. INVESTMENT POSITIONS
 // ════════════════════════════════════════════════════════════════════════════
-function InvPositionsGraph({ startDate }: { startDate: string }) {
+function InvPositionsGraph({ startDate, accountIds }: { startDate: string; accountIds?: number[] }) {
   const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
-    queryKey: ['inv-positions-history', startDate],
-    queryFn: () => getInvestmentPositionsHistory(startDate),
+    queryKey: ['inv-positions-history', startDate, accountIds],
+    queryFn: () => getInvestmentPositionsHistory(startDate, accountIds),
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
@@ -718,19 +674,19 @@ function InvPositionsGraph({ startDate }: { startDate: string }) {
   )
 }
 
-function InvPositionsSummary({ startDate }: { startDate: string }) {
+function InvPositionsSummary({ startDate, accountIds }: { startDate: string; accountIds?: number[] }) {
   const { data = [], isLoading } = useQuery({
-    queryKey: ['inv-positions-history', startDate],
-    queryFn: () => getInvestmentPositionsHistory(startDate),
+    queryKey: ['inv-positions-history', startDate, accountIds],
+    queryFn: () => getInvestmentPositionsHistory(startDate, accountIds),
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
   return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} />
 }
 
-function SectorTab() {
+function SectorTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation'], queryFn: getSectorAllocation })
+  const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation', accountIds], queryFn: () => getSectorAllocation(accountIds) })
   const rows = data as Row[]
   const { sorted: sectorSorted, sortKey: sectorSK, sortDir: sectorSD, toggleSort: sectorSort } = useSortTable(rows, 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -771,9 +727,9 @@ function SectorTab() {
   )
 }
 
-function FxExposureTab() {
+function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure'], queryFn: getFxExposure })
+  const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds) })
   const rows = data as Row[]
   const { sorted: fxSorted, sortKey: fxSK, sortDir: fxSD, toggleSort: fxSort } = useSortTable(rows, 'eur_exposure', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -811,16 +767,26 @@ function FxExposureTab() {
   )
 }
 
-function AllocationReport() {
+function AllocationReport({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const [editOpen, setEditOpen] = useState(false)
   const [cash, setCash] = useState(0)
 
-  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', 'investments'], queryFn: () => getAllocationReport('investments') })
+  // A preset that includes any Cash/Bank-type account should surface a "Cash &
+  // Savings" slice — scope='all' is what makes get_allocation compute that
+  // bucket, restricted (via accountIds) to just the cash accounts selected.
+  const { data: accountsForScope = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const hasCashAccount = !!accountIds && accountIds.some(id => {
+    const acc = (accountsForScope as Row[]).find(a => Number(a.id) === id)
+    return acc && !INV_ACCOUNT_TYPES.includes(String(acc.type))
+  })
+  const scope: 'investments' | 'all' = hasCashAccount ? 'all' : 'investments'
+
+  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', scope, accountIds], queryFn: () => getAllocationReport(scope, accountIds) })
   const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['allocation-targets'], queryFn: getAllocationTargets })
-  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta'], queryFn: getAllocationDelta })
-  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan'], queryFn: getRebalancingPlan })
+  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', accountIds], queryFn: () => getAllocationDelta(accountIds) })
+  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan', accountIds], queryFn: () => getRebalancingPlan(accountIds) })
 
   // Local editable target state
   const [localTargets, setLocalTargets] = useState<Record<string, number>>({})
@@ -1079,8 +1045,8 @@ function AllocationReport() {
   )
 }
 
-function HoldingsSnapshotTab() {
-  const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary'], queryFn: getPortfolioSummary })
+function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
+  const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary', accountIds], queryFn: () => getPortfolioSummary(accountIds) })
   const rows = data as Row[]
   const { sorted: holdSorted, sortKey: holdSK, sortDir: holdSD, toggleSort: holdSort } = useSortTablePersisted(rows, 'holdings-snapshot-sort', 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1122,19 +1088,19 @@ function HoldingsSnapshotTab() {
   )
 }
 
-function DetailAnalysisTab({ asOf }: { asOf: string }) {
+function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: number[] }) {
   // Fetch available month-end dates within the reporting period
   const { data: histData = [] } = useQuery({
-    queryKey: ['inv-positions-history', asOf],
-    queryFn: () => getInvestmentPositionsHistory(asOf),
+    queryKey: ['inv-positions-history', asOf, accountIds],
+    queryFn: () => getInvestmentPositionsHistory(asOf, accountIds),
   })
   const availableDates = [...new Set((histData as Row[]).map(r => String(r.date)))].sort().reverse()
   const [selectedDate, setSelectedDate] = useState<string>('')
   const snapshotDate = selectedDate || availableDates[0] || asOf
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ['holdings-snapshot', snapshotDate],
-    queryFn: () => getHoldingsSnapshot(snapshotDate),
+    queryKey: ['holdings-snapshot', snapshotDate, accountIds],
+    queryFn: () => getHoldingsSnapshot(snapshotDate, accountIds),
     enabled: !!snapshotDate,
   })
   const rows = data as Row[]
@@ -1200,6 +1166,7 @@ function DetailAnalysisTab({ asOf }: { asOf: string }) {
 
 function InvPositionsSection({ startDate: initialStartDate }: { startDate: string }) {
   const [tab, setTab] = usePersist('inv_positions_tab', 'Graph')
+  const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
 
   // Default to Dec 31 of the previous calendar year
   const defaultDate = `${new Date().getFullYear() - 1}-12-31`
@@ -1207,6 +1174,8 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
 
   return (
     <div className="space-y-3">
+      <PortfolioPresetBar reportScope="inv_positions" eligibleTypes={INV_POSITION_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
+
       {/* Shared date control — applies to Graph, Summary and Detail Analysis */}
       <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
         <label className="text-sm text-slate-500 font-medium whitespace-nowrap">As of date:</label>
@@ -1225,13 +1194,13 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       </div>
 
       <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure']} active={tab} onChange={setTab} />
-      {tab === 'Graph' && <InvPositionsGraph startDate={asOf} />}
-      {tab === 'Summary' && <InvPositionsSummary startDate={asOf} />}
-      {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} />}
-      {tab === 'Current Holdings' && <HoldingsSnapshotTab />}
-      {tab === 'Allocation' && <AllocationReport />}
-      {tab === 'Sector & Industry' && <SectorTab />}
-      {tab === 'FX Exposure' && <FxExposureTab />}
+      {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
+      {tab === 'Summary' && <InvPositionsSummary startDate={asOf} accountIds={presetAccountIds} />}
+      {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
+      {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
+      {tab === 'Allocation' && <AllocationReport accountIds={presetAccountIds} />}
+      {tab === 'Sector & Industry' && <SectorTab accountIds={presetAccountIds} />}
+      {tab === 'FX Exposure' && <FxExposureTab accountIds={presetAccountIds} />}
     </div>
   )
 }
@@ -2961,17 +2930,31 @@ function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
 
 const FULL_PORTFOLIO = 'Full Portfolio'
 const INV_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Investment']
+// Investment Position's preset picker also offers Cash/Bank accounts, since a
+// position/allocation report can legitimately want to include cash as a bucket
+// (see AllocationReport's scope='all' handling) — not just investment accounts.
+const INV_POSITION_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Investment', 'Cash', 'Checking', 'Savings', 'Credit Card']
+// Net Worth can meaningfully include any account type at all — reuses the
+// pre-existing ALL_ACCOUNT_TYPES constant defined further down this file.
 
-function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined) => void }) {
+// Shared "which accounts to include" preset picker, backed by Portfolio_Presets
+// (Report_Scope keeps each report section's saved preset names in their own
+// namespace — see api/routers/reports.py's portfolio-presets endpoints).
+const EMPTY_PRESET_ROWS: never[] = []
+function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void }) {
   const [open, setOpen] = useState(false)
-  const [selPreset, setSelPreset] = usePersist('perf_preset_sel', FULL_PORTFOLIO)
+  const [selPreset, setSelPreset] = usePersist(`preset_sel_${reportScope}`, FULL_PORTFOLIO)
   const [nameInput, setNameInput] = useState('')
   const [draftIds, setDraftIds] = useState<Set<number> | null>(null)
 
-  const { data: accounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
-  const { data: presets = [], refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets'], queryFn: getPortfolioPresets })
+  // A stable empty-array default matters here: while the query is still loading,
+  // `data` is undefined — destructuring a fresh `[]` literal every render would give
+  // presetList/presetMap a new reference each time, retriggering the onChange effect
+  // below in an infinite loop (setState -> re-render -> "new" empty deps -> setState...).
+  const { data: accounts = EMPTY_PRESET_ROWS } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
+  const { data: presets = EMPTY_PRESET_ROWS, refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets', reportScope], queryFn: () => getPortfolioPresets(reportScope) })
 
-  const invAccounts = (accounts as Row[]).filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)) && a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false')
+  const eligibleAccounts = (accounts as Row[]).filter(a => eligibleTypes.includes(String(a.type)) && a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false')
   const presetList = presets as { preset_id: number; preset_name: string; account_ids: number[] }[]
   const presetMap = useMemo(() => {
     const m: Record<string, number[]> = {}
@@ -2979,7 +2962,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
     return m
   }, [presetList])
 
-  const savedIds = selPreset === FULL_PORTFOLIO ? invAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
+  const savedIds = selPreset === FULL_PORTFOLIO ? eligibleAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
   const currentIds = draftIds ?? new Set(savedIds)
 
   useEffect(() => {
@@ -2999,7 +2982,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
     if (!name || name === FULL_PORTFOLIO) { alert("Please enter a valid preset name (not 'Full Portfolio')."); return }
     const ids = Array.from(currentIds)
     if (!ids.length) { alert('Select at least one account before saving.'); return }
-    await upsertPortfolioPreset(name, ids)
+    await upsertPortfolioPreset(name, ids, reportScope)
     await refetchPresets()
     setSelPreset(name)
     setDraftIds(null)
@@ -3021,7 +3004,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
     <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
         <span className="text-xs">{open ? '▼' : '▶'}</span>
-        <span>⚙️ Portfolio Preset {selPreset !== FULL_PORTFOLIO && <span className="text-blue-600">— {selPreset}</span>}</span>
+        <span>⚙️ Account Preset {selPreset !== FULL_PORTFOLIO && <span className="text-blue-600">— {selPreset}</span>}</span>
       </button>
       {open && (
         <div className="p-3 space-y-3 border-t border-slate-200">
@@ -3040,7 +3023,7 @@ function PortfolioPresetBar({ onChange }: { onChange: (ids: number[] | undefined
               className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
           </div>
           <div className="max-h-48 overflow-y-auto border border-slate-200 rounded">
-            {invAccounts.map(a => {
+            {eligibleAccounts.map(a => {
               const id = Number(a.id)
               const checked = selPreset === FULL_PORTFOLIO ? true : currentIds.has(id)
               return (
@@ -3186,7 +3169,7 @@ function InvPerformanceSection() {
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
-      {needsPreset && <PortfolioPresetBar onChange={setPresetAccountIds} />}
+      {needsPreset && <PortfolioPresetBar reportScope="inv_performance" eligibleTypes={INV_ACCOUNT_TYPES} onChange={setPresetAccountIds} />}
       {tab === 'P&L'              && <PnlReport />}
       {tab === 'Performance'      && <PerformanceTab />}
       {tab === 'TWR/MWR'          && <TwrTab accountIds={presetAccountIds} />}

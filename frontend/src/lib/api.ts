@@ -127,8 +127,8 @@ export const getTopCategories = (startDate: string, endDate: string, catType = '
 export const getSavingsRate = (months = 12) =>
   api.get('/reports/savings-rate', { params: { months } }).then(r => r.data)
 
-export const getPortfolioSummary = () =>
-  api.get('/reports/portfolio-summary').then(r => r.data)
+export const getPortfolioSummary = (accountIds?: number[]) =>
+  api.get('/reports/portfolio-summary', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getCategoryBreakdown = (startDate: string, endDate: string) =>
   api.get('/reports/category-breakdown', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
@@ -142,16 +142,16 @@ export const getCapitalGains = (year: number, method: string = 'WAC') =>
 export const getDividends = (startDate: string, endDate: string) =>
   api.get('/reports/dividends', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
 
-export const getAllocationReport = (scope: 'investments' | 'all' = 'investments') =>
-  api.get('/reports/allocation', { params: { scope } }).then(r => r.data)
+export const getAllocationReport = (scope: 'investments' | 'all' = 'investments', accountIds?: number[]) =>
+  api.get('/reports/allocation', { params: { scope, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 export const getAllocationTargets = () =>
   api.get('/reports/allocation-targets').then(r => r.data)
 export const saveAllocationTargets = (payload: Record<string, number>) =>
   api.post('/reports/allocation-targets', payload).then(r => r.data)
-export const getAllocationDelta = () =>
-  api.get('/reports/allocation-delta').then(r => r.data)
-export const getRebalancingPlan = () =>
-  api.get('/reports/rebalancing-plan').then(r => r.data)
+export const getAllocationDelta = (accountIds?: number[]) =>
+  api.get('/reports/allocation-delta', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+export const getRebalancingPlan = (accountIds?: number[]) =>
+  api.get('/reports/rebalancing-plan', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getNetWorthReport = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/net-worth-report', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
@@ -722,16 +722,16 @@ export const deleteBudget = (id: number) =>
 export const getNetWorthByAccount = (startDate: string, endDate: string, grouping: string) =>
   api.get('/reports/net-worth-by-account', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
 
-export const getInvestmentPositionsHistory = (startDate: string) =>
-  api.get('/reports/investment-positions-history', { params: { start_date: startDate } }).then(r => r.data)
-export const getHoldingsSnapshot = (asOf?: string) =>
-  api.get('/reports/holdings-snapshot', { params: asOf ? { as_of: asOf } : {} }).then(r => r.data)
+export const getInvestmentPositionsHistory = (startDate: string, accountIds?: number[]) =>
+  api.get('/reports/investment-positions-history', { params: { start_date: startDate, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+export const getHoldingsSnapshot = (asOf?: string, accountIds?: number[]) =>
+  api.get('/reports/holdings-snapshot', { params: { ...(asOf ? { as_of: asOf } : {}), account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getSectorAllocation = () =>
-  api.get('/reports/sector-allocation').then(r => r.data)
+export const getSectorAllocation = (accountIds?: number[]) =>
+  api.get('/reports/sector-allocation', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getFxExposure = () =>
-  api.get('/reports/fx-exposure').then(r => r.data)
+export const getFxExposure = (accountIds?: number[]) =>
+  api.get('/reports/fx-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getSpendingByPayee = (startDate: string, endDate: string, topN = 20) =>
   api.get('/reports/spending-by-payee', { params: { start_date: startDate, end_date: endDate, top_n: topN } }).then(r => r.data)
@@ -795,11 +795,11 @@ export const getBenchmark = (benchmarkId: number, lookbackDays = 252, accountIds
 export const getCorrelation = (lookbackDays = 252, maxHoldings = 20, accountIds?: number[]) =>
   api.get('/reports/correlation', { params: { lookback_days: lookbackDays, max_holdings: maxHoldings, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getPortfolioPresets = () =>
-  api.get('/reports/portfolio-presets').then(r => r.data)
+export const getPortfolioPresets = (reportScope: string = 'inv_performance') =>
+  api.get('/reports/portfolio-presets', { params: { report_scope: reportScope } }).then(r => r.data)
 
-export const upsertPortfolioPreset = (name: string, accountIds: number[]) =>
-  api.post('/reports/portfolio-presets', { name, account_ids: accountIds }).then(r => r.data)
+export const upsertPortfolioPreset = (name: string, accountIds: number[], reportScope: string = 'inv_performance') =>
+  api.post('/reports/portfolio-presets', { name, account_ids: accountIds, report_scope: reportScope }).then(r => r.data)
 
 export const deletePortfolioPreset = (presetId: number) =>
   api.delete(`/reports/portfolio-presets/${presetId}`).then(r => r.data)

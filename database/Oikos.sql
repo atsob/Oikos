@@ -816,13 +816,17 @@ CREATE TABLE IF NOT EXISTS Benchmark_Presets (
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
 
--- Saved account-selection presets for Inv. Performance / Correlation reports
+-- Saved account-selection presets, shared across several report sections
+-- (Inv. Performance / Correlation, Net Worth, Investment Position) — Report_Scope
+-- keeps each section's preset names in their own namespace.
 CREATE TABLE IF NOT EXISTS Portfolio_Presets (
-    Preset_Id   SERIAL PRIMARY KEY,
-    Preset_Name VARCHAR(100) UNIQUE NOT NULL,
-    Account_Ids INTEGER[] NOT NULL DEFAULT '{}',
-    Created_At  TIMESTAMP DEFAULT NOW(),
-    Updated_At  TIMESTAMP DEFAULT NOW()
+    Preset_Id    SERIAL PRIMARY KEY,
+    Report_Scope VARCHAR(32) NOT NULL DEFAULT 'inv_performance',
+    Preset_Name  VARCHAR(100) NOT NULL,
+    Account_Ids  INTEGER[] NOT NULL DEFAULT '{}',
+    Created_At   TIMESTAMP DEFAULT NOW(),
+    Updated_At   TIMESTAMP DEFAULT NOW(),
+    UNIQUE (Report_Scope, Preset_Name)
 );
 
 CREATE TABLE IF NOT EXISTS Custom_Report_Presets (

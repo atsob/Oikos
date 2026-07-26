@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-26
+
+### Added
+- **Reports → Net Worth and Investment Position now support named account presets** — save a specific set of accounts under a name and switch between them, instead of picking accounts from scratch every time (or, for Net Worth, only ever having one unnamed saved selection). Reuses the same preset mechanism Investment Performance's Benchmark/Risk Metrics/Correlation/Monte Carlo/TWR-MWR tabs already had, now shared across all three report sections with each keeping its own separate list of saved preset names.
+- **Investment Position → Allocation can now include Cash/Bank accounts as a "Cash & Savings" slice** — the account preset picker there offers Cash, Checking, Savings, and Credit Card accounts alongside investment accounts, so a preset that includes a bank account actually shows its balance as part of the allocation instead of allocation being investment-accounts-only. Every other Investment Position sub-tab (Graph, Summary, Detail Analysis, Current Holdings, Sector & Industry, FX Exposure) is scoped by the same preset.
+
 ## 2026-07-25
 
 ### Added

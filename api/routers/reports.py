@@ -144,9 +144,10 @@ def get_savings_rate(months: int = Query(12)):
 
 
 @router.get("/portfolio-summary")
-def get_portfolio_summary():
+def get_portfolio_summary(account_ids: Optional[str] = Query(None)):
     """Current holdings with value in EUR grouped by account."""
-    query = """
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
+    query = f"""
     SELECT
         a.Accounts_Name AS account,
         a.Accounts_Type AS account_type,
@@ -176,7 +177,7 @@ def get_portfolio_summary():
     JOIN Securities s ON h.Securities_Id = s.Securities_Id
     JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
     JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-    WHERE h.Quantity != 0
+    WHERE h.Quantity != 0{acct_clause}
     ORDER BY value_eur DESC
     """
     with get_db() as conn:
@@ -185,14 +186,22 @@ def get_portfolio_summary():
 
 
 @router.get("/allocation")
-def get_allocation(scope: str = Query("investments")):
+def get_allocation(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
     """Asset allocation breakdown for a donut chart.
 
     scope=investments (default): only securities held in Holdings, grouped by Securities_Type.
     scope=all: full net-worth allocation — securities + cash + real assets.
+    account_ids, when given, scopes every bucket (investments, cash, real assets) to just
+    those accounts — this is what lets a preset's selected Cash/Bank accounts actually show
+    up as a "Cash & Savings" slice instead of always pulling in every cash-type account.
     """
+    acct_ids = _parse_account_ids(account_ids)
+    inv_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
+    asset_clause = _acct_clause(acct_ids, "Accounts_Id")
+
     with get_db() as conn:
-        inv_df = pd.read_sql("""
+        inv_df = pd.read_sql(f"""
             SELECT s.Securities_Type AS label,
                    SUM(h.Quantity * COALESCE(
                        (SELECT Close FROM Historical_Prices WHERE Securities_Id = h.Securities_Id ORDER BY Date DESC LIMIT 1), 0
@@ -201,26 +210,26 @@ def get_allocation(scope: str = Query("investments")):
                    )) AS value_eur
             FROM Holdings h
             JOIN Securities s ON h.Securities_Id = s.Securities_Id
-            WHERE h.Quantity != 0
+            WHERE h.Quantity != 0{inv_clause}
             GROUP BY s.Securities_Type
         """, conn)
 
         if scope == "all":
-            cash_df = pd.read_sql("""
+            cash_df = pd.read_sql(f"""
                 SELECT 'Cash & Savings' AS label,
                        SUM(a.Accounts_Balance * COALESCE(
                            (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
                        )) AS value_eur
                 FROM Accounts a
                 WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-                  AND a.Is_Active = TRUE
+                  AND a.Is_Active = TRUE{cash_clause}
             """, conn)
-            asset_df = pd.read_sql("""
+            asset_df = pd.read_sql(f"""
                 SELECT Accounts_Type AS label,
                        SUM(Accounts_Balance) AS value_eur
                 FROM Accounts
                 WHERE Accounts_Type IN ('Real Estate','Vehicle','Asset')
-                  AND Is_Active = TRUE
+                  AND Is_Active = TRUE{asset_clause}
                 GROUP BY Accounts_Type
             """, conn)
             result = pd.concat([cash_df, inv_df, asset_df], ignore_index=True)
@@ -259,10 +268,11 @@ def save_allocation_targets(payload: dict):
 
 
 @router.get("/allocation-delta")
-def get_allocation_delta():
+def get_allocation_delta(account_ids: Optional[str] = Query(None)):
     """Current allocation vs targets + delta for the Rebalancing Delta table."""
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -279,7 +289,7 @@ def get_allocation_delta():
                 JOIN Securities s ON h.Securities_Id = s.Securities_Id
                 LEFT JOIN prices p  ON p.Securities_Id = h.Securities_Id
                 LEFT JOIN fx        ON fx.Currencies_Id_1 = s.Currencies_Id
-                WHERE h.Quantity > 0
+                WHERE h.Quantity > 0{acct_clause}
                 GROUP BY s.Securities_Type
             ),
             total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
@@ -299,10 +309,11 @@ def get_allocation_delta():
 
 
 @router.get("/rebalancing-plan")
-def get_rebalancing_plan():
+def get_rebalancing_plan(account_ids: Optional[str] = Query(None)):
     """Per-security rebalancing action plan proportional to current holdings weight."""
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -327,7 +338,7 @@ def get_rebalancing_plan():
                 JOIN Currencies c  ON c.Currencies_Id  = s.Currencies_Id
                 LEFT JOIN prices p ON p.Securities_Id  = h.Securities_Id
                 LEFT JOIN fx       ON fx.Currencies_Id_1 = s.Currencies_Id
-                WHERE h.Quantity > 0
+                WHERE h.Quantity > 0{acct_clause}
                 GROUP BY s.Securities_Id, s.Securities_Name, s.Securities_Type,
                          s.Ticker, c.Currencies_ShortName, p.Close, fx.FX_Rate
             ),
@@ -2648,7 +2659,7 @@ def get_net_worth_by_account(
         FROM period_dates p CROSS JOIN Currencies cur WHERE cur.Currencies_ShortName != 'EUR'
     ),
     cash_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             CASE WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
                  THEN GREATEST(0, a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0))
                  ELSE a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0)
@@ -2659,7 +2670,7 @@ def get_net_worth_by_account(
     inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
     inv_accounts AS (SELECT DISTINCT Accounts_Id FROM inv_universe),
     inv_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             SUM(GREATEST(COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
                 FROM Investments i2 WHERE i2.Securities_Id=iu.Securities_Id AND i2.Accounts_Id=iu.Accounts_Id AND i2.Date<=p.period_end
@@ -2669,10 +2680,10 @@ def get_net_worth_by_account(
         JOIN Accounts a ON iu.Accounts_Id=a.Accounts_Id
         JOIN Securities s ON iu.Securities_Id=s.Securities_Id
         WHERE a.Accounts_Type IN ('Brokerage','Margin','Pension','Other Investment')
-        GROUP BY p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active
+        GROUP BY p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active
     ),
     pension_bal AS (
-        SELECT p.period_end, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             GREATEST(0, a.Accounts_Balance - COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur WHEN Action='CashOut' THEN -Total_Amount_AccCur ELSE 0 END)
                 FROM Investments WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end
@@ -2681,7 +2692,7 @@ def get_net_worth_by_account(
         WHERE a.Accounts_Type IN ('Pension','Other Investment')
           AND a.Accounts_Id NOT IN (SELECT Accounts_Id FROM inv_accounts)
     )
-    SELECT period_end::text AS period, accounts_name, accounts_type, is_active,
+    SELECT period_end::text AS period, accounts_id, accounts_name, accounts_type, is_active,
            ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur
     FROM (SELECT * FROM cash_bal UNION ALL SELECT * FROM inv_bal UNION ALL SELECT * FROM pension_bal) combined
     WHERE balance_eur IS NOT NULL
@@ -2694,8 +2705,9 @@ def get_net_worth_by_account(
 
 # ── Investment Positions History ──────────────────────────────────────────────
 @router.get("/investment-positions-history")
-def get_investment_positions_history(start_date: str = Query("2020-01-01")):
-    query = """
+def get_investment_positions_history(start_date: str = Query("2020-01-01"), account_ids: Optional[str] = Query(None)):
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "Accounts_Id")
+    query = f"""
     WITH RECURSIVE months AS (
         SELECT (date_trunc('month', %(start_date)s::date) + INTERVAL '1 month' - INTERVAL '1 day')::date AS d
         UNION ALL
@@ -2703,7 +2715,7 @@ def get_investment_positions_history(start_date: str = Query("2020-01-01")):
         FROM months WHERE d < date_trunc('month', CURRENT_DATE)
     ),
     dates AS (SELECT d FROM months WHERE d <= CURRENT_DATE UNION SELECT CURRENT_DATE::date),
-    inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
+    inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut'){acct_clause}),
     qty_at AS (
         SELECT dt.d AS date_pt, iu.Securities_Id, iu.Accounts_Id,
             GREATEST(COALESCE((
@@ -2730,9 +2742,10 @@ def get_investment_positions_history(start_date: str = Query("2020-01-01")):
 
 
 @router.get("/holdings-snapshot")
-def get_holdings_snapshot(as_of: str = Query(None)):
+def get_holdings_snapshot(as_of: str = Query(None), account_ids: Optional[str] = Query(None)):
     """Per-security holdings snapshot at a given date (default: today)."""
     as_of_date = as_of or "CURRENT_DATE"
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "Accounts_Id")
     # Use parameter binding for user-supplied dates; fall back to CURRENT_DATE literal
     params: dict = {}
     if as_of:
@@ -2743,7 +2756,7 @@ def get_holdings_snapshot(as_of: str = Query(None)):
     query = f"""
     WITH inv_universe AS (
         SELECT DISTINCT Securities_Id, Accounts_Id
-        FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')
+        FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut'){acct_clause}
     ),
     qty_at AS (
         SELECT iu.Securities_Id, iu.Accounts_Id,
@@ -2795,8 +2808,9 @@ def get_holdings_snapshot(as_of: str = Query(None)):
 
 # ── Sector Allocation ─────────────────────────────────────────────────────────
 @router.get("/sector-allocation")
-def get_sector_allocation():
-    query = """
+def get_sector_allocation(account_ids: Optional[str] = Query(None)):
+    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
+    query = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     holdings_value AS (
@@ -2807,7 +2821,7 @@ def get_sector_allocation():
         FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-        WHERE h.Quantity > 0 GROUP BY sector, industry, securities_type
+        WHERE h.Quantity > 0{acct_clause} GROUP BY sector, industry, securities_type
     ),
     total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
     SELECT hv.sector, hv.industry, hv.securities_type,
@@ -2823,19 +2837,25 @@ def get_sector_allocation():
 
 # ── FX Exposure ───────────────────────────────────────────────────────────────
 @router.get("/fx-exposure")
-def get_fx_exposure():
-    query = """
+def get_fx_exposure(account_ids: Optional[str] = Query(None)):
+    # A selected preset becomes the complete account universe for both buckets —
+    # cash exposure isn't just "everything non-investment" anymore once a specific
+    # set of accounts has been chosen, same as the investment side.
+    acct_ids = _parse_account_ids(account_ids)
+    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
+    inv_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    query = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     cash_exp AS (
         SELECT a.Currencies_Id, SUM(a.Accounts_Balance) AS native_exposure
-        FROM Accounts a WHERE a.Is_Active=TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin') GROUP BY a.Currencies_Id
+        FROM Accounts a WHERE a.Is_Active=TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin'){cash_clause} GROUP BY a.Currencies_Id
     ),
     inv_exp AS (
         SELECT s.Currencies_Id, SUM(h.Quantity * COALESCE(p.Close,0)) AS native_exposure
         FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
-        WHERE h.Quantity > 0 GROUP BY s.Currencies_Id
+        WHERE h.Quantity > 0{inv_clause} GROUP BY s.Currencies_Id
     ),
     combined AS (
         SELECT Currencies_Id, native_exposure FROM cash_exp
@@ -3926,20 +3946,26 @@ def _acct_clause(account_ids: Optional[list], col: str = "h.Accounts_Id") -> str
 
 
 # ── Portfolio Presets ───────────────────────────────────────────────────────────
+# Report_Scope keeps each report section's preset names in their own namespace
+# ('inv_performance' | 'net_worth' | 'inv_positions') — see the ALTER TABLE in
+# database/connection.py's _run_startup_migrations for how an existing table
+# (created before Report_Scope existed) gets upgraded.
 def _ensure_presets_table(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Portfolio_Presets (
-            Preset_Id   SERIAL PRIMARY KEY,
-            Preset_Name VARCHAR(100) UNIQUE NOT NULL,
-            Account_Ids INTEGER[] NOT NULL DEFAULT '{}',
-            Created_At  TIMESTAMP DEFAULT NOW(),
-            Updated_At  TIMESTAMP DEFAULT NOW()
+            Preset_Id    SERIAL PRIMARY KEY,
+            Report_Scope VARCHAR(32) NOT NULL DEFAULT 'inv_performance',
+            Preset_Name  VARCHAR(100) NOT NULL,
+            Account_Ids  INTEGER[] NOT NULL DEFAULT '{}',
+            Created_At   TIMESTAMP DEFAULT NOW(),
+            Updated_At   TIMESTAMP DEFAULT NOW(),
+            UNIQUE (Report_Scope, Preset_Name)
         )
     """)
 
 
 @router.get("/portfolio-presets")
-def get_portfolio_presets():
+def get_portfolio_presets(report_scope: str = Query("inv_performance")):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -3947,8 +3973,8 @@ def get_portfolio_presets():
         conn.commit()
         df = pd.read_sql("""
             SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Account_Ids AS account_ids
-            FROM Portfolio_Presets ORDER BY Preset_Name
-        """, conn)
+            FROM Portfolio_Presets WHERE Report_Scope = %(report_scope)s ORDER BY Preset_Name
+        """, conn, params={"report_scope": report_scope})
         return _df_to_list(df)
     finally:
         conn.close()
@@ -3958,6 +3984,7 @@ def get_portfolio_presets():
 def upsert_portfolio_preset(data: dict):
     name = (data.get("name") or "").strip()
     account_ids = data.get("account_ids") or []
+    report_scope = data.get("report_scope") or "inv_performance"
     if not name:
         raise HTTPException(400, "Preset name is required")
     conn = get_connection()
@@ -3965,11 +3992,11 @@ def upsert_portfolio_preset(data: dict):
         cur = conn.cursor()
         _ensure_presets_table(cur)
         cur.execute("""
-            INSERT INTO Portfolio_Presets (Preset_Name, Account_Ids, Updated_At)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (Preset_Name) DO UPDATE
+            INSERT INTO Portfolio_Presets (Report_Scope, Preset_Name, Account_Ids, Updated_At)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (Report_Scope, Preset_Name) DO UPDATE
                 SET Account_Ids = EXCLUDED.Account_Ids, Updated_At = NOW()
-        """, (name, account_ids))
+        """, (report_scope, name, account_ids))
         conn.commit()
         return {"saved": name}
     except Exception as e:
