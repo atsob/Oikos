@@ -409,7 +409,7 @@ export function Tooltip({ text, children }: { text: string; children: React.Reac
       className="inline-flex items-center gap-0.5 cursor-help"
       onMouseEnter={show}
       onMouseLeave={() => setPos(null)}
-      onClick={e => { e.stopPropagation(); show(e) }}
+      onClick={show}
     >
       {children}
       <span className="ml-0.5 text-slate-400 text-[10px] leading-none">ⓘ</span>
