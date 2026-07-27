@@ -15,6 +15,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Investment Position → Allocation's Rebalancing Action Plan had the same gap, with worse consequences** — its "Type Act %" was also computed against investment holdings only, so every asset type looked overweight relative to its (whole-portfolio) target and the plan suggested selling almost everything, including types that were actually under target once cash was counted (e.g. it suggested selling 15% of Stock when the true position, per the now-fixed Rebalancing Delta table above it, was a small ~0.5% buy). The plan now measures against the same portfolio-wide total (including Cash & Savings when relevant), so its buy/sell calls agree with the Rebalancing Delta table above it. Individual security trades still only ever cover securities, not cash itself.
 - **Reports → Net Worth's Overview KPI cards didn't visually reconcile to the Net Worth total** — the four asset cards (Cash & Bank, Investments, Pension, Other Assets) summed to more than the Net Worth card next to them, because liabilities (Credit Cards, Loans, Other Liabilities) were already netted into that total but had no card of their own — they only showed up as bars further down in the chart. Added a fifth "Liabilities" card so the cards on screen actually add up to the Net Worth figure.
 
+### Changed
+- **Securities Analysis → Volatility's High/Low Volatility lists were hardcoded to the top 10 securities and their names weren't clickable** — added a "Show top N securities" input (persisted, default 10) so the list length is adjustable, and each security name now links to its Security Detail page, matching every other securities table in the app.
+
 ## 2026-07-25
 
 ### Added

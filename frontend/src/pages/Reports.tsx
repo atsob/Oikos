@@ -3312,6 +3312,7 @@ type Signal = {
 function VolatilityTab() {
   const { data = [], isLoading } = usePortfolioSignals()
   const [volPeriod, setVolPeriod] = usePersist('vol_period', 'Annual Vol (ann)')
+  const [volCount, setVolCount] = usePersist('vol_count', 10)
   const rows = data as Signal[]
 
   const VOL_MAP: Record<string, keyof Signal> = {
@@ -3324,10 +3325,10 @@ function VolatilityTab() {
   const col = VOL_MAP[volPeriod]
   const filtered = rows
     .filter(r => r[col] != null && Number(r[col]) > 0)
-    .map(r => ({ name: r.securities_name, vol: Number(r[col]) }))
+    .map(r => ({ id: r.securities_id, name: r.securities_name, vol: Number(r[col]) }))
 
-  const highVol = [...filtered].sort((a, b) => b.vol - a.vol).slice(0, 10)
-  const lowVol  = [...filtered].sort((a, b) => a.vol - b.vol).slice(0, 10)
+  const highVol = [...filtered].sort((a, b) => b.vol - a.vol).slice(0, volCount)
+  const lowVol  = [...filtered].sort((a, b) => a.vol - b.vol).slice(0, volCount)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -3343,7 +3344,7 @@ function VolatilityTab() {
           <tbody className="divide-y divide-slate-100">
             {items.map((r, i) => (
               <tr key={i} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium">{r.name}</td>
+                <td className="px-3 py-2 font-medium"><SecLink id={r.id}>{r.name}</SecLink></td>
                 <td className="px-3 py-2 text-right tabular-nums">{r.vol.toFixed(2)}%</td>
               </tr>
             ))}
@@ -3355,13 +3356,22 @@ function VolatilityTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-1.5">
-        {Object.keys(VOL_MAP).map(p => (
-          <button key={p} onClick={() => setVolPeriod(p)}
-            className={`px-3 py-1.5 text-xs rounded border font-medium ${volPeriod === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-            {p}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {Object.keys(VOL_MAP).map(p => (
+            <button key={p} onClick={() => setVolPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded border font-medium ${volPeriod === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-slate-500">
+          Show top
+          <input type="number" min={1} max={100} value={volCount}
+            onChange={e => setVolCount(Math.max(1, parseInt(e.target.value) || 10))}
+            className="w-16 border border-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          securities
+        </label>
       </div>
       {filtered.length === 0
         ? <p className="text-slate-400 text-sm py-8 text-center">No volatility data available.</p>
