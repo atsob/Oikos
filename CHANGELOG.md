@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-28
+
+### Added
+- **Security Detail now has an Analysis tab** — Sharpe ratio, quality score, agent/analyst signals, and analyst target price used to be squeezed into Investment Transactions' stat row (and only shown at all if you happened to hold a position). Moved into a dedicated tab with the full picture: Signals (Final/Math signal, analyst view, quality score), Risk & Volatility (Sharpe plus 1M/3M/1Y/YTD annualized volatility), Price Performance (1D through 3Y and YTD % change), 3-Year Range (high/low and % off each), and Valuation (analyst target, upside %, forward dividend yield) — all pulled from the same signals feed behind Reports → Securities Analysis, so the numbers always match. Shows for any security with signal data, not just ones you currently hold.
+
 ## 2026-07-26
 
 ### Added

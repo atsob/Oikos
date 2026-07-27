@@ -432,6 +432,90 @@ const ALL_TRANSACTIONS_COLS = [
   { field: 'description', headerName: 'Description', flex: 1 },
 ]
 
+// ── Analysis Tab ──────────────────────────────────────────────────────────────
+// Signal-derived metrics (Sharpe, quality, volatility, agent/analyst signals) for
+// this one security, pulled from the same portfolio-signals feed that backs
+// Reports → Securities Analysis. Nothing here is holdings-specific — a security
+// with no position at all can still show analysis, unlike Investment Transactions.
+function signalStyle(sig: unknown): string {
+  if (!sig) return ''
+  const v = String(sig).toUpperCase()
+  if (v.includes('CONVICTION SELL') || v.includes('UNDERPERFORM')) return 'text-red-900'
+  if (v.includes('SELL') || v.includes('CAUTION'))                 return 'text-red-600'
+  if (v.includes('HIGH CONVICTION BUY'))                           return 'text-green-900'
+  if (v.includes('STRONG') || v.includes('CONVICTION BUY'))        return 'text-green-700'
+  if (v.includes('BUY') || v.includes('UPGRADE'))                  return 'text-green-600'
+  if (v.includes('CONTRARIAN'))                                    return 'text-orange-600'
+  return 'text-slate-500'
+}
+function pctColor(v: unknown): string | undefined {
+  return v == null ? undefined : (Number(v) >= 0 ? 'text-green-600' : 'text-red-600')
+}
+function pctVal(v: unknown): string {
+  return v == null ? '—' : `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`
+}
+
+function AnalysisSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-sm font-semibold text-slate-700 mb-2">{title}</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{children}</div>
+    </div>
+  )
+}
+
+function AnalysisTab({ secId }: { secId: number }) {
+  const { data: signalsData = [], isLoading } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
+
+  return (
+    <div className="p-4 space-y-6">
+      <AnalysisSection title="Signals">
+        <StatCard compact label="Final Signal" value={String(signal.final_signal ?? '—')} color={signalStyle(signal.final_signal)} />
+        <StatCard compact label="Math Signal" value={String(signal.recommendation_signal ?? '—')} color={signalStyle(signal.recommendation_signal)} />
+        <StatCard compact label="Analyst View" value={signal.wall_street_view ? String(signal.wall_street_view).replace('_', ' ') : '—'} />
+        <StatCard compact label="Quality Score" value={signal.quality_score != null ? Number(signal.quality_score).toFixed(2) : '—'} />
+      </AnalysisSection>
+
+      <AnalysisSection title="Risk & Volatility">
+        <StatCard compact label="Sharpe Ratio" value={signal.sharpe_ratio != null ? Number(signal.sharpe_ratio).toFixed(2) : '—'}
+          color={signal.sharpe_ratio != null ? (Number(signal.sharpe_ratio) >= 1 ? 'text-green-600' : Number(signal.sharpe_ratio) < 0 ? 'text-red-600' : undefined) : undefined} />
+        <StatCard compact label="Vol (1M, ann.)" value={signal.vol_1m_ann != null ? `${Number(signal.vol_1m_ann).toFixed(2)}%` : '—'} />
+        <StatCard compact label="Vol (3M, ann.)" value={signal.vol_3m_ann != null ? `${Number(signal.vol_3m_ann).toFixed(2)}%` : '—'} />
+        <StatCard compact label="Vol (1Y, ann.)" value={signal.vol_1y_ann != null ? `${Number(signal.vol_1y_ann).toFixed(2)}%` : '—'} />
+        <StatCard compact label="Vol (YTD, ann.)" value={signal.vol_ytd_ann != null ? `${Number(signal.vol_ytd_ann).toFixed(2)}%` : '—'} />
+      </AnalysisSection>
+
+      <AnalysisSection title="Price Performance">
+        <StatCard compact label="1D" value={pctVal(signal.daily_chg_pct)} color={pctColor(signal.daily_chg_pct)} />
+        <StatCard compact label="1W" value={pctVal(signal.weekly_chg_pct)} color={pctColor(signal.weekly_chg_pct)} />
+        <StatCard compact label="1M" value={pctVal(signal.monthly_chg_pct)} color={pctColor(signal.monthly_chg_pct)} />
+        <StatCard compact label="1Q" value={pctVal(signal.quarterly_chg_pct)} color={pctColor(signal.quarterly_chg_pct)} />
+        <StatCard compact label="6M" value={pctVal(signal.semiannual_chg_pct)} color={pctColor(signal.semiannual_chg_pct)} />
+        <StatCard compact label="1Y" value={pctVal(signal.annual_chg_pct)} color={pctColor(signal.annual_chg_pct)} />
+        <StatCard compact label="3Y" value={pctVal(signal.triannual_chg_pct)} color={pctColor(signal.triannual_chg_pct)} />
+        <StatCard compact label="YTD" value={pctVal(signal.ytd_chg_pct)} color={pctColor(signal.ytd_chg_pct)} />
+      </AnalysisSection>
+
+      <AnalysisSection title="3-Year Range">
+        <StatCard compact label="3Y High" value={signal.high_3y != null ? fmt(signal.high_3y, 4) : '—'} />
+        <StatCard compact label="% from High" value={pctVal(signal.pct_from_high_3y)} color={pctColor(signal.pct_from_high_3y)} />
+        <StatCard compact label="3Y Low" value={signal.low_3y != null ? fmt(signal.low_3y, 4) : '—'} />
+        <StatCard compact label="% from Low" value={pctVal(signal.pct_from_low_3y)} color={pctColor(signal.pct_from_low_3y)} />
+      </AnalysisSection>
+
+      <AnalysisSection title="Valuation">
+        <StatCard compact label="Analyst Target" value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'} />
+        <StatCard compact label="Upside %" value={pctVal(signal.upside_pct)} color={pctColor(signal.upside_pct)} />
+        <StatCard compact label="Fwd Dividend Yield" value={signal.fwd_yield_pct != null && Number(signal.fwd_yield_pct) > 0 ? `${Number(signal.fwd_yield_pct).toFixed(2)}%` : '—'} />
+      </AnalysisSection>
+    </div>
+  )
+}
+
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
@@ -446,8 +530,6 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   })
   const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
-  const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
-  const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -575,7 +657,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   return (
     <div className="p-4 space-y-6">
       {/* Stats */}
-      <div className={`grid gap-3 ${signal ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' : 'grid-cols-2 md:grid-cols-4'}`}>
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
         <StatCard compact label="Transactions" value={String(transactions.length)} />
         <StatCard compact label="Total Qty Held" value={fmt(totalQty, 8)} />
         <StatCard
@@ -589,35 +671,6 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
           value={totalValue ? fmt(totalValue, 2) : '—'}
           subs={totalPnl !== 0 ? [{ text: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl, 2)} P&L`, color: totalPnl >= 0 ? 'text-green-600' : 'text-red-600' }] : undefined}
         />
-        {signal && (
-          <>
-            <StatCard
-              compact
-              label="Sharpe Ratio"
-              value={signal.sharpe_ratio != null ? Number(signal.sharpe_ratio).toFixed(2) : '—'}
-              color={signal.sharpe_ratio != null ? (Number(signal.sharpe_ratio) >= 1 ? 'text-green-600' : Number(signal.sharpe_ratio) < 0 ? 'text-red-600' : undefined) : undefined}
-              sub={signal.quality_score != null ? `Quality score ${Number(signal.quality_score).toFixed(2)}` : undefined}
-            />
-            <StatCard
-              compact
-              label="Agent Signal"
-              value={String(signal.final_signal ?? '—')}
-              sub={signal.recommendation_signal ? `Math: ${String(signal.recommendation_signal)}` : undefined}
-            />
-            <StatCard
-              compact
-              label="Analyst Target"
-              value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'}
-              subs={[
-                signal.wall_street_view ? { text: String(signal.wall_street_view).replace('_', ' ') } : null,
-                signal.upside_pct != null ? {
-                  text: `${Number(signal.upside_pct) >= 0 ? '+' : ''}${Number(signal.upside_pct).toFixed(2)}% upside`,
-                  color: Number(signal.upside_pct) >= 0 ? 'text-green-600' : 'text-red-600',
-                } : null,
-              ].filter((s): s is { text: string; color?: string } => s !== null)}
-            />
-          </>
-        )}
       </div>
 
       {/* Holdings by Account */}
@@ -1687,7 +1740,7 @@ function AlertsTab({ secId }: { secId: number }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Setup', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads'] as const
+const TABS = ['Setup', 'Analysis', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -1750,6 +1803,7 @@ export default function SecurityDetail() {
 
             <CardBody className="p-0">
               {tab === 'Setup' && <SecuritySetupTab security={security} />}
+              {tab === 'Analysis' && <AnalysisTab secId={secId} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}
               {tab === 'Investment Transactions' && <InvestmentTransactionsTab secId={secId} />}
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}
