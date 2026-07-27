@@ -3220,18 +3220,11 @@ function InvPerformanceSection() {
 // ════════════════════════════════════════════════════════════════════════════
 function PriceChangesTab() {
   const { data = [], isLoading } = useQuery({ queryKey: ['price-changes'], queryFn: getPriceChanges })
-  const [sortKey, setSortKey] = useState<string>('value_eur')
-  const [sortAsc, setSortAsc] = useState(false)
+  const { sorted: rows, sortKey: pcSK, sortDir: pcSD, toggleSort: pcSort } = useSortTablePersisted(data as Row[], 'price-changes-sort', 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const rows = (data as Row[]).slice().sort((a, b) => {
-    const av = Number(a[sortKey] ?? 0); const bv = Number(b[sortKey] ?? 0)
-    return sortAsc ? av - bv : bv - av
-  })
-  const col = (key: string, label: string, align = 'right') => (
-    <th className={`px-2 py-1.5 border-b border-slate-200 font-semibold cursor-pointer select-none text-${align} hover:bg-slate-100`}
-      onClick={() => { if (sortKey === key) setSortAsc(!sortAsc); else { setSortKey(key); setSortAsc(false) } }}>
-      {label}{sortKey === key ? (sortAsc ? ' ↑' : ' ↓') : ''}
-    </th>
+  const col = (key: string, label: string, align: 'left' | 'right' = 'right') => (
+    <ColHeader label={label} sortKey={key} currentKey={pcSK} currentDir={pcSD} onSort={pcSort} align={align}
+      className="px-2 py-1.5 border-b border-slate-200 hover:bg-slate-100" />
   )
   return (
     <WithCopy>
