@@ -3551,7 +3551,7 @@ function PortfolioActionSignalsTab() {
     return true
   })
 
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = usePersist('sig_search', '')
   const searchFiltered = search.trim()
     ? filtered.filter(r => String(r.securities_name).toLowerCase().includes(search.trim().toLowerCase()))
     : filtered
