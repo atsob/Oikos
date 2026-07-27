@@ -455,13 +455,13 @@ function pctVal(v: unknown): string {
   return v == null ? '—' : `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`
 }
 
-// A denser stat chip than the shared StatCard — the Analysis tab packs ~24
-// figures across 5 sections and needs to fit one screen without scrolling.
+// Sized generously — cols (below) already keeps each section to one row, so
+// there's no need to shrink the cards themselves to fit one screen.
 function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="bg-white rounded-lg border border-slate-200 px-2 py-1.5 text-center">
-      <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide leading-tight">{label}</p>
-      <p className={`text-sm font-bold mt-0.5 ${color ?? 'text-slate-900'}`}>{value}</p>
+    <div className="bg-white rounded-lg border border-slate-200 px-3 py-3 text-center">
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide leading-tight">{label}</p>
+      <p className={`text-xl font-bold mt-1 ${color ?? 'text-slate-900'}`}>{value}</p>
     </div>
   )
 }
@@ -471,8 +471,8 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 function AnalysisSection({ title, cols, children }: { title: string; cols: number; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{title}</p>
-      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>{children}</div>
+      <p className="text-sm font-semibold text-slate-700 mb-2">{title}</p>
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>{children}</div>
     </div>
   )
 }
@@ -485,7 +485,7 @@ function AnalysisTab({ secId }: { secId: number }) {
   if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
 
   return (
-    <div className="p-3 space-y-3">
+    <div className="p-4 space-y-4">
       <AnalysisSection title="Signals" cols={4}>
         <MiniStat label="Final Signal" value={String(signal.final_signal ?? '—')} color={signalStyle(signal.final_signal)} />
         <MiniStat label="Math Signal" value={String(signal.recommendation_signal ?? '—')} color={signalStyle(signal.recommendation_signal)} />
