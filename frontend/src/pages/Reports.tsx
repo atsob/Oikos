@@ -243,8 +243,10 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
   return (
     <div className="space-y-4">
       {/* Net Worth gets extra width as the "hero" card; the rest stay compact so all
-          five fit on one line instead of wrapping. */}
-      <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
+          six fit on one line instead of wrapping. Liabilities is shown as its own card
+          (balances are stored negative) so the cards visually reconcile to Net Worth
+          instead of the four asset cards alone summing to more than it. */}
+      <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_1fr] gap-3">
         <KpiCard label="Net Worth" value={fmtEur(netWorth)} color={netWorth >= 0 ? 'text-blue-700' : 'text-red-600'}
           tooltip={basePeriod ? `Change since ${fmtPeriodHeader(basePeriod, grouping)}, and that rate of change annualised.` : undefined}
           subtitleNode={delta != null ? (
@@ -256,6 +258,7 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
             </span>
           ) : undefined} />
         {NW_ASSET_GROUPS.map(g => <KpiCard key={g} label={g} value={fmtEur(latest[g] ?? 0)} compact />)}
+        <KpiCard label="Liabilities" value={fmtEur(totalLiab)} color={totalLiab < 0 ? 'text-red-600' : ''} compact />
       </div>
       <Plot
         data={[
