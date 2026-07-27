@@ -525,6 +525,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           security. Shows for any security with signal data, even one you don't currently hold.
         </Note>
         <Note>
+          Investment Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
+          ever been sold — the same all-time figure as Reports → Inv. Performance → P&amp;L, summed across every
+          account. The % is against total capital ever invested in the position, not the cost basis of the shares
+          actually sold (the app doesn't track that separately once a lot is closed).
+        </Note>
+        <Note>
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,
           pre-scoped to that security — adding one here skips picking it from a dropdown. Allocation-drift
           alerts (tied to an asset type, not one security) only show up on the Market Data page.

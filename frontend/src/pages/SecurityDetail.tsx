@@ -10,7 +10,7 @@ import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy, ArrowLeftRight 
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu,
 } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
@@ -22,7 +22,7 @@ import {
   downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
-  getAccounts, getPortfolioSignals,
+  getAccounts, getPortfolioSignals, getPnl,
   getNews, markNewsRead,
   getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert,
 } from '@/lib/api'
@@ -455,11 +455,24 @@ function pctVal(v: unknown): string {
   return v == null ? '—' : `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`
 }
 
-function AnalysisSection({ title, children }: { title: string; children: React.ReactNode }) {
+// A denser stat chip than the shared StatCard — the Analysis tab packs ~24
+// figures across 5 sections and needs to fit one screen without scrolling.
+function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 px-2 py-1.5 text-center">
+      <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wide leading-tight">{label}</p>
+      <p className={`text-sm font-bold mt-0.5 ${color ?? 'text-slate-900'}`}>{value}</p>
+    </div>
+  )
+}
+
+// cols sizes each section to fit on one row (rather than the fixed 2/4-column
+// wrap StatCard grids use) so 5 sections stack into one screen's height.
+function AnalysisSection({ title, cols, children }: { title: string; cols: number; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-sm font-semibold text-slate-700 mb-2">{title}</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{children}</div>
+      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{title}</p>
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>{children}</div>
     </div>
   )
 }
@@ -472,45 +485,45 @@ function AnalysisTab({ secId }: { secId: number }) {
   if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
 
   return (
-    <div className="p-4 space-y-6">
-      <AnalysisSection title="Signals">
-        <StatCard compact label="Final Signal" value={String(signal.final_signal ?? '—')} color={signalStyle(signal.final_signal)} />
-        <StatCard compact label="Math Signal" value={String(signal.recommendation_signal ?? '—')} color={signalStyle(signal.recommendation_signal)} />
-        <StatCard compact label="Analyst View" value={signal.wall_street_view ? String(signal.wall_street_view).replace('_', ' ') : '—'} />
-        <StatCard compact label="Quality Score" value={signal.quality_score != null ? Number(signal.quality_score).toFixed(2) : '—'} />
+    <div className="p-3 space-y-3">
+      <AnalysisSection title="Signals" cols={4}>
+        <MiniStat label="Final Signal" value={String(signal.final_signal ?? '—')} color={signalStyle(signal.final_signal)} />
+        <MiniStat label="Math Signal" value={String(signal.recommendation_signal ?? '—')} color={signalStyle(signal.recommendation_signal)} />
+        <MiniStat label="Analyst View" value={signal.wall_street_view ? String(signal.wall_street_view).replace('_', ' ') : '—'} />
+        <MiniStat label="Quality Score" value={signal.quality_score != null ? Number(signal.quality_score).toFixed(2) : '—'} />
       </AnalysisSection>
 
-      <AnalysisSection title="Risk & Volatility">
-        <StatCard compact label="Sharpe Ratio" value={signal.sharpe_ratio != null ? Number(signal.sharpe_ratio).toFixed(2) : '—'}
+      <AnalysisSection title="Risk & Volatility" cols={5}>
+        <MiniStat label="Sharpe Ratio" value={signal.sharpe_ratio != null ? Number(signal.sharpe_ratio).toFixed(2) : '—'}
           color={signal.sharpe_ratio != null ? (Number(signal.sharpe_ratio) >= 1 ? 'text-green-600' : Number(signal.sharpe_ratio) < 0 ? 'text-red-600' : undefined) : undefined} />
-        <StatCard compact label="Vol (1M, ann.)" value={signal.vol_1m_ann != null ? `${Number(signal.vol_1m_ann).toFixed(2)}%` : '—'} />
-        <StatCard compact label="Vol (3M, ann.)" value={signal.vol_3m_ann != null ? `${Number(signal.vol_3m_ann).toFixed(2)}%` : '—'} />
-        <StatCard compact label="Vol (1Y, ann.)" value={signal.vol_1y_ann != null ? `${Number(signal.vol_1y_ann).toFixed(2)}%` : '—'} />
-        <StatCard compact label="Vol (YTD, ann.)" value={signal.vol_ytd_ann != null ? `${Number(signal.vol_ytd_ann).toFixed(2)}%` : '—'} />
+        <MiniStat label="Vol (1M, ann.)" value={signal.vol_1m_ann != null ? `${Number(signal.vol_1m_ann).toFixed(2)}%` : '—'} />
+        <MiniStat label="Vol (3M, ann.)" value={signal.vol_3m_ann != null ? `${Number(signal.vol_3m_ann).toFixed(2)}%` : '—'} />
+        <MiniStat label="Vol (1Y, ann.)" value={signal.vol_1y_ann != null ? `${Number(signal.vol_1y_ann).toFixed(2)}%` : '—'} />
+        <MiniStat label="Vol (YTD, ann.)" value={signal.vol_ytd_ann != null ? `${Number(signal.vol_ytd_ann).toFixed(2)}%` : '—'} />
       </AnalysisSection>
 
-      <AnalysisSection title="Price Performance">
-        <StatCard compact label="1D" value={pctVal(signal.daily_chg_pct)} color={pctColor(signal.daily_chg_pct)} />
-        <StatCard compact label="1W" value={pctVal(signal.weekly_chg_pct)} color={pctColor(signal.weekly_chg_pct)} />
-        <StatCard compact label="1M" value={pctVal(signal.monthly_chg_pct)} color={pctColor(signal.monthly_chg_pct)} />
-        <StatCard compact label="1Q" value={pctVal(signal.quarterly_chg_pct)} color={pctColor(signal.quarterly_chg_pct)} />
-        <StatCard compact label="6M" value={pctVal(signal.semiannual_chg_pct)} color={pctColor(signal.semiannual_chg_pct)} />
-        <StatCard compact label="1Y" value={pctVal(signal.annual_chg_pct)} color={pctColor(signal.annual_chg_pct)} />
-        <StatCard compact label="3Y" value={pctVal(signal.triannual_chg_pct)} color={pctColor(signal.triannual_chg_pct)} />
-        <StatCard compact label="YTD" value={pctVal(signal.ytd_chg_pct)} color={pctColor(signal.ytd_chg_pct)} />
+      <AnalysisSection title="Price Performance" cols={8}>
+        <MiniStat label="1D" value={pctVal(signal.daily_chg_pct)} color={pctColor(signal.daily_chg_pct)} />
+        <MiniStat label="1W" value={pctVal(signal.weekly_chg_pct)} color={pctColor(signal.weekly_chg_pct)} />
+        <MiniStat label="1M" value={pctVal(signal.monthly_chg_pct)} color={pctColor(signal.monthly_chg_pct)} />
+        <MiniStat label="1Q" value={pctVal(signal.quarterly_chg_pct)} color={pctColor(signal.quarterly_chg_pct)} />
+        <MiniStat label="6M" value={pctVal(signal.semiannual_chg_pct)} color={pctColor(signal.semiannual_chg_pct)} />
+        <MiniStat label="1Y" value={pctVal(signal.annual_chg_pct)} color={pctColor(signal.annual_chg_pct)} />
+        <MiniStat label="3Y" value={pctVal(signal.triannual_chg_pct)} color={pctColor(signal.triannual_chg_pct)} />
+        <MiniStat label="YTD" value={pctVal(signal.ytd_chg_pct)} color={pctColor(signal.ytd_chg_pct)} />
       </AnalysisSection>
 
-      <AnalysisSection title="3-Year Range">
-        <StatCard compact label="3Y High" value={signal.high_3y != null ? fmt(signal.high_3y, 4) : '—'} />
-        <StatCard compact label="% from High" value={pctVal(signal.pct_from_high_3y)} color={pctColor(signal.pct_from_high_3y)} />
-        <StatCard compact label="3Y Low" value={signal.low_3y != null ? fmt(signal.low_3y, 4) : '—'} />
-        <StatCard compact label="% from Low" value={pctVal(signal.pct_from_low_3y)} color={pctColor(signal.pct_from_low_3y)} />
+      <AnalysisSection title="3-Year Range" cols={4}>
+        <MiniStat label="3Y High" value={signal.high_3y != null ? fmt(signal.high_3y, 4) : '—'} />
+        <MiniStat label="% from High" value={pctVal(signal.pct_from_high_3y)} color={pctColor(signal.pct_from_high_3y)} />
+        <MiniStat label="3Y Low" value={signal.low_3y != null ? fmt(signal.low_3y, 4) : '—'} />
+        <MiniStat label="% from Low" value={pctVal(signal.pct_from_low_3y)} color={pctColor(signal.pct_from_low_3y)} />
       </AnalysisSection>
 
-      <AnalysisSection title="Valuation">
-        <StatCard compact label="Analyst Target" value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'} />
-        <StatCard compact label="Upside %" value={pctVal(signal.upside_pct)} color={pctColor(signal.upside_pct)} />
-        <StatCard compact label="Fwd Dividend Yield" value={signal.fwd_yield_pct != null && Number(signal.fwd_yield_pct) > 0 ? `${Number(signal.fwd_yield_pct).toFixed(2)}%` : '—'} />
+      <AnalysisSection title="Valuation" cols={3}>
+        <MiniStat label="Analyst Target" value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'} />
+        <MiniStat label="Upside %" value={pctVal(signal.upside_pct)} color={pctColor(signal.upside_pct)} />
+        <MiniStat label="Fwd Dividend Yield" value={signal.fwd_yield_pct != null && Number(signal.fwd_yield_pct) > 0 ? `${Number(signal.fwd_yield_pct).toFixed(2)}%` : '—'} />
       </AnalysisSection>
     </div>
   )
@@ -530,6 +543,14 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   })
   const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  // All-time realized gain/loss, same FIFO-based figure as Reports → Inv. Performance → P&L,
+  // just summed across every account this security has ever been held in.
+  const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
+  const secPnlRows = (pnlData as Record<string, unknown>[]).filter(r => Number(r.securities_id) === secId)
+  const hasRealized = secPnlRows.length > 0
+  const realizedPnl = secPnlRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
+  const grossInvested = secPnlRows.reduce((s, r) => s + Number(r.gross_invested_all_time_eur ?? 0), 0)
+  const realizedPct = grossInvested > 0 ? (realizedPnl / grossInvested) * 100 : null
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -657,7 +678,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   return (
     <div className="p-4 space-y-6">
       {/* Stats */}
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+      <div className={`grid gap-3 ${hasRealized ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 md:grid-cols-4'}`}>
         <StatCard compact label="Transactions" value={String(transactions.length)} />
         <StatCard compact label="Total Qty Held" value={fmt(totalQty, 8)} />
         <StatCard
@@ -671,6 +692,15 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
           value={totalValue ? fmt(totalValue, 2) : '—'}
           subs={totalPnl !== 0 ? [{ text: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl, 2)} P&L`, color: totalPnl >= 0 ? 'text-green-600' : 'text-red-600' }] : undefined}
         />
+        {hasRealized && (
+          <StatCard
+            compact
+            label="Realized Gain/Loss"
+            value={fmtEur(realizedPnl)}
+            color={realizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}
+            sub={realizedPct != null ? `${realizedPct >= 0 ? '+' : ''}${realizedPct.toFixed(2)}% of invested` : undefined}
+          />
+        )}
       </div>
 
       {/* Holdings by Account */}
