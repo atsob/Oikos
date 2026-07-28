@@ -2692,22 +2692,30 @@ def get_net_worth_by_account(
     eff_end = f"LEAST('{end_date}'::date, CURRENT_DATE)"
     query = f"""
     WITH
-    period_dates AS (
-        -- is_baseline marks a row added purely so the "change since start_date" KPI has a
-        -- consistent real-date anchor regardless of grouping (a bucket's end date otherwise
-        -- lands a full grouping-interval after start_date — a year later for Year grouping,
-        -- only a month later for Month — so each grouping silently measured "change" from a
-        -- different date). It's excluded from the chart/table periods client-side so it never
-        -- shows up as a spurious extra bar/column, including when it lands in the same
-        -- calendar bucket as the first real one (e.g. Month grouping with a 1st-of-month start).
-        SELECT (gs - INTERVAL '1 day')::date AS period_end, FALSE AS is_baseline
+    -- Just the "natural" bucket-end dates (unchanged from before the Start Date baseline
+    -- feature) — used below to tell a genuine display bucket apart from period_dates' extra
+    -- start_date-only row.
+    natural_periods AS (
+        SELECT (gs - INTERVAL '1 day')::date AS period_end
         FROM generate_series(
             date_trunc('{trunc_unit}', '{start_date}'::date) + '{pg_interval}'::interval,
             date_trunc('{trunc_unit}', {eff_end}),
             '{pg_interval}'::interval
         ) gs
-        UNION SELECT {eff_end}, FALSE
-        UNION SELECT '{start_date}'::date, TRUE ORDER BY 1
+        UNION SELECT {eff_end}
+    ),
+    period_dates AS (
+        -- Also includes the exact start_date as its own period (not just bucket-end dates), so
+        -- the earliest period is the same real anchor point regardless of grouping — without
+        -- this, Year grouping's first bucket lands ~1 year after start_date while Month's lands
+        -- only ~1 month after it, making the "change since start_date" KPI silently measure
+        -- from a different date per grouping. A plain single-column UNION so that when
+        -- start_date already falls exactly on a bucket-end date (e.g. 2020-12-31 with Year
+        -- grouping), it collapses back to one row rather than two identical-period_end rows —
+        -- two rows here would make every downstream `(SELECT fx_rate FROM daily_fx WHERE
+        -- period_end=... )` scalar subquery return more than one row and error out.
+        SELECT period_end FROM natural_periods
+        UNION SELECT '{start_date}'::date ORDER BY 1
     ),
     daily_fx AS (
         SELECT p.period_end, cur.Currencies_Id,
@@ -2715,7 +2723,7 @@ def get_net_worth_by_account(
         FROM period_dates p CROSS JOIN Currencies cur WHERE cur.Currencies_ShortName != 'EUR'
     ),
     cash_bal AS (
-        SELECT p.period_end, p.is_baseline, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             CASE WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
                  THEN GREATEST(0, a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0))
                  ELSE a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end),0)
@@ -2726,7 +2734,7 @@ def get_net_worth_by_account(
     inv_universe AS (SELECT DISTINCT Securities_Id, Accounts_Id FROM Investments WHERE Action IN ('Buy','Reinvest','ShrIn','Sell','ShrOut')),
     inv_accounts AS (SELECT DISTINCT Accounts_Id FROM inv_universe),
     inv_bal AS (
-        SELECT p.period_end, p.is_baseline, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             SUM(GREATEST(COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
                 FROM Investments i2 WHERE i2.Securities_Id=iu.Securities_Id AND i2.Accounts_Id=iu.Accounts_Id AND i2.Date<=p.period_end
@@ -2736,10 +2744,10 @@ def get_net_worth_by_account(
         JOIN Accounts a ON iu.Accounts_Id=a.Accounts_Id
         JOIN Securities s ON iu.Securities_Id=s.Securities_Id
         WHERE a.Accounts_Type IN ('Brokerage','Margin','Pension','Other Investment')
-        GROUP BY p.period_end, p.is_baseline, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active
+        GROUP BY p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active
     ),
     pension_bal AS (
-        SELECT p.period_end, p.is_baseline, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
+        SELECT p.period_end, a.Accounts_Id, a.Accounts_Name, a.Accounts_Type, a.Is_Active,
             GREATEST(0, a.Accounts_Balance - COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur WHEN Action='CashOut' THEN -Total_Amount_AccCur ELSE 0 END)
                 FROM Investments WHERE Accounts_Id=a.Accounts_Id AND Date>p.period_end
@@ -2748,7 +2756,10 @@ def get_net_worth_by_account(
         WHERE a.Accounts_Type IN ('Pension','Other Investment')
           AND a.Accounts_Id NOT IN (SELECT Accounts_Id FROM inv_accounts)
     )
-    SELECT period_end::text AS period, is_baseline, accounts_id, accounts_name, accounts_type, is_active,
+    SELECT period_end::text AS period,
+           (period_end = '{start_date}'::date) AS is_baseline,
+           EXISTS(SELECT 1 FROM natural_periods np WHERE np.period_end = combined.period_end) AS is_display_period,
+           accounts_id, accounts_name, accounts_type, is_active,
            ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur
     FROM (SELECT * FROM cash_bal UNION ALL SELECT * FROM inv_bal UNION ALL SELECT * FROM pension_bal) combined
     WHERE balance_eur IS NOT NULL

@@ -532,9 +532,11 @@ function NetWorthSection() {
     queryFn: () => getNetWorthByAccount(effStart, effEnd, effGrouping),
   })
   // is_baseline rows are a dedicated "as of Start Date" data point used only for the Overview
-  // KPI's delta calc — kept out of allRows/allPeriods entirely so they never appear as a
-  // spurious extra bar/column in the chart or the other tabs' period tables.
-  const allRows = useMemo(() => (rawData as Row[]).filter(r => !r.is_baseline), [rawData])
+  // KPI's delta calc. is_display_period marks the genuine chart/table buckets — usually the
+  // complement of is_baseline, but when Start Date falls exactly on a bucket boundary (e.g.
+  // Year grouping with a Dec 31 start) the backend returns ONE row that's both, so it's
+  // filtered independently here rather than assuming the two are mutually exclusive.
+  const allRows = useMemo(() => (rawData as Row[]).filter(r => r.is_display_period), [rawData])
   const baselineRowsRaw = useMemo(() => (rawData as Row[]).filter(r => r.is_baseline), [rawData])
 
   const accountMeta = useMemo(() => {
