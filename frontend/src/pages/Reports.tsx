@@ -209,7 +209,7 @@ function fmtPeriodHeader(p: string, grouping: string) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
 }
 
-function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: string[]; grouping: string }) {
+function NwOverview({ rows, baselineRows, allPeriods, grouping }: { rows: Row[]; baselineRows: Row[]; allPeriods: string[]; grouping: string }) {
   const { isDark } = useTheme()
   const byPeriod: Record<string, Record<string, number>> = {}
   for (const r of rows) {
@@ -223,12 +223,20 @@ function NwOverview({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: s
   const netWorth = totalAssets + totalLiab
   const xs = allPeriods.map(p => fmtPeriodLabel(p, grouping))
 
-  // The comparison baseline is always the first period of the selected reporting range
-  // (Start Date), so the KPI reflects the whole range rather than just the last bucket.
-  const basePeriod = allPeriods.length ? allPeriods[0] : null
-  const baseNetWorth = basePeriod != null
-    ? NW_ASSET_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0) + NW_LIAB_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0)
-    : null
+  // The comparison baseline is the exact Start Date (a dedicated data point the backend
+  // always includes, kept out of `rows`/`allPeriods` so it never becomes a spurious chart
+  // bar) — not allPeriods[0], since a bucket's end date lands a full grouping-interval after
+  // Start Date, which used to make the KPI's "change since Start Date" figure disagree
+  // depending on the Year/Quarter/Month toggle.
+  const baseByGroup: Record<string, number> = {}
+  for (const r of baselineRows) {
+    const g = nwGroup(String(r.accounts_type))
+    baseByGroup[g] = (baseByGroup[g] ?? 0) + Number(r.balance_eur ?? 0)
+  }
+  const basePeriod = baselineRows.length ? String(baselineRows[0].period) : (allPeriods.length ? allPeriods[0] : null)
+  const baseNetWorth = baselineRows.length
+    ? NW_ASSET_GROUPS.reduce((s, g) => s + (baseByGroup[g] ?? 0), 0) + NW_LIAB_GROUPS.reduce((s, g) => s + (baseByGroup[g] ?? 0), 0)
+    : (basePeriod != null ? NW_ASSET_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0) + NW_LIAB_GROUPS.reduce((s, g) => s + (byPeriod[basePeriod]?.[g] ?? 0), 0) : null)
   const delta = baseNetWorth != null ? netWorth - baseNetWorth : null
   const pctChange = delta != null && baseNetWorth ? (delta / Math.abs(baseNetWorth)) * 100 : null
   // Periods are actual dates, and the range can span anywhere from a few weeks to decades,
@@ -523,7 +531,11 @@ function NetWorthSection() {
     queryKey: ['nw-by-account', effStart, effEnd, effGrouping],
     queryFn: () => getNetWorthByAccount(effStart, effEnd, effGrouping),
   })
-  const allRows = rawData as Row[]
+  // is_baseline rows are a dedicated "as of Start Date" data point used only for the Overview
+  // KPI's delta calc — kept out of allRows/allPeriods entirely so they never appear as a
+  // spurious extra bar/column in the chart or the other tabs' period tables.
+  const allRows = useMemo(() => (rawData as Row[]).filter(r => !r.is_baseline), [rawData])
+  const baselineRowsRaw = useMemo(() => (rawData as Row[]).filter(r => r.is_baseline), [rawData])
 
   const accountMeta = useMemo(() => {
     const m: Record<string, string> = {}
@@ -554,6 +566,20 @@ function NetWorthSection() {
       const n = String(r.accounts_name)
       return isIncluded(r) && (showZeroBalance || !isZero(n)) && (showInactive || accountActive[n] !== false)
     }), [allRows, isIncluded, showZeroBalance, showInactive, accountActive])
+
+  // Preset and active/inactive filters apply here too, but deliberately NOT the zero-balance
+  // one: isZero() classifies an account by summing its balance across allRows' sampled dates,
+  // which differ by grouping (Year sampling only checks each Dec 31, Quarter checks every
+  // quarter-end, etc.) — so the same account could be "zero" under one grouping's sample and
+  // not under another's, silently changing which accounts count toward the KPI's Start Date
+  // baseline depending on the Year/Quarter/Month toggle. The zero filter's actual job (hiding
+  // uninteresting rows from the chart/table) doesn't apply here anyway since baseline rows are
+  // never rendered as their own row — only summed into one KPI number.
+  const filteredBaselineRows = useMemo(() =>
+    baselineRowsRaw.filter(r => {
+      const n = String(r.accounts_name)
+      return isIncluded(r) && (showInactive || accountActive[n] !== false)
+    }), [baselineRowsRaw, isIncluded, showInactive, accountActive])
 
   const hiddenZeroCount = useMemo(() =>
     allRows.filter((r, i, arr) => arr.findIndex(x => x.accounts_name === r.accounts_name) === i)
@@ -615,7 +641,7 @@ function NetWorthSection() {
       {isLoading
         ? <div className="flex justify-center py-12"><Spinner /></div>
         : <>
-            {tab === 'Overview'          && <NwOverview rows={filteredRows} allPeriods={allPeriods} grouping={effGrouping} />}
+            {tab === 'Overview'          && <NwOverview rows={filteredRows} baselineRows={filteredBaselineRows} allPeriods={allPeriods} grouping={effGrouping} />}
             {tab === 'Account Balances'  && <NwAccountBalances rows={filteredRows} allPeriods={allPeriods} accountMeta={Object.fromEntries(Object.entries(accountMeta).filter(([n]) => filteredRows.some(r => String(r.accounts_name) === n)))} grouping={effGrouping} />}
             {tab === 'Summary per Type'  && <NwSummaryByType rows={filteredRows} allPeriods={allPeriods} grouping={effGrouping} />}
             {tab === 'Detail Analysis'   && <NwDetailAnalysis rows={filteredRows} allPeriods={allPeriods} accountMeta={accountMeta} grouping={effGrouping} />}
