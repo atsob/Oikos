@@ -200,10 +200,12 @@ def _run_startup_migrations():
         "ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Report_Scope VARCHAR(32) NOT NULL DEFAULT 'inv_performance'",
         "ALTER TABLE Portfolio_Presets DROP CONSTRAINT IF EXISTS portfolio_presets_preset_name_key",
         # Postgres has no ADD CONSTRAINT IF NOT EXISTS — wrap in a DO block so this doesn't
-        # log a "constraint already exists" warning on every single startup/reload.
+        # log a warning on every single startup/reload once already applied. A UNIQUE
+        # constraint creates a backing index, so re-adding it raises duplicate_table
+        # ("relation ... already exists", 42P07) rather than duplicate_object.
         """DO $$ BEGIN
                ALTER TABLE Portfolio_Presets ADD CONSTRAINT portfolio_presets_scope_name_unique UNIQUE (Report_Scope, Preset_Name);
-           EXCEPTION WHEN duplicate_object THEN NULL;
+           EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
            END $$""",
     ]
     try:
