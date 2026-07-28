@@ -199,7 +199,12 @@ def _run_startup_migrations():
         # instead of one global Preset_Name namespace.
         "ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Report_Scope VARCHAR(32) NOT NULL DEFAULT 'inv_performance'",
         "ALTER TABLE Portfolio_Presets DROP CONSTRAINT IF EXISTS portfolio_presets_preset_name_key",
-        "ALTER TABLE Portfolio_Presets ADD CONSTRAINT portfolio_presets_scope_name_unique UNIQUE (Report_Scope, Preset_Name)",
+        # Postgres has no ADD CONSTRAINT IF NOT EXISTS — wrap in a DO block so this doesn't
+        # log a "constraint already exists" warning on every single startup/reload.
+        """DO $$ BEGIN
+               ALTER TABLE Portfolio_Presets ADD CONSTRAINT portfolio_presets_scope_name_unique UNIQUE (Report_Scope, Preset_Name);
+           EXCEPTION WHEN duplicate_object THEN NULL;
+           END $$""",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)
