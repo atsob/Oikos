@@ -2693,13 +2693,19 @@ def get_net_worth_by_account(
     query = f"""
     WITH
     period_dates AS (
+        -- Also includes the exact start_date as its own period (not just bucket-end dates), so
+        -- the earliest period is the same real anchor point regardless of grouping — without
+        -- this, Year grouping's first bucket lands ~1 year after start_date while Month's lands
+        -- only ~1 month after it, making the "change since start_date" KPI (which uses the
+        -- earliest period as its baseline) silently measure from a different date per grouping.
         SELECT (gs - INTERVAL '1 day')::date AS period_end
         FROM generate_series(
             date_trunc('{trunc_unit}', '{start_date}'::date) + '{pg_interval}'::interval,
             date_trunc('{trunc_unit}', {eff_end}),
             '{pg_interval}'::interval
         ) gs
-        UNION SELECT {eff_end} ORDER BY 1
+        UNION SELECT {eff_end}
+        UNION SELECT '{start_date}'::date ORDER BY 1
     ),
     daily_fx AS (
         SELECT p.period_end, cur.Currencies_Id,
