@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-29
+
+### Added
+- **Reports → Inv. Performance → Performance's Top 15 Gainers/Losers security names now link to Security Detail** — previously plain text, clicking one now navigates straight to that security's page, matching every other securities table in the app. Fixed in passing: the by-security aggregation those tables are built from was dropping `securities_id` entirely, which is why the link couldn't be wired up directly onto the existing name cell.
+- **Dashboard's triggered-alerts panel is now clickable through to Security Detail** — Price Alerts, Signal Changes, and Bond Maturity/Coupon and Dividend Payment alerts all navigate to the relevant security when clicked. Allocation Drift alerts, which aren't tied to a single security, stay non-clickable. A Signal Change's **Dismiss** button still works independently and no longer also triggers navigation.
+
+### Fixed
+- **Reports → Net Worth could 500 when Start Date landed exactly on a bucket boundary** (e.g. Dec 31, which is simultaneously a year/quarter/month end) — follow-up to yesterday's baseline fix, which tagged the injected Start-Date row via a second unioned branch and could produce two rows sharing the same date, breaking a downstream FX-rate lookup that expected exactly one match. Restructured so the date list stays a single deduplicated set and the baseline/display-period flags are computed afterward instead — this also fixes a related case the previous fix got wrong, where a Start Date that coincides with a real bucket is now correctly both charted and used as the KPI baseline, rather than being excluded from the chart for being the baseline.
+
 ## 2026-07-28
 
 ### Added

@@ -2375,15 +2375,17 @@ function PerformanceTab() {
 
   const bySec = useMemo(() => {
     const agg: Record<string, Record<string, number>> = {}
+    const secId: Record<string, unknown> = {}
     const sumCols = ['current_value_eur', 'gross_invested_all_time_eur', 'pnl_net_all_time_eur',
       'unrealized_pnl_eur', 'realized_pnl_eur', 'pnl_dtd_eur', 'pnl_ytd_eur', 'pnl_qtd_eur', 'pnl_mtd_eur', 'pnl_wtd_eur']
     for (const r of rows) {
       const name = String(r.securities_name)
       if (!agg[name]) agg[name] = {}
+      if (secId[name] == null) secId[name] = r.securities_id
       for (const c of sumCols) agg[name][c] = (agg[name][c] ?? 0) + Number(r[c] ?? 0)
     }
-    const list: (Record<string, number> & { securities_name: string })[] =
-      Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name }) as Record<string, number> & { securities_name: string })
+    const list: (Record<string, number> & { securities_name: string; securities_id: unknown })[] =
+      Object.entries(agg).map(([name, vals]) => ({ ...vals, securities_name: name, securities_id: secId[name] }) as Record<string, number> & { securities_name: string; securities_id: unknown })
     for (const v of list) {
       const inv = v.gross_invested_all_time_eur
       if (inv) {
@@ -2429,7 +2431,7 @@ function PerformanceTab() {
   const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
     <tr className="hover:bg-slate-50">
       {rank != null && <td className="px-3 py-2 text-slate-400">{rank}</td>}
-      <td className="px-3 py-2 font-medium text-blue-700">{String(v.securities_name)}</td>
+      <td className="px-3 py-2 font-medium text-blue-700"><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
       {viewPct ? (
         <>
           <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>

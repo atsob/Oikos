@@ -6188,6 +6188,8 @@ def check_triggered_alerts() -> list:
                         'message': (f"🔔 **Price Alert** — {name} is at "
                                     f"**{cur_px:,.4f}**, above your threshold "
                                     f"of {thr:,.4f}.{suffix}"),
+                        'securities_id': sid,
+                        'type': 'price_alert',
                     })
                 elif row['alert_type'] == 'price_below' and cur_px < thr:
                     results.append({
@@ -6195,6 +6197,8 @@ def check_triggered_alerts() -> list:
                         'message': (f"🔻 **Price Alert** — {name} is at "
                                     f"**{cur_px:,.4f}**, below your threshold "
                                     f"of {thr:,.4f}.{suffix}"),
+                        'securities_id': sid,
+                        'type': 'price_alert',
                     })
 
         # ── allocation drift alerts ───────────────────────────────────────────

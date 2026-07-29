@@ -107,6 +107,7 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
 
 function SecuritiesAlertsPanel() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { data: alerts = [] } = useQuery({
     queryKey: ['triggered-alerts'],
     queryFn: getAlerts,
@@ -142,15 +143,19 @@ function SecuritiesAlertsPanel() {
         <CardBody className="pt-0 space-y-2">
           {(alerts as Record<string, unknown>[]).map((a, i) => {
             const level = String(a.level ?? 'info')
-            const isSignal = a.type === 'signal_change' && a.securities_id != null
+            const secId = a.securities_id != null ? Number(a.securities_id) : null
+            const isSignal = a.type === 'signal_change' && secId != null
             return (
-              <div key={i} className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)}`}>
+              <div key={i}
+                className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${secId != null ? 'cursor-pointer hover:brightness-95' : ''}`}
+                onClick={secId != null ? () => navigate(`/securities/${secId}`) : undefined}
+                title={secId != null ? 'View security details' : undefined}>
                 {levelIcon(level)}
                 <p className="text-sm text-slate-700 flex-1">{String(a.message ?? '')}</p>
                 {isSignal && (
                   <button
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={() => ackMut.mutate(Number(a.securities_id))}
+                    onClick={(e) => { e.stopPropagation(); ackMut.mutate(secId!) }}
                     title="Dismiss this notification">
                     Dismiss
                   </button>

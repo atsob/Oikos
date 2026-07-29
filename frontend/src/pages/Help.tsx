@@ -162,6 +162,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           by default).
         </P>
         <Note>
+          Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
+          Maturity/Coupon</b>, <b>Dividend Payment</b> — is clickable through to that security's Security Detail
+          page. <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal
+          Change's <b>Dismiss</b> button still works on its own without triggering navigation.
+        </Note>
+        <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
           click any row to open it directly in the transaction editor and fix it. New transactions can't be
           saved without a category anymore (see Cash Register), so this is mainly for cleaning up ones that
@@ -444,6 +450,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and money-weighted
           return).
         </P>
+        <Note>
+          In the Performance tab, security names in the <b>Top 15 Gainers/Losers</b> tables link to that
+          security's Security Detail page, same as every other securities table in the app.
+        </Note>
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
           account and security level, available for every window (D/W/M/Q/YTD/All), shown to two decimal places.
