@@ -330,7 +330,11 @@ def _parse_trades(statement: ET.Element) -> tuple[list, int]:
         net_cash   = _f(t, "netCash")               # signed, in trade ccy
         commission = abs(_f(t, "ibCommission"))
         trade_date = _parse_ib_date(_s(t, "tradeDate") or _s(t, "dateTime"))
-        order_id   = _s(t, "ibOrderID") or _s(t, "tradeID") or _s(t, "ibExecID")
+        # Per-fill identifier, not per-order: ibOrderID is shared by every partial
+        # fill of the same order, so using it as the dedup key collapses distinct
+        # fills into one and silently drops all but the first at import time.
+        # tradeID/ibExecID are assigned per execution and stay unique per fill.
+        order_id   = _s(t, "tradeID") or _s(t, "ibExecID") or _s(t, "ibOrderID")
         isin       = _s(t, "isin")
         exchange   = _s(t, "listingExchange") or _s(t, "exchange")
 
@@ -378,6 +382,22 @@ def _parse_trades(statement: ET.Element) -> tuple[list, int]:
             "total_eur":      round(total_eur, 2),
             "exchange":       exchange,
         })
+
+    # Some Flex Query configurations report neither tradeID nor ibExecID, so
+    # multiple partial fills of the same order can still end up sharing an
+    # identical desc key (order_id alone) despite the preference above. When
+    # that happens within a single parse, only the first occurrence keeps the
+    # bare key — matching whatever a prior import of that order's first fill
+    # already stored — and every later fill of the same order gets a "#2",
+    # "#3", ... suffix so it survives the exact-desc dedup check as a distinct
+    # record instead of being silently treated as a re-import of the first.
+    _seen_desc_counts: dict[str, int] = {}
+    for rec in records:
+        base_desc = rec["desc"]
+        _seen_desc_counts[base_desc] = _seen_desc_counts.get(base_desc, 0) + 1
+        n = _seen_desc_counts[base_desc]
+        if n > 1:
+            rec["desc"] = f"{base_desc}#{n}"
 
     return records, len(all_trade_els)
 

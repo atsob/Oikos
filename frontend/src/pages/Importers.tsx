@@ -1316,6 +1316,8 @@ function IBFlexTab() {
 
   const newInv = visibleInv.filter(r => r.status === 'new').length
   const newTx = visibleTx.filter(r => r.status === 'new').length
+  const importableInv = visibleInv.filter(r => r.status !== 'exists').length
+  const importableTx = visibleTx.filter(r => r.status !== 'exists').length
   const selInvCount = visibleInv.filter(r => selectedInv.has(r.desc as string)).length
   const selTxCount = visibleTx.filter(r => selectedTx.has(r.desc as string)).length
 
@@ -1587,7 +1589,7 @@ function IBFlexTab() {
             />
           )}
 
-          {newInv + newTx > 0 ? (
+          {importableInv + importableTx > 0 ? (
             <div className="flex gap-2 items-center">
               <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
                 {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
@@ -2954,6 +2956,8 @@ function CapitalComTab() {
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
+  const importableInv = inv.filter(r => r.status !== 'exists').length
+  const importableTx = tx.filter(r => r.status !== 'exists').length
   const selInvCount = inv.filter(r => selectedInv.has(r.desc as string)).length
   const selTxCount = tx.filter(r => selectedTx.has(r.description as string)).length
   const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
@@ -3116,7 +3120,7 @@ function CapitalComTab() {
             />
           )}
 
-          {newInv + newTx > 0 ? (
+          {importableInv + importableTx > 0 ? (
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
               {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
             </Button>
@@ -3169,6 +3173,8 @@ function FxProTab() {
   const tx = (parseResult?.tx_records as Record<string, unknown>[]) ?? []
   const newInv = inv.filter(r => r.status === 'new').length
   const newTx = tx.filter(r => r.status === 'new').length
+  const importableInv = inv.filter(r => r.status !== 'exists').length
+  const importableTx = tx.filter(r => r.status !== 'exists').length
   const selInvCount = inv.filter(r => selectedInv.has(r.desc as string)).length
   const selTxCount = tx.filter(r => selectedTx.has(r.description as string)).length
   const secMatches = (parseResult?.sec_matches ?? {}) as Record<string, { sec_id: number | null; match_type: string }>
@@ -3304,7 +3310,7 @@ function FxProTab() {
             />
           )}
 
-          {newInv + newTx > 0 ? (
+          {importableInv + importableTx > 0 ? (
             <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || selInvCount + selTxCount === 0}>
               {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({selInvCount + selTxCount} records)</>}
             </Button>
