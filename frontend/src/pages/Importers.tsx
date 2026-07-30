@@ -203,7 +203,14 @@ function ImportReconcileTab() {
       const dates = rows.map(r => r.date as string).sort()
       const appData = await getAppTransactions(accountId!, dates[0], dates[dates.length - 1])
 
-      // Simple matching: exact date + amount
+      // Days between two YYYY-MM-DD dates, for the fuzzy match's proximity window below.
+      const daysApart = (d1: string, d2: string) =>
+        Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) / 86400000
+
+      // Simple matching: exact date + amount, or same amount within a few days (fuzzy —
+      // catches bank clearing-date drift without flagging every unrelated transaction
+      // that happens to share an amount somewhere across the whole statement's date range).
+      const FUZZY_DAY_WINDOW = 3
       const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
       const matched = rows.map((r, i) => {
         const amount = Number(r.amount)
@@ -211,7 +218,7 @@ function ImportReconcileTab() {
           a.date === r.date && Math.abs(Number(a.amount) - amount) < 0.02
         )
         const fuzzy = !exact && (appData as Record<string, unknown>[]).find(a =>
-          Math.abs(Number(a.amount) - amount) < 0.02
+          Math.abs(Number(a.amount) - amount) < 0.02 && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW
         )
         const status = exact ? 'matched' : fuzzy ? 'possible_dup' : 'new'
         const defaultAction = exact ? 'Reconcile' : fuzzy ? 'Skip' : 'Import'
