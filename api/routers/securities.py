@@ -116,6 +116,90 @@ def get_security_dividends(sec_id: int):
     return _df(df)
 
 
+@router.post("/{sec_id}/dividends")
+def create_security_dividend(sec_id: int, data: dict):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Securities_Dividends (Securities_Id, Ex_Date, Pay_Date, Amount)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (Securities_Id, Ex_Date) DO UPDATE
+                SET Pay_Date = EXCLUDED.Pay_Date, Amount = EXCLUDED.Amount
+            RETURNING Dividend_Id
+        """, (sec_id, data["ex_date"], data.get("pay_date") or None, float(data["amount"])))
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return {"id": new_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.put("/{sec_id}/dividends/{dividend_id}")
+def update_security_dividend(sec_id: int, dividend_id: int, data: dict):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE Securities_Dividends
+            SET Ex_Date = %s, Pay_Date = %s, Amount = %s
+            WHERE Dividend_Id = %s AND Securities_Id = %s
+        """, (data["ex_date"], data.get("pay_date") or None, float(data["amount"]), dividend_id, sec_id))
+        conn.commit()
+        return {"ok": True}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/{sec_id}/dividends/bulk")
+def delete_security_dividends_bulk(sec_id: int, data: dict):
+    """Must be registered before the /{dividend_id} route below, or "bulk"
+    gets captured as dividend_id and fails int validation instead of
+    reaching this handler."""
+    ids = data.get("ids") or []
+    if not ids:
+        return {"deleted": 0}
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        placeholders = ",".join(["%s"] * len(ids))
+        cur.execute(
+            f"DELETE FROM Securities_Dividends WHERE Securities_Id = %s AND Dividend_Id IN ({placeholders})",
+            [sec_id] + list(ids),
+        )
+        conn.commit()
+        return {"deleted": cur.rowcount}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/{sec_id}/dividends/{dividend_id}")
+def delete_security_dividend(sec_id: int, dividend_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM Securities_Dividends WHERE Dividend_Id = %s AND Securities_Id = %s",
+            (dividend_id, sec_id),
+        )
+        conn.commit()
+        return {"deleted": cur.rowcount}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 # ── Corporate Actions ─────────────────────────────────────────────────────────
 
 @router.get("/{sec_id}/corporate-actions")

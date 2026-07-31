@@ -15,7 +15,7 @@ import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
-  getSecurityDividends,
+  getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
@@ -880,20 +880,94 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
 }
 
 // ── Dividends Tab ─────────────────────────────────────────────────────────────
-const DIVIDENDS_COLS = [
-  { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
-  { field: 'pay_date', headerName: 'Pay Date', width: 130 },
-  { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
-]
-
 function DividendsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
-  const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
+  const qc = useQueryClient()
   const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
     queryKey: ['sec-dividends', secId],
     queryFn: () => getSecurityDividends(secId),
   })
   const dividends = data as Record<string, unknown>[]
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
+
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [msg, setMsg] = useState<string | null>(null)
+  const [newExDate, setNewExDate] = useState(new Date().toISOString().slice(0, 10))
+  const [newPayDate, setNewPayDate] = useState('')
+  const [newAmount, setNewAmount] = useState('')
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [editForm, setEditForm] = useState<{ ex_date: string; pay_date: string; amount: string }>({ ex_date: '', pay_date: '', amount: '' })
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateSecurityDividend(secId, id, d),
+    onSuccess: () => { invalidate(); setEditRow(null) },
+    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+  })
+  const createMut = useMutation({
+    mutationFn: (d: Record<string, unknown>) => createSecurityDividend(secId, d),
+    onSuccess: () => { invalidate(); setNewAmount(''); setNewPayDate(''); setMsg('Added.') },
+    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+  })
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => deleteSecurityDividend(secId, id),
+    onSuccess: invalidate,
+    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+  })
+  const bulkDeleteMut = useMutation({
+    mutationFn: (ids: number[]) => deleteSecurityDividendsBulk(secId, ids),
+    onSuccess: (res: { deleted: number }) => { invalidate(); setSelectedIds([]); setMsg(`Deleted ${res.deleted} record(s).`) },
+    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+  })
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setMsg(null)
+    setEditRow(row)
+    setEditForm({
+      ex_date: String(row.ex_date ?? ''),
+      pay_date: String(row.pay_date ?? ''),
+      amount: String(row.amount ?? ''),
+    })
+  }
+
+  const saveEdit = () => {
+    if (!editRow || !editForm.ex_date || !editForm.amount) return
+    updateMut.mutate({
+      id: Number(editRow.id),
+      d: { ex_date: editForm.ex_date, pay_date: editForm.pay_date || null, amount: Number(editForm.amount) },
+    })
+  }
+
+  const DIVIDENDS_COLS = useMemo(() => [
+    {
+      headerName: '', width: 42, pinned: 'left' as const,
+      checkboxSelection: true, headerCheckboxSelection: true, sortable: false, filter: false, resizable: false,
+    },
+    { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
+    { field: 'pay_date', headerName: 'Pay Date', width: 130 },
+    { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+    {
+      headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex items-center gap-2 h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-600 hover:underline" title="Edit">
+            <Pencil size={13} />
+          </button>
+          <button onClick={() => { if (confirm('Delete this dividend record?')) deleteMut.mutate(Number(p.data.id)) }}
+            className="text-slate-400 hover:text-red-500" title="Delete">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      ),
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [deleteMut])
+  const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
+
+  const handleAdd = () => {
+    if (!newExDate || !newAmount) return
+    setMsg(null)
+    createMut.mutate({ ex_date: newExDate, pay_date: newPayDate || null, amount: Number(newAmount) })
+  }
 
   // Bar chart: total per year
   const byYear = useMemo(() => {
@@ -940,6 +1014,56 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             ) : <p className="text-sm text-slate-400">No dividend history found.</p>}
           </div>
 
+          {/* Manual add row */}
+          <div className="flex items-end gap-2 flex-wrap">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Ex-Date</label>
+              <Input type="date" className="h-8 text-xs" value={newExDate} onChange={e => setNewExDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Pay Date (optional)</label>
+              <Input type="date" className="h-8 text-xs" value={newPayDate} onChange={e => setNewPayDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Amount per Share</label>
+              <Input type="number" step="any" className="h-8 text-xs w-32" value={newAmount} onChange={e => setNewAmount(e.target.value)} />
+            </div>
+            <Button size="sm" disabled={!newExDate || !newAmount || createMut.isPending} onClick={handleAdd}>
+              <Plus size={13} /> Add
+            </Button>
+            {selectedIds.length > 0 && (
+              <Button size="sm" variant="destructive" disabled={bulkDeleteMut.isPending}
+                onClick={() => { if (confirm(`Delete ${selectedIds.length} selected record(s)?`)) bulkDeleteMut.mutate(selectedIds) }}>
+                <Trash2 size={13} /> Delete {selectedIds.length} selected
+              </Button>
+            )}
+            {msg && <span className="text-xs text-slate-500">{msg}</span>}
+          </div>
+          <p className="text-xs text-slate-400">Select rows with the checkboxes to bulk-delete, or click the pencil to edit a single record. Amounts should be per-share, in the security's own currency.</p>
+
+          {editRow && (
+            <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 flex items-end gap-2 flex-wrap">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Ex-Date</label>
+                <Input type="date" className="h-8 text-xs" value={editForm.ex_date} onChange={e => setEditForm(f => ({ ...f, ex_date: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Pay Date (optional)</label>
+                <Input type="date" className="h-8 text-xs" value={editForm.pay_date} onChange={e => setEditForm(f => ({ ...f, pay_date: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Amount per Share</label>
+                <Input type="number" step="any" className="h-8 text-xs w-32" value={editForm.amount} onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))} />
+              </div>
+              <Button size="sm" disabled={!editForm.ex_date || !editForm.amount || updateMut.isPending} onClick={saveEdit}>
+                <Save size={13} /> Save
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setEditRow(null)}>
+                <X size={13} /> Cancel
+              </Button>
+            </div>
+          )}
+
           <div className="flex justify-end">
             <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           </div>
@@ -950,6 +1074,9 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
               defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              rowSelection="multiple"
+              suppressRowClickSelection
+              onSelectionChanged={e => setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
             />
           </div>
         </>

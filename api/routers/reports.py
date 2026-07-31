@@ -1268,7 +1268,7 @@ def get_dividends_tracker(
 
     disp_cols = ["securities_id", "securities_name", "securities_type", "period_income_eur", "cost_basis_eur",
                  "yoc_pct", "fwd_yield_pct", "ex_div_date", "div_frequency"]
-    detail_cols = ["month", "securities_name", "accounts_name", "action", "income_eur"]
+    detail_cols = ["date", "month", "securities_id", "securities_name", "accounts_name", "action", "income_eur"]
 
     return {
         "period_label": period_label,

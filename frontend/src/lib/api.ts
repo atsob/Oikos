@@ -419,6 +419,18 @@ export const getSecurityHoldings = (secId: number) =>
 export const getSecurityDividends = (secId: number) =>
   api.get(`/securities/${secId}/dividends`).then(r => r.data)
 
+export const createSecurityDividend = (secId: number, data: Record<string, unknown>) =>
+  api.post(`/securities/${secId}/dividends`, data).then(r => r.data)
+
+export const updateSecurityDividend = (secId: number, dividendId: number, data: Record<string, unknown>) =>
+  api.put(`/securities/${secId}/dividends/${dividendId}`, data).then(r => r.data)
+
+export const deleteSecurityDividend = (secId: number, dividendId: number) =>
+  api.delete(`/securities/${secId}/dividends/${dividendId}`).then(r => r.data)
+
+export const deleteSecurityDividendsBulk = (secId: number, ids: number[]) =>
+  api.delete(`/securities/${secId}/dividends/bulk`, { data: { ids } }).then(r => r.data)
+
 export const getSecurityCorporateActions = (secId: number) =>
   api.get(`/securities/${secId}/corporate-actions`).then(r => r.data)
 

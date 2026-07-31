@@ -1950,8 +1950,55 @@ function DividendTrackerTab() {
   const result   = data   as TrackerResult  | undefined
   const fcResult = fcData as ForecastResult | undefined
 
+  // Per-month "which securities paid" breakdown for the monthly chart's hover —
+  // built client-side from the same per-transaction `detail` rows that back the
+  // Full Transaction Detail table below, so it always matches. Capped at the top
+  // 8 payers per month (by income) so a month with dozens of small payers doesn't
+  // produce an unreadably tall tooltip.
+  const monthlyBreakdown = useMemo(() => {
+    const byMonth = new Map<string, Map<string, number>>()
+    for (const r of result?.detail ?? []) {
+      const month = String(r.month)
+      const name = String(r.securities_name)
+      const income = Number(r.income_eur ?? 0)
+      if (!byMonth.has(month)) byMonth.set(month, new Map())
+      const bySec = byMonth.get(month)!
+      bySec.set(name, (bySec.get(name) ?? 0) + income)
+    }
+    const out: Record<string, string> = {}
+    for (const [month, bySec] of byMonth) {
+      const sorted = Array.from(bySec.entries()).sort((a, b) => b[1] - a[1])
+      const top = sorted.slice(0, 8).map(([name, inc]) => `${name}: ${fmtEur(inc)}`).join('<br>')
+      out[month] = sorted.length > 8 ? `${top}<br>+${sorted.length - 8} more` : top
+    }
+    return out
+  }, [result])
+
   const { sorted: divSorted,  sortKey: divSK,  sortDir: divSD,  toggleSort: divSort  } = useSortTablePersisted(result?.by_security   ?? [], 'div-tracker-actual-sort', 'period_income_eur',    'desc')
   const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTablePersisted(fcResult?.by_security ?? [], 'div-tracker-forecast-sort', 'annual_forecast_eur',  'desc')
+
+  // Income-by-Security rows are aggregated per security across the whole period —
+  // expanding one shows the underlying per-transaction rows from `detail` (same
+  // source as the monthly chart's hover and the Full Transaction Detail table),
+  // grouped by securities_id so two differently-named-but-same-id edge cases
+  // (shouldn't happen, but detail also has securities_name as a fallback key)
+  // can't cross-contaminate.
+  const [expandedSec, setExpandedSec] = useState<Set<number>>(new Set())
+  const toggleSecExpand = (id: number) => setExpandedSec(prev => {
+    const s = new Set(prev)
+    s.has(id) ? s.delete(id) : s.add(id)
+    return s
+  })
+  const detailBySecId = useMemo(() => {
+    const map = new Map<number, Row[]>()
+    for (const r of result?.detail ?? []) {
+      const id = Number(r.securities_id)
+      if (!map.has(id)) map.set(id, [])
+      map.get(id)!.push(r)
+    }
+    for (const rows of map.values()) rows.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    return map
+  }, [result])
 
   // ── View toggle ───────────────────────────────────────────────────────────────
   const VIEW_LABELS: Record<string, string> = { actual: '📋 Actual', forecast: '🔮 Forecast', recommendations: '💡 Recommendations' }
@@ -2272,7 +2319,13 @@ function DividendTrackerTab() {
           </div>
 
           <Plot
-            data={[{ x: result.monthly.map(m => m.month), y: result.monthly.map(m => m.income_eur), type: 'bar', marker: { color: '#2ecc71' } }]}
+            data={[{
+              x: result.monthly.map(m => m.month),
+              y: result.monthly.map(m => m.income_eur),
+              type: 'bar', marker: { color: '#2ecc71' },
+              customdata: result.monthly.map(m => monthlyBreakdown[String(m.month)] ?? '(no detail)'),
+              hovertemplate: '<b>%{x|%b %Y}</b> — Total €%{y:,.2f}<br>%{customdata}<extra></extra>',
+            }]}
             layout={{
               title: `Monthly Dividend & Interest Income (€) — ${result.period_label}`,
               height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
@@ -2286,6 +2339,7 @@ function DividendTrackerTab() {
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="w-6 px-1 py-2 border-b border-slate-200"></th>
                   <ColHeader label="Security" sortKey="securities_name" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Security name." />
                   <ColHeader label="Type" sortKey="securities_type" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="Asset type — Stock, ETF, Bond, etc." />
                   <ColHeader label={`Income (${result.period_label})`} sortKey="period_income_eur" currentKey={divSK} currentDir={divSD} onSort={divSort} align="right" tooltip="Total dividends and interest received from this security in the selected period." />
@@ -2296,18 +2350,51 @@ function DividendTrackerTab() {
                   <ColHeader label="Frequency" sortKey="div_frequency" currentKey={divSK} currentDir={divSD} onSort={divSort} tooltip="How often dividends are paid — monthly, quarterly, semi-annually, or annually." />
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {divSorted.map((r, i) => (
-                    <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                      <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(Number(r.period_income_eur ?? 0))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{r.yoc_pct != null ? `${Number(r.yoc_pct).toFixed(2)}%` : '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.fwd_yield_pct != null ? `${Number(r.fwd_yield_pct).toFixed(2)}%` : '—'}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{r.ex_div_date ? String(r.ex_div_date).slice(0, 10) : '—'}</td>
-                      <td className="px-3 py-2 text-slate-500">{r.div_frequency != null ? String(r.div_frequency) : '—'}</td>
-                    </tr>
-                  ))}
+                  {divSorted.map((r, i) => {
+                    const secId = Number(r.securities_id)
+                    const txns = detailBySecId.get(secId) ?? []
+                    const isOpen = expandedSec.has(secId)
+                    return (
+                      <React.Fragment key={i}>
+                        <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => toggleSecExpand(secId)}>
+                          <td className="px-1 py-2 text-center text-slate-400">{txns.length > 0 ? (isOpen ? '▾' : '▸') : ''}</td>
+                          <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                          <td className="px-3 py-2 text-slate-500">{String(r.securities_type)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(Number(r.period_income_eur ?? 0))}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{r.yoc_pct != null ? `${Number(r.yoc_pct).toFixed(2)}%` : '—'}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.fwd_yield_pct != null ? `${Number(r.fwd_yield_pct).toFixed(2)}%` : '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-500">{r.ex_div_date ? String(r.ex_div_date).slice(0, 10) : '—'}</td>
+                          <td className="px-3 py-2 text-slate-500">{r.div_frequency != null ? String(r.div_frequency) : '—'}</td>
+                        </tr>
+                        {isOpen && txns.length > 0 && (
+                          <tr>
+                            <td></td>
+                            <td colSpan={8} className="px-3 pb-3">
+                              <table className="w-full text-xs border-collapse">
+                                <thead><tr className="bg-slate-100 text-slate-500 uppercase tracking-wide">
+                                  <th className="text-left px-2 py-1 border-b border-slate-200">Date</th>
+                                  <th className="text-left px-2 py-1 border-b border-slate-200">Account</th>
+                                  <th className="text-left px-2 py-1 border-b border-slate-200">Type</th>
+                                  <th className="text-right px-2 py-1 border-b border-slate-200">Income (€)</th>
+                                </tr></thead>
+                                <tbody>
+                                  {txns.map((t, j) => (
+                                    <tr key={j} className="border-b border-slate-100">
+                                      <td className="px-2 py-1 text-slate-500">{String(t.date ?? '').slice(0, 10)}</td>
+                                      <td className="px-2 py-1 text-blue-700">{String(t.accounts_name ?? '')}</td>
+                                      <td className="px-2 py-1 text-slate-500">{String(t.action ?? '')}</td>
+                                      <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(t.income_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(t.income_eur ?? 0))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

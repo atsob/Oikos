@@ -557,11 +557,31 @@ def download_dividend_history(target_sec_id=None):
             if divs is None or divs.empty:
                 return sec_id, sec_name, symbol, [], None, None
             rows = []
+            skipped = 0
+            price = latest_price_by_sec.get(sec_id)
             for ts, amount in divs.items():
                 ex_date = ts.date() if hasattr(ts, 'date') else None
                 if ex_date is None or amount <= 0:
                     continue
+                # Yahoo's per-security dividend series isn't retroactively
+                # adjusted for reverse splits the way price history is —
+                # tickers that underwent a severe consolidation (e.g. Greek
+                # banks recapitalized 2013-2015) report genuine pre-split
+                # amounts still denominated in old-share terms, which land
+                # many orders of magnitude above any plausible modern
+                # per-share dividend (seen: >€40,000/share for a stock
+                # trading at a few euros). A real per-share dividend can't
+                # exceed the share's own trading price by much, so reject
+                # anything wildly out of line with the latest known close
+                # rather than storing it and re-corrupting the history on
+                # every future re-download.
+                if price and amount > price * 5:
+                    skipped += 1
+                    continue
                 rows.append((sec_id, ex_date, float(amount)))
+            if skipped:
+                print(f"  ⚠️ {sec_name}: skipped {skipped} implausible dividend amount(s) "
+                      f"(> 5x latest price {price})")
             frequency = _infer_frequency(divs)
             return sec_id, sec_name, symbol, rows, frequency, None
         except Exception as exc:
@@ -585,6 +605,13 @@ def download_dividend_history(target_sec_id=None):
         if not securities:
             logging.warning("No securities with Yahoo Ticker found.")
             return
+
+        cur.execute("""
+            SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+            FROM Historical_Prices
+            ORDER BY Securities_Id, Date DESC
+        """)
+        latest_price_by_sec = {row[0]: float(row[1]) for row in cur.fetchall() if row[1] is not None}
 
         total = len(securities)
         print(f"Downloading dividend history for {total} securities…")

@@ -6074,10 +6074,18 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
 def _get_dividend_alerts(lead_days: int = None) -> list:
     """Upcoming-payment heads-up for every currently held dividend-paying
     security — no per-security setup required, same rationale as bonds.
-    Dividend_Pay_Date on Securities is the last date a payment was seen
-    (from Yahoo's `dividendDate`), projected forward by Dividend_Frequency
-    until it lands on or after today, since Yahoo doesn't expose a full
-    forward dividend calendar.
+
+    Anchored on Ex_Dividend_Date, not Dividend_Pay_Date: the latter is only
+    trustworthy as a forecast anchor when it's a plausible lag *after* the
+    ex-date (a few weeks, typically) — some data sources (seen: Yahoo's
+    `dividendDate` for several long-held Greek/legacy securities) carry
+    stale pay dates decades in the past, which would otherwise get projected
+    forward independently of the ex-date and land on a date unrelated to the
+    real upcoming payment — in one observed case pushing a payment that was
+    genuinely 3 days away out to 8 days, silently outside the alert window.
+    Mirrors the same ex-date-primary, sanity-checked-lag approach already
+    used by the Dividend Tracker's Forecast tab (get_dividends_forecast in
+    api/routers/reports.py) so the two agree.
 
     lead_days defaults to the user's Tools → System → App Settings
     "Dividend Alerts" value (Pref_Key='app-settings'.dividendAlertLeadDays),
@@ -6098,13 +6106,14 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
             SELECT h.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
                    h.Quantity AS quantity, s.Dividend_Rate AS dividend_rate,
                    s.Dividend_Frequency AS dividend_frequency,
+                   s.Ex_Dividend_Date AS ex_dividend_date,
                    s.Dividend_Pay_Date AS dividend_pay_date,
                    c.Currencies_ShortName AS currency, COALESCE(fx.FX_Rate, 1) AS fx_rate
             FROM Holdings h
             JOIN Securities s ON s.Securities_Id = h.Securities_Id
             JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0 AND s.Dividend_Pay_Date IS NOT NULL
+            WHERE h.Quantity > 0 AND s.Ex_Dividend_Date IS NOT NULL
               AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL
         """, conn)
     finally:
@@ -6117,12 +6126,22 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
     period_months = {'Semi-Annual': 6, 'Quarterly': 3, 'Monthly': 1}
     results = []
     for _, row in df.iterrows():
-        last_pay = pd.Timestamp(row['dividend_pay_date']).date()
+        ex_anchor = pd.Timestamp(row['ex_dividend_date']).date()
         freq = row['dividend_frequency']
         months = period_months.get(freq, 12)  # default Annual
-        next_pay = last_pay
-        while next_pay < today:
-            next_pay += relativedelta(months=months)
+
+        pay_raw = row['dividend_pay_date']
+        lag = None
+        if pd.notna(pay_raw):
+            candidate_lag = (pd.Timestamp(pay_raw).date() - ex_anchor).days
+            if 0 <= candidate_lag <= 90:
+                lag = candidate_lag
+
+        next_ex = ex_anchor
+        while next_ex < today:
+            next_ex += relativedelta(months=months)
+        next_pay = next_ex + timedelta(days=lag) if lag is not None else next_ex
+
         days_until = (next_pay - today).days
         if 0 <= days_until <= lead_days:
             frac = {'Semi-Annual': 0.5, 'Quarterly': 0.25, 'Monthly': 1.0 / 12}.get(freq, 1.0)
