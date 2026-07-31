@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -82,6 +82,7 @@ function PricesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [period, setPeriod] = usePersist<ChartPeriod>('sec_chart_period', 'YTD')
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
@@ -97,12 +98,14 @@ function PricesTab({ secId }: { secId: number }) {
   const { data: history = [], isLoading } = useQuery({
     queryKey: ['price-history', secId, fromDate],
     queryFn: () => getPriceHistory(secId, fromDate),
+    refetchInterval: liveRefetchMs,
   })
   // Shares the ['sec-transactions', secId] query with InvestmentTransactionsTab —
   // switching tabs doesn't re-fetch.
   const { data: txHistory = [] } = useQuery({
     queryKey: ['sec-transactions', secId],
     queryFn: () => getSecurityTransactions(secId),
+    refetchInterval: liveRefetchMs,
   })
 
   const importMut = useMutation({
@@ -533,13 +536,16 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const { data: txData = [], isLoading: txLoading } = useQuery({
     queryKey: ['sec-transactions', secId],
     queryFn: () => getSecurityTransactions(secId),
+    refetchInterval: liveRefetchMs,
   })
   const { data: holdingsData, isLoading: holdingsLoading } = useQuery({
     queryKey: ['sec-holdings', secId],
     queryFn: () => getSecurityHoldings(secId),
+    refetchInterval: liveRefetchMs,
   })
   const { data: accountsData = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
   const { data: securitiesData = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
@@ -1625,7 +1631,8 @@ function NewsTab({ secId }: { secId: number }) {
 
 function AlertsTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
-  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions, refetchInterval: liveRefetchMs })
   // Price alerts are the only kind tied to a single security (allocation-drift alerts are
   // asset-type-wide and belong on the Market Data page instead).
   const rows = (data as Record<string, unknown>[]).filter(r =>

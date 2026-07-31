@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-07-31
+
+### Added
+- **Pages driven by live prices or background updates now refresh themselves automatically** instead of requiring a manual reload — Dashboard (KPI cards, Net Worth breakdown/trend), Cash Register, Investments (Holdings, Transactions, Cash), Reports → Inv. Performance (P&L, Performance, TWR/MWR, Risk Metrics, Dividend Tracker, Savings, Bond Schedule, Benchmark, Correlation) and → Inv. Positions (Graph, Summary, Current Holdings, Allocation, Sector & Industry, FX Exposure), Market Data (FX Prices, Securities Prices, Watchlist, Alerts), and Security Detail (Prices, Investment Transactions, Alerts). Cash Register's grid refresh pauses itself while a transaction is being edited or a batch selection is active, so it can't disrupt in-progress work. Left out on purpose: Monte Carlo (an expensive simulation, not worth recomputing unattended), Detail Analysis (a fixed historical-date snapshot, not "now"), and Market Data's Anomalies (a batch data-quality check).
+- **The refresh interval is configurable under Tools → System → App Settings → Live Data Refresh** (default 60 seconds, 0 disables it) — one setting controls every page above, persisted server-side like the rest of your app settings.
+
 ## 2026-07-29
 
 ### Added

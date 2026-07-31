@@ -10,6 +10,16 @@ export function useSettings(): [AppSettings, (s: AppSettings) => void] {
   return [settings, saveSettings]
 }
 
+// The user-configured auto-refresh interval (Tools -> System -> App Settings ->
+// Live Data Refresh) for queries backed by data that can change in the background —
+// live prices, balances refreshed by a sync job, linked transactions inserted from
+// another page. Returns `false` (TanStack Query's "disabled" value) when the user
+// has set it to 0.
+export function useLiveRefetchInterval(): number | false {
+  const [settings] = useSettings()
+  return settings.liveRefreshSeconds > 0 ? settings.liveRefreshSeconds * 1000 : false
+}
+
 // Persists UI state (tab selections, saved filters, etc.) server-side via
 // lib/preferences.ts, so it follows the user across devices/browsers/origins
 // instead of being trapped in one browser's localStorage. Signature/behavior

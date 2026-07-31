@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { usePersist, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -462,6 +462,7 @@ function FxPricesTab() {
   const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [curId, setCurId] = useState<number | null>(null)
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
@@ -480,6 +481,7 @@ function FxPricesTab() {
     queryKey: ['fx-history', curId, fromDate],
     queryFn: () => getFxRates(curId!, fromDate),
     enabled: !!curId,
+    refetchInterval: liveRefetchMs,
   })
 
   const rows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
@@ -690,6 +692,7 @@ function SecuritiesPricesTab() {
   const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
   const { isDark } = useTheme()
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [secId, setSecId] = useState<number | null>(null)
   const [period, setPeriod] = useState<ChartPeriod>('All')
   const fromDate = periodToFromDate(period)
@@ -721,6 +724,7 @@ function SecuritiesPricesTab() {
     queryKey: ['price-history', secId, fromDate],
     queryFn: () => getPriceHistory(secId!, fromDate),
     enabled: !!secId,
+    refetchInterval: liveRefetchMs,
   })
 
   const addPriceMut = useMutation({
@@ -1112,7 +1116,8 @@ function DownloadsTab() {
 // ── Watchlist Tab ─────────────────────────────────────────────────────────────
 function WatchlistTab() {
   const qc = useQueryClient()
-  const { data = [], isLoading } = useQuery({ queryKey: ['watchlist'], queryFn: getWatchlist })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['watchlist'], queryFn: getWatchlist, refetchInterval: liveRefetchMs })
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const rows = data as Record<string, unknown>[]
   const secs = securities as Record<string, unknown>[]
@@ -1248,7 +1253,8 @@ const ASSET_TYPES_FOR_DRIFT = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 
 
 function AlertsTab() {
   const qc = useQueryClient()
-  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions, refetchInterval: liveRefetchMs })
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const rows = data as Record<string, unknown>[]
   const secs = securities as Record<string, unknown>[]

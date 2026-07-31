@@ -2108,6 +2108,19 @@ function AppSettingsPanel() {
             </p>
           </div>
 
+          {/* Live data refresh */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Live Data Refresh</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Refresh interval (seconds)</label>
+            <input type="number" min={0} max={3600} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.liveRefreshSeconds} onChange={e => set('liveRefreshSeconds', Math.max(0, Number(e.target.value) || 0))} />
+            <p className="mt-2 text-xs text-slate-400">
+              How often the Dashboard, Inv. Performance, and Cash Register pull fresh data while left open — picks up
+              price syncs, balance updates, and transactions inserted in the background (e.g. an Investment
+              Transaction's linked cash entry) without needing a manual reload. Set to 0 to disable.
+            </p>
+          </div>
+
           {/* Reporting currency */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Reporting Currency</h3>

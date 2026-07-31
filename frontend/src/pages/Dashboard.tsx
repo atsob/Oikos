@@ -13,7 +13,7 @@ import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Ba
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
 import { setPref } from '@/lib/preferences'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
@@ -112,6 +112,7 @@ function SecuritiesAlertsPanel() {
     queryKey: ['triggered-alerts'],
     queryFn: getAlerts,
     staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
   })
   const ackMut = useMutation({
     mutationFn: (sid: number) => acknowledgeSignal(sid),
@@ -718,6 +719,7 @@ export default function Dashboard() {
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [opts, setOptsState] = React.useState<DashOpts>(loadOpts)
 
   const setOpts = (o: DashOpts) => { setOptsState(o); saveOpts(o) }
@@ -739,6 +741,7 @@ export default function Dashboard() {
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts', opts.includeFuture],
     queryFn: () => getAccounts(opts.includeFuture),
+    refetchInterval: liveRefetchMs,
   })
 
   // Must mirror the "now" totals' account filtering below (showDisabled + includedAccounts),
@@ -755,6 +758,7 @@ export default function Dashboard() {
     queryKey: ['net-worth', nwPeriod, nwAccountIds.join(',')],
     queryFn: () => getNetWorth(NW_PERIODS[nwPeriod] ?? '2000-01-01', nwAccountIds),
     enabled: nwAccountIds.length > 0,
+    refetchInterval: liveRefetchMs,
   })
 
   const { data: monthlySummaries = [] } = useQuery({

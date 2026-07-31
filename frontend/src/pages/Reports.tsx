@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -658,9 +658,11 @@ function NetWorthSection() {
 // ════════════════════════════════════════════════════════════════════════════
 function InvPositionsGraph({ startDate, accountIds }: { startDate: string; accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({
     queryKey: ['inv-positions-history', startDate, accountIds],
     queryFn: () => getInvestmentPositionsHistory(startDate, accountIds),
+    refetchInterval: liveRefetchMs,
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
@@ -706,9 +708,11 @@ function InvPositionsGraph({ startDate, accountIds }: { startDate: string; accou
 }
 
 function InvPositionsSummary({ startDate, accountIds }: { startDate: string; accountIds?: number[] }) {
+  const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({
     queryKey: ['inv-positions-history', startDate, accountIds],
     queryFn: () => getInvestmentPositionsHistory(startDate, accountIds),
+    refetchInterval: liveRefetchMs,
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
@@ -717,7 +721,8 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
 
 function SectorTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation', accountIds], queryFn: () => getSectorAllocation(accountIds) })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation', accountIds], queryFn: () => getSectorAllocation(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: sectorSorted, sortKey: sectorSK, sortDir: sectorSD, toggleSort: sectorSort } = useSortTable(rows, 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -760,7 +765,8 @@ function SectorTab({ accountIds }: { accountIds?: number[] }) {
 
 function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds) })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: fxSorted, sortKey: fxSK, sortDir: fxSD, toggleSort: fxSort } = useSortTable(rows, 'eur_exposure', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -801,6 +807,7 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
 function AllocationReport({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [editOpen, setEditOpen] = useState(false)
   const [cash, setCash] = useState(0)
 
@@ -814,10 +821,10 @@ function AllocationReport({ accountIds }: { accountIds?: number[] }) {
   })
   const scope: 'investments' | 'all' = hasCashAccount ? 'all' : 'investments'
 
-  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', scope, accountIds], queryFn: () => getAllocationReport(scope, accountIds) })
+  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', scope, accountIds], queryFn: () => getAllocationReport(scope, accountIds), refetchInterval: liveRefetchMs })
   const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['allocation-targets'], queryFn: getAllocationTargets })
-  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', scope, accountIds], queryFn: () => getAllocationDelta(scope, accountIds) })
-  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan', scope, accountIds], queryFn: () => getRebalancingPlan(scope, accountIds) })
+  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', scope, accountIds], queryFn: () => getAllocationDelta(scope, accountIds), refetchInterval: liveRefetchMs })
+  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan', scope, accountIds], queryFn: () => getRebalancingPlan(scope, accountIds), refetchInterval: liveRefetchMs })
 
   // Local editable target state
   const [localTargets, setLocalTargets] = useState<Record<string, number>>({})
@@ -1077,7 +1084,8 @@ function AllocationReport({ accountIds }: { accountIds?: number[] }) {
 }
 
 function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
-  const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary', accountIds], queryFn: () => getPortfolioSummary(accountIds) })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary', accountIds], queryFn: () => getPortfolioSummary(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: holdSorted, sortKey: holdSK, sortDir: holdSD, toggleSort: holdSort } = useSortTablePersisted(rows, 'holdings-snapshot-sort', 'value_eur', 'desc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1308,6 +1316,7 @@ function ChkBox({ label, checked, onChange }: { label: string; checked: boolean;
 
 function PnlReport() {
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [win, setWin] = usePersist<PnlWindow>('pnl_win', 'ytd')
   const [showClosedAccounts, setShowClosedAccounts] = usePersist('pnl_showClosedAccounts', false)
   const [showFxSplit, setShowFxSplit] = usePersist('pnl_showFxSplit', false)
@@ -1323,7 +1332,7 @@ function PnlReport() {
     }, { replace: false })
   }
 
-  const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
+  const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01'), refetchInterval: liveRefetchMs })
 
   // Derive all data BEFORE any early return so hooks are always called in the same order
   const rows = data as Row[]
@@ -1571,12 +1580,14 @@ function PnlReport() {
 
 function TwrTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('twr_lookback', 730)
   const [cfOpen, setCfOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['twr', lookback, accountIds],
     queryFn: () => getTwr(lookback, accountIds),
+    refetchInterval: liveRefetchMs,
   })
 
   type TwrData = {
@@ -1740,6 +1751,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
 
 function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('risk_lookback', 730)
   const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
 
@@ -1751,6 +1763,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const { data, isLoading } = useQuery({
     queryKey: ['risk-metrics', lookback, benchSecId, accountIds],
     queryFn: () => getRiskMetrics(lookback, benchSecId, accountIds),
+    refetchInterval: liveRefetchMs,
   })
 
   type RiskData = {
@@ -1865,6 +1878,7 @@ const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b8
 
 function DividendTrackerTab() {
   const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [divView, setDivView] = usePersist<'actual' | 'forecast' | 'recommendations'>('div_view', 'actual')
 
   // ── Actual state ─────────────────────────────────────────────────────────────
@@ -1876,6 +1890,7 @@ function DividendTrackerTab() {
   const { data, isLoading } = useQuery({
     queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
     queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
+    refetchInterval: liveRefetchMs,
   })
 
   // ── Forecast state ────────────────────────────────────────────────────────────
@@ -2365,7 +2380,8 @@ const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
 
 function PerformanceTab() {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl() })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl(), refetchInterval: liveRefetchMs })
   const [period, setPeriod] = usePersist('perf_period', 'Daily')
   const [viewPct, setViewPct] = usePersist('perf_view_pct', false)
   const [topN, setTopN] = usePersist('perf_top_n', 15)
@@ -2615,7 +2631,8 @@ function PerformanceTab() {
 
 function SavingsAccountsTab() {
   const { isDark } = useTheme()
-  const { data, isLoading } = useQuery({ queryKey: ['savings-accounts'], queryFn: getSavingsAccounts })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data, isLoading } = useQuery({ queryKey: ['savings-accounts'], queryFn: getSavingsAccounts, refetchInterval: liveRefetchMs })
   const result = data as { summary: Row; detail: Row[]; detail_last: Row[] } | undefined
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -2743,7 +2760,8 @@ function SavingsAccountsTab() {
 
 function BondScheduleTab() {
   const { isDark } = useTheme()
-  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule, refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTablePersisted(rows, 'bond-schedule-sort', 'days_to_maturity', 'asc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -2813,6 +2831,7 @@ function BondScheduleTab() {
 
 function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
   const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
   const [benchmarkId, setBenchmarkId] = usePersist<number | null>('bench_id', null)
   const [lookback, setLookback] = usePersist('bench_lookback', 365)
@@ -2825,6 +2844,7 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
     queryKey: ['benchmark', effId, lookback, accountIds, resample],
     queryFn: () => getBenchmark(effId!, lookback, accountIds, resample),
     enabled: effId != null,
+    refetchInterval: liveRefetchMs,
   })
   const rows = data as { date: string; portfolio: number; benchmark: number | null }[]
 
@@ -2881,12 +2901,14 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
 }
 
 function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
+  const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('corr_lookback', 252)
   const [maxH, setMaxH] = usePersist('corr_max', 20)
 
   const { data, isLoading } = useQuery({
     queryKey: ['correlation', lookback, maxH, accountIds],
     queryFn: () => getCorrelation(lookback, maxH, accountIds),
+    refetchInterval: liveRefetchMs,
   })
   const result = data as { tickers: string[]; matrix: (number | null)[][] } | undefined
 

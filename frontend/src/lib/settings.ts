@@ -9,6 +9,7 @@ export interface AppSettings {
   defaultTransferPayeeName: string // auto-filled as the Payee when a new transaction is marked Transfer, if left blank
   bondAlertLeadDays: number // Dashboard heads-up window for bond maturity/coupon dates
   dividendAlertLeadDays: number // Dashboard heads-up window for security dividend payments
+  liveRefreshSeconds: number // auto-refresh interval for price/balance-driven views (0 = off)
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -20,6 +21,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   defaultTransferPayeeName: 'Transfer Money',
   bondAlertLeadDays: 7,
   dividendAlertLeadDays: 3,
+  liveRefreshSeconds: 60,
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

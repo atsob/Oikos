@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { usePersist, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
@@ -106,6 +106,7 @@ export default function Register() {
   const gridRef = useRef<AgGridReact>(null)
   const [, setGridApi] = useState<GridApi | null>(null)
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
 
   const [accountId, setAccountId] = usePersist<number | null>('register_accountId', null)
   const [showInactive, setShowInactive] = useState(false)
@@ -187,8 +188,19 @@ export default function Register() {
   const [reconcileMsg, setReconcileMsg] = useState<string | null>(null)
   const [reconciling, setReconciling] = useState(false)
 
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
-  const { data: accountsFuture = [] } = useQuery({ queryKey: ['accounts', 'future'], queryFn: () => getAccounts(true) })
+  // Rows here can be inserted in the background — e.g. an Investment Transaction's
+  // linked cash entry, or a bank import/sync run elsewhere — with no signal to this
+  // open page. Periodically refresh the currently-loaded blocks so they show up
+  // without a manual reload; skipped while there's an open edit or an active
+  // selection so an in-progress edit/batch action isn't disrupted underneath the user.
+  useEffect(() => {
+    if (!liveRefetchMs || tx.modalOpen || batchMoveOpen || clearOpen || reconcileOpen || selectedIds.length > 0) return
+    const id = setInterval(refreshGrid, liveRefetchMs)
+    return () => clearInterval(id)
+  }, [liveRefetchMs, tx.modalOpen, batchMoveOpen, clearOpen, reconcileOpen, selectedIds.length, refreshGrid])
+
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts(), refetchInterval: liveRefetchMs })
+  const { data: accountsFuture = [] } = useQuery({ queryKey: ['accounts', 'future'], queryFn: () => getAccounts(true), refetchInterval: liveRefetchMs })
   const cashAccounts = (accounts as Record<string, unknown>[])
     .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
     .filter(a => showInactive || Boolean(a.is_active))

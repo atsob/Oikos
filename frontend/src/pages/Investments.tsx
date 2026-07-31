@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from 'react'
-import { usePersist, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -250,6 +250,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 export default function Investments() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const liveRefetchMs = useLiveRefetchInterval()
   const [tab, setTab] = usePersist<'holdings' | 'transactions' | 'cash'>('investments_tab', 'holdings')
   const [accountId, setAccountId] = usePersist<number | null>('investments_accountId', null)
   const [showInactive, setShowInactive] = useState(false)
@@ -283,7 +284,7 @@ export default function Investments() {
   const [cashBatchMsg, setCashBatchMsg] = useState<string | null>(null)
   const cashGridRef = useRef<AgGridReact>(null)
 
-  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts(), refetchInterval: liveRefetchMs })
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
 
   const investmentAccounts = (accounts as Record<string, unknown>[])
@@ -318,6 +319,7 @@ export default function Investments() {
   const { data: holdings = [], isLoading: holdingsLoading } = useQuery({
     queryKey: ['holdings', accountId, includeClosed],
     queryFn: () => getHoldings(accountId ?? undefined, includeClosed),
+    refetchInterval: liveRefetchMs,
   })
 
   const invParams = { account_id: accountId ?? undefined, from_date: fromDate, to_date: toDate, action: actionFilter || undefined, limit: PAGE_SIZE, offset }
@@ -325,6 +327,7 @@ export default function Investments() {
     queryKey: ['investments', invParams],
     queryFn: () => getInvestments(invParams),
     enabled: tab === 'transactions',
+    refetchInterval: liveRefetchMs,
   })
 
   // ── Cash tab state ────────────────────────────────────────────────────────
@@ -348,6 +351,7 @@ export default function Investments() {
     queryKey: ['inv-cash', cashParams],
     queryFn: () => getTransactions(cashParams),
     enabled: tab === 'cash' && accountId != null,
+    refetchInterval: liveRefetchMs,
   })
   const cashRows = ((cashData as { transactions?: Record<string, unknown>[] } | null)?.transactions ?? []) as Record<string, unknown>[]
 
