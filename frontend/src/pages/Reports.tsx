@@ -5911,7 +5911,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
 
   const totalDiv     = sum(divRows)
   const totalIntInv  = sum(intInvRows)
-  const totalExempt  = sum(divExempt)
+  const totalExempt  = sum(divExempt) + sum(intExempt)
   const totalRoc     = sum(invRoc)
   const totalBank    = sum(bankRows)
   const grandTotal   = totalDiv + totalIntInv + totalBank
