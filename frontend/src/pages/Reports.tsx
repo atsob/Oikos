@@ -13,6 +13,7 @@ import {
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
   getCashFlowForecastFull, getPnl,
   getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
+  getXraySectorWeighting, getXrayAssetAllocation, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
   getSpendingTrends, getSavingsRateDetail,
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
@@ -804,6 +805,224 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
+// ── Portfolio X-Ray ──────────────────────────────────────────────────────────
+// Look-through ETF/Mutual Fund composition (cached via "Download Fund Composition"
+// on MarketData/SecurityDetail Downloads tabs) blended with direct stock/bond
+// holdings — see api/routers/reports.py's xray/* endpoints for the blend logic.
+
+function XrayBarTab({ queryKey, queryFn, labelField, color }: {
+  queryKey: string; queryFn: () => Promise<unknown>; labelField: string; color: string
+}) {
+  const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['xray', queryKey], queryFn, refetchInterval: liveRefetchMs })
+  const rows = data as Row[]
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  return (
+    <div className="space-y-4">
+      <Plot
+        data={[{ x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r[labelField])), type: 'bar', orientation: 'h', marker: { color }, text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside' }]}
+        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+      <WithCopy>
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-slate-50">
+            <tr className="bg-slate-50 text-xs text-slate-500">
+              <ColHeader label="Category" sortKey={labelField} currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5">{String(r[labelField])}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </WithCopy>
+    </div>
+  )
+}
+
+function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'asset-allocation', accountIds], queryFn: () => getXrayAssetAllocation(accountIds), refetchInterval: liveRefetchMs })
+  const rows = data as Row[]
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <div>
+        <Plot
+          data={[{ values: rows.map(r => Number(r.value_eur)), labels: rows.map(r => String(r.asset_class)), type: 'pie', hole: 0.45, textinfo: 'label+percent' }]}
+          layout={{ height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' }, ...plotLayout(isDark) }}
+          config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+      </div>
+      <WithCopy>
+      <div className="overflow-x-auto text-xs">
+        <table className="w-full border-collapse">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500">
+            <th className="text-left px-2 py-1.5 border-b border-slate-200">Asset Class</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight %</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5">{String(r.asset_class)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </WithCopy>
+    </div>
+  )
+}
+
+function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds], queryFn: () => getXrayBondQuality(accountIds), refetchInterval: liveRefetchMs })
+  const rows = data as Row[]
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  return (
+    <div className="space-y-4">
+      <Plot
+        data={[{ x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.quality)), type: 'bar', orientation: 'h', marker: { color: '#f59e0b' }, text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside' }]}
+        layout={{ height: Math.max(240, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+      <WithCopy>
+      <div className="overflow-x-auto text-xs">
+        <table className="w-full border-collapse">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500">
+            <th className="text-left px-2 py-1.5 border-b border-slate-200">Credit Quality</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight %</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Avg. Duration (yrs)</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5">{String(r.quality)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.avg_duration_years != null ? fmtNum(Number(r.avg_duration_years), 1) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </WithCopy>
+      <p className="text-xs text-slate-400">
+        Percentages are of total bond-like exposure (direct bonds + the bond portion of held funds), not the whole portfolio.
+        "Direct / Unrated" duration is an approximation (years to maturity), not modified duration like the fund-sourced figures.
+      </p>
+    </div>
+  )
+}
+
+function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds], queryFn: () => getXrayStockOverlap(accountIds), refetchInterval: liveRefetchMs })
+  const rows = data as Row[]
+  const totalPortfolio = rows.length > 0 ? Number(rows[0].total_portfolio_eur ?? 0) : 0
+
+  const bySymbol = useMemo(() => {
+    const m: Record<string, { name: string; total: number; sources: { label: string; value: number }[] }> = {}
+    for (const r of rows) {
+      const sym = String(r.symbol ?? '—')
+      if (!m[sym]) m[sym] = { name: String(r.name ?? ''), total: 0, sources: [] }
+      const val = Number(r.value_eur ?? 0)
+      m[sym].total += val
+      m[sym].sources.push({ label: r.source_type === 'Direct' ? 'Direct' : `via ${String(r.source_label)}`, value: val })
+    }
+    return Object.entries(m).sort((a, b) => b[1].total - a[1].total)
+  }, [rows])
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  return (
+    <div className="space-y-4">
+      <WithCopy>
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-slate-50">
+            <tr className="bg-slate-50 text-xs text-slate-500">
+              <th className="text-left px-2 py-1.5 border-b border-slate-200">Symbol</th>
+              <th className="text-left px-2 py-1.5 border-b border-slate-200">Name</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200">Total Value (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200">% of Portfolio</th>
+              <th className="text-left px-2 py-1.5 border-b border-slate-200">Sources</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bySymbol.map(([sym, v], i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5 font-mono font-medium">{sym}</td>
+                <td className="px-2 py-1.5 text-slate-500">{v.name}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(v.total)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(totalPortfolio > 0 ? v.total / totalPortfolio * 100 : 0)}</td>
+                <td className="px-2 py-1.5 text-slate-500">
+                  {v.sources.map((s) => `${s.label} (${fmtPct(totalPortfolio > 0 ? s.value / totalPortfolio * 100 : 0)})`).join(', ')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </WithCopy>
+      <p className="text-xs text-slate-400">
+        Fund contributions only capture each fund's top 10 constituents — true overlap for broad-market funds may be higher than shown here.
+      </p>
+    </div>
+  )
+}
+
+function XrayExpenseRatioTab({ accountIds }: { accountIds?: number[] }) {
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'expense-ratio', accountIds], queryFn: () => getXrayExpenseRatio(accountIds), refetchInterval: liveRefetchMs })
+  const row = (data as Row[])[0]
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!row || row.weighted_expense_ratio_pct == null) return <div className="text-sm text-slate-400 py-8 text-center">No fund holdings with a known expense ratio.</div>
+  return (
+    <div className="max-w-md">
+      <Card>
+        <CardBody>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Weighted Average Expense Ratio</p>
+          <p className="text-3xl font-bold text-slate-700">{fmtPct(Number(row.weighted_expense_ratio_pct), 3)}</p>
+          <p className="text-xs text-slate-400 mt-2">
+            Covers {fmtPct(Number(row.coverage_pct))} of fund holdings by value ({fmtEur(Number(row.total_fund_value_eur))} total in ETFs/Mutual Funds).
+          </p>
+        </CardBody>
+      </Card>
+    </div>
+  )
+}
+
+function XRayTab({ accountIds }: { accountIds?: number[] }) {
+  const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
+  return (
+    <div className="space-y-3">
+      <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
+      {tab === 'Asset Allocation' && <XrayAssetAllocationTab accountIds={accountIds} />}
+      {tab === 'Sector Weighting' && <XrayBarTab queryKey={`sector-weighting-${accountIds?.join(',') ?? 'all'}`} queryFn={() => getXraySectorWeighting(accountIds)} labelField="sector" color="#3b82f6" />}
+      {tab === 'Style Box' && <XrayBarTab queryKey={`style-box-${accountIds?.join(',') ?? 'all'}`} queryFn={() => getXrayStyleBox(accountIds)} labelField="style" color="#10b981" />}
+      {tab === 'Bond Quality' && <XrayBondQualityTab accountIds={accountIds} />}
+      {tab === 'Stock Overlap' && <XrayStockOverlapTab accountIds={accountIds} />}
+      {tab === 'Expense Ratio' && <XrayExpenseRatioTab accountIds={accountIds} />}
+    </div>
+  )
+}
+
 function AllocationReport({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
@@ -1232,7 +1451,7 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
         </button>
       </div>
 
-      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure', 'X-Ray']} active={tab} onChange={setTab} />
       {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Summary' && <InvPositionsSummary startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
@@ -1240,6 +1459,7 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       {tab === 'Allocation' && <AllocationReport accountIds={presetAccountIds} />}
       {tab === 'Sector & Industry' && <SectorTab accountIds={presetAccountIds} />}
       {tab === 'FX Exposure' && <FxExposureTab accountIds={presetAccountIds} />}
+      {tab === 'X-Ray' && <XRayTab accountIds={presetAccountIds} />}
     </div>
   )
 }

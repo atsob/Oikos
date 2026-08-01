@@ -35,6 +35,7 @@ from data.downloaders import (
     download_securities_info_from_yahoo,
     download_securities_info_from_tradingview,
     download_dividend_history,
+    download_fund_composition,
 )
 from ai.update_vector import update_all_embeddings
 from database.backup import DatabaseBackup
@@ -71,6 +72,9 @@ MONTHLY_SUMMARY_MINUTE = 0
 DIVIDEND_HISTORY_WEEKDAY = 6  # Sunday at 06:30
 DIVIDEND_HISTORY_HOUR    = 6
 DIVIDEND_HISTORY_MINUTE  = 30
+FUND_COMPOSITION_DAY     = 2  # 2nd of month at 07:30 — avoids colliding with monthly_summary (day 1)
+FUND_COMPOSITION_HOUR    = 7
+FUND_COMPOSITION_MINUTE  = 30
 SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
 NEWS_FETCH_INTERVAL_MINUTES = 240     # Every 4 hours, 24×7
 
@@ -281,6 +285,23 @@ def _dividend_history_job():
         _record_job("dividend_history", "error", str(e))
 
 
+def _fund_composition_job():
+    """Download ETF/Mutual Fund look-through composition once per month.
+
+    Runs monthly rather than weekly — fund composition (sector weights,
+    top holdings, expense ratio) drifts slowly and each call is a heavier
+    fetch than the dividend refresh, so weekly would be needless request volume.
+    """
+    logging.info("Running monthly fund composition refresh…")
+    try:
+        download_fund_composition()
+        logging.info("Fund composition refresh complete.")
+        _record_job("fund_composition", "success", "Completed OK")
+    except Exception as e:
+        logging.error(f"Fund composition refresh failed: {e}", exc_info=True)
+        _record_job("fund_composition", "error", str(e))
+
+
 def _backup_job():
     """Create a daily database backup and purge files older than BACKUP_RETENTION_DAYS."""
     logging.info("Running daily database backup…")
@@ -450,6 +471,9 @@ if __name__ == "__main__":
     # Monthly summary: skip if already ran this month
     _last_monthly_summary_month: int = -1
 
+    # Fund composition: skip if already ran this month
+    _last_fund_composition_month: int = -1
+
     # Signal notifications: first run deferred to tick loop
     _last_signal_refresh: datetime = datetime.min
 
@@ -515,6 +539,12 @@ if __name__ == "__main__":
         if now.weekday() == dh_wd and _in_window(now, dh_h, dh_m) and _last_dividend_history_week != _this_week_start:
             _dividend_history_job()
             _last_dividend_history_week = _this_week_start
+
+        # ── Fund composition (Portfolio X-Ray): monthly ───────────────────────
+        fc_d, fc_h, fc_m = _parse_monthly(sc.get('fund_composition', ''), FUND_COMPOSITION_DAY, FUND_COMPOSITION_HOUR, FUND_COMPOSITION_MINUTE)
+        if now.day == fc_d and _in_window(now, fc_h, fc_m) and _last_fund_composition_month != now.month:
+            _fund_composition_job()
+            _last_fund_composition_month = now.month
 
         # ── Signal notifications: every N minutes ─────────────────────────────
         minutes_since_signal = (now - _last_signal_refresh).total_seconds() / 60

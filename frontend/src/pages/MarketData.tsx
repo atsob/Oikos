@@ -7,7 +7,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -983,6 +983,7 @@ function DownloadsTab() {
       qc.invalidateQueries({ queryKey: ['price-history'] })
       qc.invalidateQueries({ queryKey: ['currencies'] })
       qc.invalidateQueries({ queryKey: ['fx-history'] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
     } catch (e) {
       setStatus(s => ({ ...s, [key]: 'error' }))
       setMessages(m => ({ ...m, [key]: extractError(e) }))
@@ -1043,6 +1044,7 @@ function DownloadsTab() {
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
           <ActionRow id="yahoo-info"  label="Update Securities Info"   onClick={() => run('yahoo-info',  () => downloadYahooInfo(sid))} />
           <ActionRow id="yahoo-divs"  label="Download Dividend History" onClick={() => run('yahoo-divs',  () => downloadYahooDividends(sid))} />
+          <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(sid))} />
           <ActionRow id="yahoo-px"    label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, sid))} />
         </div>
       </div>

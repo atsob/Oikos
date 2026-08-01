@@ -19,7 +19,7 @@ import {
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
+  downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals, getPnl,
@@ -1616,6 +1616,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       qc.invalidateQueries({ queryKey: ['securities'] })
       qc.invalidateQueries({ queryKey: ['price-history', secId] })
       qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
     } catch (e) {
       setStatus(s => ({ ...s, [key]: 'error' }))
       setMessages(m => ({ ...m, [key]: extractError(e) }))
@@ -1644,6 +1645,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
     </div>
   )
 
+  const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
   const hasYahoo = !!(security.yahoo_ticker && String(security.yahoo_ticker).trim())
   const hasTv = !!(security.tv_symbol && String(security.tv_symbol).trim() && security.tv_exchange && String(security.tv_exchange).trim())
   const [downloadAllRunning, setDownloadAllRunning] = useState(false)
@@ -1654,6 +1656,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
     if (hasYahoo) {
       jobs.push(['yahoo-info', () => downloadYahooInfo(secId)])
       jobs.push(['yahoo-divs', () => downloadYahooDividends(secId)])
+      if (isFund) jobs.push(['fund-composition', () => downloadFundComposition(secId)])
       jobs.push(['yahoo-px',   () => downloadYahooPrices('max', secId)])
     }
     if (hasTv) {
@@ -1696,6 +1699,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
             <ActionRow id="yahoo-info" label="Update Security Info" onClick={() => run('yahoo-info', () => downloadYahooInfo(secId))} />
             <ActionRow id="yahoo-divs" label="Download Dividend History" onClick={() => run('yahoo-divs', () => downloadYahooDividends(secId))} />
+            {isFund && <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(secId))} />}
             <ActionRow id="yahoo-px" label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, secId))} />
           </div>
         </div>

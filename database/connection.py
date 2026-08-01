@@ -207,6 +207,57 @@ def _run_startup_migrations():
                ALTER TABLE Portfolio_Presets ADD CONSTRAINT portfolio_presets_scope_name_unique UNIQUE (Report_Scope, Preset_Name);
            EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
            END $$""",
+        # Recurring_Templates.Periodicity: normalise to the hyphenated vocabulary
+        # ('Bi-Weekly', 'Bi-Monthly', 'Semi-Annual', 'Annual') used everywhere else —
+        # Recurring.tsx's dropdown and the CASE statements in api/routers/recurring.py.
+        # "Save as recurring template" on an existing transaction used to write
+        # 'Biweekly'/'Semiannually'/'Annually' instead, which the real scheduled
+        # draft generator (database/crud.py) didn't recognise and silently advanced
+        # as if Monthly. Data-only fix; harmless no-op once already applied.
+        "UPDATE Recurring_Templates SET Periodicity = 'Annual' WHERE Periodicity = 'Annually'",
+        "UPDATE Recurring_Templates SET Periodicity = 'Semi-Annual' WHERE Periodicity = 'Semiannually'",
+        "UPDATE Recurring_Templates SET Periodicity = 'Bi-Weekly' WHERE Periodicity = 'Biweekly'",
+        # Portfolio X-Ray: cached ETF/Mutual Fund look-through composition (sector
+        # weights, asset mix, top holdings, expense ratio) from yfinance's
+        # get_funds_data(), refreshed monthly by the scheduler / on-demand.
+        """CREATE TABLE IF NOT EXISTS Fund_Composition (
+               Securities_Id                  INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Asset_Cash_Pct                 NUMERIC(6,4),
+               Asset_Stock_Pct                NUMERIC(6,4),
+               Asset_Bond_Pct                 NUMERIC(6,4),
+               Asset_Preferred_Pct            NUMERIC(6,4),
+               Asset_Convertible_Pct          NUMERIC(6,4),
+               Asset_Other_Pct                NUMERIC(6,4),
+               Sector_Weightings              JSONB,
+               Category_Name                  VARCHAR(100),
+               Fund_Family                    VARCHAR(150),
+               Legal_Type                     VARCHAR(50),
+               Expense_Ratio_Pct              NUMERIC(6,4),
+               Category_Avg_Expense_Ratio_Pct NUMERIC(6,4),
+               Total_Net_Assets               NUMERIC(20,2),
+               Holdings_Turnover_Pct          NUMERIC(6,4),
+               Bond_Ratings                   JSONB,
+               Bond_Duration                  NUMERIC(8,4),
+               Bond_Maturity                  NUMERIC(8,4),
+               Equity_PE                      NUMERIC(10,4),
+               Equity_PB                      NUMERIC(10,4),
+               Equity_PS                      NUMERIC(10,4),
+               Equity_PCF                     NUMERIC(10,4),
+               Equity_Median_Market_Cap       NUMERIC(20,2),
+               Equity_3yr_Earnings_Growth_Pct NUMERIC(8,4),
+               Last_Updated                   TIMESTAMPTZ DEFAULT NOW(),
+               Fetch_Error                    TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
+               Fund_Holding_Id  SERIAL PRIMARY KEY,
+               Securities_Id    INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Rank             SMALLINT NOT NULL,
+               Symbol           VARCHAR(20) NOT NULL,
+               Holding_Name     VARCHAR(200),
+               Weight_Pct       NUMERIC(6,4) NOT NULL,
+               UNIQUE(Securities_Id, Rank)
+           )""",
+        "CREATE INDEX IF NOT EXISTS idx_fund_top_holdings_symbol ON Fund_Top_Holdings(Symbol)",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)

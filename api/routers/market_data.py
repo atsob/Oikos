@@ -337,6 +337,17 @@ def download_yahoo_dividends(data: dict = {}):
         raise HTTPException(500, str(e))
 
 
+@router.post("/download/fund-composition")
+def download_fund_composition_endpoint(data: dict = {}):
+    """Download ETF/Mutual Fund look-through composition from Yahoo Finance (Portfolio X-Ray)."""
+    try:
+        from data.downloaders import download_fund_composition
+        download_fund_composition(target_sec_id=data.get("security_id"))
+        return {"ok": True, "message": "Fund composition downloaded"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/download/yahoo-prices")
 def download_yahoo_prices(data: dict = {}):
     """Download historical prices from Yahoo Finance."""

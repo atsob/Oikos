@@ -294,6 +294,9 @@ export const downloadYahooInfo = (securityId?: number) =>
 export const downloadYahooDividends = (securityId?: number) =>
   api.post('/market-data/download/yahoo-dividends', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
+export const downloadFundComposition = (securityId?: number) =>
+  api.post('/market-data/download/fund-composition', securityId ? { security_id: securityId } : {}).then(r => r.data)
+
 export const downloadYahooPrices = (period: string, securityId?: number) =>
   api.post('/market-data/download/yahoo-prices', { period, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 
@@ -744,6 +747,24 @@ export const getSectorAllocation = (accountIds?: number[]) =>
 
 export const getFxExposure = (accountIds?: number[]) =>
   api.get('/reports/fx-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXraySectorWeighting = (accountIds?: number[]) =>
+  api.get('/reports/xray/sector-weighting', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayAssetAllocation = (accountIds?: number[]) =>
+  api.get('/reports/xray/asset-allocation', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayStyleBox = (accountIds?: number[]) =>
+  api.get('/reports/xray/style-box', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayBondQuality = (accountIds?: number[]) =>
+  api.get('/reports/xray/bond-quality', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayStockOverlap = (accountIds?: number[]) =>
+  api.get('/reports/xray/stock-overlap', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayExpenseRatio = (accountIds?: number[]) =>
+  api.get('/reports/xray/expense-ratio', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getSpendingByPayee = (startDate: string, endDate: string, topN = 20) =>
   api.get('/reports/spending-by-payee', { params: { start_date: startDate, end_date: endDate, top_n: topN } }).then(r => r.data)

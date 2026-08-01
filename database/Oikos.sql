@@ -899,6 +899,49 @@ CREATE TABLE IF NOT EXISTS News_Items (
 CREATE INDEX IF NOT EXISTS idx_news_items_source    ON News_Items(Source_Type, Source_Id);
 CREATE INDEX IF NOT EXISTS idx_news_items_published ON News_Items(Published_At DESC);
 
+-- =============================================================================
+-- PORTFOLIO X-RAY
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS Fund_Composition (
+    Securities_Id                  INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Asset_Cash_Pct                 NUMERIC(6,4),
+    Asset_Stock_Pct                NUMERIC(6,4),
+    Asset_Bond_Pct                 NUMERIC(6,4),
+    Asset_Preferred_Pct            NUMERIC(6,4),
+    Asset_Convertible_Pct          NUMERIC(6,4),
+    Asset_Other_Pct                NUMERIC(6,4),
+    Sector_Weightings              JSONB,
+    Category_Name                  VARCHAR(100),
+    Fund_Family                    VARCHAR(150),
+    Legal_Type                     VARCHAR(50),
+    Expense_Ratio_Pct              NUMERIC(6,4),
+    Category_Avg_Expense_Ratio_Pct NUMERIC(6,4),
+    Total_Net_Assets               NUMERIC(20,2),
+    Holdings_Turnover_Pct          NUMERIC(6,4),
+    Bond_Ratings                   JSONB,
+    Bond_Duration                  NUMERIC(8,4),
+    Bond_Maturity                  NUMERIC(8,4),
+    Equity_PE                      NUMERIC(10,4),
+    Equity_PB                      NUMERIC(10,4),
+    Equity_PS                      NUMERIC(10,4),
+    Equity_PCF                     NUMERIC(10,4),
+    Equity_Median_Market_Cap       NUMERIC(20,2),
+    Equity_3yr_Earnings_Growth_Pct NUMERIC(8,4),
+    Last_Updated                   TIMESTAMPTZ DEFAULT NOW(),
+    Fetch_Error                    TEXT
+);
+CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
+    Fund_Holding_Id  SERIAL PRIMARY KEY,
+    Securities_Id    INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Rank             SMALLINT NOT NULL,
+    Symbol           VARCHAR(20) NOT NULL,
+    Holding_Name     VARCHAR(200),
+    Weight_Pct       NUMERIC(6,4) NOT NULL,
+    UNIQUE(Securities_Id, Rank)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_top_holdings_symbol ON Fund_Top_Holdings(Symbol);
+
 CREATE TABLE IF NOT EXISTS Alerts (
     Alert_Id      SERIAL PRIMARY KEY,
     Alert_Type    TEXT NOT NULL,

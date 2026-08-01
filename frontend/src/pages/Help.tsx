@@ -436,10 +436,21 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
-          Holdings, Allocation, Sector &amp; Industry, FX Exposure) to a saved set of accounts — see the same
+          Holdings, Allocation, Sector &amp; Industry, FX Exposure, X-Ray) to a saved set of accounts — see the same
           control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}
           alongside investment accounts: include one in a preset and Allocation shows its balance as a{' '}
           <b>Cash &amp; Savings</b> slice instead of only ever breaking down investment holdings.
+        </Note>
+        <Note>
+          <b>X-Ray</b> looks through held ETFs/Mutual Funds into their underlying composition (sector weights,
+          asset mix, top holdings, Morningstar-style category, expense ratio, bond quality/duration — sourced
+          from Yahoo Finance, no Morningstar account needed) and blends it with your direct stock/bond holdings:
+          True Asset Allocation, Sector Weighting, Style Box, Bond Quality &amp; Duration, Stock Overlap (e.g. how
+          much of your total AAPL exposure is direct vs. via each fund you hold), and Weighted Expense Ratio.
+          A fund's underlying data isn't downloaded automatically the first time you hold it — use{' '}
+          <b>Download Fund Composition (X-Ray)</b> on Market Data → Downloads (or Security Detail → Downloads for
+          one fund) to refresh it; it also refreshes monthly on its own. Funds with no cached data yet show up as
+          "Uncovered Fund Exposure" rather than being silently left out of the totals.
         </Note>
 
         <H3>💹 Inv. Performance</H3>

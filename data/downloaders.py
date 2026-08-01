@@ -12,7 +12,7 @@ from ai.llm import get_custom_session
 from datetime import datetime, timedelta
 from decimal import Decimal
 from config.settings import ENV_CONFIG
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, Json
 
 
 # ── Trading-day validation ─────────────────────────────────────────────────────
@@ -670,6 +670,193 @@ def download_dividend_history(target_sec_id=None):
     finally:
         cur.close()
         conn.close()
+
+
+_FUND_COMPOSITION_COLUMNS = [
+    "Asset_Cash_Pct", "Asset_Stock_Pct", "Asset_Bond_Pct", "Asset_Preferred_Pct",
+    "Asset_Convertible_Pct", "Asset_Other_Pct", "Sector_Weightings", "Category_Name",
+    "Fund_Family", "Legal_Type", "Expense_Ratio_Pct", "Category_Avg_Expense_Ratio_Pct",
+    "Total_Net_Assets", "Holdings_Turnover_Pct", "Bond_Ratings", "Bond_Duration",
+    "Bond_Maturity", "Equity_PE", "Equity_PB", "Equity_PS", "Equity_PCF",
+    "Equity_Median_Market_Cap", "Equity_3yr_Earnings_Growth_Pct",
+]
+
+
+def download_fund_composition(target_sec_id=None):
+    """Download ETF/Mutual Fund look-through composition from Yahoo Finance.
+
+    Populates Fund_Composition (one row per fund: asset mix, sector weights,
+    Morningstar-style category, expense ratio, bond quality/duration, equity
+    valuation stats) and Fund_Top_Holdings (up to 10 constituent tickers per
+    fund) via yfinance's Ticker.get_funds_data(). Powers the Portfolio X-Ray
+    report — this is the fund side of that blend; direct stock/bond holdings
+    need no cached data since their own Securities row already has what's needed.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    MAX_WORKERS = 5
+
+    conn = get_connection()
+    cur  = conn.cursor()
+    custom_session = get_custom_session()
+
+    def _df_val(df, row_label, own_col=True):
+        """Best-effort lookup into a get_funds_data() stats DataFrame.
+
+        These DataFrames are indexed by attribute name with two columns: the
+        fund's own ticker symbol (varies per call, so accessed positionally)
+        and 'Category Average'. Any missing row/column/NA yields None rather
+        than raising, since coverage is inherently spotty for many funds.
+        """
+        try:
+            if df is None or row_label not in df.index:
+                return None
+            col = df.columns[0] if own_col else "Category Average"
+            if col not in df.columns:
+                return None
+            val = df.loc[row_label, col]
+            if val is None or pd.isna(val):
+                return None
+            return float(val)
+        except Exception:
+            return None
+
+    def _fetch(sec_id, sec_name, symbol):
+        try:
+            import logging as _logging
+            _yf_logger = _logging.getLogger("yfinance")
+            _prev_level = _yf_logger.level
+            _yf_logger.setLevel(_logging.CRITICAL)
+            try:
+                fd = yf.Ticker(symbol, session=custom_session).get_funds_data()
+            finally:
+                _yf_logger.setLevel(_prev_level)
+            if fd is None:
+                return sec_id, sec_name, symbol, None, [], "get_funds_data() returned no data"
+
+            def _safe(fn):
+                try:
+                    return fn()
+                except Exception:
+                    return None
+
+            asset_classes = _safe(lambda: fd.asset_classes) or {}
+            sector_w      = _safe(lambda: fd.sector_weightings) or {}
+            overview      = _safe(lambda: fd.fund_overview) or {}
+            ops_df        = _safe(lambda: fd.fund_operations)
+            bond_ratings  = _safe(lambda: fd.bond_ratings) or {}
+            bond_h_df     = _safe(lambda: fd.bond_holdings)
+            eq_h_df       = _safe(lambda: fd.equity_holdings)
+            top_df        = _safe(lambda: fd.top_holdings)
+
+            composition = {
+                "Asset_Cash_Pct":        asset_classes.get("cashPosition"),
+                "Asset_Stock_Pct":       asset_classes.get("stockPosition"),
+                "Asset_Bond_Pct":        asset_classes.get("bondPosition"),
+                "Asset_Preferred_Pct":   asset_classes.get("preferredPosition"),
+                "Asset_Convertible_Pct": asset_classes.get("convertiblePosition"),
+                "Asset_Other_Pct":       asset_classes.get("otherPosition"),
+                "Sector_Weightings":     Json(sector_w) if sector_w else None,
+                "Category_Name":         overview.get("categoryName"),
+                "Fund_Family":           overview.get("family"),
+                "Legal_Type":            overview.get("legalType"),
+                "Expense_Ratio_Pct":         _df_val(ops_df, "Annual Report Expense Ratio", own_col=True),
+                "Category_Avg_Expense_Ratio_Pct": _df_val(ops_df, "Annual Report Expense Ratio", own_col=False),
+                "Total_Net_Assets":          _df_val(ops_df, "Total Net Assets", own_col=True),
+                "Holdings_Turnover_Pct":     _df_val(ops_df, "Annual Holdings Turnover", own_col=True),
+                "Bond_Ratings":          Json(bond_ratings) if bond_ratings else None,
+                "Bond_Duration":         _df_val(bond_h_df, "Duration", own_col=True),
+                "Bond_Maturity":         _df_val(bond_h_df, "Maturity", own_col=True),
+                "Equity_PE":             _df_val(eq_h_df, "Price/Earnings", own_col=True),
+                "Equity_PB":             _df_val(eq_h_df, "Price/Book", own_col=True),
+                "Equity_PS":             _df_val(eq_h_df, "Price/Sales", own_col=True),
+                "Equity_PCF":            _df_val(eq_h_df, "Price/Cashflow", own_col=True),
+                "Equity_Median_Market_Cap":       _df_val(eq_h_df, "Median Market Cap", own_col=True),
+                "Equity_3yr_Earnings_Growth_Pct": _df_val(eq_h_df, "3 Year Earnings Growth", own_col=True),
+            }
+            top_rows = []
+            if top_df is not None and not top_df.empty:
+                for rank, (tkr, row) in enumerate(top_df.iterrows(), start=1):
+                    weight = row.get("Holding Percent")
+                    if weight is None or pd.isna(weight):
+                        continue
+                    top_rows.append((sec_id, rank, str(tkr), row.get("Name"), float(weight)))
+            return sec_id, sec_name, symbol, composition, top_rows, None
+        except Exception as exc:
+            return sec_id, sec_name, symbol, None, [], str(exc)
+
+    try:
+        base_query = """
+            SELECT Securities_Id, Securities_Name, Yahoo_Ticker
+            FROM   Securities
+            WHERE  Yahoo_Ticker IS NOT NULL AND Yahoo_Ticker != ''
+              AND  Securities_Type IN ('ETF', 'Mutual Fund')
+        """
+        if target_sec_id:
+            base_query += f" AND Securities_Id = {int(target_sec_id)}"
+        base_query += " ORDER BY Securities_Name ASC"
+        cur.execute(base_query)
+        funds = cur.fetchall()
+
+        if not funds:
+            logging.warning("No ETF/Mutual Fund securities with Yahoo Ticker found.")
+            return
+
+        total = len(funds)
+        print(f"Downloading fund composition for {total} fund(s)…")
+
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(_fetch, sec_id, sec_name, symbol): sec_name
+                       for sec_id, sec_name, symbol in funds}
+            for f in as_completed(futures):
+                results.append(f.result())
+
+        comp_rows, holdings_by_sec, error_rows = [], {}, []
+
+        for sec_id, sec_name, symbol, comp, top_rows, err in results:
+            if err or comp is None:
+                print(f"  ⚠️ {sec_name} ({symbol}): {err}")
+                error_rows.append((sec_id, err))
+                continue
+            print(f"  ✔ {sec_name}: composition cached ({len(top_rows)} top holdings)")
+            comp_rows.append((sec_id, *[comp[c] for c in _FUND_COMPOSITION_COLUMNS]))
+            holdings_by_sec[sec_id] = top_rows
+
+        if comp_rows:
+            set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in _FUND_COMPOSITION_COLUMNS)
+            execute_batch(cur, f"""
+                INSERT INTO Fund_Composition (Securities_Id, {", ".join(_FUND_COMPOSITION_COLUMNS)}, Last_Updated, Fetch_Error)
+                VALUES (%s, {", ".join(["%s"] * len(_FUND_COMPOSITION_COLUMNS))}, NOW(), NULL)
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    {set_clause}, Last_Updated = NOW(), Fetch_Error = NULL
+            """, comp_rows, page_size=500)
+
+        for sec_id, rows in holdings_by_sec.items():
+            cur.execute("DELETE FROM Fund_Top_Holdings WHERE Securities_Id = %s", (sec_id,))
+            if rows:
+                execute_batch(cur, """
+                    INSERT INTO Fund_Top_Holdings (Securities_Id, Rank, Symbol, Holding_Name, Weight_Pct)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, rows, page_size=500)
+
+        if error_rows:
+            execute_batch(cur, """
+                INSERT INTO Fund_Composition (Securities_Id, Last_Updated, Fetch_Error)
+                VALUES (%s, NOW(), %s)
+                ON CONFLICT (Securities_Id) DO UPDATE SET Fetch_Error = EXCLUDED.Fetch_Error, Last_Updated = NOW()
+            """, error_rows, page_size=500)
+
+        conn.commit()
+        print(f"Fund composition complete — {len(comp_rows)} fund(s) cached, {len(error_rows)} error(s).")
+        logging.info(f"Fund composition: {len(comp_rows)} funds cached, {len(error_rows)} errors.")
+
+    except Exception as e:
+        logging.error(f"❌ Error: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
 
 def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
     """Download historical security prices from Yahoo Finance.
