@@ -1173,25 +1173,35 @@ def generate_draft_transactions() -> int:
 
     from datetime import timedelta as _td
 
+    # Keys must match the Periodicity vocabulary used everywhere else — Recurring.tsx's
+    # own dropdown and the CASE statements in api/routers/recurring.py (the manual
+    # confirm-draft path). This dict used to use a different, non-hyphenated spelling
+    # ('Biweekly', 'Semiannually', 'Annually') that no template-creation UI actually
+    # produced anymore, so any template with a hyphenated periodicity silently fell
+    # through to the `_DELTAS['Monthly']` fallback below and got advanced monthly
+    # regardless of its real frequency — e.g. an Annual bonus template would
+    # regenerate a new draft every month instead of once a year.
     if relativedelta is not None:
         _DELTAS = {
-            'Daily':         lambda d: d + relativedelta(days=1),
-            'Weekly':        lambda d: d + relativedelta(weeks=1),
-            'Biweekly':      lambda d: d + relativedelta(weeks=2),
-            'Monthly':       lambda d: d + relativedelta(months=1),
-            'Quarterly':     lambda d: d + relativedelta(months=3),
-            'Semiannually':  lambda d: d + relativedelta(months=6),
-            'Annually':      lambda d: d + relativedelta(years=1),
+            'Daily':        lambda d: d + relativedelta(days=1),
+            'Weekly':       lambda d: d + relativedelta(weeks=1),
+            'Bi-Weekly':    lambda d: d + relativedelta(weeks=2),
+            'Monthly':      lambda d: d + relativedelta(months=1),
+            'Bi-Monthly':   lambda d: d + relativedelta(months=2),
+            'Quarterly':    lambda d: d + relativedelta(months=3),
+            'Semi-Annual':  lambda d: d + relativedelta(months=6),
+            'Annual':       lambda d: d + relativedelta(years=1),
         }
     else:
         _DELTAS = {
-            'Daily':         lambda d: d + _td(days=1),
-            'Weekly':        lambda d: d + _td(weeks=1),
-            'Biweekly':      lambda d: d + _td(weeks=2),
-            'Monthly':       lambda d: d + _td(days=30),
-            'Quarterly':     lambda d: d + _td(days=91),
-            'Semiannually':  lambda d: d + _td(days=183),
-            'Annually':      lambda d: d + _td(days=365),
+            'Daily':        lambda d: d + _td(days=1),
+            'Weekly':       lambda d: d + _td(weeks=1),
+            'Bi-Weekly':    lambda d: d + _td(weeks=2),
+            'Monthly':      lambda d: d + _td(days=30),
+            'Bi-Monthly':   lambda d: d + _td(days=61),
+            'Quarterly':    lambda d: d + _td(days=91),
+            'Semi-Annual':  lambda d: d + _td(days=183),
+            'Annual':       lambda d: d + _td(days=365),
         }
 
     conn = get_connection()

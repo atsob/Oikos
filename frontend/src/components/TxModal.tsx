@@ -11,7 +11,12 @@ import { getSettings } from '@/lib/settings'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
 import { api } from '@/lib/api'
 
-export const PERIODICITIES = ['Daily', 'Weekly', 'Biweekly', 'Monthly', 'Quarterly', 'Semiannually', 'Annually']
+// Must match Recurring.tsx's own PERIODICITIES (minus 'Once', which only makes sense
+// when creating a template directly, not "save this transaction as recurring") and the
+// Periodicity values api/routers/recurring.py and database/crud.py's generate_draft_transactions
+// actually know how to advance — a mismatched spelling here means saving a template
+// with, say, "Annually" instead of "Annual" silently breaks its recurrence.
+export const PERIODICITIES = ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly', 'Bi-Monthly', 'Quarterly', 'Semi-Annual', 'Annual']
 
 export const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 
@@ -23,11 +28,12 @@ export function addPeriod(dateStr: string, freq: string, n: number): string {
   switch (freq) {
     case 'Daily':        d.setDate(d.getDate() + n); break
     case 'Weekly':       d.setDate(d.getDate() + 7 * n); break
-    case 'Biweekly':     d.setDate(d.getDate() + 14 * n); break
+    case 'Bi-Weekly':    d.setDate(d.getDate() + 14 * n); break
     case 'Monthly':      d.setMonth(d.getMonth() + n); break
+    case 'Bi-Monthly':   d.setMonth(d.getMonth() + 2 * n); break
     case 'Quarterly':    d.setMonth(d.getMonth() + 3 * n); break
-    case 'Semiannually': d.setMonth(d.getMonth() + 6 * n); break
-    case 'Annually':     d.setFullYear(d.getFullYear() + n); break
+    case 'Semi-Annual':  d.setMonth(d.getMonth() + 6 * n); break
+    case 'Annual':       d.setFullYear(d.getFullYear() + n); break
   }
   return d.toISOString().slice(0, 10)
 }
@@ -103,7 +109,7 @@ interface ModalProps {
 const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
 /** Payee selector with inline "＋ Add new payee" when no match is found. */
-function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {
+export function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {
   value: string
   onChange: (v: string) => void
   payees: Record<string, unknown>[]
@@ -200,7 +206,7 @@ function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {
  * missing tail — so nesting a new category under an existing parent needs no
  * separate "choose parent" step.
  */
-function CategorySelect({ value, onChange, categories, onCategoryCreated, className }: {
+export function CategorySelect({ value, onChange, categories, onCategoryCreated, className }: {
   value: string
   onChange: (v: string) => void
   categories: Record<string, unknown>[]
@@ -560,40 +566,46 @@ export function TxModal({
             </label>
           </div>
 
-          {/* Recurring template: new transactions only. Installment series: available on
-              edit too, so an existing one-off transaction can be converted in place — it
-              becomes installment 1/N and the remaining installments are created fresh. */}
+          {/* Recurring template: available on both new and existing transactions — on an
+              existing one, saving creates a fresh template seeded from its current
+              field values, it doesn't change the transaction itself into a recurring
+              instance. Installment series: available on edit too, so an existing
+              one-off transaction can be converted in place — it becomes installment
+              1/N and the remaining installments are created fresh. */}
           <div className="space-y-2">
-            {!form.id && (
-              <div className="border border-slate-200 rounded-lg">
-                <button type="button"
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
-                  onClick={() => { setRecurringEnabled(!recurringEnabled); if (!recurringEnabled) setInstallmentEnabled(false) }}>
-                  <input type="checkbox" checked={recurringEnabled} onChange={() => {}} className="rounded pointer-events-none" />
-                  Save as recurring template
-                </button>
-                {recurringEnabled && (
-                  <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
-                    <div className="pt-2">
-                      <label className="text-xs font-medium text-slate-500 block mb-1">Template Name *</label>
-                      <Input value={recurringName} onChange={e => setRecurringName(e.target.value)} placeholder="e.g. Monthly Rent" />
+            <div className="border border-slate-200 rounded-lg">
+              <button type="button"
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-lg"
+                onClick={() => { setRecurringEnabled(!recurringEnabled); if (!recurringEnabled) setInstallmentEnabled(false) }}>
+                <input type="checkbox" checked={recurringEnabled} onChange={() => {}} className="rounded pointer-events-none" />
+                Save as recurring template
+              </button>
+              {recurringEnabled && (
+                <div className="px-3 pb-3 space-y-2 border-t border-slate-100">
+                  {form.id && (
+                    <p className="pt-2 text-xs text-slate-500">
+                      Creates a new recurring template from this transaction's current values — this transaction itself is unaffected.
+                    </p>
+                  )}
+                  <div className={form.id ? '' : 'pt-2'}>
+                    <label className="text-xs font-medium text-slate-500 block mb-1">Template Name *</label>
+                    <Input value={recurringName} onChange={e => setRecurringName(e.target.value)} placeholder="e.g. Monthly Rent" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
+                      <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={recurringFreq} onChange={e => setRecurringFreq(e.target.value)}>
+                        {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
+                      </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Frequency</label>
-                        <select className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={recurringFreq} onChange={e => setRecurringFreq(e.target.value)}>
-                          {PERIODICITIES.map(p => <option key={p}>{p}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-slate-500 block mb-1">Next Due Date</label>
-                        <Input type="date" value={recurringNextDue} onChange={e => setRecurringNextDue(e.target.value)} />
-                      </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 block mb-1">Next Due Date</label>
+                      <Input type="date" value={recurringNextDue} onChange={e => setRecurringNextDue(e.target.value)} />
                     </div>
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
 
             <div className="border border-slate-200 rounded-lg">
               <button type="button"
@@ -879,7 +891,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
             }]
         if (!useSplits || finalSplits.length > 0) await upsertSplits(txId, finalSplits)
 
-        if (!form.id && recurringEnabled && recurringName.trim()) {
+        if (recurringEnabled && recurringName.trim()) {
           await createRecurringTemplate({
             name: recurringName.trim(),
             accounts_id: form.accounts_id,

@@ -12,10 +12,14 @@ import {
 import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
+import { PayeeSelect, CategorySelect } from '@/components/TxModal'
 
 type Row = Record<string, unknown>
 
-const PERIODICITIES = ['Weekly', 'Bi-Weekly', 'Monthly', 'Bi-Monthly', 'Quarterly', 'Semi-Annual', 'Annual', 'Once']
+// 'Daily' was missing here even though the backend (both the scheduled draft
+// generator and the manual confirm-draft endpoint) has always supported it —
+// a Daily template could be created but never edited back to Daily afterward.
+const PERIODICITIES = ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly', 'Bi-Monthly', 'Quarterly', 'Semi-Annual', 'Annual', 'Once']
 
 // ── Template form ─────────────────────────────────────────────────────────────
 interface TplForm {
@@ -62,9 +66,11 @@ interface ModalProps {
   saving: boolean
   error: string | null
   isEdit: boolean
+  onPayeeCreated: (p: { id: number; name: string }) => void
+  onCategoryCreated: (c: { id: number; full_path: string; type: string }) => void
 }
 
-function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payees, categories, onSave, onClose, saving, error, isEdit }: ModalProps) {
+function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payees, categories, onSave, onClose, saving, error, isEdit, onPayeeCreated, onCategoryCreated }: ModalProps) {
   useEscapeKey(onClose)
   const set = (k: keyof TplForm, v: unknown) => onChange({ ...form, [k]: v as string & boolean })
 
@@ -72,6 +78,34 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
   const removeSplit = (i: number) => onSplitsChange(splits.filter((_, j) => j !== i))
   const setSplit = (i: number, k: keyof SplitRow, v: string) =>
     onSplitsChange(splits.map((s, j) => j === i ? { ...s, [k]: v } : s))
+
+  // Same payee -> "categories you've actually used with this payee before" sorting
+  // as the Cash Register / Investments Cash modal, so the dropdown surfaces the
+  // likely category first instead of a flat alphabetical list every time.
+  const payeeId = form.payees_id ? Number(form.payees_id) : null
+  const { data: topCats = [] } = useQuery({
+    queryKey: ['payee-top-categories', payeeId],
+    queryFn: () => getPayeeTopCategories(payeeId!),
+    enabled: !!payeeId,
+    staleTime: 60_000,
+  })
+  const sortedCategories = useMemo(() => {
+    if (!payeeId || !(topCats as Row[]).length) return categories
+    const topIds = new Set((topCats as Row[]).map(c => String(c.id)))
+    const top = (topCats as Row[]).map(tc => categories.find(c => String(c.id) === String(tc.id))).filter(Boolean) as Row[]
+    const rest = categories.filter(c => !topIds.has(String(c.id)))
+    return top.length ? [
+      { id: '__sep__', full_path: '── Recent for this payee ──', _disabled: true },
+      ...top,
+      { id: '__sep2__', full_path: '── All categories ──', _disabled: true },
+      ...rest,
+    ] : categories
+  }, [categories, topCats, payeeId])
+
+  const splitsTotal = splits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
+  const tplTotal = parseFloat(form.total_amount) || 0
+  const remaining = tplTotal - splitsTotal
+  const splitsMatch = Math.round(remaining * 100) === 0
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -99,10 +133,8 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Payee</label>
-              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.payees_id} onChange={e => set('payees_id', e.target.value)}>
-                <option value="">— none —</option>
-                {payees.map(p => <option key={String(p.id)} value={String(p.id)}>{String(p.name)}</option>)}
-              </select>
+              <PayeeSelect value={form.payees_id} onChange={v => set('payees_id', v)}
+                payees={payees as Record<string, unknown>[]} onPayeeCreated={onPayeeCreated} />
             </div>
           </div>
 
@@ -174,15 +206,19 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
                 </div>
                 {splits.map((sp, i) => (
                   <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <select className="col-span-5 rounded-md border border-slate-300 px-2 py-1 text-xs" value={sp.categories_id} onChange={e => setSplit(i, 'categories_id', e.target.value)}>
-                      <option value="">— none —</option>
-                      {categories.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)}</option>)}
-                    </select>
+                    <CategorySelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
+                      categories={sortedCategories} onCategoryCreated={onCategoryCreated} />
                     <Input className="col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
                     <Input className="col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
                     <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>
                   </div>
                 ))}
+                {tplTotal > 0 && (
+                  <div className={`flex justify-between text-xs pt-1 border-t border-slate-100 mt-1 ${splitsMatch ? 'text-green-600' : 'text-red-500'}`}>
+                    <span>{fmtEur(splitsTotal)} allocated ({Math.round((splitsTotal / tplTotal) * 100)}%)</span>
+                    <span>{splitsMatch ? '✓ 100% covered' : `Unallocated: ${fmtEur(remaining)}`}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -723,6 +759,15 @@ export default function Recurring() {
     setSaving(true)
     setSaveError(null)
     try {
+      const validSplits = splits.filter(s => s.amount)
+      const tplTotal = form.total_amount ? parseFloat(form.total_amount) : 0
+      if (validSplits.length > 0 && tplTotal > 0) {
+        const splitsTotal = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+        if (Math.round(splitsTotal * 100) !== Math.round(tplTotal * 100)) {
+          throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(tplTotal)})`)
+        }
+      }
+
       const payload: Record<string, unknown> = {
         name: form.name,
         accounts_id: form.accounts_id ? Number(form.accounts_id) : null,
@@ -735,7 +780,7 @@ export default function Recurring() {
         auto_confirm: form.auto_confirm,
         active: form.active,
         accounts_id_target: form.accounts_id_target ? Number(form.accounts_id_target) : null,
-        splits: splits.filter(s => s.amount).map(s => ({
+        splits: validSplits.map(s => ({
           categories_id: s.categories_id ? Number(s.categories_id) : null,
           amount: parseFloat(s.amount),
           memo: s.memo || null,
@@ -855,6 +900,8 @@ export default function Recurring() {
           saving={saving}
           error={saveError}
           isEdit={editId !== null}
+          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string, unknown>[]) => [...(old ?? []), c])}
         />
       )}
 
