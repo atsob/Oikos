@@ -235,6 +235,15 @@ export const upsertCategory = (data: Record<string, unknown>) =>
 export const upsertInstitution = (data: Record<string, unknown>) =>
   api.post('/static-data/institutions', data).then(r => r.data)
 
+export const getCreditRatings = () =>
+  api.get('/static-data/credit-ratings').then(r => r.data)
+
+export const getIssuers = (search?: string) =>
+  api.get('/static-data/issuers', { params: search ? { search } : {} }).then(r => r.data)
+
+export const upsertIssuer = (data: Record<string, unknown>) =>
+  api.post('/static-data/issuers', data).then(r => r.data)
+
 export const getSecuritiesMaster = (search?: string) =>
   api.get('/static-data/securities', { params: search ? { search } : {} }).then(r => r.data)
 
@@ -418,6 +427,15 @@ export const getSecurityTransactions = (secId: number) =>
 
 export const getSecurityHoldings = (secId: number) =>
   api.get(`/securities/${secId}/holdings`).then(r => r.data)
+
+export const getSecurityFundComposition = (secId: number) =>
+  api.get(`/securities/${secId}/fund-composition`).then(r => r.data)
+
+export const setSecurityCategoryOverride = (secId: number, categoryOverride: string | null) =>
+  api.patch(`/securities/${secId}/fund-composition/category-override`, { category_override: categoryOverride }).then(r => r.data)
+
+export const setSecurityAssetClassOverride = (secId: number, assetClassOverride: string | null) =>
+  api.patch(`/securities/${secId}/fund-composition/asset-class-override`, { asset_class_override: assetClassOverride }).then(r => r.data)
 
 export const getSecurityDividends = (secId: number) =>
   api.get(`/securities/${secId}/dividends`).then(r => r.data)

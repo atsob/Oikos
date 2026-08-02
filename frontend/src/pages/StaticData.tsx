@@ -11,12 +11,13 @@ import {
   getPayeeTransactions, getCategoryTransactions,
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
+  getCreditRatings, getIssuers, upsertIssuer,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, AccountOptions } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
-const TABS = ['Payees', 'Categories', 'Institutions', 'Accounts', 'Tax Rules', 'Instrument Tax']
+const TABS = ['Payees', 'Categories', 'Institutions', 'Issuers', 'Accounts', 'Tax Rules', 'Instrument Tax']
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
@@ -707,12 +708,25 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
 }
 
 // ── Institutions modal for full edit ─────────────────────────────────────────
+// Shared Moody's/S&P/Fitch notch options, sourced from Credit_Ratings_LT — used
+// by both the Institutions modal and the Issuers modal below.
+function useRatingOptions() {
+  const { data = [] } = useQuery({ queryKey: ['credit-ratings'], queryFn: getCreditRatings, staleTime: Infinity })
+  const rows = data as Record<string, unknown>[]
+  return {
+    moodys: rows.map(r => String(r.moodys)),
+    sp: rows.map(r => String(r.sp)),
+    fitch: rows.map(r => String(r.fitch)),
+  }
+}
+
 function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const ratingOptions = useRatingOptions()
 
   const { data = [], isLoading } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
 
@@ -831,9 +845,24 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
               </select>
             </Field>
             <Field label="BIC Code"><Input value={form.bic ?? ''} onChange={e => set('bic', e.target.value)} placeholder="ABCDGRAA" maxLength={11} /></Field>
-            <Field label="Moody's"><Input value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)} placeholder="Aaa" /></Field>
-            <Field label="S&P"><Input value={form.sp ?? ''} onChange={e => set('sp', e.target.value)} placeholder="AAA" /></Field>
-            <Field label="Fitch"><Input value={form.fitch ?? ''} onChange={e => set('fitch', e.target.value)} placeholder="AAA" /></Field>
+            <Field label="Moody's">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.moodys.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+            <Field label="S&P">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.sp ?? ''} onChange={e => set('sp', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.sp.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Fitch">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.fitch ?? ''} onChange={e => set('fitch', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.fitch.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
             <Field label="Contact"><Input value={form.contact ?? ''} onChange={e => set('contact', e.target.value)} /></Field>
             <Field label="Phone"><Input value={form.phone ?? ''} onChange={e => set('phone', e.target.value)} /></Field>
             <div className="col-span-2">
@@ -842,6 +871,153 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
             <div className="col-span-2">
               <Field label="Website"><Input value={form.website ?? ''} onChange={e => set('website', e.target.value)} placeholder="https://…" /></Field>
             </div>
+            <div className="col-span-2">
+              <Field label="Notes">
+                <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm resize-none" rows={2} value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} />
+              </Field>
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Issuers Tab ───────────────────────────────────────────────────────────────
+function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
+  const qc = useQueryClient()
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const ratingOptions = useRatingOptions()
+
+  const { data = [], isLoading } = useQuery({ queryKey: ['issuers'], queryFn: () => getIssuers() })
+
+  const filtered = search
+    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : data as Record<string, unknown>[]
+
+  const openEdit = (row: Record<string, unknown>) => {
+    setEditRow(row)
+    setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
+    setError(null)
+  }
+
+  const openNew = () => {
+    setEditRow({})
+    setForm({ name: '', moodys: '', sp: '', fitch: '', notes: '' })
+    setError(null)
+  }
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      await upsertIssuer({ id: editRow?.id ?? undefined, ...form })
+      qc.invalidateQueries({ queryKey: ['issuers'] })
+      setEditRow(null)
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail ?? (e instanceof Error ? e.message : 'Save failed'))
+    }
+    finally { setSaving(false) }
+  }
+
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDelete = async (id: number) => {
+    if (!confirm('Delete this issuer?')) return
+    setDeleteError(null)
+    try {
+      await deleteRow('issuers', id)
+      qc.invalidateQueries({ queryKey: ['issuers'] })
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (e instanceof Error ? e.message : 'Delete failed')
+      setDeleteError(msg)
+    }
+  }
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  const issuerColDefs = [
+    { field: 'id', headerName: 'ID', width: 70 },
+    { field: 'name', headerName: 'Issuer', flex: 2, minWidth: 200 },
+    { field: 'moodys', headerName: "Moody's", width: 90 },
+    { field: 'sp', headerName: 'S&P', width: 80 },
+    { field: 'fitch', headerName: 'Fitch', width: 80 },
+    { field: 'notes', headerName: 'Notes', flex: 2, minWidth: 160 },
+    {
+      headerName: '', width: 80, sortable: false, filter: false,
+      cellRenderer: (p: { data: Record<string, unknown> }) => (
+        <div className="flex gap-1 items-center h-full">
+          <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+          <button onClick={() => handleDelete(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+        </div>
+      ),
+    },
+  ]
+  const gridCols = useGridColumnState('static-data-issuers', issuerColDefs)
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
+          </div>
+          {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} issuers · double-click to edit</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Issuer</Button>
+          <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        </div>
+      </div>
+      <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          columnDefs={gridCols.colDefs}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+        />
+      </div>
+
+      {editRow !== null && (
+        <Modal title={form.id ? 'Edit Issuer' : 'New Issuer'} onClose={() => setEditRow(null)}
+          footer={<>
+            {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} /></Field>
+            </div>
+            <Field label="Moody's">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.moodys.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+            <Field label="S&P">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.sp ?? ''} onChange={e => set('sp', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.sp.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+            <Field label="Fitch">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.fitch ?? ''} onChange={e => set('fitch', e.target.value)}>
+                <option value="">— not rated —</option>
+                {ratingOptions.fitch.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
             <div className="col-span-2">
               <Field label="Notes">
                 <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm resize-none" rows={2} value={form.notes ?? ''} onChange={e => set('notes', e.target.value)} />
@@ -1238,6 +1414,7 @@ export default function StaticData() {
           {tab === 'Payees'       && <PayeesTab search={search} onSearchChange={setSearch} />}
           {tab === 'Categories'   && <CategoriesTab search={search} onSearchChange={setSearch} />}
           {tab === 'Institutions' && <InstitutionsTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Issuers' && <IssuersTab search={search} onSearchChange={setSearch} />}
           {tab === 'Accounts'     && <AccountsTab search={search} onSearchChange={setSearch} />}
           {tab === 'Tax Rules'      && <TaxRulesTab />}
           {tab === 'Instrument Tax' && <InstrumentTaxTab />}

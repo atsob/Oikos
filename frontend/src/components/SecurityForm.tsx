@@ -14,7 +14,7 @@ export const EMPTY_SECURITY_FORM: Record<string, string> = {
   dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
   dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
   analyst_rating: '', analyst_target_price: '',
-  tax_category: '',
+  tax_category: '', issuer_id: '',
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
@@ -30,11 +30,12 @@ function FormSection({ children }: { children: ReactNode }) {
   return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
 }
 
-export function SecurityFormFields({ form, set, currencies, taxRules }: {
+export function SecurityFormFields({ form, set, currencies, taxRules, issuers = [] }: {
   form: Record<string, string>
   set: (k: string, v: string) => void
   currencies: Record<string, unknown>[]
   taxRules: Record<string, unknown>[]
+  issuers?: Record<string, unknown>[]
 }) {
   const BoolField = ({ k, label }: { k: string; label: string }) => (
     <FormField label={label}>
@@ -92,6 +93,12 @@ export function SecurityFormFields({ form, set, currencies, taxRules }: {
         </select>
       </FormField>
       <FormField label="Face Value"><Input type="number" step="0.01" value={form.face_value} onChange={e => set('face_value', e.target.value)} placeholder="1000.00" /></FormField>
+      <FormField label="Issuer">
+        <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.issuer_id ?? ''} onChange={e => set('issuer_id', e.target.value)}>
+          <option value="">— not set —</option>
+          {issuers.map(i => <option key={String(i.id)} value={String(i.id)}>{String(i.name)}</option>)}
+        </select>
+      </FormField>
 
       <FormSection>Dividends</FormSection>
       <FormField label="Dividend Yield %"><Input type="number" step="0.0001" value={form.dividend_yield} onChange={e => set('dividend_yield', e.target.value)} placeholder="0.0000" /></FormField>

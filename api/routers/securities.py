@@ -99,6 +99,52 @@ def get_security_holdings(sec_id: int):
     return {"holdings": records, "latest_price": latest_price, "price_date": price_date}
 
 
+# ── Fund Composition (Portfolio X-Ray look-through data) ─────────────────────
+
+@router.get("/{sec_id}/fund-composition")
+def get_security_fund_composition(sec_id: int):
+    with get_db() as conn:
+        comp_df = pd.read_sql("SELECT * FROM Fund_Composition WHERE Securities_Id = %(sid)s", conn, params={"sid": sec_id})
+        holdings_df = pd.read_sql("""
+            SELECT Rank AS rank, Symbol AS symbol, Holding_Name AS holding_name, Weight_Pct AS weight_pct
+            FROM Fund_Top_Holdings WHERE Securities_Id = %(sid)s ORDER BY Rank
+        """, conn, params={"sid": sec_id})
+    comp_records = _df(comp_df)
+    return {
+        "composition": comp_records[0] if comp_records else None,
+        "top_holdings": _df(holdings_df),
+    }
+
+
+@router.patch("/{sec_id}/fund-composition/category-override")
+def set_security_category_override(sec_id: int, data: dict):
+    category = (data.get("category_override") or None)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Fund_Composition (Securities_Id, Category_Override)
+            VALUES (%s, %s)
+            ON CONFLICT (Securities_Id) DO UPDATE SET Category_Override = EXCLUDED.Category_Override
+        """, (sec_id, category))
+    return {"id": sec_id}
+
+
+@router.patch("/{sec_id}/fund-composition/asset-class-override")
+def set_security_asset_class_override(sec_id: int, data: dict):
+    """Manually pin a fund's entire value to one X-Ray asset class — for funds
+    Yahoo's generic 6-bucket split can't classify correctly (e.g. a physical
+    commodity ETC lands 100% in Yahoo's "other" bucket with no further detail)."""
+    asset_class = (data.get("asset_class_override") or None)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Fund_Composition (Securities_Id, Asset_Class_Override)
+            VALUES (%s, %s)
+            ON CONFLICT (Securities_Id) DO UPDATE SET Asset_Class_Override = EXCLUDED.Asset_Class_Override
+        """, (sec_id, asset_class))
+    return {"id": sec_id}
+
+
 # ── Dividend History ──────────────────────────────────────────────────────────
 
 @router.get("/{sec_id}/dividends")

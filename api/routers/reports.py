@@ -2953,55 +2953,87 @@ def get_fx_exposure(account_ids: Optional[str] = Query(None)):
 
 @router.get("/xray/sector-weighting")
 def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
+    """Sector summary, plus a per-security detail breakdown (which security
+    contributed how much/what % to each sector) for the UI's click-to-drill-down."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    query = f"""
+    holdings_cte = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
-               COALESCE(NULLIF(TRIM(s.Sector),''),'Other / Unknown') AS sector,
+               COALESCE(
+                   NULLIF(TRIM(s.Sector),''),
+                   CASE s.Securities_Type::text WHEN 'Crypto' THEN 'Crypto' WHEN 'Commodity' THEN 'Commodities' END,
+                   'Other / Unknown'
+               ) AS sector,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
         FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
         GROUP BY h.Securities_Id, s.Securities_Type, sector
+    )
+    """
+    detail_cte = """
+    , direct_detail AS (
+        SELECT hv.sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+        WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
-    direct_sector AS (
-        SELECT sector, value_eur FROM holdings_value WHERE sec_type NOT IN ('ETF','Mutual Fund')
-    ),
-    fund_sector AS (
-        SELECT INITCAP(REPLACE(je.key,'_',' ')) AS sector, hv.value_eur * je.value::numeric AS value_eur
+    fund_detail AS (
+        SELECT INITCAP(REPLACE(je.key,'_',' ')) AS sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+               hv.value_eur * je.value::numeric AS value_eur
         FROM holdings_value hv
+        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         CROSS JOIN LATERAL jsonb_each_text(fc.Sector_Weightings) AS je(key, value)
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NOT NULL
     ),
-    uncovered AS (
-        SELECT 'Uncovered Fund Exposure' AS sector, hv.value_eur
-        FROM holdings_value hv
+    uncovered_detail AS (
+        SELECT 'Uncovered Fund Exposure' AS sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
           AND NOT EXISTS (SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id AND fc.Sector_Weightings IS NOT NULL)
     ),
-    combined AS (
-        SELECT * FROM direct_sector
-        UNION ALL SELECT * FROM fund_sector
-        UNION ALL SELECT * FROM uncovered
-    ),
-    totals AS (SELECT SUM(value_eur) AS grand_total FROM combined)
+    detail_combined AS (
+        SELECT * FROM direct_detail
+        UNION ALL SELECT * FROM fund_detail
+        UNION ALL SELECT * FROM uncovered_detail
+    )
+    """
+    summary_query = holdings_cte + detail_cte + """
+    , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
     SELECT sector, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
-    FROM combined GROUP BY sector ORDER BY value_eur DESC
+    FROM detail_combined GROUP BY sector ORDER BY value_eur DESC
+    """
+    detail_query = holdings_cte + detail_cte + """
+    , sector_totals AS (SELECT sector, SUM(value_eur) AS sector_total FROM detail_combined GROUP BY sector)
+    SELECT dc.sector, dc.securities_id, dc.name, dc.ticker,
+           ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
+           ROUND((SUM(dc.value_eur)/NULLIF(st.sector_total,0)*100)::numeric,2) AS pct
+    FROM detail_combined dc JOIN sector_totals st ON st.sector = dc.sector
+    GROUP BY dc.sector, dc.securities_id, dc.name, dc.ticker, st.sector_total
+    ORDER BY dc.sector, value_eur DESC
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
+        summary_df = pd.read_sql(summary_query, conn)
+        detail_df = pd.read_sql(detail_query, conn)
+    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
 
 
 @router.get("/xray/asset-allocation")
 def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
-    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    query = f"""
+    """Asset-class summary, plus a per-security detail breakdown (which security
+    contributed how much/what % to each class) for the UI's click-to-drill-down.
+    Cash/Bank accounts (Cash, Checking, Savings, Credit Card) in the preset also
+    contribute their balance to the 'Cash' bucket, same account-type exclusion
+    list get_allocation's scope='all' cash bucket already uses — Holdings alone
+    would otherwise never surface real cash, only a fund's own cash sleeve."""
+    parsed_acct_ids = _parse_account_ids(account_ids)
+    acct_clause = _acct_clause(parsed_acct_ids, "h.Accounts_Id")
+    cash_clause = _acct_clause(parsed_acct_ids, "a.Accounts_Id")
+    holdings_cte = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     holdings_value AS (
@@ -3012,19 +3044,46 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
         GROUP BY h.Securities_Id, s.Securities_Type
+    )
+    """
+    detail_cte = f"""
+    , direct_cash AS (
+        SELECT 'Cash' AS asset_class, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
+               a.Accounts_Balance * COALESCE(fx.FX_Rate,1) AS value_eur
+        FROM Accounts a
+        LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+        WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+          AND a.Is_Active = TRUE AND a.Accounts_Balance != 0{cash_clause}
     ),
-    direct_asset AS (
+    direct_detail AS (
         SELECT CASE
-                 WHEN sec_type = 'Stock' THEN 'Stocks'
-                 WHEN sec_type = 'Bond' THEN 'Bonds'
-                 WHEN sec_type = 'CD' THEN 'Cash'
+                 WHEN hv.sec_type = 'Stock' THEN 'Stocks'
+                 WHEN hv.sec_type = 'Bond' THEN 'Bonds'
+                 WHEN hv.sec_type = 'CD' THEN 'Cash'
+                 WHEN hv.sec_type = 'Crypto' THEN 'Crypto'
+                 WHEN hv.sec_type = 'Commodity' THEN 'Commodities'
                  ELSE 'Other'
-               END AS asset_class, value_eur
-        FROM holdings_value WHERE sec_type NOT IN ('ETF','Mutual Fund')
+               END AS asset_class,
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+        WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
-    fund_asset AS (
-        SELECT b.asset_class, SUM(hv.value_eur * b.pct) AS value_eur
+    fund_detail_override AS (
+        -- Manual override (e.g. a physical commodity ETC Yahoo lumps entirely
+        -- into its generic "other" bucket) — routes the fund's whole value to
+        -- one class instead of splitting across Yahoo's 6 asset buckets.
+        SELECT fc.Asset_Class_Override AS asset_class, hv.Securities_Id AS securities_id,
+               s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv
+        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+        JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Asset_Class_Override IS NOT NULL
+    ),
+    fund_detail_split AS (
+        SELECT b.asset_class, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+               hv.value_eur * b.pct AS value_eur
+        FROM holdings_value hv
+        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         CROSS JOIN LATERAL (VALUES
             ('Stocks',      fc.Asset_Stock_Pct),
@@ -3034,31 +3093,53 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
             ('Convertible', fc.Asset_Convertible_Pct),
             ('Other',       fc.Asset_Other_Pct)
         ) AS b(asset_class, pct)
-        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND b.pct IS NOT NULL
-        GROUP BY b.asset_class
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Asset_Class_Override IS NULL
+          AND b.pct IS NOT NULL AND b.pct > 0
     ),
-    uncovered AS (
-        SELECT 'Uncovered Fund Exposure' AS asset_class, hv.value_eur
-        FROM holdings_value hv
+    fund_detail AS (
+        SELECT * FROM fund_detail_override
+        UNION ALL SELECT * FROM fund_detail_split
+    ),
+    uncovered_detail AS (
+        SELECT 'Uncovered Fund Exposure' AS asset_class,
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
+          AND NOT EXISTS (
+              SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id
+                AND fc.Asset_Class_Override IS NOT NULL
+          )
           AND NOT EXISTS (
               SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id
                 AND (fc.Asset_Stock_Pct IS NOT NULL OR fc.Asset_Bond_Pct IS NOT NULL OR fc.Asset_Cash_Pct IS NOT NULL)
           )
     ),
-    combined AS (
-        SELECT * FROM direct_asset
-        UNION ALL SELECT * FROM fund_asset
-        UNION ALL SELECT * FROM uncovered
-    ),
-    totals AS (SELECT SUM(value_eur) AS grand_total FROM combined)
+    detail_combined AS (
+        SELECT * FROM direct_cash
+        UNION ALL SELECT * FROM direct_detail
+        UNION ALL SELECT * FROM fund_detail
+        UNION ALL SELECT * FROM uncovered_detail
+    )
+    """
+    summary_query = holdings_cte + detail_cte + """
+    , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
     SELECT asset_class, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
-    FROM combined GROUP BY asset_class ORDER BY value_eur DESC
+    FROM detail_combined GROUP BY asset_class ORDER BY value_eur DESC
+    """
+    detail_query = holdings_cte + detail_cte + """
+    , class_totals AS (SELECT asset_class, SUM(value_eur) AS class_total FROM detail_combined GROUP BY asset_class)
+    SELECT dc.asset_class, dc.securities_id, dc.name, dc.ticker,
+           ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
+           ROUND((SUM(dc.value_eur)/NULLIF(ct.class_total,0)*100)::numeric,2) AS pct
+    FROM detail_combined dc JOIN class_totals ct ON ct.asset_class = dc.asset_class
+    GROUP BY dc.asset_class, dc.securities_id, dc.name, dc.ticker, ct.class_total
+    ORDER BY dc.asset_class, value_eur DESC
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
+        summary_df = pd.read_sql(summary_query, conn)
+        detail_df = pd.read_sql(detail_query, conn)
+    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
 
 
 @router.get("/xray/style-box")
@@ -3077,7 +3158,7 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None)):
         GROUP BY h.Securities_Id, s.Securities_Type
     ),
     fund_style AS (
-        SELECT COALESCE(fc.Category_Name, 'N/A (no Morningstar category)') AS style, hv.value_eur
+        SELECT COALESCE(fc.Category_Override, fc.Category_Name, 'N/A (no Morningstar category)') AS style, hv.value_eur
         FROM holdings_value hv
         LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
@@ -3110,13 +3191,13 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     holdings_value AS (
-        SELECT h.Securities_Id, s.Securities_Type::text AS sec_type, s.Maturity_Date,
+        SELECT h.Securities_Id, s.Securities_Type::text AS sec_type, s.Maturity_Date, s.Issuer_Id,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
         FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
-        GROUP BY h.Securities_Id, s.Securities_Type, s.Maturity_Date
+        GROUP BY h.Securities_Id, s.Securities_Type, s.Maturity_Date, s.Issuer_Id
     ),
     fund_bond AS (
         SELECT INITCAP(REPLACE(je.key,'_',' ')) AS quality, hv.value_eur * je.value::numeric AS value_eur,
@@ -3127,11 +3208,26 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Bond_Ratings IS NOT NULL
     ),
     direct_bond AS (
-        SELECT 'Direct / Unrated' AS quality, value_eur,
-               CASE WHEN Maturity_Date IS NOT NULL
-                    THEN EXTRACT(EPOCH FROM (Maturity_Date::timestamp - CURRENT_DATE::timestamp)) / (365.25*86400)
+        -- Maps a linked Issuer's Moody's notch straight to a quality bucket;
+        -- a bond with no issuer, or an issuer with no rating set, falls
+        -- through to 'Direct / Unrated' (the prior always-on default).
+        SELECT CASE
+                 WHEN iss.Moodys = 'Aaa' THEN 'AAA'
+                 WHEN iss.Moodys IN ('Aa1','Aa2','Aa3') THEN 'AA'
+                 WHEN iss.Moodys IN ('A1','A2','A3') THEN 'A'
+                 WHEN iss.Moodys IN ('Baa1','Baa2','Baa3') THEN 'BBB'
+                 WHEN iss.Moodys IN ('Ba1','Ba2','Ba3') THEN 'BB'
+                 WHEN iss.Moodys IN ('B1','B2','B3') THEN 'B'
+                 WHEN iss.Moodys IN ('Caa1','Caa2','Caa3','Ca','C') THEN 'Below B'
+                 ELSE 'Direct / Unrated'
+               END AS quality,
+               hv.value_eur,
+               CASE WHEN hv.Maturity_Date IS NOT NULL
+                    THEN EXTRACT(EPOCH FROM (hv.Maturity_Date::timestamp - CURRENT_DATE::timestamp)) / (365.25*86400)
                END AS duration_years
-        FROM holdings_value WHERE sec_type = 'Bond'
+        FROM holdings_value hv
+        LEFT JOIN Issuers iss ON iss.Issuers_Id = hv.Issuer_Id
+        WHERE hv.sec_type = 'Bond'
     ),
     uncovered AS (
         SELECT 'Uncovered Fund Bond Exposure' AS quality, hv.value_eur, NULL::numeric AS duration_years
@@ -3205,9 +3301,10 @@ def get_xray_stock_overlap(account_ids: Optional[str] = Query(None)):
 def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
     """Weighted-average expense ratio across held funds, plus coverage_pct (fund
     €-value with a known expense ratio ÷ total fund €-value) so the UI can show
-    e.g. '0.12% (covers 94% of fund holdings by value)' rather than implying completeness."""
+    e.g. '0.12% (covers 94% of fund holdings by value)' rather than implying completeness.
+    Also returns a per-fund breakdown (value, % of fund holdings, own expense ratio)."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    query = f"""
+    holdings_cte = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
     holdings_value AS (
@@ -3219,6 +3316,8 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
         WHERE h.Quantity > 0{acct_clause} AND s.Securities_Type IN ('ETF','Mutual Fund')
         GROUP BY h.Securities_Id, s.Securities_Type
     )
+    """
+    summary_query = holdings_cte + """
     SELECT
         ROUND((SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur * fc.Expense_Ratio_Pct ELSE 0 END)
                / NULLIF(SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur ELSE 0 END),0) * 100)::numeric,4) AS weighted_expense_ratio_pct,
@@ -3228,9 +3327,22 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
     FROM holdings_value hv
     LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
     """
+    funds_query = holdings_cte + """
+    , totals AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
+    SELECT s.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+           ROUND(hv.value_eur::numeric,2) AS value_eur,
+           ROUND((hv.value_eur / NULLIF((SELECT grand_total FROM totals),0) * 100)::numeric,2) AS pct,
+           ROUND((fc.Expense_Ratio_Pct * 100)::numeric,4) AS expense_ratio_pct
+    FROM holdings_value hv
+    JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+    LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
+    ORDER BY hv.value_eur DESC
+    """
     with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
+        summary_df = pd.read_sql(summary_query, conn)
+        funds_df = pd.read_sql(funds_query, conn)
+    summary = _df_to_list(summary_df)
+    return {"summary": summary[0] if summary else None, "funds": _df_to_list(funds_df)}
 
 
 # ── Spending by Payee ─────────────────────────────────────────────────────────

@@ -415,6 +415,110 @@ def delete_institution(iid: int):
         conn_obj.close()
 
 
+# ── Credit Ratings lookup ──────────────────────────────────────────────────────
+# Powers the Institutions and Issuers modals' Moody's/S&P/Fitch selects.
+
+@router.get("/credit-ratings")
+def get_credit_ratings():
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT Credit_Ratings_LT_Id AS id, Quality AS quality, Description AS description,
+                   Moodys AS moodys, S_P AS sp, Fitch AS fitch
+            FROM Credit_Ratings_LT
+            ORDER BY Credit_Ratings_LT_Id ASC
+        """, conn)
+    return _df(df)
+
+
+# ── Issuers ────────────────────────────────────────────────────────────────────
+# Bond/fund issuers with Moody's/S&P/Fitch ratings — not just bonds, e.g. a fund
+# family can be recorded here too (originally shipped as "Bond Issuers").
+
+@router.get("/issuers")
+def get_issuers(search: Optional[str] = Query(None)):
+    clause = "AND LOWER(Issuers_Name) LIKE %(s)s" if search else ""
+    params: dict = {}
+    if search:
+        params["s"] = f"%{search.lower()}%"
+    with get_db() as conn:
+        df = pd.read_sql(f"""
+            SELECT Issuers_Id AS id, Issuers_Name AS name,
+                   Moodys AS moodys, S_P AS sp, Fitch AS fitch, Notes AS notes
+            FROM Issuers
+            WHERE 1=1 {clause}
+            ORDER BY Issuers_Name ASC
+        """, conn, params=params if params else None)
+    return _df(df)
+
+
+@router.post("/issuers")
+def upsert_issuer(data: dict):
+    iid = data.get('id')
+    name = (data.get('name') or '').strip()
+
+    if not name:
+        raise HTTPException(422, "Issuer name is required")
+
+    col_map = {
+        'name':   'Issuers_Name',
+        'moodys': 'Moodys',
+        'sp':     'S_P',
+        'fitch':  'Fitch',
+        'notes':  'Notes',
+    }
+    fields = {}
+    for k in col_map:
+        v = data.get(k)
+        fields[k] = v if (v not in ('', None) or k == 'name') else None
+    fields['name'] = name
+
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            if iid:
+                sets = ", ".join(f"{col_map[k]}=%s" for k in fields)
+                vals = [fields[k] for k in fields] + [iid]
+                cur.execute(f"UPDATE Issuers SET {sets} WHERE Issuers_Id=%s", vals)
+            else:
+                cols = ", ".join(col_map[k] for k in fields)
+                phs  = ", ".join("%s" for _ in fields)
+                vals = [fields[k] for k in fields]
+                cur.execute(
+                    f"INSERT INTO Issuers ({cols}) VALUES ({phs}) RETURNING Issuers_Id",
+                    vals,
+                )
+                iid = cur.fetchone()[0]
+            return {"id": iid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("upsert_issuer failed: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/issuers/{iid}")
+def delete_issuer(iid: int):
+    from database.connection import get_connection
+    conn_obj = get_connection()
+    try:
+        cur = conn_obj.cursor()
+        cur.execute("SELECT COUNT(*) FROM Securities WHERE Issuer_Id=%s", (iid,))
+        secs = cur.fetchone()[0]
+        if secs:
+            raise HTTPException(400, f"Cannot delete: issuer is linked to {secs} security(ies). Unlink them first.")
+        cur.execute("DELETE FROM Issuers WHERE Issuers_Id=%s", (iid,))
+        conn_obj.commit()
+        return {"deleted": iid}
+    except HTTPException:
+        conn_obj.rollback()
+        raise
+    except Exception as e:
+        conn_obj.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn_obj.close()
+
+
 @router.post("/accounts")
 def upsert_account(data: dict):
     from database.connection import get_connection
@@ -591,6 +695,7 @@ def upsert_security(data: dict):
             _n('payout_ratio'), _n('five_year_avg_yield'),
             _s('analyst_rating'), _n('analyst_target_price'),
             _s('tax_category'),
+            data.get('issuer_id') or None,
         )
         cols = """Ticker, Securities_Name, Securities_Type, Currencies_Id,
                   Is_Active, Is_Tax_Exempt, ISIN, Sector, Industry,
@@ -600,7 +705,7 @@ def upsert_security(data: dict):
                   Ex_Dividend_Date, Dividend_Pay_Date,
                   Payout_Ratio, Five_Year_Avg_Yield,
                   Analyst_Rating, Analyst_Target_Price,
-                  Tax_Category"""
+                  Tax_Category, Issuer_Id"""
         placeholders = ','.join(['%s'] * len(vals))
         if sid:
             set_clause = ', '.join(f"{c.strip()}=%s" for c in cols.split(','))

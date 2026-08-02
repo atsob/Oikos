@@ -103,13 +103,53 @@ def get_securities(search: Optional[str] = Query(None)):
                    s.Five_Year_Avg_Yield AS five_year_avg_yield,
                    s.Analyst_Rating AS analyst_rating,
                    s.Analyst_Target_Price AS analyst_target_price,
+                   s.Issuer_Id AS issuer_id,
                    COALESCE((SELECT COUNT(*) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id), 0) AS price_records,
                    (SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS latest_price,
                    (SELECT Date FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS price_date,
                    COALESCE((SELECT COUNT(*) FROM Investments WHERE Securities_Id = s.Securities_Id), 0) AS investment_count,
-                   COALESCE((SELECT SUM(Quantity) FROM Holdings WHERE Securities_Id = s.Securities_Id), 0) AS held_quantity
+                   COALESCE((SELECT SUM(Quantity) FROM Holdings WHERE Securities_Id = s.Securities_Id), 0) AS held_quantity,
+                   -- Quote fields: prefer Historical_Prices (already downloaded daily for
+                   -- every security's price chart, so almost always fresher/more complete)
+                   -- and fall back to the Securities_Quote cache from the Yahoo quote
+                   -- download only when price history can't supply it. Open, P/E, and
+                   -- Market Cap have no Historical_Prices equivalent (no Open column, and
+                   -- P/E/Market Cap aren't derivable from price alone), so those three
+                   -- always come from Securities_Quote.
+                   COALESCE(
+                       (SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC OFFSET 1 LIMIT 1),
+                       sq.Prev_Close
+                   ) AS prev_close,
+                   sq.Day_Open AS day_open,
+                   COALESCE(
+                       (SELECT High FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1),
+                       sq.Day_High
+                   ) AS day_high,
+                   COALESCE(
+                       (SELECT Low FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1),
+                       sq.Day_Low
+                   ) AS day_low,
+                   COALESCE(
+                       (SELECT MAX(High) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id AND Date >= CURRENT_DATE - INTERVAL '365 days'),
+                       sq.Week52_High
+                   ) AS week52_high,
+                   COALESCE(
+                       (SELECT MIN(Low) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id AND Date >= CURRENT_DATE - INTERVAL '365 days'),
+                       sq.Week52_Low
+                   ) AS week52_low,
+                   COALESCE(
+                       (SELECT Volume FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1),
+                       sq.Volume
+                   ) AS volume,
+                   COALESCE(
+                       (SELECT ROUND(AVG(Volume)) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id AND Date >= CURRENT_DATE - INTERVAL '30 days'),
+                       sq.Avg_Volume
+                   ) AS avg_volume,
+                   sq.Trailing_PE AS trailing_pe, sq.Market_Cap AS market_cap,
+                   sq.Quote_Updated_At AS quote_updated_at
             FROM Securities s
             LEFT JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
+            LEFT JOIN Securities_Quote sq ON sq.Securities_Id = s.Securities_Id
             WHERE 1=1 {clause}
             ORDER BY s.Securities_Name ASC
         """, conn, params=params if params else None)

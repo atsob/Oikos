@@ -321,17 +321,37 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                 info.get('dividendDate') or info.get('lastDividendDate')
             )
 
+            # ── Quote summary (free — already in ticker.info) ──────────────
+            # Powers Security Detail's Overview tab. Price/change themselves
+            # aren't stored here — Price already comes from Historical_Prices
+            # (latest_price), Change is derived client-side from that vs.
+            # Prev_Close, avoiding a stale duplicate of data we already have.
+            quote = (
+                info.get('previousClose') or None,
+                info.get('open') or None,
+                info.get('dayHigh') or None,
+                info.get('dayLow') or None,
+                info.get('fiftyTwoWeekHigh') or None,
+                info.get('fiftyTwoWeekLow') or None,
+                info.get('volume') or None,
+                info.get('averageVolume') or None,
+                info.get('trailingPE') or None,
+                info.get('marketCap') or None,
+            )
+
             return (sec_id, sec_name, symbol,
                     sector, industry, rating, target_price,
                     div_yield, div_rate, five_yr_avg, payout,
                     ex_div_date, div_pay_date,
                     isin,
+                    quote,
                     None)
         except Exception as exc:
             return (sec_id, sec_name, symbol,
                     None, None, None, None,
                     None, None, None, None,
                     None, None,
+                    None,
                     None,
                     str(exc))
 
@@ -373,6 +393,7 @@ def download_securities_info_from_yahoo(target_sec_id=None):
         sec_industry_updates = []    # rows that have sector/industry
         div_updates          = []    # ALL rows that returned without error
         isin_updates         = []    # (isin, sec_id) where Yahoo returned an ISIN
+        quote_updates        = []    # ALL rows that returned without error
 
         for row in results:
             (sec_id, sec_name, symbol,
@@ -380,6 +401,7 @@ def download_securities_info_from_yahoo(target_sec_id=None):
              div_yield, div_rate, five_yr_avg, payout,
              ex_div_date, div_pay_date,
              isin,
+             quote,
              err) = row
 
             if err:
@@ -417,6 +439,9 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                 print(f"       isin={isin}")
                 isin_updates.append((isin, sec_id))
 
+            # Quote update (Security Detail Overview tab)
+            quote_updates.append((sec_id, *quote))
+
         if sec_industry_updates:
             cur.executemany("""
                 UPDATE Securities
@@ -450,6 +475,22 @@ def download_securities_info_from_yahoo(target_sec_id=None):
             """, isin_updates)
             print(f"  ISIN: {len(isin_updates)} securities with Yahoo ISIN "
                   f"(only NULL/empty slots written).")
+
+        if quote_updates:
+            execute_batch(cur, """
+                INSERT INTO Securities_Quote
+                    (Securities_Id, Prev_Close, Day_Open, Day_High, Day_Low,
+                     Week52_High, Week52_Low, Volume, Avg_Volume, Trailing_PE, Market_Cap,
+                     Quote_Updated_At)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Prev_Close = EXCLUDED.Prev_Close, Day_Open = EXCLUDED.Day_Open,
+                    Day_High = EXCLUDED.Day_High, Day_Low = EXCLUDED.Day_Low,
+                    Week52_High = EXCLUDED.Week52_High, Week52_Low = EXCLUDED.Week52_Low,
+                    Volume = EXCLUDED.Volume, Avg_Volume = EXCLUDED.Avg_Volume,
+                    Trailing_PE = EXCLUDED.Trailing_PE, Market_Cap = EXCLUDED.Market_Cap,
+                    Quote_Updated_At = NOW()
+            """, quote_updates, page_size=500)
 
         conn.commit()
         print(f"Yahoo info update complete — "

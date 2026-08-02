@@ -152,6 +152,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_institutions_id   ON Institutions(Institut
 CREATE UNIQUE INDEX IF NOT EXISTS idx_institutions_name ON Institutions(Institutions_Name);
 
 
+-- Issuers: name + Moody's/S&P/Fitch ratings, mirroring Institutions' rating
+-- columns (same Credit_Ratings_LT FK) — kept separate since an issuer isn't
+-- a financial institution the user holds accounts with. Covers bond issuers
+-- and fund/ETF issuers alike, not bonds only.
+CREATE TABLE IF NOT EXISTS Issuers (
+    Issuers_Id   SERIAL PRIMARY KEY,
+    Issuers_Name VARCHAR(150) UNIQUE NOT NULL,
+    Moodys       VARCHAR(4) REFERENCES Credit_Ratings_LT(Moodys),
+    S_P          VARCHAR(4) REFERENCES Credit_Ratings_LT(S_P),
+    Fitch        VARCHAR(4) REFERENCES Credit_Ratings_LT(Fitch),
+    Notes        TEXT
+);
+
+
 CREATE TABLE Categories (
     Categories_Id        SERIAL PRIMARY KEY,
     Categories_Name      VARCHAR(100) NOT NULL,
@@ -196,6 +210,7 @@ CREATE TABLE Securities (
     Dividend_Pay_Date    DATE,
     Payout_Ratio         NUMERIC(8,4),
     Five_Year_Avg_Yield  NUMERIC(8,4),
+    Issuer_Id            INTEGER REFERENCES Issuers(Issuers_Id) ON DELETE SET NULL,
     embedding            vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_securities_id           ON Securities(Securities_Id);
@@ -929,7 +944,9 @@ CREATE TABLE IF NOT EXISTS Fund_Composition (
     Equity_Median_Market_Cap       NUMERIC(20,2),
     Equity_3yr_Earnings_Growth_Pct NUMERIC(8,4),
     Last_Updated                   TIMESTAMPTZ DEFAULT NOW(),
-    Fetch_Error                    TEXT
+    Fetch_Error                    TEXT,
+    Category_Override              VARCHAR(50),
+    Asset_Class_Override           VARCHAR(20)
 );
 CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
     Fund_Holding_Id  SERIAL PRIMARY KEY,
@@ -941,6 +958,28 @@ CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
     UNIQUE(Securities_Id, Rank)
 );
 CREATE INDEX IF NOT EXISTS idx_fund_top_holdings_symbol ON Fund_Top_Holdings(Symbol);
+
+-- =============================================================================
+-- SECURITY DETAIL QUOTE
+-- =============================================================================
+
+-- Daily quote fields (day/52-week range, volume, P/E, market cap) for Security
+-- Detail's Overview tab, from yfinance's ticker.info. Kept in its own 1:1
+-- child table rather than bloating Securities.
+CREATE TABLE IF NOT EXISTS Securities_Quote (
+    Securities_Id     INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Prev_Close        NUMERIC(20,8),
+    Day_Open          NUMERIC(20,8),
+    Day_High          NUMERIC(20,8),
+    Day_Low           NUMERIC(20,8),
+    Week52_High       NUMERIC(20,8),
+    Week52_Low        NUMERIC(20,8),
+    Volume            BIGINT,
+    Avg_Volume        BIGINT,
+    Trailing_PE       NUMERIC(10,4),
+    Market_Cap        NUMERIC(20,2),
+    Quote_Updated_At  TIMESTAMPTZ
+);
 
 CREATE TABLE IF NOT EXISTS Alerts (
     Alert_Id      SERIAL PRIMARY KEY,

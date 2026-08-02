@@ -258,6 +258,67 @@ def _run_startup_migrations():
                UNIQUE(Securities_Id, Rank)
            )""",
         "CREATE INDEX IF NOT EXISTS idx_fund_top_holdings_symbol ON Fund_Top_Holdings(Symbol)",
+        # Security Detail Overview tab: cached daily quote fields (day/52-week
+        # range, volume, P/E, market cap) from yfinance's ticker.info, kept
+        # in their own 1:1 child table rather than bloating Securities.
+        """CREATE TABLE IF NOT EXISTS Securities_Quote (
+               Securities_Id     INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Prev_Close        NUMERIC(20,8),
+               Day_Open          NUMERIC(20,8),
+               Day_High          NUMERIC(20,8),
+               Day_Low           NUMERIC(20,8),
+               Week52_High       NUMERIC(20,8),
+               Week52_Low        NUMERIC(20,8),
+               Volume            BIGINT,
+               Avg_Volume        BIGINT,
+               Trailing_PE       NUMERIC(10,4),
+               Market_Cap        NUMERIC(20,2),
+               Quote_Updated_At  TIMESTAMPTZ
+           )""",
+        # Issuers: name + Moody's/S&P/Fitch ratings, mirroring Institutions'
+        # rating columns (same Credit_Ratings_LT FK). Kept as its own table
+        # rather than reusing Institutions, since an issuer isn't a financial
+        # institution the user holds accounts with. Originally shipped as
+        # "Bond Issuers" (bond-only); renamed to the generic "Issuers" since
+        # it's also meant to cover fund/ETF issuers, not just bond issuers —
+        # these three renames are one-time migrations for installs that
+        # already have the old names; harmless no-ops once already applied
+        # (each catches the "doesn't exist" error a repeat run would raise).
+        """DO $$ BEGIN
+               ALTER TABLE Bond_Issuers RENAME TO Issuers;
+           EXCEPTION WHEN undefined_table THEN NULL;
+           END $$""",
+        """DO $$ BEGIN
+               ALTER TABLE Issuers RENAME COLUMN Bond_Issuers_Id TO Issuers_Id;
+           EXCEPTION WHEN undefined_table OR undefined_column THEN NULL;
+           END $$""",
+        """DO $$ BEGIN
+               ALTER TABLE Issuers RENAME COLUMN Bond_Issuers_Name TO Issuers_Name;
+           EXCEPTION WHEN undefined_table OR undefined_column THEN NULL;
+           END $$""",
+        """DO $$ BEGIN
+               ALTER TABLE Securities RENAME COLUMN Bond_Issuer_Id TO Issuer_Id;
+           EXCEPTION WHEN undefined_column THEN NULL;
+           END $$""",
+        """CREATE TABLE IF NOT EXISTS Issuers (
+               Issuers_Id   SERIAL PRIMARY KEY,
+               Issuers_Name VARCHAR(150) UNIQUE NOT NULL,
+               Moodys       VARCHAR(4) REFERENCES Credit_Ratings_LT(Moodys),
+               S_P          VARCHAR(4) REFERENCES Credit_Ratings_LT(S_P),
+               Fitch        VARCHAR(4) REFERENCES Credit_Ratings_LT(Fitch),
+               Notes        TEXT
+           )""",
+        # Must run after Issuers is created (FK target).
+        "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Issuer_Id INTEGER REFERENCES Issuers(Issuers_Id) ON DELETE SET NULL",
+        # X-Ray Style Box: manual category override for funds Yahoo doesn't
+        # supply a Morningstar-style category for (mostly non-US ETFs).
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Category_Override VARCHAR(50)",
+        # X-Ray Asset Allocation: manual asset-class override for funds Yahoo's
+        # generic 6-bucket asset_classes split can't classify correctly (e.g.
+        # physical commodity ETCs land 100% in "other" — Yahoo has no
+        # commodity-specific bucket). When set, the fund's whole value routes
+        # to this one class instead of being split across the 6 Yahoo buckets.
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Asset_Class_Override VARCHAR(20)",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)

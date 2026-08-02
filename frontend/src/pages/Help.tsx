@@ -383,7 +383,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           <b>⚙️ Account Preset</b> lets you save a specific set of accounts under a name and switch between
           them — pick "Full Portfolio" (the default) to include everything, or save your current checkbox
-          selection as a named preset to quickly re-apply it later. Presets are shared with Investment Position
+          selection as a named preset to quickly re-apply it later. Presets are shared with Inv. Portfolio
           but each report keeps its own separate list of saved names. <b>Show inactive accounts</b> (on by
           default here, since this is a historical report) controls whether closed accounts' past balances
           count — turning it off will understate historical change if a closed account held real money at some
@@ -432,7 +432,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           year's starting budget. It overwrites any existing budget for the categories being copied.
         </Note>
 
-        <H3>📈 Inv. Positions</H3>
+        <H3>📈 Inv. Portfolio</H3>
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
@@ -451,6 +451,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Download Fund Composition (X-Ray)</b> on Market Data → Downloads (or Security Detail → Downloads for
           one fund) to refresh it; it also refreshes monthly on its own. Funds with no cached data yet show up as
           "Uncovered Fund Exposure" rather than being silently left out of the totals.
+        </Note>
+        <Note>
+          Funds Yahoo doesn't report a category for land in Style Box's <b>"N/A (no Morningstar category)"</b>{' '}
+          bucket — resolve one by opening that fund's Security Detail → <b>Composition &amp; Holdings</b> tab and
+          picking a category from the dropdown there; X-Ray reflects it immediately. The same tab also has an{' '}
+          <b>Asset Class Override</b> for Asset Allocation — useful when Yahoo's generic stock/bond/cash/other
+          split misclassifies a fund (e.g. a physical commodity ETC lands 100% in "Other" since Yahoo has no
+          commodity-specific bucket); setting it routes the fund's whole value to the class you pick instead.
+          Similarly, direct bonds land in Bond Quality's <b>"Direct / Unrated"</b> bucket until you record a real
+          rating: add the issuer under Static Data → <b>Issuers</b> (name + Moody's/S&amp;P/Fitch), then link it
+          from that bond's Security Detail → Setup tab (<b>Issuer</b> field).
         </Note>
 
         <H3>💹 Inv. Performance</H3>
@@ -513,15 +524,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Static Data</H2>
-        <P>Master reference data, in six tabs:</P>
+        <P>Master reference data, in seven tabs:</P>
         <Ul>
           <li><b>Payees</b> — who you pay/receive from; supports merging duplicates.</li>
           <li><b>Categories</b> — the Income/Expense/Transfer/etc. taxonomy; also mergeable.</li>
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
+          <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves X-Ray's Bond Quality view instead of "Direct / Unrated".</li>
           <li><b>Accounts</b> — the full account list with type, currency, institution, active status.</li>
           <li><b>Tax Rules</b> — capital-gains/dividend/income tax treatment per tax category.</li>
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
         </Ul>
+        <Note>
+          Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
+          draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
+        </Note>
       </>
     ),
   },
@@ -534,9 +550,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Reference and price data, in eight tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, and Alerts.</P>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
-          page — Setup, Analysis, Prices, Investment Transactions (with a <b>New Transaction</b> button and a Tax
-          column for withholding tax), Price Anomalies, Dividends, Corporate Actions, News, Alerts, and Downloads,
-          all for that one security.
+          page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Investment
+          Transactions (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
+          Anomalies, Dividends, Corporate Actions, News, Alerts, Downloads, and — for ETF/Mutual Fund securities
+          only — <b>Composition &amp; Holdings</b> (that fund's own X-Ray look-through data), all for that one
+          security.
         </P>
         <Note>
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;

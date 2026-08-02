@@ -15,6 +15,7 @@ import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
+  getSecurityFundComposition, setSecurityCategoryOverride, setSecurityAssetClassOverride,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
@@ -22,7 +23,7 @@ import {
   downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
-  getAccounts, getPortfolioSignals, getPnl,
+  getAccounts, getPortfolioSignals, getPnl, getIssuers,
   getNews, markNewsRead,
   getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert,
 } from '@/lib/api'
@@ -32,6 +33,7 @@ import { InvTransferModal } from '@/components/InvTransferModal'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 import { NewsList } from '@/pages/News'
 import type { NewsItem } from '@/pages/News'
+import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
 
 // ── Shared period helper (mirrors MarketData) ─────────────────────────────────
 const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
@@ -1537,6 +1539,98 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 }
 
 // ── Security Setup Tab ────────────────────────────────────────────────────────
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+function OverviewRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="text-sm font-medium text-slate-700 tabular-nums text-right">{value}</span>
+    </div>
+  )
+}
+
+function OverviewPanel({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
+        {actions}
+      </div>
+      <div className="px-4 py-1">{children}</div>
+    </div>
+  )
+}
+
+function OverviewTab({ secId, security, onEditDetails }: { secId: number; security: Record<string, unknown>; onEditDetails: () => void }) {
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data: holdingsData, isLoading } = useQuery({
+    queryKey: ['sec-holdings', secId],
+    queryFn: () => getSecurityHoldings(secId),
+    refetchInterval: liveRefetchMs,
+  })
+  const holdings = ((holdingsData as { holdings: Record<string, unknown>[] }) ?? { holdings: [] }).holdings
+  const totalQty = holdings.reduce((s, r) => s + Number(r.qty_held ?? 0), 0)
+  const totalValue = holdings.reduce((s, r) => s + Number(r.current_value ?? 0), 0)
+  const totalCost = holdings.reduce((s, r) => s + Number(r.cost_basis ?? 0), 0)
+  const gain = totalValue - totalCost
+  const pctGain = totalCost ? (gain / totalCost) * 100 : null
+  const avgCostPerShare = totalQty ? totalCost / totalQty : null
+
+  const curr = String(security.currency ?? '')
+  const money = (n: number | null) => n == null ? '—' : `${fmt(n, 2)}${curr ? ` ${curr}` : ''}`
+  const gainColor = (n: number | null) => n == null ? '' : n >= 0 ? 'text-green-600' : 'text-red-600'
+
+  const latestPrice = security.latest_price != null ? Number(security.latest_price) : null
+  const prevClose = security.prev_close != null ? Number(security.prev_close) : null
+  const change = latestPrice != null && prevClose != null ? latestPrice - prevClose : null
+  const pctChange = change != null && prevClose ? (change / prevClose) * 100 : null
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+      <OverviewPanel title="My Holdings">
+        <OverviewRow label="Shares Held" value={fmt(totalQty, totalQty % 1 === 0 ? 0 : 4)} />
+        <OverviewRow label="Market Value" value={money(totalValue)} />
+        <OverviewRow label="Cost Basis" value={money(totalCost)} />
+        <OverviewRow label="Gain" value={<span className={gainColor(gain)}>{money(gain)}</span>} />
+        <OverviewRow label="% Gain" value={pctGain != null ? <span className={gainColor(pctGain)}>{fmtPct(pctGain)}</span> : '—'} />
+        <OverviewRow label="Avg Cost / Share" value={money(avgCostPerShare)} />
+      </OverviewPanel>
+
+      <OverviewPanel title="Security Details" actions={<Button size="sm" variant="secondary" onClick={onEditDetails}>Edit Details</Button>}>
+        <OverviewRow label="Name" value={String(security.name ?? '—')} />
+        <OverviewRow label="Symbol" value={String(security.ticker ?? '—')} />
+        <OverviewRow label="Type" value={String(security.type ?? '—')} />
+        <OverviewRow label="Industry" value={String(security.industry ?? '') || '—'} />
+        <OverviewRow label="Market" value={String(security.tv_exchange ?? '') || '—'} />
+        <OverviewRow label="Currency" value={curr || '—'} />
+      </OverviewPanel>
+
+      <OverviewPanel title="Quote">
+        <OverviewRow label="Data as of" value={security.price_date ? String(security.price_date).slice(0, 10) : '—'} />
+        <OverviewRow label="Price" value={money(latestPrice)} />
+        <OverviewRow label="Change" value={<span className={gainColor(change)}>{money(change)}</span>} />
+        <OverviewRow label="% Change" value={pctChange != null ? <span className={gainColor(pctChange)}>{fmtPct(pctChange)}</span> : '—'} />
+        <OverviewRow label="Open" value={money(security.day_open != null ? Number(security.day_open) : null)} />
+        <OverviewRow label="Prev Close" value={money(prevClose)} />
+        <OverviewRow label="High" value={money(security.day_high != null ? Number(security.day_high) : null)} />
+        <OverviewRow label="Low" value={money(security.day_low != null ? Number(security.day_low) : null)} />
+        <OverviewRow label="52-Week High" value={money(security.week52_high != null ? Number(security.week52_high) : null)} />
+        <OverviewRow label="52-Week Low" value={money(security.week52_low != null ? Number(security.week52_low) : null)} />
+        <OverviewRow label="Volume" value={security.volume != null ? Number(security.volume).toLocaleString() : '—'} />
+        <OverviewRow label="Avg Vol" value={security.avg_volume != null ? Number(security.avg_volume).toLocaleString() : '—'} />
+        <OverviewRow label="P/E" value={security.trailing_pe != null ? fmt(security.trailing_pe, 2) : '—'} />
+        <OverviewRow label="Market Cap" value={money(security.market_cap != null ? Number(security.market_cap) : null)} />
+        <OverviewRow label="Div Yield" value={security.dividend_yield != null ? fmtPct(Number(security.dividend_yield)) : '—'} />
+        <OverviewRow label="Ann Div/Shr" value={security.dividend_rate != null ? fmt(security.dividend_rate, 4) : '—'} />
+        <OverviewRow label="Ex-Div Date" value={security.ex_dividend_date ? String(security.ex_dividend_date).slice(0, 10) : '—'} />
+        <OverviewRow label="Exchange" value={String(security.tv_exchange ?? '') || '—'} />
+      </OverviewPanel>
+    </div>
+  )
+}
+
 function SecuritySetupTab({ security, onSaved }: { security: Record<string, unknown>; onSaved?: () => void }) {
   const qc = useQueryClient()
   const [form, setForm] = useState<Record<string, string>>(() => ({
@@ -1558,6 +1652,7 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
 
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
   const { data: taxRules = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })
+  const { data: issuers = [] } = useQuery({ queryKey: ['issuers'], queryFn: () => getIssuers() })
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -1576,7 +1671,7 @@ function SecuritySetupTab({ security, onSaved }: { security: Record<string, unkn
 
   return (
     <div className="p-5 max-w-4xl space-y-4">
-      <SecurityFormFields form={form} set={set} currencies={currencies as Record<string, unknown>[]} taxRules={taxRules as Record<string, unknown>[]} />
+      <SecurityFormFields form={form} set={set} currencies={currencies as Record<string, unknown>[]} taxRules={taxRules as Record<string, unknown>[]} issuers={issuers as Record<string, unknown>[]} />
 
       <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
         <Button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.ticker?.trim()}>
@@ -1731,6 +1826,175 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <ActionRow id="eodhd-isin" label="Fetch ISIN" onClick={() => run('eodhd-isin', () => downloadIsin(secId))} />
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Composition & Holdings Tab (ETF/Fund only) ─────────────────────────────────
+function CompositionSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="px-4 py-2.5 border-b border-slate-100">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
+      </div>
+      <div className="px-4 py-1">{children}</div>
+    </div>
+  )
+}
+
+function CompositionHoldingsTab({ secId }: { secId: number }) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['sec-fund-composition', secId],
+    queryFn: () => getSecurityFundComposition(secId),
+  })
+  const composition = (data as { composition: Record<string, unknown> | null; top_holdings: Record<string, unknown>[] } | undefined)?.composition ?? null
+  const topHoldings = (data as { top_holdings: Record<string, unknown>[] } | undefined)?.top_holdings ?? []
+
+  const [saving, setSaving] = useState(false)
+  const handleCategoryChange = async (value: string) => {
+    setSaving(true)
+    try {
+      await setSecurityCategoryOverride(secId, value || null)
+      qc.invalidateQueries({ queryKey: ['sec-fund-composition', secId] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
+    } finally { setSaving(false) }
+  }
+  const [savingAssetClass, setSavingAssetClass] = useState(false)
+  const handleAssetClassChange = async (value: string) => {
+    setSavingAssetClass(true)
+    try {
+      await setSecurityAssetClassOverride(secId, value || null)
+      qc.invalidateQueries({ queryKey: ['sec-fund-composition', secId] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
+    } finally { setSavingAssetClass(false) }
+  }
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  const assetMix: [string, unknown][] = composition ? [
+    ['Cash', composition.asset_cash_pct], ['Stocks', composition.asset_stock_pct], ['Bonds', composition.asset_bond_pct],
+    ['Preferred', composition.asset_preferred_pct], ['Convertible', composition.asset_convertible_pct], ['Other', composition.asset_other_pct],
+  ] : []
+  const sectorWeightings = (composition?.sector_weightings as Record<string, number> | null) ?? null
+  const bondRatings = (composition?.bond_ratings as Record<string, number> | null) ?? null
+  const hasBondStats = composition && (composition.bond_duration != null || bondRatings)
+  const hasEquityStats = composition && (composition.equity_pe != null || composition.equity_pb != null || composition.equity_median_market_cap != null)
+
+  return (
+    <div className="p-5 space-y-4 max-w-4xl">
+      <CompositionSection title="Category">
+        <OverviewRow label="Morningstar / Manual Category" value={
+          <select
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+            value={String(composition?.category_override ?? composition?.category_name ?? '')}
+            disabled={saving}
+            onChange={e => handleCategoryChange(e.target.value)}
+          >
+            <option value="">— {composition?.category_name ? String(composition.category_name) : 'N/A (no Morningstar category)'} —</option>
+            {STYLE_BOX_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        } />
+        {composition && Boolean(composition.category_override) && (
+          <p className="text-xs text-slate-400 pb-1.5">Manually set — overrides Yahoo's category ({composition.category_name ? String(composition.category_name) : 'none reported'}) in X-Ray's Style Box.</p>
+        )}
+      </CompositionSection>
+
+      <CompositionSection title="Asset Allocation Class">
+        <OverviewRow label="X-Ray Asset Class Override" value={
+          <select
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+            value={String(composition?.asset_class_override ?? '')}
+            disabled={savingAssetClass}
+            onChange={e => handleAssetClassChange(e.target.value)}
+          >
+            <option value="">— auto (split by Yahoo's asset mix) —</option>
+            {ASSET_CLASS_OVERRIDE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        } />
+        {composition && Boolean(composition.asset_class_override) && (
+          <p className="text-xs text-slate-400 pb-1.5">Manually set — routes this fund's whole value to "{String(composition.asset_class_override)}" in X-Ray's Asset Allocation, instead of splitting it across Yahoo's stock/bond/cash/other mix above.</p>
+        )}
+      </CompositionSection>
+
+      {!composition ? (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-400 text-center">
+          No fund composition data yet — use <span className="font-mono">Download Fund Composition (X-Ray)</span> on the Downloads tab to fetch sector weights, asset mix, top holdings, expense ratio, and more from Yahoo Finance.
+        </div>
+      ) : (
+        <>
+          <CompositionSection title="Asset Mix">
+            {assetMix.filter(([, v]) => v != null).map(([label, v]) => (
+              <OverviewRow key={label} label={label} value={fmtPct(Number(v) * 100)} />
+            ))}
+          </CompositionSection>
+
+          {sectorWeightings && (
+            <CompositionSection title="Sector Weightings">
+              {Object.entries(sectorWeightings).sort((a, b) => b[1] - a[1]).map(([sector, w]) => (
+                <OverviewRow key={sector} label={sector.split('_').map(s => s[0].toUpperCase() + s.slice(1)).join(' ')} value={fmtPct(Number(w) * 100)} />
+              ))}
+            </CompositionSection>
+          )}
+
+          <CompositionSection title="Fund Details">
+            <OverviewRow label="Family" value={String(composition.fund_family ?? '—')} />
+            <OverviewRow label="Legal Type" value={String(composition.legal_type ?? '—')} />
+            <OverviewRow label="Expense Ratio" value={composition.expense_ratio_pct != null ? fmtPct(Number(composition.expense_ratio_pct) * 100, 3) : '—'} />
+            <OverviewRow label="Category Avg Expense Ratio" value={composition.category_avg_expense_ratio_pct != null ? fmtPct(Number(composition.category_avg_expense_ratio_pct) * 100, 3) : '—'} />
+            <OverviewRow label="Total Net Assets" value={composition.total_net_assets != null ? fmtNum(Number(composition.total_net_assets), 0) : '—'} />
+            <OverviewRow label="Holdings Turnover" value={composition.holdings_turnover_pct != null ? fmtPct(Number(composition.holdings_turnover_pct) * 100) : '—'} />
+            <OverviewRow label="Last Updated" value={composition.last_updated ? String(composition.last_updated).slice(0, 10) : '—'} />
+            {composition.fetch_error != null && <OverviewRow label="Last Fetch Error" value={<span className="text-red-600">{String(composition.fetch_error)}</span>} />}
+          </CompositionSection>
+
+          {hasBondStats && (
+            <CompositionSection title="Bond Stats">
+              {bondRatings && Object.entries(bondRatings).sort((a, b) => b[1] - a[1]).map(([q, w]) => (
+                <OverviewRow key={q} label={q.split('_').map(s => s[0].toUpperCase() + s.slice(1)).join(' ')} value={fmtPct(Number(w) * 100)} />
+              ))}
+              {composition.bond_duration != null && <OverviewRow label="Duration (yrs)" value={fmtNum(Number(composition.bond_duration), 2)} />}
+              {composition.bond_maturity != null && <OverviewRow label="Maturity (yrs)" value={fmtNum(Number(composition.bond_maturity), 2)} />}
+            </CompositionSection>
+          )}
+
+          {hasEquityStats && (
+            <CompositionSection title="Equity Stats">
+              {composition.equity_pe != null && <OverviewRow label="P/E" value={fmtNum(Number(composition.equity_pe), 2)} />}
+              {composition.equity_pb != null && <OverviewRow label="P/B" value={fmtNum(Number(composition.equity_pb), 2)} />}
+              {composition.equity_ps != null && <OverviewRow label="P/S" value={fmtNum(Number(composition.equity_ps), 2)} />}
+              {composition.equity_pcf != null && <OverviewRow label="P/CF" value={fmtNum(Number(composition.equity_pcf), 2)} />}
+              {composition.equity_median_market_cap != null && <OverviewRow label="Median Market Cap" value={fmtNum(Number(composition.equity_median_market_cap), 0)} />}
+              {composition.equity_3yr_earnings_growth_pct != null && <OverviewRow label="3Y Earnings Growth" value={fmtPct(Number(composition.equity_3yr_earnings_growth_pct) * 100)} />}
+            </CompositionSection>
+          )}
+
+          {topHoldings.length > 0 && (
+            <CompositionSection title="Top Holdings">
+              <div className="overflow-x-auto -mx-4">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-slate-500 border-b border-slate-100">
+                    <th className="text-left px-4 py-1.5">#</th>
+                    <th className="text-left px-4 py-1.5">Symbol</th>
+                    <th className="text-left px-4 py-1.5">Name</th>
+                    <th className="text-right px-4 py-1.5">Weight</th>
+                  </tr></thead>
+                  <tbody>
+                    {topHoldings.map(h => (
+                      <tr key={String(h.rank)} className="border-b border-slate-50 last:border-0">
+                        <td className="px-4 py-1 text-slate-400">{String(h.rank)}</td>
+                        <td className="px-4 py-1 font-mono font-medium">{String(h.symbol)}</td>
+                        <td className="px-4 py-1 text-slate-600">{String(h.holding_name ?? '')}</td>
+                        <td className="px-4 py-1 text-right tabular-nums">{fmtPct(Number(h.weight_pct) * 100)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CompositionSection>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -1908,7 +2172,7 @@ function AlertsTab({ secId }: { secId: number }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Setup', 'Analysis', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads'] as const
+const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition & Holdings'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -1924,6 +2188,7 @@ export default function SecurityDetail() {
   })
   const securities = securitiesRaw as Record<string, unknown>[]
   const security = securities.find(s => Number(s.id) === secId) ?? {} as Record<string, unknown>
+  const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
 
   return (
     <div>
@@ -1960,7 +2225,7 @@ export default function SecurityDetail() {
             {/* Sub-tabs */}
             <div className="border-b border-slate-200 px-4">
               <div className="flex gap-1">
-                {TABS.map(t => (
+                {TABS.filter(t => t !== 'Composition & Holdings' || isFund).map(t => (
                   <button key={t} onClick={() => setTab(t)}
                     className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                     {t}
@@ -1970,6 +2235,7 @@ export default function SecurityDetail() {
             </div>
 
             <CardBody className="p-0">
+              {tab === 'Overview' && <OverviewTab secId={secId} security={security} onEditDetails={() => setTab('Setup')} />}
               {tab === 'Setup' && <SecuritySetupTab security={security} />}
               {tab === 'Analysis' && <AnalysisTab secId={secId} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}
@@ -1980,6 +2246,7 @@ export default function SecurityDetail() {
               {tab === 'News' && <NewsTab secId={secId} />}
               {tab === 'Alerts' && <AlertsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
+              {tab === 'Composition & Holdings' && <CompositionHoldingsTab secId={secId} />}
             </CardBody>
           </Card>
         )}
