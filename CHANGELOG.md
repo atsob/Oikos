@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-02
+
+### Added
+- **X-Ray's Style Box view is now interactive and no longer dumps unclassified funds into one opaque bucket** — click a bar or table row to list the individual securities/accounts behind that category below, with each one's value and % of the category (same click-to-drill-down as Asset Allocation and Sector Weighting). Style Box now also includes Cash & Savings accounts from the active preset as a "Cash" bucket, same as Asset Allocation. A fund with no Morningstar category (and no manual override) is no longer lumped into a single "N/A (no Morningstar category)" pile — it's bucketed by its own dominant asset mix instead (e.g. "Equity Fund (Uncategorized)", "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), using the same asset-mix data already cached for Asset Allocation; only a fund with no cached composition at all still falls back to "N/A (no data)".
+- **X-Ray's Bond Quality and Stock Overlap views are now interactive too** — Bond Quality: click a credit-quality bar/row to list the individual bonds/fund slices behind it below (value, weight % of that quality bucket, duration). Stock Overlap: click a symbol row to list its individual sources below (Direct vs. via each fund, value, and % of portfolio) instead of only the condensed inline summary.
+
 ## 2026-08-01
 
 ### Added

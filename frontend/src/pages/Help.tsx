@@ -450,18 +450,26 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A fund's underlying data isn't downloaded automatically the first time you hold it — use{' '}
           <b>Download Fund Composition (X-Ray)</b> on Market Data → Downloads (or Security Detail → Downloads for
           one fund) to refresh it; it also refreshes monthly on its own. Funds with no cached data yet show up as
-          "Uncovered Fund Exposure" rather than being silently left out of the totals.
+          "Uncovered Fund Exposure" rather than being silently left out of the totals. Asset Allocation, Sector
+          Weighting, and Style Box also include any <b>Cash &amp; Savings accounts</b> selected in the current
+          Account Preset as a "Cash" bucket. Every X-Ray view supports click-to-drill-down: click a bucket/row (in
+          the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,
+          Sector Weighting, Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for
+          Stock Overlap.
         </Note>
         <Note>
-          Funds Yahoo doesn't report a category for land in Style Box's <b>"N/A (no Morningstar category)"</b>{' '}
-          bucket — resolve one by opening that fund's Security Detail → <b>Composition &amp; Holdings</b> tab and
-          picking a category from the dropdown there; X-Ray reflects it immediately. The same tab also has an{' '}
-          <b>Asset Class Override</b> for Asset Allocation — useful when Yahoo's generic stock/bond/cash/other
-          split misclassifies a fund (e.g. a physical commodity ETC lands 100% in "Other" since Yahoo has no
-          commodity-specific bucket); setting it routes the fund's whole value to the class you pick instead.
-          Similarly, direct bonds land in Bond Quality's <b>"Direct / Unrated"</b> bucket until you record a real
-          rating: add the issuer under Static Data → <b>Issuers</b> (name + Moody's/S&amp;P/Fitch), then link it
-          from that bond's Security Detail → Setup tab (<b>Issuer</b> field).
+          Funds Yahoo doesn't report a Morningstar category for no longer collapse into one opaque "N/A" bucket
+          in Style Box — instead they're bucketed by their own dominant asset mix (e.g. <b>"Equity Fund (Uncategorized)"</b>,
+          "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
+          <b>"N/A (no data)"</b> only when the fund has no cached composition at all. To assign a real category,
+          open that fund's Security Detail → <b>Composition &amp; Holdings</b> tab and pick one from the dropdown
+          there; X-Ray reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
+          Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
+          physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it
+          routes the fund's whole value to the class you pick instead. Similarly, direct bonds land in Bond
+          Quality's <b>"Direct / Unrated"</b> bucket until you record a real rating: add the issuer under Static
+          Data → <b>Issuers</b> (name + Moody's/S&amp;P/Fitch), then link it from that bond's Security Detail →
+          Setup tab (<b>Issuer</b> field).
         </Note>
 
         <H3>💹 Inv. Performance</H3>

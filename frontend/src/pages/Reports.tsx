@@ -810,47 +810,6 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
 // on MarketData/SecurityDetail Downloads tabs) blended with direct stock/bond
 // holdings — see api/routers/reports.py's xray/* endpoints for the blend logic.
 
-function XrayBarTab({ queryKey, queryFn, labelField, color }: {
-  queryKey: string; queryFn: () => Promise<unknown>; labelField: string; color: string
-}) {
-  const { isDark } = useTheme()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['xray', queryKey], queryFn, refetchInterval: liveRefetchMs })
-  const rows = data as Row[]
-  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  return (
-    <div className="space-y-4">
-      <Plot
-        data={[{ x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r[labelField])), type: 'bar', orientation: 'h', marker: { color }, text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside' }]}
-        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            <tr className="bg-slate-50 text-xs text-slate-500">
-              <ColHeader label="Category" sortKey={labelField} currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5">{String(r[labelField])}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </WithCopy>
-    </div>
-  )
-}
-
 function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -918,6 +877,93 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
                   <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedSector})</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailRows.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function XrayStyleBoxTab({ accountIds }: { accountIds?: number[] }) {
+  const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'style-box', accountIds], queryFn: () => getXrayStyleBox(accountIds), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const rows = resp?.summary ?? []
+  const detail = resp?.detail ?? []
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
+  const [selectedStyle, setSelectedStyle] = useState<string | null>(null)
+  const detailRows = selectedStyle ? detail.filter(r => String(r.style) === selectedStyle) : []
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  return (
+    <div className="space-y-4">
+      <Plot
+        data={[{
+          x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.style)),
+          type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+          marker: { color: rows.map(r => String(r.style) === selectedStyle ? '#047857' : '#10b981') },
+        }]}
+        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
+        onClick={(e: { points?: { y?: string }[] }) => {
+          const label = e?.points?.[0]?.y
+          if (label) setSelectedStyle(c => c === label ? null : label)
+        }} />
+      <WithCopy>
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-slate-50">
+            <tr className="bg-slate-50 text-xs text-slate-500">
+              <ColHeader label="Category" sortKey="style" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => {
+              const style = String(r.style)
+              return (
+                <tr key={i} onClick={() => setSelectedStyle(c => c === style ? null : style)}
+                  className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedStyle === style ? 'bg-emerald-50' : ''}`}>
+                  <td className="px-2 py-1.5">{style}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      </WithCopy>
+
+      {selectedStyle && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedStyle}"</p>
+            <button onClick={() => setSelectedStyle(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+          </div>
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="bg-slate-50 text-xs text-slate-500">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedStyle})</th>
                 </tr>
               </thead>
               <tbody>
@@ -1041,15 +1087,28 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
 function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds], queryFn: () => getXrayBondQuality(accountIds), refetchInterval: liveRefetchMs })
-  const rows = data as Row[]
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds], queryFn: () => getXrayBondQuality(accountIds), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const rows = resp?.summary ?? []
+  const detail = resp?.detail ?? []
+  const [selectedQuality, setSelectedQuality] = useState<string | null>(null)
+  const detailRows = selectedQuality ? detail.filter(r => String(r.quality) === selectedQuality) : []
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
     <div className="space-y-4">
       <Plot
-        data={[{ x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.quality)), type: 'bar', orientation: 'h', marker: { color: '#f59e0b' }, text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside' }]}
+        data={[{
+          x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.quality)),
+          type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+          marker: { color: rows.map(r => String(r.quality) === selectedQuality ? '#b45309' : '#f59e0b') },
+        }]}
         layout={{ height: Math.max(240, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
+        onClick={(e: { points?: { y?: string }[] }) => {
+          const label = e?.points?.[0]?.y
+          if (label) setSelectedQuality(c => c === label ? null : label)
+        }} />
       <WithCopy>
       <div className="overflow-x-auto text-xs">
         <table className="w-full border-collapse">
@@ -1060,14 +1119,18 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Avg. Duration (yrs)</th>
           </tr></thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5">{String(r.quality)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.avg_duration_years != null ? fmtNum(Number(r.avg_duration_years), 1) : '—'}</td>
-              </tr>
-            ))}
+            {rows.map((r, i) => {
+              const quality = String(r.quality)
+              return (
+                <tr key={i} onClick={() => setSelectedQuality(c => c === quality ? null : quality)}
+                  className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedQuality === quality ? 'bg-amber-50' : ''}`}>
+                  <td className="px-2 py-1.5">{quality}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.avg_duration_years != null ? fmtNum(Number(r.avg_duration_years), 1) : '—'}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -1076,6 +1139,39 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
         Percentages are of total bond-like exposure (direct bonds + the bond portion of held funds), not the whole portfolio.
         "Direct / Unrated" duration is an approximation (years to maturity), not modified duration like the fund-sourced figures.
       </p>
+
+      {selectedQuality && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities rated "{selectedQuality}"</p>
+            <button onClick={() => setSelectedQuality(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+          </div>
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="bg-slate-50 text-xs text-slate-500">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedQuality})</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Duration (yrs)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailRows.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.duration_years != null ? fmtNum(Number(r.duration_years), 1) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
     </div>
   )
 }
@@ -1085,6 +1181,7 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
   const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds], queryFn: () => getXrayStockOverlap(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const totalPortfolio = rows.length > 0 ? Number(rows[0].total_portfolio_eur ?? 0) : 0
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
 
   const bySymbol = useMemo(() => {
     const m: Record<string, { name: string; total: number; sources: { label: string; value: number }[] }> = {}
@@ -1097,6 +1194,8 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
     }
     return Object.entries(m).sort((a, b) => b[1].total - a[1].total)
   }, [rows])
+
+  const detailRows = selectedSymbol ? bySymbol.find(([sym]) => sym === selectedSymbol)?.[1].sources ?? [] : []
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
@@ -1115,7 +1214,8 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
           </thead>
           <tbody>
             {bySymbol.map(([sym, v], i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+              <tr key={i} onClick={() => setSelectedSymbol(c => c === sym ? null : sym)}
+                className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedSymbol === sym ? 'bg-slate-100' : ''}`}>
                 <td className="px-2 py-1.5 font-mono font-medium">{sym}</td>
                 <td className="px-2 py-1.5 text-slate-500">{v.name}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(v.total)}</td>
@@ -1132,6 +1232,37 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
       <p className="text-xs text-slate-400">
         Fund contributions only capture each fund's top 10 constituents — true overlap for broad-market funds may be higher than shown here.
       </p>
+
+      {selectedSymbol && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Sources of "{selectedSymbol}" exposure</p>
+            <button onClick={() => setSelectedSymbol(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+          </div>
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="bg-slate-50 text-xs text-slate-500">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Source</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of Portfolio)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailRows.map((s, i) => (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-2 py-1.5">{s.label}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(s.value)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(totalPortfolio > 0 ? s.value / totalPortfolio * 100 : 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
     </div>
   )
 }
@@ -1210,7 +1341,7 @@ function XRayTab({ accountIds }: { accountIds?: number[] }) {
       <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
       {tab === 'Asset Allocation' && <XrayAssetAllocationTab accountIds={accountIds} />}
       {tab === 'Sector Weighting' && <XraySectorWeightingTab accountIds={accountIds} />}
-      {tab === 'Style Box' && <XrayBarTab queryKey={`style-box-${accountIds?.join(',') ?? 'all'}`} queryFn={() => getXrayStyleBox(accountIds)} labelField="style" color="#10b981" />}
+      {tab === 'Style Box' && <XrayStyleBoxTab accountIds={accountIds} />}
       {tab === 'Bond Quality' && <XrayBondQualityTab accountIds={accountIds} />}
       {tab === 'Stock Overlap' && <XrayStockOverlapTab accountIds={accountIds} />}
       {tab === 'Expense Ratio' && <XrayExpenseRatioTab accountIds={accountIds} />}
