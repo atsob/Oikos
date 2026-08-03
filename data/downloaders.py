@@ -1,4 +1,5 @@
 import logging
+import math
 import yfinance as yf
 import pdfplumber
 import requests
@@ -326,6 +327,24 @@ def download_securities_info_from_yahoo(target_sec_id=None):
             # aren't stored here — Price already comes from Historical_Prices
             # (latest_price), Change is derived client-side from that vs.
             # Prev_Close, avoiding a stale duplicate of data we already have.
+            def _clamped(raw, max_abs):
+                """None if raw isn't a finite number or exceeds the target
+                NUMERIC column's precision — e.g. a distressed penny stock's
+                near-zero earnings can make Yahoo's trailingPE absurdly large
+                (into the millions), which would otherwise raise a Postgres
+                'numeric field overflow' on this one row and, since every
+                security's quote/sector/dividend/ISIN update shares a single
+                transaction, silently discard the entire batch's results."""
+                if raw is None:
+                    return None
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(val) or abs(val) >= max_abs:
+                    return None
+                return val
+
             quote = (
                 info.get('previousClose') or None,
                 info.get('open') or None,
@@ -335,8 +354,8 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                 info.get('fiftyTwoWeekLow') or None,
                 info.get('volume') or None,
                 info.get('averageVolume') or None,
-                info.get('trailingPE') or None,
-                info.get('marketCap') or None,
+                _clamped(info.get('trailingPE'), 10 ** 6),   # NUMERIC(10,4)
+                _clamped(info.get('marketCap'), 10 ** 18),   # NUMERIC(20,2)
             )
 
             return (sec_id, sec_name, symbol,

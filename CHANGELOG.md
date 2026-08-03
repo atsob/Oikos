@@ -13,6 +13,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Fixed
 - **X-Ray's Sector Weighting showed "Real Estate" and "Realestate" as two separate buckets** — Yahoo's fund sector-weighting data uses the one-word key `realestate` (unlike its other underscore_separated sector keys), which the formatting logic capitalized as "Realestate" instead of "Real Estate", splitting real-estate exposure into a near-duplicate bucket instead of merging with the "Real Estate" GICS sector direct holdings already use.
+- **Security Detail Overview's Open, P/E, and Market Cap were blank for every security** — a distressed/penny stock's near-zero earnings produced a Yahoo `trailingPE` value large enough to overflow the `Securities_Quote.Trailing_PE` column's precision. Since every security's quote/sector/industry/dividend/ISIN update for that day shares one database transaction, this single bad value silently aborted the *entire* batch, discarding the day's Yahoo update for all securities rather than just the one at fault — not only Open/P/E/Market Cap, but any field that same run would have refreshed. Trailing P/E and Market Cap are now sanity-clamped to fit their columns (out-of-range values are dropped as unreliable rather than stored or allowed to blow up the transaction) before being written.
 
 ## 2026-08-01
 
