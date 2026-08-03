@@ -428,6 +428,19 @@ def parse_saxo_transactions_pdf(
                 # Rightmost value = account-currency (EUR) total
                 amount = amt_vals[-1][1]
 
+                # A pure charge line (e.g. CFD Finance) with no separate trade
+                # amount reports the SAME EUR total in the Booked Amount, Booked
+                # Costs, and Total Costs columns — that's 3 extra non-zero values
+                # beyond the Conversion Rate, none of which is a genuine "amount
+                # in instrument currency". Collapse them back to the 2-value
+                # [ConversionRate, EUR total] shape below; otherwise the first
+                # (leftmost) value — the conversion rate — gets misread as the
+                # sec-currency amount, swapping Total (sec. currency) and FX Rate.
+                if len(amt_vals) >= 3:
+                    _tail = [v for _, v in amt_vals[1:]]
+                    if all(abs(v - _tail[0]) < 1e-6 for v in _tail):
+                        amt_vals = [amt_vals[0], amt_vals[-1]]
+
                 # Derive security-currency amount and FX rate from column count
                 # by computing the ratio: our FX_Rate = |EUR amount| / |sec amount|
                 # (acc/sec direction, e.g. EUR per USD).
