@@ -455,7 +455,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Account Preset as a "Cash" bucket. Every X-Ray view supports click-to-drill-down: click a bucket/row (in
           the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,
           Sector Weighting, Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for
-          Stock Overlap.
+          Stock Overlap. Sector Weighting has two further fallbacks so "Uncovered Fund Exposure" only means
+          "genuinely no usable data": a fund with an Asset Class Override set (see below) uses it for its sector
+          bucket too, and a bond-dominant fund — Yahoo doesn't provide sector weightings for bond funds at all,
+          it's an equity-fund concept — lands in a distinct "Bonds (No Sector Data)" bucket instead.
         </Note>
         <Note>
           Funds Yahoo doesn't report a Morningstar category for no longer collapse into one opaque "N/A" bucket

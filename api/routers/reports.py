@@ -2980,7 +2980,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
-    fund_detail AS (
+    fund_detail_split AS (
         -- Yahoo's own sector-weighting keys are underscore_separated except
         -- 'realestate' (no underscore) — special-cased so it reads "Real Estate"
         -- like the GICS sector name direct holdings already use, instead of
@@ -2994,11 +2994,45 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         CROSS JOIN LATERAL jsonb_each_text(fc.Sector_Weightings) AS je(key, value)
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NOT NULL
     ),
+    fund_detail_override AS (
+        -- Yahoo has no sector weightings for this fund, but the user already
+        -- manually classified it via the Asset Class Override (e.g. a physical
+        -- commodity ETC) — reuse that instead of leaving it "Uncovered".
+        SELECT fc.Asset_Class_Override AS sector, hv.Securities_Id AS securities_id,
+               s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv
+        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+        JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NULL AND fc.Asset_Class_Override IS NOT NULL
+    ),
+    fund_detail_bond_fallback AS (
+        -- Yahoo doesn't provide GICS-style sector weightings for bond funds at
+        -- all (sector weighting is an equity-fund concept) — a bond-dominant
+        -- fund isn't really "uncovered", it just has no sector breakdown to
+        -- give. Bucketed separately from Bond Quality's own credit-rating
+        -- split (Fund_Composition.Bond_Ratings), which is a different, more
+        -- reliable signal than trying to infer a single sector from it.
+        SELECT 'Bonds (No Sector Data)' AS sector, hv.Securities_Id AS securities_id,
+               s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        FROM holdings_value hv
+        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+        JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NULL AND fc.Asset_Class_Override IS NULL
+          AND COALESCE(fc.Asset_Bond_Pct,0) >= 0.7
+    ),
+    fund_detail AS (
+        SELECT * FROM fund_detail_split
+        UNION ALL SELECT * FROM fund_detail_override
+        UNION ALL SELECT * FROM fund_detail_bond_fallback
+    ),
     uncovered_detail AS (
         SELECT 'Uncovered Fund Exposure' AS sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
-          AND NOT EXISTS (SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id AND fc.Sector_Weightings IS NOT NULL)
+          AND NOT EXISTS (
+              SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id
+                AND (fc.Sector_Weightings IS NOT NULL OR fc.Asset_Class_Override IS NOT NULL OR COALESCE(fc.Asset_Bond_Pct,0) >= 0.7)
+          )
     ),
     detail_combined AS (
         SELECT * FROM direct_detail
