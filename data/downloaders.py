@@ -345,13 +345,26 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                     return None
                 return val
 
+            # Some exchanges quote in a minor currency unit Yahoo reports as
+            # its own currency code — e.g. London Stock Exchange ordinary
+            # shares in "GBp"/"GBX" (pence) rather than "GBP" (pounds), a
+            # factor of 100 apart. Every price-like field below (but not
+            # dividendRate, dividendYield, trailingPE, or marketCap — Yahoo
+            # already reports those in the major unit even for GBp tickers)
+            # needs dividing by this scale before storing, or a GBp security's
+            # market value ends up ~100x too high everywhere in the app.
+            price_scale = 100.0 if str(info.get('currency') or '').strip() in ('GBp', 'GBX') else 1.0
+
+            def _scaled(raw):
+                return (raw / price_scale) if raw else None
+
             quote = (
-                info.get('previousClose') or None,
-                info.get('open') or None,
-                info.get('dayHigh') or None,
-                info.get('dayLow') or None,
-                info.get('fiftyTwoWeekHigh') or None,
-                info.get('fiftyTwoWeekLow') or None,
+                _scaled(info.get('previousClose')),
+                _scaled(info.get('open')),
+                _scaled(info.get('dayHigh')),
+                _scaled(info.get('dayLow')),
+                _scaled(info.get('fiftyTwoWeekHigh')),
+                _scaled(info.get('fiftyTwoWeekLow')),
                 info.get('volume') or None,
                 info.get('averageVolume') or None,
                 _clamped(info.get('trailingPE'), 10 ** 6),   # NUMERIC(10,4)
@@ -364,12 +377,14 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                     ex_div_date, div_pay_date,
                     isin,
                     quote,
+                    price_scale,
                     None)
         except Exception as exc:
             return (sec_id, sec_name, symbol,
                     None, None, None, None,
                     None, None, None, None,
                     None, None,
+                    None,
                     None,
                     None,
                     str(exc))
@@ -413,6 +428,7 @@ def download_securities_info_from_yahoo(target_sec_id=None):
         div_updates          = []    # ALL rows that returned without error
         isin_updates         = []    # (isin, sec_id) where Yahoo returned an ISIN
         quote_updates        = []    # ALL rows that returned without error
+        price_scale_updates  = []    # (price_scale, sec_id) — only when non-default (100)
 
         for row in results:
             (sec_id, sec_name, symbol,
@@ -421,6 +437,7 @@ def download_securities_info_from_yahoo(target_sec_id=None):
              ex_div_date, div_pay_date,
              isin,
              quote,
+             price_scale,
              err) = row
 
             if err:
@@ -460,6 +477,12 @@ def download_securities_info_from_yahoo(target_sec_id=None):
 
             # Quote update (Security Detail Overview tab)
             quote_updates.append((sec_id, *quote))
+
+            # Price_Scale update — only written when non-default (100), since
+            # the column already defaults to 1 and there's no need to touch
+            # every security's row on every run just to reassert that default.
+            if price_scale and price_scale != 1.0:
+                price_scale_updates.append((price_scale, sec_id))
 
         if sec_industry_updates:
             cur.executemany("""
@@ -511,11 +534,19 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                     Quote_Updated_At = NOW()
             """, quote_updates, page_size=500)
 
+        if price_scale_updates:
+            cur.executemany("""
+                UPDATE Securities SET Price_Scale = %s WHERE Securities_Id = %s
+            """, price_scale_updates)
+            print(f"  Price_Scale: {len(price_scale_updates)} securities quoted in a "
+                  f"minor currency unit (e.g. GBp/GBX pence) — scale factor recorded.")
+
         conn.commit()
         print(f"Yahoo info update complete — "
               f"{len(sec_industry_updates)} sector/industry, "
               f"{sum(1 for r in div_updates)} dividend fields, "
-              f"{len(isin_updates)} ISIN(s) updated "
+              f"{len(isin_updates)} ISIN(s), "
+              f"{len(price_scale_updates)} Price_Scale updated "
               f"(out of {total} securities).")
         logging.info(f"Yahoo info update complete — {len(sec_industry_updates)} "
                      f"sector/industry, dividend fields for {len(div_updates)} securities, "
@@ -937,12 +968,20 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
     if not tsperiod:
         tsperiod = "1m"
 
-    def _fetch(sec_id, sec_name, symbol):
-        """Fetch OHLCV history for one ticker; returns (sec_id, sec_name, symbol, rows, error)."""
+    def _fetch(sec_id, sec_name, symbol, price_scale):
+        """Fetch OHLCV history for one ticker; returns (sec_id, sec_name, symbol, rows, error).
+
+        price_scale normalizes securities Yahoo quotes in a minor currency unit
+        (e.g. LSE ordinary shares in GBp/GBX pence, 100 to the pound) back to
+        the major unit — see Securities.Price_Scale, set by
+        download_securities_info_from_yahoo. Volume is a share count, not a
+        price, so it's left unscaled.
+        """
         try:
             hist = yf.Ticker(symbol, session=custom_session).history(period=tsperiod)
             if hist is None or hist.empty:
                 return sec_id, sec_name, symbol, [], None
+            scale = float(price_scale) if price_scale else 1.0
             rows = []
             for date, row in hist.iterrows():
                 if 'Close' not in row or pd.isna(row['Close']):
@@ -950,9 +989,9 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
                 rows.append((
                     int(sec_id),
                     date.strftime('%Y-%m-%d'),
-                    float(row['Close']),
-                    float(row['High'])   if 'High'   in row and not pd.isna(row['High'])   else None,
-                    float(row['Low'])    if 'Low'    in row and not pd.isna(row['Low'])    else None,
+                    float(row['Close']) / scale,
+                    (float(row['High']) / scale) if 'High' in row and not pd.isna(row['High']) else None,
+                    (float(row['Low'])  / scale) if 'Low'  in row and not pd.isna(row['Low'])  else None,
                     float(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else 0,
                 ))
             return sec_id, sec_name, symbol, rows, None
@@ -961,7 +1000,7 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
 
     try:
         base_query = """
-            SELECT Securities_Id, Securities_Name, Yahoo_Ticker
+            SELECT Securities_Id, Securities_Name, Yahoo_Ticker, COALESCE(Price_Scale, 1)
             FROM   Securities
             WHERE  Yahoo_Ticker IS NOT NULL
               AND  Yahoo_Ticker != ''
@@ -985,8 +1024,8 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
         # ── Parallel fetch ────────────────────────────────────────────────────
         all_rows = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_fetch, sid, sname, sym): sname
-                       for sid, sname, sym in securities}
+            futures = {pool.submit(_fetch, sid, sname, sym, scale): sname
+                       for sid, sname, sym, scale in securities}
             for f in as_completed(futures):
                 sec_id, sec_name, symbol, rows, err = f.result()
                 if err:

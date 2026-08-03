@@ -319,6 +319,13 @@ def _run_startup_migrations():
         # commodity-specific bucket). When set, the fund's whole value routes
         # to this one class instead of being split across the 6 Yahoo buckets.
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Asset_Class_Override VARCHAR(20)",
+        # Some exchanges quote in a minor currency unit Yahoo reports as its own
+        # currency code — e.g. London Stock Exchange ordinary shares in GBp/GBX
+        # (pence) rather than GBP (pounds), a factor of 100 apart. Price_Scale
+        # lets downloaders normalize every price/quote field for that security
+        # back to its actual major-unit currency before storing it, instead of
+        # silently treating "552.1 GBp" as "552.1 GBP".
+        "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Price_Scale NUMERIC(10,4) DEFAULT 1",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)

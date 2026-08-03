@@ -211,6 +211,11 @@ CREATE TABLE Securities (
     Payout_Ratio         NUMERIC(8,4),
     Five_Year_Avg_Yield  NUMERIC(8,4),
     Issuer_Id            INTEGER REFERENCES Issuers(Issuers_Id) ON DELETE SET NULL,
+    -- Some exchanges quote in a minor currency unit Yahoo reports as its own
+    -- currency code — e.g. LSE ordinary shares in GBp/GBX (pence) rather than
+    -- GBP (pounds), a factor of 100 apart. Downloaders divide every price/quote
+    -- field for this security by Price_Scale before storing it.
+    Price_Scale          NUMERIC(10,4) DEFAULT 1,
     embedding            vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_securities_id           ON Securities(Securities_Id);
