@@ -2981,7 +2981,12 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
     fund_detail AS (
-        SELECT INITCAP(REPLACE(je.key,'_',' ')) AS sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+        -- Yahoo's own sector-weighting keys are underscore_separated except
+        -- 'realestate' (no underscore) — special-cased so it reads "Real Estate"
+        -- like the GICS sector name direct holdings already use, instead of
+        -- "Realestate" landing as a separate, near-duplicate bucket.
+        SELECT CASE WHEN je.key = 'realestate' THEN 'Real Estate' ELSE INITCAP(REPLACE(je.key,'_',' ')) END AS sector,
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
                hv.value_eur * je.value::numeric AS value_eur
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id

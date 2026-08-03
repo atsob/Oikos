@@ -8,6 +8,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **X-Ray's Style Box view is now interactive and no longer dumps unclassified funds into one opaque bucket** — click a bar or table row to list the individual securities/accounts behind that category below, with each one's value and % of the category (same click-to-drill-down as Asset Allocation and Sector Weighting). Style Box now also includes Cash & Savings accounts from the active preset as a "Cash" bucket, same as Asset Allocation. A fund with no Morningstar category (and no manual override) is no longer lumped into a single "N/A (no Morningstar category)" pile — it's bucketed by its own dominant asset mix instead (e.g. "Equity Fund (Uncategorized)", "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), using the same asset-mix data already cached for Asset Allocation; only a fund with no cached composition at all still falls back to "N/A (no data)".
 - **X-Ray's Bond Quality and Stock Overlap views are now interactive too** — Bond Quality: click a credit-quality bar/row to list the individual bonds/fund slices behind it below (value, weight % of that quality bucket, duration). Stock Overlap: click a symbol row to list its individual sources below (Direct vs. via each fund, value, and % of portfolio) instead of only the condensed inline summary.
 
+### Fixed
+- **X-Ray's Sector Weighting showed "Real Estate" and "Realestate" as two separate buckets** — Yahoo's fund sector-weighting data uses the one-word key `realestate` (unlike its other underscore_separated sector keys), which the formatting logic capitalized as "Realestate" instead of "Real Estate", splitting real-estate exposure into a near-duplicate bucket instead of merging with the "Real Estate" GICS sector direct holdings already use.
+
 ## 2026-08-01
 
 ### Added
