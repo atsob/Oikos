@@ -520,6 +520,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🔍 Securities Analysis</H3>
         <P>Four sub-tabs: Price Changes, Volatility, Investment Signals (risk/reward, Sharpe ratio), and Portfolio Action Signals.</P>
+        <Note>
+          <b>Portfolio Action Signals</b> is a full ag-Grid table — click a column header to sort, drag headers to
+          reorder them, and use the <b>Columns</b> button to show/hide any of them (your layout is saved and
+          follows you across devices, same as every other customizable grid in Oikos). Beyond the buy/sell signals
+          themselves, it also carries every field from a security's own Overview tab: Symbol, Type, Industry,
+          Currency, Exchange; Shares Held, Cost Basis, Avg Cost/Share, Realized P&amp;L; and the full Quote panel
+          (Open, Prev Close, Day High/Low, 52-Week High/Low, Volume, Avg Volume, P/E, Market Cap, Ann Div/Share,
+          Ex-Div Date, Change/% Change) — most hidden by default to keep the table readable, but a click away via
+          Columns.
+        </Note>
 
         <H3>🏖️ Financial Planning</H3>
         <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>

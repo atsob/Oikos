@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -26,15 +26,18 @@ import {
   updateTransaction, upsertSplits, getSplits, getCategories, getPayees, deleteTransaction,
   getTransactionById,
   addPrice,
+  getSecurities,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
+import { AgGridReact } from 'ag-grid-react'
+import type { ColDef } from 'ag-grid-community'
 
 type Row = Record<string, unknown>
 
@@ -3984,6 +3987,7 @@ type Signal = {
   recommendation_signal: string | null
   final_signal: string | null
   fwd_yield_pct: number | null
+  current_qty: number | null
 }
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
@@ -4215,26 +4219,80 @@ function InvestmentSignalsTab() {
 
 // ── Portfolio Action Signals Tab ──────────────────────────────────────────────
 function PortfolioActionSignalsTab() {
+  const navigate = useNavigate()
   const { data = [], isLoading } = usePortfolioSignals()
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  // All-time realized P&L per security, same FIFO-based figure Security Detail's
+  // Overview/Investment Transactions tabs show, summed across every account.
+  const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
   const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
-  const rows = (data as Signal[]).map(r => ({
-    ...r,
-    unrealized_pnl_pct: r.unrealized_pnl_eur != null && r.total_cost_eur != null && Number(r.total_cost_eur) > 0
-      ? Number(r.unrealized_pnl_eur) / Number(r.total_cost_eur) * 100
-      : null,
-  }))
 
-  const filtered = rows.filter(r => {
+  const secById = useMemo(() => {
+    const m = new Map<number, Row>()
+    for (const s of securities as Row[]) m.set(Number(s.id), s)
+    return m
+  }, [securities])
+
+  const realizedById = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const r of pnlData as Row[]) {
+      const sid = r.securities_id != null ? Number(r.securities_id) : null
+      if (sid == null) continue
+      m.set(sid, (m.get(sid) ?? 0) + Number(r.realized_pnl_eur ?? 0))
+    }
+    return m
+  }, [pnlData])
+
+  // Merges in every Security Detail Overview field not already covered by the
+  // signal query itself — Security Details (symbol/type/industry/currency/exchange),
+  // My Holdings (shares held, cost basis, avg cost/share, realized P&L), and Quote
+  // (open/prev close/high/low/52-week range/volume/avg volume/P-E/market cap/ann
+  // div per share/ex-div date) — reusing the same getSecurities()/getPnl() data
+  // Security Detail's own Overview tab is built from, rather than duplicating that
+  // logic in the portfolio-signals SQL query.
+  const rows = useMemo(() => (data as Signal[]).map(r => {
+    const sec = secById.get(r.securities_id)
+    const qty = r.current_qty != null ? Number(r.current_qty) : null
+    const costBasis = r.total_cost_eur != null ? Number(r.total_cost_eur) : null
+    const prevClose = sec?.prev_close != null ? Number(sec.prev_close) : null
+    const change = r.price_today != null && prevClose != null ? Number(r.price_today) - prevClose : null
+    return {
+      ...r,
+      unrealized_pnl_pct: r.unrealized_pnl_eur != null && costBasis != null && costBasis > 0
+        ? Number(r.unrealized_pnl_eur) / costBasis * 100
+        : null,
+      ticker: sec?.ticker ?? null,
+      sec_type: sec?.type ?? null,
+      industry: sec?.industry ?? null,
+      currency: sec?.currency ?? null,
+      exchange: sec?.tv_exchange ?? null,
+      shares_held: qty,
+      cost_basis_eur: costBasis,
+      avg_cost_per_share_eur: qty ? (costBasis ?? 0) / qty : null,
+      realized_pnl_eur: realizedById.get(r.securities_id) ?? null,
+      change,
+      pct_change: change != null && prevClose ? (change / prevClose) * 100 : null,
+      day_open: sec?.day_open != null ? Number(sec.day_open) : null,
+      prev_close: prevClose,
+      day_high: sec?.day_high != null ? Number(sec.day_high) : null,
+      day_low: sec?.day_low != null ? Number(sec.day_low) : null,
+      week52_high: sec?.week52_high != null ? Number(sec.week52_high) : null,
+      week52_low: sec?.week52_low != null ? Number(sec.week52_low) : null,
+      volume: sec?.volume != null ? Number(sec.volume) : null,
+      avg_volume: sec?.avg_volume != null ? Number(sec.avg_volume) : null,
+      trailing_pe: sec?.trailing_pe != null ? Number(sec.trailing_pe) : null,
+      market_cap: sec?.market_cap != null ? Number(sec.market_cap) : null,
+      dividend_rate: sec?.dividend_rate != null ? Number(sec.dividend_rate) : null,
+      ex_dividend_date: sec?.ex_dividend_date ?? null,
+    }
+  }), [data, secById, realizedById])
+
+  const filtered = useMemo(() => rows.filter(r => {
     if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
     return true
-  })
+  }), [rows, view])
 
   const [search, setSearch] = usePersist('sig_search', '')
-  const searchFiltered = search.trim()
-    ? filtered.filter(r => String(r.securities_name).toLowerCase().includes(search.trim().toLowerCase()))
-    : filtered
-
-  const { sorted: sortedFiltered, sortKey: pasSK, sortDir: pasSD, toggleSort: pasSort } = useSortTablePersisted(searchFiltered, 'portfolio-action-signals-sort', 'final_signal', 'asc')
 
   const signalStyle = (sig: string | null): string => {
     if (!sig) return ''
@@ -4259,6 +4317,102 @@ function PortfolioActionSignalsTab() {
     return <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${color}`}>{v.replace('_', ' ')}</span>
   }
 
+  const pnlCellClass = (p: { value: unknown }) => p.value != null && Number(p.value) < 0 ? 'text-red-600' : p.value != null ? 'text-green-700' : ''
+  const pctFmt = (v: unknown) => v != null ? `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '—'
+  const numFmt = (dec = 4) => (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), dec) : '—'
+  const eurFmt = (p: { value: unknown }) => p.value != null ? fmtEur(Number(p.value)) : '—'
+
+  // Stable reference matters — see MarketData.tsx's identical colDefs comment:
+  // onColumnResized/onColumnMoved persist column state and re-render this component,
+  // and a fresh array literal every render would make ag-Grid treat columnDefs as
+  // "changed" and reset it back to these defaults, undoing the user's own resize/reorder.
+  const colDefs = useMemo(() => {
+    const cols: ColDef[] = [
+      { field: 'securities_name', headerName: 'Security', pinned: 'left', minWidth: 200, flex: 2,
+        cellRenderer: (p: { value: string; data: Row }) => (
+          <button onClick={() => navigate(`/securities/${p.data.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+        ) },
+      { field: 'ticker', headerName: 'Symbol', width: 90, cellStyle: { fontFamily: 'monospace' } },
+      { field: 'final_signal', headerName: 'Final Signal', width: 160, sort: 'asc' as const,
+        headerTooltip: 'Combined signal: math signal + analyst rating. Conviction signals appear when both agree.',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${signalStyle(p.value)}` },
+      { field: 'recommendation_signal', headerName: 'Math Signal', width: 140,
+        headerTooltip: 'Quantitative signal derived from Sharpe ratio and quality score.',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${signalStyle(p.value)}` },
+      { field: 'wall_street_view', headerName: 'Analyst View', width: 130,
+        headerTooltip: 'Wall Street analyst consensus rating.',
+        cellRenderer: (p: { value: string | null }) => analystBadge(p.value) },
+      { field: 'current_value_eur', headerName: 'Value (€)', type: 'numericColumn', width: 110,
+        headerTooltip: 'Current market value of the position in EUR.', valueFormatter: eurFmt },
+      { field: 'unrealized_pnl_eur', headerName: 'Unreal. P&L', type: 'numericColumn', width: 110,
+        headerTooltip: 'Unrealized P&L: market value minus FIFO cost basis.', valueFormatter: eurFmt, cellClass: pnlCellClass },
+      { field: 'unrealized_pnl_pct', headerName: 'P&L %', type: 'numericColumn', width: 90,
+        headerTooltip: 'Unrealized P&L as % of cost basis.', valueFormatter: p => pctFmt(p.value), cellClass: pnlCellClass },
+      { field: 'realized_pnl_eur', headerName: 'Realized P&L', type: 'numericColumn', width: 120,
+        headerTooltip: 'All-time realized P&L (FIFO), summed across every account this security has ever been held in.',
+        valueFormatter: eurFmt, cellClass: pnlCellClass },
+      { field: 'shares_held', headerName: 'Shares Held', type: 'numericColumn', width: 100,
+        headerTooltip: 'Current quantity held across all accounts.', valueFormatter: numFmt(4) },
+      { field: 'cost_basis_eur', headerName: 'Cost Basis (€)', type: 'numericColumn', width: 110,
+        headerTooltip: 'FIFO cost basis in EUR.', valueFormatter: eurFmt },
+      { field: 'avg_cost_per_share_eur', headerName: 'Avg Cost/Share (€)', type: 'numericColumn', width: 130, hide: true,
+        headerTooltip: 'Cost basis divided by shares held, in EUR.', valueFormatter: numFmt(4) },
+      { field: 'change', headerName: 'Change', type: 'numericColumn', width: 100, hide: true,
+        headerTooltip: 'Price change vs previous close, in the security’s own currency.', valueFormatter: numFmt(4), cellClass: pnlCellClass },
+      { field: 'pct_change', headerName: '% Change', type: 'numericColumn', width: 100, hide: true,
+        headerTooltip: 'Price change vs previous close, as a percentage.', valueFormatter: p => pctFmt(p.value), cellClass: pnlCellClass },
+      { field: 'fwd_yield_pct', headerName: 'Fwd Yield %', type: 'numericColumn', width: 110,
+        headerTooltip: 'Forward dividend yield based on analyst estimates.',
+        valueFormatter: p => p.value != null && Number(p.value) > 0 ? `${Number(p.value).toFixed(2)}%` : '—', cellClass: () => 'text-blue-700' },
+      { field: 'sharpe_ratio', headerName: 'Sharpe', type: 'numericColumn', width: 90,
+        headerTooltip: 'Sharpe ratio: excess return divided by annual volatility.',
+        valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—',
+        cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 1 ? 'text-green-700' : Number(p.value ?? 0) < 0 ? 'text-red-600' : 'text-slate-600'}` },
+      { field: 'quality_score', headerName: 'Quality', type: 'numericColumn', width: 90,
+        headerTooltip: 'Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).',
+        valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
+      { field: 'price_today', headerName: 'Price', type: 'numericColumn', width: 100,
+        headerTooltip: 'Most recent available market price, in the security’s own currency.', valueFormatter: numFmt(4) },
+      { field: 'day_open', headerName: 'Open', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'prev_close', headerName: 'Prev Close', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'day_high', headerName: 'Day High', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'day_low', headerName: 'Day Low', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'high_3y', headerName: '3Y High', type: 'numericColumn', width: 100,
+        headerTooltip: 'Highest price in the last 3 years (post-split adjusted).', valueFormatter: numFmt(4) },
+      { field: 'pct_from_high_3y', headerName: '% from High', type: 'numericColumn', width: 110,
+        headerTooltip: 'Current price vs 3-year high as a percentage.', valueFormatter: p => pctFmt(p.value),
+        cellClass: (p: { value: unknown }) => Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600' },
+      { field: 'low_3y', headerName: '3Y Low', type: 'numericColumn', width: 100,
+        headerTooltip: 'Lowest price in the last 3 years (post-split adjusted).', valueFormatter: numFmt(4) },
+      { field: 'pct_from_low_3y', headerName: '% from Low', type: 'numericColumn', width: 110,
+        headerTooltip: 'Current price vs 3-year low as a percentage.', valueFormatter: p => pctFmt(p.value),
+        cellClass: (p: { value: unknown }) => Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600' },
+      { field: 'week52_high', headerName: '52-Week High', type: 'numericColumn', width: 120, hide: true, valueFormatter: numFmt(4) },
+      { field: 'week52_low', headerName: '52-Week Low', type: 'numericColumn', width: 120, hide: true, valueFormatter: numFmt(4) },
+      { field: 'volume', headerName: 'Volume', type: 'numericColumn', width: 110, hide: true,
+        valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
+      { field: 'avg_volume', headerName: 'Avg Vol', type: 'numericColumn', width: 110, hide: true,
+        valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
+      { field: 'trailing_pe', headerName: 'P/E', type: 'numericColumn', width: 90, hide: true, valueFormatter: numFmt(2) },
+      { field: 'market_cap', headerName: 'Market Cap', type: 'numericColumn', width: 140, hide: true,
+        valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
+      { field: 'dividend_rate', headerName: 'Ann Div/Shr', type: 'numericColumn', width: 110, hide: true, valueFormatter: numFmt(4) },
+      { field: 'ex_dividend_date', headerName: 'Ex-Div Date', width: 110, hide: true,
+        valueFormatter: p => typeof p.value === 'string' ? p.value.slice(0, 10) : '—' },
+      { field: 'sec_type', headerName: 'Type', width: 100, hide: true },
+      { field: 'industry', headerName: 'Industry', width: 160, hide: true },
+      { field: 'currency', headerName: 'Currency', width: 90, hide: true },
+      { field: 'exchange', headerName: 'Exchange', width: 100, hide: true },
+      { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', width: 100,
+        headerTooltip: 'Analyst target price vs current price — expected upside.', valueFormatter: p => pctFmt(p.value),
+        cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}` },
+      { field: 'target_price', headerName: 'Target', type: 'numericColumn', width: 100,
+        headerTooltip: 'Analyst consensus target price.', valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
+    ]
+    return cols
+  }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+  const gridCols = useGridColumnState('portfolio-action-signals', colDefs)
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -4276,90 +4430,26 @@ function PortfolioActionSignalsTab() {
         ))}
         <input
           type="text"
-          placeholder="Search security…"
+          placeholder="Search…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="ml-auto px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
+          className="px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
         />
+        <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
       </div>
 
-      <WithCopy>
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-              <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="sticky left-0 bg-slate-50 text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Combined signal: math signal + analyst rating. Conviction signals appear when both agree.">Final Signal</Tooltip>} sortKey="final_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Quantitative signal derived from Sharpe ratio and quality score.">Math Signal</Tooltip>} sortKey="recommendation_signal" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Wall Street analyst consensus rating.">Analyst View</Tooltip>} sortKey="wall_street_view" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Current market value of the position in EUR.">Value (€)</Tooltip>} sortKey="current_value_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Unrealized P&L: market value minus FIFO cost basis.">Unreal. P&L</Tooltip>} sortKey="unrealized_pnl_eur" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Unrealized P&L as % of cost basis.">P&L %</Tooltip>} sortKey="unrealized_pnl_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Forward dividend yield based on analyst estimates.">Fwd Yield %</Tooltip>} sortKey="fwd_yield_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Sharpe ratio: excess return divided by annual volatility.">Sharpe</Tooltip>} sortKey="sharpe_ratio" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).">Quality</Tooltip>} sortKey="quality_score" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Most recent available market price.">Price</Tooltip>} sortKey="price_today" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Highest price in the last 3 years (post-split adjusted).">3Y High</Tooltip>} sortKey="high_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Current price vs 3-year high as a percentage.">% from High</Tooltip>} sortKey="pct_from_high_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Lowest price in the last 3 years (post-split adjusted).">3Y Low</Tooltip>} sortKey="low_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Current price vs 3-year low as a percentage.">% from Low</Tooltip>} sortKey="pct_from_low_3y" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Analyst target price vs current price — expected upside.">Upside %</Tooltip>} sortKey="upside_pct" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-              <ColHeader label={<Tooltip text="Analyst consensus target price.">Target</Tooltip>} sortKey="target_price" currentKey={pasSK} currentDir={pasSD} onSort={pasSort} align="right" className="text-xs text-slate-500 uppercase tracking-wide" />
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {sortedFiltered.map((r, i) => {
-                const pnl = r.unrealized_pnl_eur
-                const cost = r.total_cost_eur
-                const pnlPct = r.unrealized_pnl_pct
-                return (
-                  <tr key={i} className={`hover:bg-slate-50 ${Number(r.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}`}>
-                    <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap sticky left-0 bg-white"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                    <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.final_signal)}`}>{r.final_signal ?? '—'}</td>
-                    <td className={`px-3 py-2 whitespace-nowrap text-xs ${signalStyle(r.recommendation_signal)}`}>{r.recommendation_signal ?? '—'}</td>
-                    <td className="px-3 py-2">{analystBadge(r.wall_street_view)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.current_value_eur != null && Number(r.current_value_eur) > 0 ? fmtEur(Number(r.current_value_eur)) : '—'}</td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${pnl != null ? (Number(pnl) >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
-                      {pnl != null && cost != null && Number(cost) > 0 ? `${Number(pnl) >= 0 ? '+' : ''}${fmtEur(Number(pnl))}` : '—'}
-                    </td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${pnlPct != null ? (pnlPct >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
-                      {pnlPct != null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%` : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-blue-700">
-                      {r.fwd_yield_pct != null && Number(r.fwd_yield_pct) > 0 ? `${Number(r.fwd_yield_pct).toFixed(2)}%` : '—'}
-                    </td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.sharpe_ratio ?? 0) >= 1 ? 'text-green-700' : Number(r.sharpe_ratio ?? 0) < 0 ? 'text-red-600' : 'text-slate-600'}`}>
-                      {r.sharpe_ratio != null ? Number(r.sharpe_ratio).toFixed(2) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                      {r.quality_score != null ? Number(r.quality_score).toFixed(2) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.price_today != null ? fmtNum(Number(r.price_today), 4) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.high_3y != null ? fmtNum(Number(r.high_3y), 4) : '—'}
-                    </td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_high_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                      {r.pct_from_high_3y != null ? `${Number(r.pct_from_high_3y) >= 0 ? '+' : ''}${Number(r.pct_from_high_3y).toFixed(2)}%` : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.low_3y != null ? fmtNum(Number(r.low_3y), 4) : '—'}
-                    </td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${Number(r.pct_from_low_3y ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                      {r.pct_from_low_3y != null ? `${Number(r.pct_from_low_3y) >= 0 ? '+' : ''}${Number(r.pct_from_low_3y).toFixed(2)}%` : '—'}
-                    </td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.upside_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                      {r.upside_pct != null ? `${Number(r.upside_pct) >= 0 ? '+' : ''}${Number(r.upside_pct).toFixed(2)}%` : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                      {r.target_price != null ? Number(r.target_price).toFixed(2) : '—'}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </WithCopy>
+      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 300px)', width: '100%' }}>
+        <AgGridReact
+          rowData={filtered}
+          columnDefs={gridCols.colDefs}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          quickFilterText={search}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
+          getRowClass={(p: { data?: Row }) => Number(p.data?.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}
+        />
+      </div>
     </div>
   )
 }
