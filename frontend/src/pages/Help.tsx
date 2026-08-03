@@ -484,6 +484,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           return).
         </P>
         <Note>
+          <b>Dividend Tracker → Forecast</b> has a period selector — <b>Till EOY</b>, <b>Next 6 Months</b>, or{' '}
+          <b>Next 12 Months</b> — that bounds the projected total, monthly chart, and per-security table to real
+          expected payment dates within that window (not a pro-rata slice of the annual rate), so a security due
+          to pay outside the window simply doesn't show up. Each row also shows its full annualized rate
+          alongside the period amount for reference. Portfolio YOC always stays annualized regardless of period,
+          and "Upcoming payments (next 3 months)" is a separate, fixed near-term view unaffected by the selector.
+        </Note>
+        <Note>
           In the Performance tab, security names in the <b>Top 15 Gainers/Losers</b> tables link to that
           security's Security Detail page, same as every other securities table in the app.
         </Note>

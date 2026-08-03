@@ -1282,8 +1282,10 @@ def get_dividends_tracker(
 
 # ── Dividend Forecast ───────────────────────────────────────────────────────────
 @router.get("/dividends-forecast")
-def get_dividends_forecast():
-    """Projected 12-month dividend income for currently-held dividend-paying securities."""
+def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
+    """Projected dividend income for currently-held dividend-paying securities, over
+    a selectable horizon: to end of this calendar year, the next 6 months, or the
+    next 12 months (default, matches the original always-12-month behaviour)."""
     import calendar as _cal
     from datetime import date as _date, timedelta as _timedelta
 
@@ -1295,6 +1297,13 @@ def get_dividends_forecast():
         m = (m - 1) % 12 + 1
         return d.replace(year=y, month=m, day=min(d.day, _cal.monthrange(y, m)[1]))
 
+    if period == "eoy":
+        cutoff_date = _date(today.year, 12, 31)
+    elif period == "6m":
+        cutoff_date = _add_months(today, 6)
+    else:
+        cutoff_date = _add_months(today, 12)
+
     _FREQ_MAP = {"monthly": 12, "quarterly": 4, "semi-annual": 2, "bi-annual": 2, "annual": 1, "yearly": 1}
 
     def _ppy(freq_str) -> int:
@@ -1302,7 +1311,7 @@ def get_dividends_forecast():
             return 4
         return _FREQ_MAP.get(str(freq_str).strip().lower(), 4)
 
-    def _next_dates(anchor, freq_str, horizon_months: int = 12) -> list:
+    def _next_dates(anchor, freq_str, cutoff: _date) -> list:
         ppy = _ppy(freq_str)
         interval = max(round(12 / ppy), 1)
         try:
@@ -1311,7 +1320,6 @@ def get_dividends_forecast():
             d = today
         while d <= today:
             d = _add_months(d, interval)
-        cutoff = _add_months(today, horizon_months)
         dates = []
         while d <= cutoff:
             dates.append(d)
@@ -1427,8 +1435,16 @@ def get_dividends_forecast():
             (pd.Timestamp(ex_anchor).date() + _timedelta(days=_lag))
             if (_lag is not None and pd.notna(ex_anchor)) else ex_anchor
         )
-        ex_dates   = _next_dates(ex_anchor,  freq, horizon_months=13)
-        pay_dates  = _next_dates(pay_anchor, freq, horizon_months=13)
+        # Always compute the *next* upcoming date over a full 13-month lookahead
+        # (matches the previous always-12-month behaviour) so "next expected"
+        # keeps showing a date even when it falls outside a short selected period
+        # (e.g. an annual payer next paying in March isn't due before an EOY
+        # cutoff in October) — the period-bounded lists below are what actually
+        # drive the in-period total/table filtering.
+        next_ex_dates  = _next_dates(ex_anchor,  freq, cutoff=_add_months(today, 13))
+        next_pay_dates = _next_dates(pay_anchor, freq, cutoff=_add_months(today, 13))
+        ex_dates   = [d for d in next_ex_dates  if d <= cutoff_date]
+        pay_dates  = [d for d in next_pay_dates if d <= cutoff_date]
 
         rows.append({
             "securities_id":            int(r["securities_id"]),
@@ -1438,27 +1454,43 @@ def get_dividends_forecast():
             "market_value_eur":         round(mv, 2),
             "cost_basis_eur":           round(cost, 2),
             "annual_forecast_eur":      round(annual, 2),
+            "period_forecast_eur":      round(per_pmt * len(pay_dates), 2),
             "per_payment_eur":          round(per_pmt, 2),
             "payments_per_year":        ppy,
             "frequency":                str(freq) if freq and not (isinstance(freq, float) and pd.isna(freq)) else "Quarterly (assumed)",
             "method":                   method,
             "dividend_yield":           float(dy) if pd.notna(dy) else None,
-            "next_expected_ex_date":    str(ex_dates[0])  if ex_dates  else None,
-            "next_expected_pay_date":   str(pay_dates[0]) if pay_dates else None,
+            "next_expected_ex_date":    str(next_ex_dates[0])  if next_ex_dates  else None,
+            "next_expected_pay_date":   str(next_pay_dates[0]) if next_pay_dates else None,
             "last_known_ex_date":       str(pd.Timestamp(raw_ex).date())  if pd.notna(raw_ex)  else None,
             "last_known_pay_date":      str(pd.Timestamp(raw_pay).date()) if pd.notna(raw_pay) else None,
             "pay_lag_days":             _lag if _lag else None,
             "_ex_dates":                [str(d) for d in ex_dates],
             "_pay_dates":               [str(d) for d in pay_dates],
+            # Full 13-month lookahead, independent of the selected period — backs
+            # "Upcoming payments (next 3 months)", which stays a fixed near-term
+            # view regardless of whether the broader forecast period is EOY/6m/12m.
+            "_ex_dates_full":           [str(d) for d in next_ex_dates],
+            "_pay_dates_full":          [str(d) for d in next_pay_dates],
         })
 
     if not rows:
-        return {"summary": {}, "monthly_forecast": [], "by_security": [], "upcoming": []}
+        return {"summary": {}, "monthly_forecast": [], "by_security": [], "upcoming": [], "period": period}
 
+    # Portfolio Yield-on-Cost is a standard *annualized* metric — computed from
+    # every forecastable holding's full run-rate/cost basis regardless of which
+    # period is selected, so it doesn't swing based on how short a window you pick.
     total_annual  = sum(r["annual_forecast_eur"] for r in rows)
-    total_monthly = total_annual / 12
     total_cost    = sum(r["cost_basis_eur"] for r in rows)
     portfolio_yoc = (total_annual / total_cost * 100) if total_cost > 0 else 0
+
+    # The headline figure and monthly chart, in contrast, are bounded to the
+    # selected period — the sum of actual projected payments landing within it
+    # (respecting each security's real payment dates/frequency), not a naive
+    # pro-rata slice of the annual rate.
+    total_period  = sum(r["period_forecast_eur"] for r in rows)
+    months_in_period = max(1, round((cutoff_date - today).days / 30.44))
+    total_monthly = total_period / months_in_period
 
     monthly_map: dict = {}
     for r in rows:
@@ -1468,12 +1500,15 @@ def get_dividends_forecast():
     monthly_forecast = sorted(
         [{"month": k, "income_eur": v} for k, v in monthly_map.items()],
         key=lambda x: x["month"]
-    )[:12]
+    )
 
+    # "Upcoming payments" is always a fixed 3-month near-term look-ahead,
+    # independent of the broader EOY/6m/12m period selector — uses the full
+    # 13-month date lists rather than the period-bounded ones above.
     cutoff_3m = str(_add_months(today, 3))
     upcoming: list = []
     for r in rows:
-        for ex_d, pay_d in zip(r["_ex_dates"], r["_pay_dates"]):
+        for ex_d, pay_d in zip(r["_ex_dates_full"], r["_pay_dates_full"]):
             if ex_d <= cutoff_3m:
                 upcoming.append({
                     "ex_date":         ex_d,
@@ -1485,16 +1520,22 @@ def get_dividends_forecast():
                 })
     upcoming.sort(key=lambda x: x["ex_date"])
 
+    # The by-security table is scoped to the selected period: only securities
+    # with at least one projected payment inside it are shown (an annual payer
+    # due in March isn't relevant to an EOY forecast made in October), ranked
+    # by how much of that period's total each contributes.
     by_security = sorted(
-        [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows],
-        key=lambda x: x["annual_forecast_eur"], reverse=True
+        [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows if r["_pay_dates"]],
+        key=lambda x: x["period_forecast_eur"], reverse=True
     )
 
     return {
+        "period": period,
         "summary": {
+            "total_period_eur":  round(total_period, 2),
             "total_annual_eur":  round(total_annual, 2),
             "total_monthly_eur": round(total_monthly, 2),
-            "securities_count":  len(rows),
+            "securities_count":  len(by_security),
             "portfolio_yoc_pct": round(portfolio_yoc, 2),
         },
         "monthly_forecast": monthly_forecast,

@@ -2444,10 +2444,11 @@ function DividendTrackerTab() {
 
   // ── Forecast state ────────────────────────────────────────────────────────────
   const [upcomingOpen, setUpcomingOpen] = useState(false)
+  const [fcPeriod, setFcPeriod] = usePersist<'eoy' | '6m' | '12m'>('div_forecast_period', '12m')
 
   const { data: fcData, isLoading: fcLoading } = useQuery({
-    queryKey: ['dividends-forecast'],
-    queryFn: getDividendsForecast,
+    queryKey: ['dividends-forecast', fcPeriod],
+    queryFn: () => getDividendsForecast(fcPeriod),
     enabled: divView === 'forecast',
   })
 
@@ -2490,7 +2491,8 @@ function DividendTrackerTab() {
     summary: Row
   }
   type ForecastResult = {
-    summary: { total_annual_eur: number; total_monthly_eur: number; securities_count: number; portfolio_yoc_pct: number }
+    period: 'eoy' | '6m' | '12m'
+    summary: { total_period_eur: number; total_annual_eur: number; total_monthly_eur: number; securities_count: number; portfolio_yoc_pct: number }
     monthly_forecast: { month: string; income_eur: number }[]
     by_security: Row[]
     upcoming: Row[]
@@ -2524,7 +2526,7 @@ function DividendTrackerTab() {
   }, [result])
 
   const { sorted: divSorted,  sortKey: divSK,  sortDir: divSD,  toggleSort: divSort  } = useSortTablePersisted(result?.by_security   ?? [], 'div-tracker-actual-sort', 'period_income_eur',    'desc')
-  const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTablePersisted(fcResult?.by_security ?? [], 'div-tracker-forecast-sort', 'annual_forecast_eur',  'desc')
+  const { sorted: fcSorted,   sortKey: fcSK,   sortDir: fcSD,   toggleSort: fcSort   } = useSortTablePersisted(fcResult?.by_security ?? [], 'div-tracker-forecast-sort', 'period_forecast_eur',  'desc')
 
   // Income-by-Security rows are aggregated per security across the whole period —
   // expanding one shows the underlying per-transaction rows from `detail` (same
@@ -2563,30 +2565,40 @@ function DividendTrackerTab() {
   )
 
   // ── Forecast view ─────────────────────────────────────────────────────────────
+  const FC_PERIOD_LABELS: Record<'eoy' | '6m' | '12m', string> = { eoy: 'Till EOY', '6m': 'Next 6 Months', '12m': 'Next 12 Months' }
+  const FC_PERIOD_SHORT:  Record<'eoy' | '6m' | '12m', string> = { eoy: 'EOY', '6m': '6mo', '12m': '12mo' }
   if (divView === 'forecast') {
     return (
       <div className="space-y-4">
         {ViewToggle}
+        <div className="flex gap-1.5">
+          {(['eoy', '6m', '12m'] as const).map(p => (
+            <button key={p} onClick={() => setFcPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded border font-medium ${fcPeriod === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {FC_PERIOD_LABELS[p]}
+            </button>
+          ))}
+        </div>
         {fcLoading ? <div className="flex justify-center py-12"><Spinner /></div>
           : !fcResult || !fcResult.by_security.length ? (
-            <p className="text-slate-400 text-sm py-8 text-center">No forecast data — no holdings with dividend yield, rate, or trailing income.</p>
+            <p className="text-slate-400 text-sm py-8 text-center">No forecast data for this period — no holdings with an expected dividend payment before {FC_PERIOD_LABELS[fcPeriod].toLowerCase()}.</p>
           ) : (
           <>
             <div className="grid grid-cols-4 gap-4">
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Total projected dividend and interest income over the next 12 months, based on current holdings and forward yields.">Projected Annual</Tooltip></p>
-                <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_annual_eur)}</p>
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Total projected dividend and interest income ${fcPeriod === 'eoy' ? 'between now and the end of this year' : `over the ${fcPeriod === '6m' ? 'next 6 months' : 'next 12 months'}`}, based on current holdings' real expected payment dates.`}>Projected ({FC_PERIOD_SHORT[fcPeriod]})</Tooltip></p>
+                <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_period_eur)}</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Annual forecast divided by 12 — average expected monthly income.">Monthly Average</Tooltip></p>
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Projected period total divided by the number of months in the period — average expected monthly income.">Monthly Average</Tooltip></p>
                 <p className="text-xl font-bold">{fmtEur(fcResult.summary.total_monthly_eur)}</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of currently-held securities with enough data to forecast dividends.">Securities</Tooltip></p>
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of currently-held securities with at least one dividend payment expected within this period.">Securities</Tooltip></p>
                 <p className="text-xl font-bold">{fcResult.summary.securities_count}</p>
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
-                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Projected annual income divided by the total cost basis of forecasted holdings.">Portfolio YOC</Tooltip></p>
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Full-year projected income (regardless of the period selected above) divided by the total cost basis of forecasted holdings — the standard annualized Yield-on-Cost metric.">Portfolio YOC</Tooltip></p>
                 <p className="text-xl font-bold">{fcResult.summary.portfolio_yoc_pct.toFixed(2)}%</p>
               </div>
             </div>
@@ -2595,7 +2607,7 @@ function DividendTrackerTab() {
               <Plot
                 data={[{ x: fcResult.monthly_forecast.map(m => m.month), y: fcResult.monthly_forecast.map(m => m.income_eur), type: 'bar', marker: { color: '#3b82f6' }, name: 'Projected' }]}
                 layout={{
-                  title: 'Projected Monthly Dividend Income (€) — Next 12 Months',
+                  title: `Projected Monthly Dividend Income (€) — ${FC_PERIOD_LABELS[fcPeriod]}`,
                   height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
                   yaxis: { title: 'Projected Income (€)' },
                   ...plotLayout(isDark),
@@ -2608,20 +2620,22 @@ function DividendTrackerTab() {
               <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
-                    <col className="w-[22%]" />
+                    <col className="w-[20%]" />
                     <col className="w-[9%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[7%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[9%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[6%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[8%]" />
+                    <col className="w-[8%]" />
                     <col className="w-[8%]" />
                     <col className="w-[7%]" />
                   </colgroup>
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                     <ColHeader label="Security"      sortKey="securities_name"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Security name." />
-                    <ColHeader label="Annual (€)"    sortKey="annual_forecast_eur"    currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected annual dividend income in EUR based on current holdings." />
+                    <ColHeader label={`Amt (${FC_PERIOD_SHORT[fcPeriod]}) (€)`} sortKey="period_forecast_eur" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Sum of actual expected payments landing within the selected period." />
+                    <ColHeader label="Ann. Rate (€)" sortKey="annual_forecast_eur"    currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Full-year projected dividend income in EUR, regardless of the period selected above." />
                     <ColHeader label="Per Pmt (€)"   sortKey="per_payment_eur"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Expected income per dividend payment (annual ÷ payments per year)." />
                     <ColHeader label="Frequency"     sortKey="frequency"              currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How often dividends are paid." />
                     <ColHeader label="Yield %"       sortKey="dividend_yield"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata." />
@@ -2635,7 +2649,8 @@ function DividendTrackerTab() {
                     {fcSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
                         <td className="px-2 py-1.5 font-medium truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.annual_forecast_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.period_forecast_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtEur(Number(r.annual_forecast_eur))}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
                         <td className="px-2 py-1.5 text-slate-500 truncate" title={String(r.frequency)}>{String(r.frequency)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>

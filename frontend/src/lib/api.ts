@@ -831,8 +831,8 @@ export const getSavingsAccounts = () =>
 export const getDividendsTracker = (period: string, startDate?: string, endDate?: string) =>
   api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)
 
-export const getDividendsForecast = () =>
-  api.get('/reports/dividends-forecast').then(r => r.data)
+export const getDividendsForecast = (period: 'eoy' | '6m' | '12m' = '12m') =>
+  api.get('/reports/dividends-forecast', { params: { period } }).then(r => r.data)
 
 export const getDividendRecommendations = () =>
   api.get('/reports/dividend-recommendations').then(r => r.data)
