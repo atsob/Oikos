@@ -118,7 +118,7 @@ function SecuritiesAlertsPanel() {
     mutationFn: (sid: number) => acknowledgeSignal(sid),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   if (!(alerts as unknown[]).length) return null
 
   const levelStyle = (level: string) => {
@@ -134,7 +134,7 @@ function SecuritiesAlertsPanel() {
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="text-sm font-semibold text-orange-700">
           🔔 {(alerts as unknown[]).length} triggered alert{(alerts as unknown[]).length !== 1 ? 's' : ''}
         </span>
