@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { usePersist, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridApi } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -13,7 +13,7 @@ import {
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
   getCreditRatings, getIssuers, upsertIssuer,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, AccountOptions } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
@@ -152,6 +152,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     },
   ]
   const gridCols = useGridColumnState('static-data-payees', payeeColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -174,10 +175,13 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
             <ArrowRightLeft size={13} /> Merge Payees
           </Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
@@ -368,6 +372,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     },
   ]
   const gridCols = useGridColumnState('static-data-categories', categoryColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -390,10 +395,13 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
             <ArrowRightLeft size={13} /> Merge Categories
           </Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
@@ -588,6 +596,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     },
   ]
   const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -613,10 +622,13 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
@@ -797,6 +809,7 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
     },
   ]
   const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -814,10 +827,13 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
@@ -958,6 +974,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
     },
   ]
   const gridCols = useGridColumnState('static-data-issuers', issuerColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -975,10 +992,13 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Issuer</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}

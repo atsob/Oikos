@@ -143,3 +143,17 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
 
   return { colDefs: orderedColDefs, onColumnMoved, onColumnResized, onSortChanged, columns, toggleColumn }
 }
+
+// ── useGridApi ───────────────────────────────────────────────────────────────
+// Captures a grid's GridApi for use outside ag-Grid (e.g. CopyToExcelButton),
+// via onGridReady. Pass an optional onReady for anything else a grid already
+// needs to do on ready (autoSizeAllColumns, etc.) instead of adding a second
+// onGridReady prop, which ag-Grid only invokes once and the other would be lost.
+export function useGridApi(onReady?: (api: GridApi) => void) {
+  const [gridApi, setGridApi] = useState<GridApi | null>(null)
+  const onGridReady = useCallback((e: { api: GridApi }) => {
+    setGridApi(e.api)
+    onReady?.(e.api)
+  }, [onReady])
+  return { gridApi, onGridReady } as const
+}

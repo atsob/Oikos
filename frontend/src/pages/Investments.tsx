@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -11,7 +11,7 @@ import {
   syncBalances, batchUpdateInvestments, batchDeleteInvestments,
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, AccountOptions, BatchAccountPicker } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -365,6 +365,7 @@ export default function Investments() {
     ...makeCashCols(String(selectedAccount?.currency ?? 'EUR')),
   ], [selectedAccount])
   const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
+  const { gridApi: cashGridApi, onGridReady: onCashGridReady } = useGridApi(api => api.autoSizeAllColumns())
 
   const txColDefs = useMemo(() => [
     { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
@@ -374,6 +375,7 @@ export default function Investments() {
     },
   ], [navigate])
   const txGridCols = useGridColumnState('investments-transactions', txColDefs)
+  const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi(api => api.autoSizeAllColumns())
 
   const CASH_OUT_ACTIONS = new Set(['Buy', 'MiscExp', 'CashOut'])
   const CASH_IN_ACTIONS = new Set(['Sell', 'Dividend', 'IntInc', 'CashIn', 'RtrnCap', 'MiscInc'])
@@ -719,10 +721,12 @@ export default function Investments() {
                         </>
                       )}
                       <ColumnsMenu columns={cashGridCols.columns} onToggle={cashGridCols.toggleColumn} />
+                      <CopyToExcelButton gridApi={cashGridApi} />
                     </div>
                   </div>
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                     <AgGridReact
+                      theme="legacy"
                       ref={cashGridRef}
                       rowData={cashRows}
                       quickFilterText={cashSearch}
@@ -731,7 +735,7 @@ export default function Investments() {
                       rowSelection="multiple"
                       onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                       onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
-                      onGridReady={e => e.api.autoSizeAllColumns()}
+                      onGridReady={onCashGridReady}
                       onColumnMoved={cashGridCols.onColumnMoved}
                       onColumnResized={cashGridCols.onColumnResized}
                       onSortChanged={cashGridCols.onSortChanged}
@@ -780,10 +784,12 @@ export default function Investments() {
                       </>
                     )}
                     <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
+                    <CopyToExcelButton gridApi={txGridApi} />
                   </div>
                 </div>
                 <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
                   <AgGridReact
+                    theme="legacy"
                     ref={txGridRef}
                     rowData={invWithBalance}
                     quickFilterText={txSearch}
@@ -792,7 +798,7 @@ export default function Investments() {
                     rowSelection="multiple"
                     onSelectionChanged={e => setSelectedTxIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                     onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
-                    onGridReady={e => e.api.autoSizeAllColumns()}
+                    onGridReady={onTxGridReady}
                     onColumnMoved={txGridCols.onColumnMoved}
                     onColumnResized={txGridCols.onColumnResized}
                     onSortChanged={txGridCols.onSortChanged}

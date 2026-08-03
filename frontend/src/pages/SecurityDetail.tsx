@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, Copy, ArrowLeftRight } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton,
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -82,6 +82,7 @@ const PRICES_TAB_COLS = [
 
 function PricesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
+  const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -307,9 +308,12 @@ function PricesTab({ secId }: { secId: number }) {
           </Button>
         )}
         <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        <CopyToExcelButton gridApi={gridApi} />
       </div>
       <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={rows}
           quickFilterText={priceSearch}
           rowSelection="multiple"
@@ -536,7 +540,9 @@ function AnalysisTab({ secId }: { secId: number }) {
 
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
+  const { gridApi: holdingsGridApi, onGridReady: onHoldingsGridReady } = useGridApi()
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
+  const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data: txData = [], isLoading: txLoading } = useQuery({
@@ -659,28 +665,6 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const totalCost = holdings.holdings.reduce((s, r) => s + Number(r.cost_basis ?? 0), 0)
   const totalPnl = totalValue - totalCost
 
-  const copyText = useCallback(() => {
-    const header = 'Account\tQty Held\tCost Basis\tCost/Share\tCur. Value\tUnrealised P&L\tP&L %'
-    const rows = holdings.holdings.map(r => {
-      const qty = Number(r.qty_held ?? 0)
-      const cost = Number(r.cost_basis ?? 0)
-      const pnl = Number(r.unrealised_pnl ?? 0)
-      const costPerShare = qty ? cost / qty : null
-      const pnlPct = cost ? pnl / cost * 100 : null
-      return `${r.account}\t${fmt(r.qty_held, 8)}\t${fmt(r.cost_basis, 2)}\t${fmt(costPerShare, 4)}\t${fmt(r.current_value, 2)}\t${fmt(r.unrealised_pnl, 2)}\t${pnlPct != null ? pnlPct.toFixed(2) + '%' : '—'}`
-    }).join('\n')
-    navigator.clipboard.writeText(header + '\n' + rows)
-  }, [holdings.holdings])
-
-  const copyTransactions = useCallback(() => {
-    const header = 'Account\tDate\tAction\tQuantity\tPrice/Share\tCommission\tW. Tax\tTotal (Sec. Cur.)\tTotal (Acc. Cur.)\tCurrency\tDescription'
-    const rows = transactions.map((r: Record<string, unknown>) =>
-      [r.account, r.date, r.action, fmt(r.quantity, 8), fmt(r.price_per_share), fmt(r.commission, 2),
-       r.tax_amount != null ? fmt(r.tax_amount, 2) : '', fmt(r.total_sec_cur, 2), fmt(r.total_acc_cur, 2), r.currency, r.description ?? ''].join('\t')
-    ).join('\n')
-    navigator.clipboard.writeText(header + '\n' + rows)
-  }, [transactions])
-
   if (txLoading || holdingsLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -716,12 +700,14 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold text-slate-700">Holdings by Account</p>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={copyText}><Copy size={13} /> Copy</Button>
             <ColumnsMenu columns={holdingsGridCols.columns} onToggle={holdingsGridCols.toggleColumn} />
+            <CopyToExcelButton gridApi={holdingsGridApi} />
           </div>
         </div>
         <div className="ag-theme-alpine" style={{ height: `${Math.min(holdings.holdings.length * 42 + 48, 300)}px`, width: '100%' }}>
           <AgGridReact
+            theme="legacy"
+            onGridReady={onHoldingsGridReady}
             rowData={holdings.holdings}
             onColumnMoved={holdingsGridCols.onColumnMoved}
             onColumnResized={holdingsGridCols.onColumnResized}
@@ -747,12 +733,14 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
               <ArrowLeftRight size={14} /> Transfer
             </Button>
-            <Button size="sm" variant="secondary" onClick={copyTransactions}><Copy size={13} /> Copy</Button>
             <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
+            <CopyToExcelButton gridApi={txGridApi} />
           </div>
         </div>
         <div className="ag-theme-alpine mt-2" style={{ height: '400px', width: '100%' }}>
           <AgGridReact
+            theme="legacy"
+            onGridReady={onTxGridReady}
             rowData={transactions}
             quickFilterText={txSearch}
             onColumnMoved={txGridCols.onColumnMoved}
@@ -811,6 +799,7 @@ const PRICE_ANOMALIES_COLS = [
 
 function PriceAnomaliesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-anomalies', PRICE_ANOMALIES_COLS)
+  const { gridApi, onGridReady } = useGridApi()
   const qc = useQueryClient()
   const [threshold, setThreshold] = useState(100)
   const [selected, setSelected] = useState<string[]>([])
@@ -857,6 +846,8 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
           )}
           <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
             <AgGridReact
+              theme="legacy"
+              onGridReady={onGridReady}
               rowData={anomalies}
               rowSelection="multiple"
               onSelectionChanged={e => setSelected(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
@@ -874,6 +865,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
               <Trash2 size={13} /> Delete all {anomalies.length} listed
             </Button>
             <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+            <CopyToExcelButton gridApi={gridApi} />
           </div>
         </>
       )}
@@ -964,6 +956,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [deleteMut])
   const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
+  const { gridApi, onGridReady } = useGridApi()
 
   const handleAdd = () => {
     if (!newExDate || !newAmount) return
@@ -1066,11 +1059,14 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             </div>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
             <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+            <CopyToExcelButton gridApi={gridApi} />
           </div>
           <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
             <AgGridReact
+              theme="legacy"
+              onGridReady={onGridReady}
               rowData={dividends}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
@@ -1231,6 +1227,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       { field: 'currency', headerName: 'Ccy', width: 70 },
     ]
   }, [eventGroup])
+  const { gridApi: previewGridApi, onGridReady: onPreviewGridReady } = useGridApi()
 
   const actionsColDefs = [
     { field: 'id', headerName: 'ID', width: 65 },
@@ -1253,6 +1250,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     },
   ]
   const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -1267,11 +1265,14 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         </p>
         {actions.length > 0 && (
           <>
-            <div className="flex justify-end mb-2">
+            <div className="flex justify-end gap-2 mb-2">
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+              <CopyToExcelButton gridApi={gridApi} />
             </div>
             <div className="ag-theme-alpine" style={{ height: `${Math.min(actions.length * 42 + 52, 260)}px`, width: '100%' }}>
               <AgGridReact
+                theme="legacy"
+                onGridReady={onGridReady}
                 rowData={actions}
                 onColumnMoved={gridCols.onColumnMoved}
                 onColumnResized={gridCols.onColumnResized}
@@ -1515,9 +1516,12 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         {/* Preview table */}
         {preview && preview.length > 0 && (
           <div className="space-y-3">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Preview — transactions to be created</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Preview — transactions to be created</p>
+              <CopyToExcelButton gridApi={previewGridApi} />
+            </div>
             <div className="ag-theme-alpine" style={{ height: `${Math.min(preview.length * 42 + 52, 300)}px`, width: '100%' }}>
-              <AgGridReact rowData={preview} columnDefs={previewCols} defaultColDef={{ resizable: true }} />
+              <AgGridReact theme="legacy" onGridReady={onPreviewGridReady} rowData={preview} columnDefs={previewCols} defaultColDef={{ resizable: true }} />
             </div>
             <div className="flex gap-3 items-center">
               <Button onClick={() => executeMut.mutate()} disabled={executeMut.isPending}>

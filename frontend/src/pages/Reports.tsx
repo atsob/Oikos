@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -29,7 +29,7 @@ import {
   getSecurities,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
@@ -4412,6 +4412,7 @@ function PortfolioActionSignalsTab() {
     return cols
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('portfolio-action-signals', colDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -4436,10 +4437,13 @@ function PortfolioActionSignalsTab() {
           className="px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
         />
         <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        <CopyToExcelButton gridApi={gridApi} />
       </div>
 
       <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 300px)', width: '100%' }}>
         <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
           rowData={filtered}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}

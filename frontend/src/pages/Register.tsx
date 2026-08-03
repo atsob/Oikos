@@ -8,7 +8,7 @@ import {
   clearAccount, reconcileAccount, searchAllTransactions,
   syncBalances, batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
-import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, AccountOptions, BatchAccountPicker } from '@/components/ui'
+import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
@@ -104,7 +104,7 @@ const PERIODS = [
 // ── Register page ─────────────────────────────────────────────────────────────
 export default function Register() {
   const gridRef = useRef<AgGridReact>(null)
-  const [, setGridApi] = useState<GridApi | null>(null)
+  const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
 
@@ -537,12 +537,15 @@ export default function Register() {
                   </>
                 )}
                 <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+                <CopyToExcelButton gridApi={gridApi} />
               </div>
             </div>
             {/* Infinite row model: rows stream in as you scroll instead of clicking through
-                numbered pages — see the `datasource` above for how blocks are fetched. */}
+                numbered pages — see the `datasource` above for how blocks are fetched. Copy to
+                Excel only copies whichever rows have scrolled into view and loaded so far. */}
             <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
               <AgGridReact
+                theme="legacy"
                 ref={gridRef}
                 rowModelType="infinite"
                 datasource={datasource}

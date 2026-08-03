@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-03
+
+### Added
+- **Every data table in Oikos now has a "Copy to Excel" button** next to Columns — copies the table to the clipboard as tab-separated data, so pasting into Excel or Google Sheets lands in real columns instead of one long line of text. Copies exactly what's currently on screen (sort, search/filter, and visible/hidden columns), same as the table itself. Also replaces the bespoke "Copy" buttons Security Detail → Investment Transactions' Holdings by Account and All Transactions tables already had with the same shared button, so behavior and labeling are now consistent everywhere. Cash Register's transaction table streams rows in as you scroll, so there Copy to Excel only copies whichever rows have already loaded.
+
+### Fixed
+- **Every data table in the app logged an AG Grid "Theming API and CSS File Themes are both used" console error on every render** — Oikos loads the older CSS-file theming system (`ag-grid.css` / `ag-theme-alpine.css`), but none of the tables told the grid to use it, so newer versions of ag-Grid defaulted to its new Theming API instead, which conflicts with the loaded CSS files. Purely a console-noise issue (styling itself looked fine), fixed by explicitly opting every table into the legacy theme.
+
 ## 2026-08-02
 
 ### Added

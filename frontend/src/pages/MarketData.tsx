@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
@@ -225,6 +225,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     return cols
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-securities', colDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -242,10 +243,11 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-        <AgGridReact rowData={securities} columnDefs={gridCols.colDefs}
+        <AgGridReact theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
@@ -379,6 +381,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
     return cols
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-currencies', colDefs)
+  const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -396,10 +399,11 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+          <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
-        <AgGridReact rowData={filtered} columnDefs={gridCols.colDefs}
+        <AgGridReact theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
@@ -461,6 +465,7 @@ const FX_PRICES_COLS = [
 
 function FxPricesTab() {
   const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
+  const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -590,10 +595,13 @@ function FxPricesTab() {
                 </Button>
               )}
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+              <CopyToExcelButton gridApi={gridApi} />
             </div>
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
+              theme="legacy"
+              onGridReady={onGridReady}
               rowData={rows}
               quickFilterText={fxSearch}
               rowSelection="multiple"
@@ -691,6 +699,7 @@ const SECURITIES_PRICES_COLS = [
 
 function SecuritiesPricesTab() {
   const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
+  const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -870,10 +879,13 @@ function SecuritiesPricesTab() {
                 </Button>
               )}
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+              <CopyToExcelButton gridApi={gridApi} />
             </div>
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
             <AgGridReact
+              theme="legacy"
+              onGridReady={onGridReady}
               rowData={priceRows}
               quickFilterText={priceSearch}
               rowSelection="multiple"
@@ -1448,6 +1460,7 @@ export default function MarketData() {
   // below, same as before; this only fixes it surviving a navigate-away-and-back.
   const [search, setSearch] = usePersist('market_data_search', '')
   const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
+  const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi()
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
     queryKey: ['price-anomalies'],
@@ -1481,9 +1494,10 @@ export default function MarketData() {
                 <div>
                   <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
                     <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
+                    <CopyToExcelButton gridApi={anomalyGridApi} />
                   </div>
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-                    <AgGridReact rowData={anomalies} columnDefs={anomalyGridCols.colDefs}
+                    <AgGridReact theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       onColumnMoved={anomalyGridCols.onColumnMoved}
                       onColumnResized={anomalyGridCols.onColumnResized} />

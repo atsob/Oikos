@@ -805,6 +805,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           column width are remembered the same way as other saved view settings, so they follow you across
           reloads and devices.
         </P>
+        <H3>Copying a table to Excel</H3>
+        <P>
+          The <b>Copy to Excel</b> button next to <b>Columns</b> copies that table to the clipboard as
+          tab-separated data — paste straight into Excel or Google Sheets and it lands in real columns, not one
+          long line of text. It copies exactly what's on screen: current sort, any active search/filter, and
+          only the columns you've currently got visible.
+        </P>
+        <Note>
+          Cash Register's transaction table loads rows as you scroll (not all at once), so Copy to Excel there
+          only copies whichever rows have already loaded — scroll through the range you want first.
+        </Note>
         <H3>Version info</H3>
         <P>
           The sidebar footer shows the build version and, below it, the exact git commit hash and date it was

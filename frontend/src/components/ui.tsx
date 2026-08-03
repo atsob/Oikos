@@ -1,8 +1,9 @@
 import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCcw, ChevronDown, Columns3, X } from 'lucide-react'
+import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check } from 'lucide-react'
 import { usePersist } from '@/lib/hooks'
+import type { GridApi } from 'ag-grid-community'
 
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
 export function useEscapeKey(onClose: () => void) {
@@ -464,6 +465,38 @@ export function ColumnsMenu({ columns, onToggle }: {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Copy to Excel button ────────────────────────────────────────────────────────
+// Copies the grid's current view — respecting sort, filter and column
+// visibility/order, same as what's on screen — to the clipboard as tab-separated
+// text, which Excel/Sheets paste back into cells/columns rather than one text blob.
+// For a grid using an infinite/server-side row model, this only copies whichever
+// rows have been scrolled into view and loaded client-side, not the full server dataset.
+export function CopyToExcelButton({ gridApi }: { gridApi: GridApi | null }) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const handleCopy = async () => {
+    if (!gridApi) return
+    const tsv = gridApi.getDataAsCsv({ columnSeparator: '\t' })
+    if (!tsv) return
+    try {
+      await navigator.clipboard.writeText(tsv)
+      setStatus('copied')
+    } catch {
+      setStatus('failed')
+    }
+    setTimeout(() => setStatus('idle'), 1500)
+  }
+
+  return (
+    <button onClick={handleCopy} disabled={!gridApi}
+      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed">
+      {status === 'copied' ? <><Check size={13} /> Copied</>
+        : status === 'failed' ? <><X size={13} /> Copy failed</>
+        : <><ClipboardCopy size={13} /> Copy to Excel</>}
+    </button>
   )
 }
 
