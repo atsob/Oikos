@@ -1576,6 +1576,15 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
   const pctGain = totalCost ? (gain / totalCost) * 100 : null
   const avgCostPerShare = totalQty ? totalCost / totalQty : null
 
+  // All-time realized gain/loss, same FIFO-based figure as Reports → Inv. Performance → P&L
+  // and the Investment Transactions tab, summed across every account this security has
+  // ever been held in. Already EUR-denominated, unlike the rest of this panel which uses
+  // the security's own currency.
+  const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
+  const secPnlRows = (pnlData as Record<string, unknown>[]).filter(r => Number(r.securities_id) === secId)
+  const hasRealized = secPnlRows.length > 0
+  const realizedPnl = secPnlRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
+
   const curr = String(security.currency ?? '')
   const money = (n: number | null) => n == null ? '—' : `${fmt(n, 2)}${curr ? ` ${curr}` : ''}`
   const gainColor = (n: number | null) => n == null ? '' : n >= 0 ? 'text-green-600' : 'text-red-600'
@@ -1596,6 +1605,7 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
         <OverviewRow label="Gain" value={<span className={gainColor(gain)}>{money(gain)}</span>} />
         <OverviewRow label="% Gain" value={pctGain != null ? <span className={gainColor(pctGain)}>{fmtPct(pctGain)}</span> : '—'} />
         <OverviewRow label="Avg Cost / Share" value={money(avgCostPerShare)} />
+        {hasRealized && <OverviewRow label="Realized P&L" value={<span className={gainColor(realizedPnl)}>{fmtEur(realizedPnl)}</span>} />}
       </OverviewPanel>
 
       <OverviewPanel title="Security Details" actions={<Button size="sm" variant="secondary" onClick={onEditDetails}>Edit Details</Button>}>
