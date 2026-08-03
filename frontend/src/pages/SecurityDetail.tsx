@@ -1637,7 +1637,138 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
         <OverviewRow label="Ex-Div Date" value={security.ex_dividend_date ? String(security.ex_dividend_date).slice(0, 10) : '—'} />
         <OverviewRow label="Exchange" value={String(security.tv_exchange ?? '') || '—'} />
       </OverviewPanel>
+
+      <div className="md:col-span-3">
+        <OverviewPriceChart secId={secId} />
+      </div>
     </div>
+  )
+}
+
+// Compact price chart for the Overview tab — same underlying price-history/
+// transaction-marker data and 'sec_chart_period' persisted period as the
+// Prices tab's full chart, just without the MA line, volume axis, or the
+// editing/import tooling below it (those stay on the Prices tab).
+function OverviewPriceChart({ secId }: { secId: number }) {
+  const { isDark } = useTheme()
+  const liveRefetchMs = useLiveRefetchInterval()
+  const [period, setPeriod] = usePersist<ChartPeriod>('sec_chart_period', 'YTD')
+  const fromDate = periodToFromDate(period)
+
+  const { data: history = [], isLoading } = useQuery({
+    queryKey: ['price-history', secId, fromDate],
+    queryFn: () => getPriceHistory(secId, fromDate),
+    refetchInterval: liveRefetchMs,
+  })
+  const { data: txHistory = [] } = useQuery({
+    queryKey: ['sec-transactions', secId],
+    queryFn: () => getSecurityTransactions(secId),
+    refetchInterval: liveRefetchMs,
+  })
+
+  const pctChange = (() => {
+    const h = history as Record<string, unknown>[]
+    if (h.length < 2) return null
+    const first = Number(h[0].close), last = Number(h[h.length - 1].close)
+    if (!first) return null
+    return ((last - first) / first) * 100
+  })()
+
+  const txMarkers = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    const closeByDate = new Map(h.map(r => [String(r.date).slice(0, 10), Number(r.close)]))
+    const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Grant', 'Vest', 'Exercise'])
+    const REINVEST_LIKE = new Set(['Reinvest'])
+    const SELL_LIKE = new Set(['Sell', 'ShrOut', 'Expire'])
+    const toPoint = (r: Record<string, unknown>) => {
+      const d = String(r.date).slice(0, 10)
+      const y = r.price_per_share != null ? Number(r.price_per_share) : (closeByDate.get(d) ?? null)
+      return { d, y, action: String(r.action ?? ''), quantity: r.quantity, price: r.price_per_share }
+    }
+    const inRange = (txHistory as Record<string, unknown>[]).filter(r => String(r.date).slice(0, 10) >= fromDate)
+    return {
+      buys: inRange.filter(r => BUY_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+      reinvests: inRange.filter(r => REINVEST_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+      sells: inRange.filter(r => SELL_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
+    }
+  }, [history, txHistory, fromDate])
+
+  return (
+    <OverviewPanel
+      title="Price History"
+      actions={
+        <div className="flex items-center gap-3">
+          {pctChange != null && !isLoading && (
+            <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+              {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
+            </span>
+          )}
+          <PeriodSelector value={period} onChange={setPeriod} />
+        </div>
+      }
+    >
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
+        <Plot
+          data={[
+            {
+              x: (history as Record<string, unknown>[]).map(r => r.date),
+              y: (history as Record<string, unknown>[]).map(r => r.close),
+              type: 'scatter', mode: 'lines', name: 'Close',
+              line: { color: '#3b82f6', width: 1.5 },
+              yaxis: 'y',
+            },
+            {
+              x: (history as Record<string, unknown>[]).map(r => r.date),
+              y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
+              type: 'bar', name: 'Volume',
+              marker: { color: 'rgba(148,163,184,0.4)' },
+              yaxis: 'y2',
+              hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
+            },
+            {
+              x: txMarkers.reinvests.map(p => p.d),
+              y: txMarkers.reinvests.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Reinvest',
+              marker: { color: '#14b8a6', size: 9, symbol: 'diamond', line: { color: '#0f766e', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+            {
+              x: txMarkers.buys.map(p => p.d),
+              y: txMarkers.buys.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Buy',
+              marker: { color: '#22c55e', size: 10, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+            {
+              x: txMarkers.sells.map(p => p.d),
+              y: txMarkers.sells.map(p => p.y),
+              type: 'scatter', mode: 'markers', name: 'Sell',
+              marker: { color: '#ef4444', size: 10, symbol: 'triangle-down', line: { color: '#b91c1c', width: 1 } },
+              yaxis: 'y',
+              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              hovertemplate: '%{text}<extra></extra>',
+            },
+          ]}
+          layout={{
+            height: 280,
+            margin: { t: 10, r: 60, b: 40, l: 70 },
+            hovermode: 'x unified',
+            yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
+            yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
+              title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
+            legend: { orientation: 'h', y: -0.2, x: 0 },
+            bargap: 0.1,
+            ...plotLayout(isDark),
+          }}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: '100%' }}
+        />
+      )}
+    </OverviewPanel>
   )
 }
 
