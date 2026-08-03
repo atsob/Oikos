@@ -286,8 +286,6 @@ def download_securities_info_from_yahoo(target_sec_id=None):
                 if (not _raw or str(_raw).strip().lower() in ('none', 'n/a', ''))
                 else str(_raw).strip().lower()
             )
-            target_price = info.get('targetMeanPrice') or None
-
             # ISIN — not in ticker.info; requires the dedicated ticker.isin
             # property which hits a separate Yahoo search endpoint.
             # Validate: must be exactly 12 alphanumeric characters.
@@ -357,6 +355,8 @@ def download_securities_info_from_yahoo(target_sec_id=None):
 
             def _scaled(raw):
                 return (raw / price_scale) if raw else None
+
+            target_price = _scaled(info.get('targetMeanPrice'))
 
             quote = (
                 _scaled(info.get('previousClose')),

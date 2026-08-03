@@ -104,6 +104,7 @@ def get_securities(search: Optional[str] = Query(None)):
                    s.Analyst_Rating AS analyst_rating,
                    s.Analyst_Target_Price AS analyst_target_price,
                    s.Issuer_Id AS issuer_id,
+                   COALESCE(s.Price_Scale, 1) AS price_scale,
                    COALESCE((SELECT COUNT(*) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id), 0) AS price_records,
                    (SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS latest_price,
                    (SELECT Date FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS price_date,

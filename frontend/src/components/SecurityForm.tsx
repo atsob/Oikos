@@ -77,6 +77,13 @@ export function SecurityFormFields({ form, set, currencies, taxRules, issuers = 
       </FormField>
       <FormField label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></FormField>
       <FormField label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></FormField>
+      {form.price_scale && Number(form.price_scale) !== 1 && (
+        <FormField label="Price Scale">
+          <div className="w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-800">
+            ÷{Number(form.price_scale)} <span className="text-amber-600">(quoted in minor unit, e.g. pence)</span>
+          </div>
+        </FormField>
+      )}
 
       <FormSection>Data Sources</FormSection>
       <FormField label="Yahoo Ticker"><Input value={form.yahoo_ticker} onChange={e => set('yahoo_ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></FormField>
