@@ -1617,28 +1617,30 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
         <OverviewRow label="Currency" value={curr || '—'} />
       </OverviewPanel>
 
-      <OverviewPanel title="Quote">
-        <OverviewRow label="Data as of" value={security.price_date ? String(security.price_date).slice(0, 10) : '—'} />
-        <OverviewRow label="Price" value={money(latestPrice)} />
-        <OverviewRow label="Change" value={<span className={gainColor(change)}>{money(change)}</span>} />
-        <OverviewRow label="% Change" value={pctChange != null ? <span className={gainColor(pctChange)}>{fmtPct(pctChange)}</span> : '—'} />
-        <OverviewRow label="Open" value={money(security.day_open != null ? Number(security.day_open) : null)} />
-        <OverviewRow label="Prev Close" value={money(prevClose)} />
-        <OverviewRow label="High" value={money(security.day_high != null ? Number(security.day_high) : null)} />
-        <OverviewRow label="Low" value={money(security.day_low != null ? Number(security.day_low) : null)} />
-        <OverviewRow label="52-Week High" value={money(security.week52_high != null ? Number(security.week52_high) : null)} />
-        <OverviewRow label="52-Week Low" value={money(security.week52_low != null ? Number(security.week52_low) : null)} />
-        <OverviewRow label="Volume" value={security.volume != null ? Number(security.volume).toLocaleString() : '—'} />
-        <OverviewRow label="Avg Vol" value={security.avg_volume != null ? Number(security.avg_volume).toLocaleString() : '—'} />
-        <OverviewRow label="P/E" value={security.trailing_pe != null ? fmt(security.trailing_pe, 2) : '—'} />
-        <OverviewRow label="Market Cap" value={money(security.market_cap != null ? Number(security.market_cap) : null)} />
-        <OverviewRow label="Div Yield" value={security.dividend_yield != null ? fmtPct(Number(security.dividend_yield)) : '—'} />
-        <OverviewRow label="Ann Div/Shr" value={security.dividend_rate != null ? fmt(security.dividend_rate, 4) : '—'} />
-        <OverviewRow label="Ex-Div Date" value={security.ex_dividend_date ? String(security.ex_dividend_date).slice(0, 10) : '—'} />
-        <OverviewRow label="Exchange" value={String(security.tv_exchange ?? '') || '—'} />
-      </OverviewPanel>
+      <div className="md:row-span-2">
+        <OverviewPanel title="Quote">
+          <OverviewRow label="Data as of" value={security.price_date ? String(security.price_date).slice(0, 10) : '—'} />
+          <OverviewRow label="Price" value={money(latestPrice)} />
+          <OverviewRow label="Change" value={<span className={gainColor(change)}>{money(change)}</span>} />
+          <OverviewRow label="% Change" value={pctChange != null ? <span className={gainColor(pctChange)}>{fmtPct(pctChange)}</span> : '—'} />
+          <OverviewRow label="Open" value={money(security.day_open != null ? Number(security.day_open) : null)} />
+          <OverviewRow label="Prev Close" value={money(prevClose)} />
+          <OverviewRow label="High" value={money(security.day_high != null ? Number(security.day_high) : null)} />
+          <OverviewRow label="Low" value={money(security.day_low != null ? Number(security.day_low) : null)} />
+          <OverviewRow label="52-Week High" value={money(security.week52_high != null ? Number(security.week52_high) : null)} />
+          <OverviewRow label="52-Week Low" value={money(security.week52_low != null ? Number(security.week52_low) : null)} />
+          <OverviewRow label="Volume" value={security.volume != null ? Number(security.volume).toLocaleString() : '—'} />
+          <OverviewRow label="Avg Vol" value={security.avg_volume != null ? Number(security.avg_volume).toLocaleString() : '—'} />
+          <OverviewRow label="P/E" value={security.trailing_pe != null ? fmt(security.trailing_pe, 2) : '—'} />
+          <OverviewRow label="Market Cap" value={money(security.market_cap != null ? Number(security.market_cap) : null)} />
+          <OverviewRow label="Div Yield" value={security.dividend_yield != null ? fmtPct(Number(security.dividend_yield)) : '—'} />
+          <OverviewRow label="Ann Div/Shr" value={security.dividend_rate != null ? fmt(security.dividend_rate, 4) : '—'} />
+          <OverviewRow label="Ex-Div Date" value={security.ex_dividend_date ? String(security.ex_dividend_date).slice(0, 10) : '—'} />
+          <OverviewRow label="Exchange" value={String(security.tv_exchange ?? '') || '—'} />
+        </OverviewPanel>
+      </div>
 
-      <div className="md:col-span-3">
+      <div className="md:col-span-2">
         <OverviewPriceChart secId={secId} />
       </div>
     </div>
