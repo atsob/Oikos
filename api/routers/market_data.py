@@ -443,12 +443,17 @@ def download_tv_prices(data: dict = {}):
 
 
 @router.post("/download/solidus-bonds")
-def download_solidus_bonds():
-    """Download Greek bond prices from Solidus PDF."""
+def download_solidus_bonds(data: dict = {}):
+    """Download Greek bond prices from Solidus PDF, optionally scoped to one security."""
     try:
         from data.downloaders import download_bond_prices_from_solidus
-        download_bond_prices_from_solidus()
-        return {"ok": True, "message": "Solidus bond prices downloaded"}
+        target_sec_id = data.get("security_id")
+        result = download_bond_prices_from_solidus(target_sec_id=target_sec_id)
+        if target_sec_id is not None:
+            message = "Solidus bond price updated" if result.get("target_matched") else "ISIN not found in Solidus PDF"
+        else:
+            message = f"Solidus bond prices downloaded ({result.get('updated_count', 0)} updated)"
+        return {"ok": True, "message": message}
     except Exception as e:
         raise HTTPException(500, str(e))
 

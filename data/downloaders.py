@@ -2011,13 +2011,21 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
     _refresh_materialized_views_async()
 
 
-def download_bond_prices_from_solidus():
+def download_bond_prices_from_solidus(target_sec_id=None):
+    """Download Greek bond mid-prices from the Solidus PDF and match them to
+    Securities by ISIN (stored in Ticker/Yahoo_Ticker for these bonds).
+
+    When target_sec_id is given, only that security's row (if its ISIN appears
+    in the PDF) is updated — used for the per-security "Downloads" tab button
+    — and the return value reports whether it was actually matched, since a
+    single-security caller needs that to show a meaningful status message.
+    """
     pdf_url = "https://www.solidus.gr/AppFol/appDetails/RadControls/fol1/Bonds/SOLIDUS_BOND_LIST.pdf"
-    
+
     response = requests.get(pdf_url)
     if response.status_code != 200:
         print("Failed to receive the file.")
-        return
+        return {"updated_count": 0, "target_matched": False}
 
     bond_prices = {}
     pdf_date = None
@@ -2065,43 +2073,48 @@ def download_bond_prices_from_solidus():
 
     if not bond_prices:
         print("No Data found via Text Extraction.")
-    else:
-        # 3. Update the database
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            custom_session = get_custom_session() # DO I NEED THIS?
-        
-            updated_count = 0
+        return {"updated_count": 0, "target_matched": False}
 
-            for isin, mid_price in bond_prices.items():
+    # 3. Update the database
+    updated_count = 0
+    target_matched = False
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        for isin, mid_price in bond_prices.items():
+            cur.execute("""
+                SELECT Securities_Id FROM Securities
+                WHERE (Yahoo_Ticker = %s OR Ticker = %s) AND Is_Active = TRUE
+            """, (isin, isin))
+
+            res = cur.fetchone()
+            if res:
+                s_id = res[0]
+                if target_sec_id is not None and s_id != target_sec_id:
+                    continue
+                # Use PDF Date instead of datetime.now()
                 cur.execute("""
-                    SELECT Securities_Id FROM Securities 
-                    WHERE (Yahoo_Ticker = %s OR Ticker = %s) AND Is_Active = TRUE
-                """, (isin, isin))
-                
-                res = cur.fetchone()
-                if res:
-                    s_id = res[0]
-                    # Use PDF Date instead of datetime.now()
-                    cur.execute("""
-                        INSERT INTO Historical_Prices (Securities_Id, Date, Close, Source, Downloaded_At)
-                        VALUES (%s, %s, %s, 'Solidus', NOW())
-                        ON CONFLICT (Securities_Id, Date) DO UPDATE SET
-                            Close         = EXCLUDED.Close,
-                            Source        = EXCLUDED.Source,
-                            Downloaded_At = EXCLUDED.Downloaded_At
-                    """, (s_id, pdf_date, mid_price))
-                    updated_count += 1
+                    INSERT INTO Historical_Prices (Securities_Id, Date, Close, Source, Downloaded_At)
+                    VALUES (%s, %s, %s, 'Solidus', NOW())
+                    ON CONFLICT (Securities_Id, Date) DO UPDATE SET
+                        Close         = EXCLUDED.Close,
+                        Source        = EXCLUDED.Source,
+                        Downloaded_At = EXCLUDED.Downloaded_At
+                """, (s_id, pdf_date, mid_price))
+                updated_count += 1
+                if s_id == target_sec_id:
+                    target_matched = True
 
-            conn.commit()
-            print(f"Successful update of {updated_count} bonds for date {pdf_date}.")
+        conn.commit()
+        print(f"Successful update of {updated_count} bonds for date {pdf_date}.")
+        return {"updated_count": updated_count, "target_matched": target_matched}
 
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            logging.error(f"❌ Error: {e}")
-            logging.error(f"Error: {e}")
-        finally:
-            cur.close()
-            conn.close()
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        logging.error(f"❌ Error: {e}")
+        return {"updated_count": updated_count, "target_matched": target_matched, "error": str(e)}
+    finally:
+        cur.close()
+        conn.close()
 

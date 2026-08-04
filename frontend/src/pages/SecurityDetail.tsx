@@ -20,7 +20,7 @@ import {
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin,
+  downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals, getPnl, getIssuers,
@@ -1888,6 +1888,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
   )
 
   const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
+  const isBond = String(security.type ?? '') === 'Bond'
   const hasYahoo = !!(security.yahoo_ticker && String(security.yahoo_ticker).trim())
   const hasTv = !!(security.tv_symbol && String(security.tv_symbol).trim() && security.tv_exchange && String(security.tv_exchange).trim())
   const [downloadAllRunning, setDownloadAllRunning] = useState(false)
@@ -1906,6 +1907,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       jobs.push(['tv-px',   () => downloadTvPrices('max', secId)])
     }
     jobs.push(['eodhd-isin', () => downloadIsin(secId)])
+    if (isBond) jobs.push(['solidus', () => downloadSolidusBonds(secId)])
     for (const [key, fn] of jobs) await run(key, fn)
     setDownloadAllRunning(false)
   }
@@ -1973,6 +1975,18 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <ActionRow id="eodhd-isin" label="Fetch ISIN" onClick={() => run('eodhd-isin', () => downloadIsin(secId))} />
         </div>
       </div>
+
+      {isBond && (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Greek Bonds (Solidus)</p>
+          <p className="text-xs text-slate-400 mb-2">
+            Matches this security's ISIN (via its Ticker/Yahoo Ticker) against the daily Solidus bond price list. Only Greek government bonds/T-bills are covered.
+          </p>
+          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+            <ActionRow id="solidus" label="Download Bond Price (Solidus)" onClick={() => run('solidus', () => downloadSolidusBonds(secId))} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

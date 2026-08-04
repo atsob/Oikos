@@ -318,8 +318,8 @@ export const downloadIsin = (securityId?: number) =>
 export const downloadTvPrices = (period: string, securityId?: number) =>
   api.post('/market-data/download/tv-prices', { period, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 
-export const downloadSolidusBonds = () =>
-  api.post('/market-data/download/solidus-bonds').then(r => r.data)
+export const downloadSolidusBonds = (securityId?: number) =>
+  api.post('/market-data/download/solidus-bonds', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
 export const getWatchlist = () =>
   api.get('/market-data/watchlist').then(r => r.data)
