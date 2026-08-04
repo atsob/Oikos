@@ -102,7 +102,7 @@ const makeCashCols = (currency: string): ColDef[] => [
   { field: 'memo', headerName: 'Memo', width: 140 },
   { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: CashAmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
   { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: CashBalanceCell, cellRendererParams: { currency }, type: 'numericColumn' },
-  { headerName: 'Status', width: 170, cellRenderer: CashStatusCell },
+  { colId: 'status', headerName: 'Status', width: 170, cellRenderer: CashStatusCell },
 ]
 
 

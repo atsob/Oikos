@@ -70,7 +70,7 @@ function fmtPctLocal(n: unknown, dec = 2) {
 
 // ── Prices Tab ────────────────────────────────────────────────────────────────
 const PRICES_TAB_COLS = [
-  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 110, sort: 'desc' as const },
   { field: 'close',  headerName: 'Close',  width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
   { field: 'high',   headerName: 'High',   width: 110, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
@@ -401,7 +401,7 @@ const HOLDINGS_BY_ACCOUNT_COLS = [
   { field: 'qty_held', headerName: 'Qty Held', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
   { field: 'cost_basis', headerName: 'Cost Basis', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
   {
-    headerName: 'Cost/Share', flex: 1,
+    colId: 'cost_per_share', headerName: 'Cost/Share', flex: 1,
     valueGetter: (p: { data?: Record<string, unknown> }) => {
       const qty = Number(p.data?.qty_held ?? 0)
       const cost = Number(p.data?.cost_basis ?? 0)
@@ -416,7 +416,7 @@ const HOLDINGS_BY_ACCOUNT_COLS = [
     cellStyle: (p: { value: unknown }) => ({ color: Number(p.value) >= 0 ? '#16a34a' : '#dc2626' }),
   },
   {
-    headerName: 'P&L %', flex: 1,
+    colId: 'pnl_pct', headerName: 'P&L %', flex: 1,
     valueGetter: (p: { data?: Record<string, unknown> }) => {
       const cost = Number(p.data?.cost_basis ?? 0)
       const pnl = Number(p.data?.unrealised_pnl ?? 0)
@@ -788,7 +788,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
 // ── Price Anomalies Tab ───────────────────────────────────────────────────────
 const anomalyPctFmt = (v: unknown) => v != null ? fmtPctLocal((Number(v) - 1) * 100, 1) : '—'
 const PRICE_ANOMALIES_COLS = [
-  { checkboxSelection: true, width: 50, pinned: 'left' as const },
+  { colId: 'select', checkboxSelection: true, width: 50, pinned: 'left' as const },
   { field: 'date', headerName: 'Date', width: 120 },
   { field: 'close', headerName: 'Price', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
   { field: 'prev_close', headerName: 'Prev Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
@@ -933,14 +933,14 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
 
   const DIVIDENDS_COLS = useMemo(() => [
     {
-      headerName: '', width: 42, pinned: 'left' as const,
+      colId: 'select', headerName: '', width: 42, pinned: 'left' as const,
       checkboxSelection: true, headerCheckboxSelection: true, sortable: false, filter: false, resizable: false,
     },
     { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
     { field: 'pay_date', headerName: 'Pay Date', width: 130 },
     { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
     {
-      headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
+      colId: 'actions', headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex items-center gap-2 h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-600 hover:underline" title="Edit">
@@ -1240,7 +1240,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     { field: 'description', headerName: 'Description', flex: 1 },
     { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
     {
-      headerName: '', width: 75, pinned: 'right' as const,
+      colId: 'actions', headerName: '', width: 75, pinned: 'right' as const,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }) }}
           className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">

@@ -2,6 +2,18 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-04
+
+### Added
+- **Security Detail → Setup shows a read-only Price Scale field** for securities quoted in a minor currency unit (e.g. London Stock Exchange shares priced in pence, GBp/GBX) — only shown when non-default, so it stays out of the way for the vast majority of securities where it doesn't apply.
+- **Reports → Cash Flow Forecast now includes projected dividend income** as its own chart series, KPI card, and table — projects each currently-held security's next payment(s) within the selected horizon using the same Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view.
+- **Security Detail → Downloads has a new "Greek Bonds (Solidus)" section** for Bond-type securities — downloads that one security's price from the daily Solidus PDF (matched by ISIN), instead of only being available as an all-bonds bulk action on Market Data → Downloads.
+
+### Fixed
+- **Analyst Target Price (and the Upside % derived from it) was ~100x too high for the same 10 UK LSE holdings** fixed on 2026-08-03 for Market Value — `targetMeanPrice` from Yahoo is also pence-denominated for GBp/GBX-quoted tickers, but the downloader captured it before applying the pence→pounds scale correction the other price fields already got. BP p.l.c.'s Analyst Target is now €5.95 (was 595.36) with a sane +7.84% upside (was +10683.60%); the other 9 affected securities' stored values were corrected directly.
+- **Dividend Tracker → Forecast's Ex-Div and Pay Date columns wrapped onto two lines**, splitting the date at the hyphen (e.g. "2026-08-" / "31") instead of showing it on one line.
+- **Dragging a column header to reorder it silently reverted on the next reload** for any column with no underlying data field (status badges, edit/delete action buttons, checkbox-selection columns) — Cash Register's Status column (reported: dragging it before Balance), Investments' Cash tab Status column, several Security Detail tables (Cost/Share and P&L % on Investment Transactions, the selection checkbox on Prices/Price Anomalies, Dividends' selection and action columns, Corporate Actions' edit button), every Static Data tab's Edit/Delete column, and Market Data's Securities/Currencies action columns and FX/Securities Prices selection checkboxes. The reorder was actually saving correctly — only restoring it on the next render silently failed, because these columns had no explicit ID for the app's column-order memory to match them by.
+
 ## 2026-08-03
 
 ### Added

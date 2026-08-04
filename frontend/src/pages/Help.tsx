@@ -411,11 +411,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🔄 Cash Flow Forecast</H3>
         <P>
-          Projects future cash flow from three sources, shown separately: <b>explicitly scheduled</b> future
+          Projects future cash flow from four sources, shown separately: <b>explicitly scheduled</b> future
           transactions already entered, <b>active Recurring Templates</b> (see Recurring) projected forward from
-          each template's own due date and frequency, and <b>statistically-detected patterns</b> — payee/category
+          each template's own due date and frequency, <b>statistically-detected patterns</b> — payee/category
           combinations seen in every one of the last few complete months, for recurring bills you haven't set up
-          a template for.
+          a template for — and <b>projected dividend income</b> for currently-held securities, using the same
+          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view.
         </P>
         <Note>
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
@@ -602,6 +603,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,
           pre-scoped to that security — adding one here skips picking it from a dropdown. Allocation-drift
           alerts (tied to an asset type, not one security) only show up on the Market Data page.
+        </Note>
+        <Note>
+          The <b>Setup</b> tab shows a read-only <b>Price Scale</b> field (only when non-default) for securities
+          quoted in a minor currency unit, e.g. London Stock Exchange shares priced in pence (GBp/GBX) rather than
+          pounds — this is what keeps their Market Value, Analyst Target Price, and other price-like figures
+          correctly scaled to pounds everywhere in the app.
+        </Note>
+        <Note>
+          For Greek government bonds/T-bills, the <b>Downloads</b> tab has a <b>Greek Bonds (Solidus)</b> section
+          to pull that bond's price from the daily Solidus PDF, matched by ISIN — the same downloader available in
+          bulk on Market Data → Downloads, scoped here to just this security.
         </Note>
       </>
     ),

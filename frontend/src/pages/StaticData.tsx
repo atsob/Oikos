@@ -142,7 +142,7 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
     { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: (p: { value: string | null }) => p.value?.slice(0, 10) ?? '—' },
     {
-      headerName: '', width: 80, sortable: false, filter: false,
+      colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -362,7 +362,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' as const },
     { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
     {
-      headerName: '', width: 80, sortable: false, filter: false,
+      colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -586,7 +586,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
     { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     {
-      headerName: '', width: 80, sortable: false, filter: false,
+      colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -799,7 +799,7 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
     { field: 'website', headerName: 'Website', flex: 1, minWidth: 140 },
     { field: 'contact', headerName: 'Contact', flex: 1, minWidth: 120 },
     {
-      headerName: '', width: 80, sortable: false, filter: false,
+      colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -964,7 +964,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
     { field: 'fitch', headerName: 'Fitch', width: 80 },
     { field: 'notes', headerName: 'Notes', flex: 2, minWidth: 160 },
     {
-      headerName: '', width: 80, sortable: false, filter: false,
+      colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>

@@ -86,7 +86,7 @@ const makeColDefs = (currency: string): ColDef[] => [
   { field: 'memo', headerName: 'Memo', width: 140, sortable: false },
   { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
   { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, cellRendererParams: { currency }, type: 'numericColumn', sortable: false },
-  { headerName: 'Status', width: 170, cellRenderer: ClearedCell, sortable: false },
+  { colId: 'status', headerName: 'Status', width: 170, cellRenderer: ClearedCell, sortable: false },
 ]
 
 

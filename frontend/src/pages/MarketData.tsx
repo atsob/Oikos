@@ -213,7 +213,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'held_quantity', headerName: 'Held Qty', width: 80, type: 'numericColumn' },
     { field: 'investment_count', headerName: '# Investments', width: 100, type: 'numericColumn', hide: true },
     {
-      headerName: '', width: 70, sortable: false, filter: false, pinned: 'right',
+      colId: 'actions', headerName: '', width: 70, sortable: false, filter: false, pinned: 'right',
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -369,7 +369,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
       { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
       { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
       {
-        headerName: '', width: 80, sortable: false, filter: false,
+        colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
         cellRenderer: (p: { data: Record<string, unknown> }) => (
           <div className="flex gap-1 items-center h-full">
             <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
@@ -458,7 +458,7 @@ function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p:
 
 // ── FX Prices tab: history chart + manual entry ───────────────────────────────
 const FX_PRICES_COLS = [
-  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 130, sort: 'desc' as const },
   { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 6) : '' },
 ]
@@ -687,7 +687,7 @@ function FxPricesTab() {
 
 // ── Securities Prices tab: history chart + manual entry ───────────────────────
 const SECURITIES_PRICES_COLS = [
-  { checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
+  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
   { field: 'date', headerName: 'Date', width: 110, sort: 'desc' as const },
   { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
   { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
