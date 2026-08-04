@@ -2509,6 +2509,52 @@ def get_cash_flow_forecast_full(
             ORDER  BY next_expected_date ASC
         """, conn)
 
+        df_div = pd.read_sql("""
+            WITH fx_latest AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            ),
+            price_latest AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+            ),
+            holdings_agg AS (
+                SELECT Securities_Id, SUM(Quantity) AS total_qty
+                FROM Holdings WHERE Quantity > 0
+                GROUP BY Securities_Id
+            ),
+            last_div AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Ex_Date AS last_ex_date
+                FROM Securities_Dividends ORDER BY Securities_Id, Ex_Date DESC
+            ),
+            trailing_income AS (
+                SELECT i.Securities_Id,
+                    SUM(i.Total_Amount_AccCur * COALESCE(fx.FX_Rate, 1)) AS trailing_12m_income_eur
+                FROM Investments i
+                JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
+                LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
+                WHERE i.Action IN ('Dividend','IntInc','Reinvest')
+                  AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+                GROUP BY i.Securities_Id
+            )
+            SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+                ha.total_qty,
+                ROUND((ha.total_qty * COALESCE(pl.Close, 0) * COALESCE(fx2.FX_Rate, 1))::numeric, 2) AS market_value_eur,
+                COALESCE(fx2.FX_Rate, 1) AS fx_rate,
+                s.Dividend_Yield AS dividend_yield, s.Dividend_Rate AS dividend_rate,
+                s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
+                s.Dividend_Frequency AS dividend_frequency,
+                ld.last_ex_date,
+                COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur
+            FROM Securities s
+            JOIN holdings_agg ha ON ha.Securities_Id = s.Securities_Id
+            LEFT JOIN price_latest pl  ON pl.Securities_Id  = s.Securities_Id
+            LEFT JOIN fx_latest    fx2 ON fx2.Currencies_Id_1 = s.Currencies_Id
+            LEFT JOIN last_div     ld  ON ld.Securities_Id  = s.Securities_Id
+            LEFT JOIN trailing_income ti ON ti.Securities_Id = s.Securities_Id
+            WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
+        """, conn)
+
     # Filter scheduled to horizon
     if not df_future.empty:
         df_future['date'] = pd.to_datetime(df_future['date'])
@@ -2584,6 +2630,78 @@ def get_cash_flow_forecast_full(
 
     recur_rows.sort(key=lambda x: x['date'])
 
+    # Project dividend income for currently-held dividend-paying securities, using
+    # the same annual-run-rate / payments-per-year logic as the Dividend Tracker's
+    # Forecast view (Dividend Rate > Fwd Yield > Trailing 12m actual income),
+    # bounded by this endpoint's own day-based horizon.
+    _DIV_FREQ_MAP = {"monthly": 12, "quarterly": 4, "semi-annual": 2, "bi-annual": 2, "annual": 1, "yearly": 1}
+
+    def _div_ppy(freq_str) -> int:
+        if not freq_str or (isinstance(freq_str, float) and pd.isna(freq_str)):
+            return 4
+        return _DIV_FREQ_MAP.get(str(freq_str).strip().lower(), 4)
+
+    dividend_rows = []
+    for _, r in df_div.iterrows():
+        mv  = _fnum(r.get("market_value_eur"))
+        qty = _fnum(r.get("total_qty"))
+        fx  = _fnum(r.get("fx_rate"), default=1.0)
+        dr  = r.get("dividend_rate")
+        dy  = r.get("dividend_yield")
+        t12 = _fnum(r.get("trailing_12m_income_eur"))
+
+        if pd.notna(dr) and float(dr) > 0 and qty > 0:
+            annual = float(dr) * qty * fx
+        elif pd.notna(dy) and float(dy) > 0 and mv > 0:
+            annual = mv * float(dy) / 100
+        elif t12 > 0:
+            annual = t12
+        else:
+            continue
+        if annual <= 0:
+            continue
+
+        freq = r.get("dividend_frequency")
+        ppy = _div_ppy(freq)
+        interval = relativedelta(months=max(round(12 / ppy), 1))
+        per_pmt = annual / ppy
+
+        raw_ex  = r.get("ex_dividend_date")
+        raw_pay = r.get("dividend_pay_date")
+        ex_anchor = raw_ex if pd.notna(raw_ex) else r.get("last_ex_date")
+
+        # Same stale-pay-date guard as the Dividend Tracker forecast: only trust
+        # Dividend_Pay_Date as its own anchor when it's a plausible lag after the
+        # ex-date, otherwise derive the pay anchor from the (reliable) ex-date.
+        _lag = None
+        if pd.notna(raw_ex) and pd.notna(raw_pay):
+            candidate_lag = (pd.Timestamp(raw_pay).date() - pd.Timestamp(raw_ex).date()).days
+            if 0 <= candidate_lag <= 90:
+                _lag = candidate_lag
+        pay_anchor = (
+            (pd.Timestamp(ex_anchor).date() + _dt.timedelta(days=_lag))
+            if (_lag is not None and pd.notna(ex_anchor)) else ex_anchor
+        )
+
+        try:
+            d = pd.Timestamp(pay_anchor).date() if pay_anchor and not (isinstance(pay_anchor, float) and pd.isna(pay_anchor)) else today
+        except Exception:
+            d = today
+        while d <= today:
+            d = d + interval
+        while d <= cutoff:
+            dividend_rows.append({
+                'date': d.isoformat(),
+                'payees_name': str(r['securities_name']),
+                'securities_id': int(r['securities_id']),
+                'amount_eur': round(per_pmt, 2),
+                'currency': 'EUR',
+                'frequency': str(freq) if freq and not (isinstance(freq, float) and pd.isna(freq)) else 'Quarterly (assumed)',
+            })
+            d = d + interval
+
+    dividend_rows.sort(key=lambda x: x['date'])
+
     # Build scheduled list
     scheduled = []
     if not df_f.empty:
@@ -2603,11 +2721,13 @@ def get_cash_flow_forecast_full(
     tmpl_out  = sum(r['amount_eur'] for r in template_rows if r['amount_eur'] < 0)
     recur_in  = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] > 0)
     recur_out = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] < 0)
+    div_in    = sum(r['amount_eur'] for r in dividend_rows)
 
     return {
         'scheduled': scheduled,
         'templates': template_rows,
         'recurring': recur_rows,
+        'dividends': dividend_rows,
         'metrics': {
             'sched_in':  round(sched_in,  2),
             'sched_out': round(sched_out, 2),
@@ -2615,7 +2735,8 @@ def get_cash_flow_forecast_full(
             'tmpl_out':  round(tmpl_out,  2),
             'recur_in':  round(recur_in,  2),
             'recur_out': round(recur_out, 2),
-            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out, 2),
+            'div_in':    round(div_in,    2),
+            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out + div_in, 2),
         },
     }
 

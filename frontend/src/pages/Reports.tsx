@@ -2654,8 +2654,8 @@ function DividendTrackerTab() {
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
                         <td className="px-2 py-1.5 text-slate-500 truncate" title={String(r.frequency)}>{String(r.frequency)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>
-                        <td className="px-2 py-1.5 text-right text-slate-500">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
-                        <td className="px-2 py-1.5 text-right text-slate-500">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-500 whitespace-nowrap">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-500 whitespace-nowrap">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.market_value_eur))}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur))}</td>
                         <td className="px-2 py-1.5">
@@ -5466,6 +5466,7 @@ const CF_COLOR_MAP: Record<string, string> = {
   'Expense · Recurring Template': '#F39C12',
   'Income · Recurring (est.)':    '#82E0AA',
   'Expense · Recurring (est.)':   '#F1948A',
+  'Income · Dividends (est.)':    '#9B59B6',
 }
 
 function CashFlowSection() {
@@ -5482,10 +5483,11 @@ function CashFlowSection() {
     scheduled: Row[]
     templates: Row[]
     recurring: Row[]
-    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; net_total: number }
+    dividends: Row[]
+    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; div_in: number; net_total: number }
   } | undefined
 
-  // Build chart data: aggregate scheduled + templates + recurring by calendar month
+  // Build chart data: aggregate scheduled + templates + recurring + dividends by calendar month
   const chartTraces = useMemo(() => {
     if (!result) return []
     const bySeriesMonth: Record<string, Record<string, number>> = {}
@@ -5499,6 +5501,7 @@ function CashFlowSection() {
     for (const r of result.scheduled) addRow(String(r.date), Number(r.amount_eur), 'Scheduled')
     for (const r of result.templates) addRow(String(r.date), Number(r.amount_eur), 'Recurring Template')
     for (const r of result.recurring) addRow(String(r.date), Number(r.amount_eur), 'Recurring (est.)')
+    for (const r of result.dividends ?? []) addRow(String(r.date), Number(r.amount_eur), 'Dividends (est.)')
 
     const allMonths = [...new Set([
       ...Object.values(bySeriesMonth).flatMap(m => Object.keys(m))
@@ -5519,6 +5522,7 @@ function CashFlowSection() {
   const scheduled = result?.scheduled ?? []
   const templates = result?.templates ?? []
   const recurring = result?.recurring ?? []
+  const dividends = result?.dividends ?? []
 
   const KPI_METRICS = m ? [
     { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.' },
@@ -5527,7 +5531,8 @@ function CashFlowSection() {
     { label: 'Template Out',  value: fmtEur(m.tmpl_out),  color: 'text-orange-600', tip: 'Total expenses projected from your active Recurring Templates within the horizon.' },
     { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.' },
     { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.' },
-    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, and recurring in/out amounts within the horizon.' },
+    { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).' },
+    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, and dividend in/out amounts within the horizon.' },
   ] : []
 
   return (
@@ -5559,7 +5564,7 @@ function CashFlowSection() {
 
       {/* KPI metrics */}
       {KPI_METRICS.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           {KPI_METRICS.map(k => (
             <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
               <Tooltip text={k.tip}>
@@ -5711,6 +5716,45 @@ function CashFlowSection() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">{String(r.avg_days_between)}</td>
                     <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
+
+      {/* Dividend Income */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">💰 Expected Dividend Income</h3>
+        <p className="text-xs text-slate-400 mb-2">
+          Projected dividend payments for currently-held securities within this horizon, using the same forecast
+          logic as the Dividend Tracker (Dividend Rate &gt; Fwd Yield &gt; Trailing 12m actual income).
+        </p>
+        {dividends.length === 0 ? (
+          <p className="text-sm text-slate-400">No dividend payments projected within this horizon.</p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Pay Date</th>
+                  <th className="px-3 py-2 text-left">Security</th>
+                  <th className="px-3 py-2 text-right">Amount (€)</th>
+                  <th className="px-3 py-2 text-left">Frequency</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dividends.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600 whitespace-nowrap">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.payees_name || '—')}</SecLink></td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-purple-700">
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.frequency || '—')}</td>
                   </tr>
                 ))}
               </tbody>
