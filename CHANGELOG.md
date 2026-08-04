@@ -2,9 +2,16 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-05
+
+### Added
+- **Inv. Portfolio → Sector & Industry tab is now merged into Portfolio Analysis → Sector Weighting**, which drills down two levels: Sector → Industry → Securities, carrying over the old tab's industry-level granularity on top of the fund look-through accuracy Portfolio Analysis already has (an ETF/fund's own value now counts under its actual underlying sector composition, instead of never having a Sector/Industry at all since that data doesn't exist on fund securities). Click a sector to see its industry breakdown, then an industry to see the individual securities in it, with weight % recomputed at each level. Industry data only exists for direct holdings (it's an individual-security concept); a fund's look-through contribution to a sector groups into a "Fund Look-Through (No Industry Data)" bucket instead of being silently dropped from the industry view. The old Sector & Industry tab has been removed.
+- Renamed **Inv. Portfolio → "X-Ray"** to **"Portfolio Analysis"** (label only — internal identifiers, saved presets, and persisted tab memory are unchanged, with a one-time migration so anyone with the old tab remembered as active lands on the new one instead of a blank pane).
+
 ## 2026-08-04
 
 ### Added
+- **Inv. Portfolio → Allocation tab is now merged into X-Ray → Asset Allocation**, which gains its own **⚙️ Edit Target Allocations** panel, an Actual vs. Target chart, and a Rebalancing Delta table, built on X-Ray's more accurate look-through classes (Stocks/Cash/Bonds/Commodities/Crypto/Other/Preferred/Convertible — a fund's value is split across its actual underlying composition instead of counting entirely under one bucket like "ETF"). Existing targets from the old tab were auto-migrated where a class maps 1:1 (Stock→Stocks, Bond→Bonds, Cash & Savings→Cash, Commodity→Commodities, Crypto→Crypto); the old "ETF" target has no equivalent here since a fund's value now splits across multiple classes, so it wasn't carried over — re-enter it against whichever class you want that value counted toward. The old Allocation tab (donut, its own targets, and the per-security Rebalancing Action Plan) has been removed; the new X-Ray version doesn't include a per-security trade plan, since a fund spanning multiple classes has no single security to buy/sell to fix one class's deficit.
 - **Security Detail → Setup shows a read-only Price Scale field** for securities quoted in a minor currency unit (e.g. London Stock Exchange shares priced in pence, GBp/GBX) — only shown when non-default, so it stays out of the way for the vast majority of securities where it doesn't apply.
 - **Reports → Cash Flow Forecast now includes projected dividend income** as its own chart series, KPI card, and table — projects each currently-held security's next payment(s) within the selected horizon using the same Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view.
 - **Security Detail → Downloads has a new "Greek Bonds (Solidus)" section** for Bond-type securities — downloads that one security's price from the daily Solidus PDF (matched by ISIN), instead of only being available as an all-bonds bulk action on Market Data → Downloads.

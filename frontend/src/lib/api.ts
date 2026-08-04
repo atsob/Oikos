@@ -142,17 +142,6 @@ export const getCapitalGains = (year: number, method: string = 'WAC') =>
 export const getDividends = (startDate: string, endDate: string) =>
   api.get('/reports/dividends', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
 
-export const getAllocationReport = (scope: 'investments' | 'all' = 'investments', accountIds?: number[]) =>
-  api.get('/reports/allocation', { params: { scope, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
-export const getAllocationTargets = () =>
-  api.get('/reports/allocation-targets').then(r => r.data)
-export const saveAllocationTargets = (payload: Record<string, number>) =>
-  api.post('/reports/allocation-targets', payload).then(r => r.data)
-export const getAllocationDelta = (scope: 'investments' | 'all' = 'investments', accountIds?: number[]) =>
-  api.get('/reports/allocation-delta', { params: { scope, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
-export const getRebalancingPlan = (scope: 'investments' | 'all' = 'investments', accountIds?: number[]) =>
-  api.get('/reports/rebalancing-plan', { params: { scope, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
-
 export const getNetWorthReport = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/net-worth-report', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
 
@@ -760,9 +749,6 @@ export const getInvestmentPositionsHistory = (startDate: string, accountIds?: nu
 export const getHoldingsSnapshot = (asOf?: string, accountIds?: number[]) =>
   api.get('/reports/holdings-snapshot', { params: { ...(asOf ? { as_of: asOf } : {}), account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getSectorAllocation = (accountIds?: number[]) =>
-  api.get('/reports/sector-allocation', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
-
 export const getFxExposure = (accountIds?: number[]) =>
   api.get('/reports/fx-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
@@ -771,6 +757,11 @@ export const getXraySectorWeighting = (accountIds?: number[]) =>
 
 export const getXrayAssetAllocation = (accountIds?: number[]) =>
   api.get('/reports/xray/asset-allocation', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+
+export const getXrayAssetAllocationTargets = () =>
+  api.get('/reports/xray/asset-allocation-targets').then(r => r.data)
+export const saveXrayAssetAllocationTargets = (payload: Record<string, number>) =>
+  api.post('/reports/xray/asset-allocation-targets', payload).then(r => r.data)
 
 export const getXrayStyleBox = (accountIds?: number[]) =>
   api.get('/reports/xray/style-box', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)

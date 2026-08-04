@@ -326,6 +326,34 @@ def _run_startup_migrations():
         # back to its actual major-unit currency before storing it, instead of
         # silently treating "552.1 GBp" as "552.1 GBP".
         "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Price_Scale NUMERIC(10,4) DEFAULT 1",
+        # X-Ray Asset Allocation: target percentages keyed by X-Ray's look-through
+        # asset classes (Stocks/Cash/Bonds/Commodities/Crypto/Other/Preferred/
+        # Convertible) — separate from Allocation_Targets (keyed by Securities_Type,
+        # used by the older non-look-through Inv. Portfolio -> Allocation tab, kept
+        # unchanged), since a fund's value now splits across multiple classes here
+        # rather than counting entirely under one Securities_Type bucket.
+        """CREATE TABLE IF NOT EXISTS XRay_Allocation_Targets (
+               Asset_Class VARCHAR(30) PRIMARY KEY,
+               Target_Pct  NUMERIC(5,2) NOT NULL DEFAULT 0
+           )""",
+        # One-time best-effort seed from the older Allocation_Targets, for whichever
+        # classes map 1:1 (Stock->Stocks, Bond->Bonds, Cash & Savings->Cash,
+        # Commodity->Commodities, Crypto->Crypto). ETF has no equivalent here — its
+        # value is now split across other classes via fund look-through — so it's
+        # left out; ON CONFLICT DO NOTHING makes this purely a first-run seed, never
+        # overwriting a target the user has since set directly on the new table.
+        """INSERT INTO XRay_Allocation_Targets (Asset_Class, Target_Pct)
+           SELECT CASE Securities_Type
+                    WHEN 'Stock' THEN 'Stocks'
+                    WHEN 'Bond' THEN 'Bonds'
+                    WHEN 'Cash & Savings' THEN 'Cash'
+                    WHEN 'Commodity' THEN 'Commodities'
+                    WHEN 'Crypto' THEN 'Crypto'
+                  END AS asset_class,
+                  Target_Pct
+           FROM Allocation_Targets
+           WHERE Securities_Type IN ('Stock','Bond','Cash & Savings','Commodity','Crypto')
+           ON CONFLICT (Asset_Class) DO NOTHING""",
     ]
     try:
         conn     = psycopg2.connect(**DB_CONFIG)

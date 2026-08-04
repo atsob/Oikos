@@ -2057,12 +2057,12 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
           </select>
         } />
         {composition && Boolean(composition.category_override) && (
-          <p className="text-xs text-slate-400 pb-1.5">Manually set — overrides Yahoo's category ({composition.category_name ? String(composition.category_name) : 'none reported'}) in X-Ray's Style Box.</p>
+          <p className="text-xs text-slate-400 pb-1.5">Manually set — overrides Yahoo's category ({composition.category_name ? String(composition.category_name) : 'none reported'}) in Portfolio Analysis's Style Box.</p>
         )}
       </CompositionSection>
 
       <CompositionSection title="Asset Allocation Class">
-        <OverviewRow label="X-Ray Asset Class Override" value={
+        <OverviewRow label="Portfolio Analysis Asset Class Override" value={
           <select
             className="rounded-md border border-slate-300 px-2 py-1 text-xs"
             value={String(composition?.asset_class_override ?? '')}
@@ -2074,7 +2074,7 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
           </select>
         } />
         {composition && Boolean(composition.asset_class_override) && (
-          <p className="text-xs text-slate-400 pb-1.5">Manually set — routes this fund's whole value to "{String(composition.asset_class_override)}" in X-Ray's Asset Allocation, instead of splitting it across Yahoo's stock/bond/cash/other mix above.</p>
+          <p className="text-xs text-slate-400 pb-1.5">Manually set — routes this fund's whole value to "{String(composition.asset_class_override)}" in Portfolio Analysis's Asset Allocation, instead of splitting it across Yahoo's stock/bond/cash/other mix above.</p>
         )}
       </CompositionSection>
 

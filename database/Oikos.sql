@@ -827,6 +827,15 @@ INSERT INTO Allocation_Targets (Securities_Type, Target_Pct) VALUES
     ('Closed-End Fund', 0)
 ON CONFLICT (Securities_Type) DO NOTHING;
 
+-- X-Ray Asset Allocation targets — keyed by X-Ray's look-through asset classes
+-- (Stocks/Cash/Bonds/Commodities/Crypto/Other/Preferred/Convertible), separate
+-- from Allocation_Targets above since a fund's value splits across multiple
+-- classes here instead of counting entirely under one Securities_Type.
+CREATE TABLE IF NOT EXISTS XRay_Allocation_Targets (
+    Asset_Class VARCHAR(30) PRIMARY KEY,
+    Target_Pct  NUMERIC(5, 2) NOT NULL DEFAULT 0
+);
+
 
 CREATE TABLE IF NOT EXISTS Benchmark_Presets (
     Preset_Id   SERIAL PRIMARY KEY,

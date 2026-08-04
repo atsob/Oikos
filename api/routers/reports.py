@@ -192,236 +192,6 @@ def get_portfolio_summary(account_ids: Optional[str] = Query(None)):
     return _df_to_list(df)
 
 
-@router.get("/allocation")
-def get_allocation(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
-    """Asset allocation breakdown for a donut chart.
-
-    scope=investments (default): only securities held in Holdings, grouped by Securities_Type.
-    scope=all: full net-worth allocation — securities + cash + real assets.
-    account_ids, when given, scopes every bucket (investments, cash, real assets) to just
-    those accounts — this is what lets a preset's selected Cash/Bank accounts actually show
-    up as a "Cash & Savings" slice instead of always pulling in every cash-type account.
-    """
-    acct_ids = _parse_account_ids(account_ids)
-    inv_clause = _acct_clause(acct_ids, "h.Accounts_Id")
-    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
-    asset_clause = _acct_clause(acct_ids, "Accounts_Id")
-
-    with get_db() as conn:
-        inv_df = pd.read_sql(f"""
-            SELECT s.Securities_Type AS label,
-                   SUM(h.Quantity * COALESCE(
-                       (SELECT Close FROM Historical_Prices WHERE Securities_Id = h.Securities_Id ORDER BY Date DESC LIMIT 1), 0
-                   ) * COALESCE(
-                       (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = s.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
-                   )) AS value_eur
-            FROM Holdings h
-            JOIN Securities s ON h.Securities_Id = s.Securities_Id
-            WHERE h.Quantity != 0{inv_clause}
-            GROUP BY s.Securities_Type
-        """, conn)
-
-        if scope == "all":
-            cash_df = pd.read_sql(f"""
-                SELECT 'Cash & Savings' AS label,
-                       SUM(a.Accounts_Balance * COALESCE(
-                           (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
-                       )) AS value_eur
-                FROM Accounts a
-                WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-                  AND a.Is_Active = TRUE{cash_clause}
-            """, conn)
-            asset_df = pd.read_sql(f"""
-                SELECT Accounts_Type AS label,
-                       SUM(Accounts_Balance) AS value_eur
-                FROM Accounts
-                WHERE Accounts_Type IN ('Real Estate','Vehicle','Asset')
-                  AND Is_Active = TRUE{asset_clause}
-                GROUP BY Accounts_Type
-            """, conn)
-            result = pd.concat([cash_df, inv_df, asset_df], ignore_index=True)
-        else:
-            result = inv_df
-
-    result = result[result["value_eur"].notna() & (result["value_eur"] > 0)]
-    return _df_to_list(result)
-
-
-@router.get("/allocation-targets")
-def get_allocation_targets():
-    """Return saved target percentages from Allocation_Targets."""
-    with get_db() as conn:
-        df = pd.read_sql(
-            "SELECT Securities_Type AS securities_type, Target_Pct AS target_pct FROM Allocation_Targets ORDER BY Securities_Type",
-            conn,
-        )
-    return _df_to_list(df)
-
-
-@router.post("/allocation-targets")
-def save_allocation_targets(payload: dict):
-    """Upsert {securities_type: target_pct} map into Allocation_Targets."""
-    with get_db() as conn:
-        cur = conn.cursor()
-        for sec_type, pct in payload.items():
-            cur.execute(
-                """INSERT INTO Allocation_Targets (Securities_Type, Target_Pct)
-                   VALUES (%s, %s)
-                   ON CONFLICT (Securities_Type)
-                   DO UPDATE SET Target_Pct = EXCLUDED.Target_Pct""",
-                (sec_type, float(pct)),
-            )
-    return {"ok": True}
-
-
-@router.get("/allocation-delta")
-def get_allocation_delta(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
-    """Current allocation vs targets + delta for the Rebalancing Delta table.
-
-    scope=all mirrors /allocation's scope=all: unions in a "Cash & Savings" row
-    so this table and its Actual-vs-Target chart stay consistent with the donut,
-    instead of computing percentages against securities-only value.
-    """
-    acct_ids = _parse_account_ids(account_ids)
-    acct_clause = _acct_clause(acct_ids, "h.Accounts_Id")
-    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
-    cash_union = ""
-    if scope == "all":
-        cash_union = f"""
-                UNION ALL
-                SELECT
-                    'Cash & Savings' AS securities_type,
-                    SUM(a.Accounts_Balance * COALESCE(
-                        (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
-                    )) AS value_eur
-                FROM Accounts a
-                WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-                  AND a.Is_Active = TRUE{cash_clause}
-        """
-    with get_db() as conn:
-        df = pd.read_sql(f"""
-            WITH fx AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
-            ),
-            prices AS (
-                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
-                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
-            ),
-            holdings_value AS (
-                SELECT
-                    s.Securities_Type::text AS securities_type,
-                    SUM(h.Quantity * COALESCE(p.Close, 0) * COALESCE(fx.FX_Rate, 1)) AS value_eur
-                FROM Holdings h
-                JOIN Securities s ON h.Securities_Id = s.Securities_Id
-                LEFT JOIN prices p  ON p.Securities_Id = h.Securities_Id
-                LEFT JOIN fx        ON fx.Currencies_Id_1 = s.Currencies_Id
-                WHERE h.Quantity > 0{acct_clause}
-                GROUP BY s.Securities_Type
-                {cash_union}
-            ),
-            total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
-            SELECT
-                hv.securities_type,
-                ROUND(hv.value_eur::numeric, 2)                                                           AS value_eur,
-                ROUND((hv.value_eur / NULLIF(t.grand_total, 0) * 100)::numeric, 2)                        AS actual_pct,
-                COALESCE(at.Target_Pct, 0)                                                                 AS target_pct,
-                ROUND((hv.value_eur / NULLIF(t.grand_total, 0) * 100 - COALESCE(at.Target_Pct, 0))::numeric, 2) AS delta_pct,
-                ROUND(((COALESCE(at.Target_Pct, 0) - hv.value_eur / NULLIF(t.grand_total, 0) * 100) / 100 * t.grand_total)::numeric, 2) AS rebalance_eur
-            FROM holdings_value hv
-            CROSS JOIN total t
-            LEFT JOIN Allocation_Targets at ON at.Securities_Type = hv.securities_type
-            ORDER BY value_eur DESC
-        """, conn)
-    return _df_to_list(df)
-
-
-@router.get("/rebalancing-plan")
-def get_rebalancing_plan(scope: str = Query("investments"), account_ids: Optional[str] = Query(None)):
-    """Per-security rebalancing action plan proportional to current holdings weight.
-
-    Trades are still only ever proposed for securities (cash isn't a security you can
-    buy/sell here), but under scope=all the portfolio total that actual/target percentages
-    are measured against includes the Cash & Savings bucket, matching /allocation-delta —
-    otherwise a security type looks overweight vs. its (whole-portfolio) target just because
-    cash was excluded from the denominator, which used to produce badly wrong buy/sell calls.
-    """
-    acct_ids = _parse_account_ids(account_ids)
-    acct_clause = _acct_clause(acct_ids, "h.Accounts_Id")
-    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
-    cash_cte = "SELECT 0::numeric AS cash_eur"
-    if scope == "all":
-        cash_cte = f"""
-            SELECT COALESCE(SUM(a.Accounts_Balance * COALESCE(
-                (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1
-            )), 0) AS cash_eur
-            FROM Accounts a
-            WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-              AND a.Is_Active = TRUE{cash_clause}
-        """
-    with get_db() as conn:
-        df = pd.read_sql(f"""
-            WITH fx AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
-            ),
-            prices AS (
-                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
-                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
-            ),
-            holding_vals AS (
-                SELECT
-                    s.Securities_Id,
-                    s.Securities_Name,
-                    s.Securities_Type::text                                     AS securities_type,
-                    s.Ticker,
-                    c.Currencies_ShortName                                      AS currency,
-                    COALESCE(p.Close, 0)                                        AS current_price,
-                    COALESCE(fx.FX_Rate, 1)                                     AS fx_rate,
-                    SUM(h.Quantity)                                             AS current_qty,
-                    ROUND((SUM(h.Quantity) * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1))::numeric, 2) AS value_eur
-                FROM Holdings h
-                JOIN Securities s  ON s.Securities_Id  = h.Securities_Id
-                JOIN Currencies c  ON c.Currencies_Id  = s.Currencies_Id
-                LEFT JOIN prices p ON p.Securities_Id  = h.Securities_Id
-                LEFT JOIN fx       ON fx.Currencies_Id_1 = s.Currencies_Id
-                WHERE h.Quantity > 0{acct_clause}
-                GROUP BY s.Securities_Id, s.Securities_Name, s.Securities_Type,
-                         s.Ticker, c.Currencies_ShortName, p.Close, fx.FX_Rate
-            ),
-            cash_bucket AS ({cash_cte}),
-            grand AS (SELECT SUM(hv.value_eur) + (SELECT cash_eur FROM cash_bucket) AS total FROM holding_vals hv),
-            type_vals AS (
-                SELECT securities_type, SUM(value_eur) AS type_eur
-                FROM holding_vals GROUP BY securities_type
-            )
-            SELECT
-                hv.Securities_Id                                                AS securities_id,
-                hv.Securities_Name                                              AS security,
-                hv.securities_type                                              AS type,
-                hv.Ticker                                                       AS ticker,
-                hv.currency,
-                hv.current_qty                                                  AS qty,
-                hv.current_price                                                AS price,
-                hv.value_eur,
-                ROUND((hv.value_eur / NULLIF(g.total,0)*100)::numeric, 2)      AS weight_pct,
-                ROUND((tv.type_eur  / NULLIF(g.total,0)*100)::numeric, 2)      AS type_actual_pct,
-                COALESCE(at.Target_Pct, 0)                                     AS type_target_pct,
-                ROUND((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100)::numeric, 2) AS type_delta_pct,
-                ROUND((hv.value_eur / NULLIF(tv.type_eur,0)
-                       * ((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) / 100 * g.total))::numeric, 2) AS suggested_delta_eur,
-                g.total                                                        AS portfolio_total_eur
-            FROM holding_vals hv
-            CROSS JOIN grand g
-            JOIN type_vals tv         ON tv.securities_type = hv.securities_type
-            LEFT JOIN Allocation_Targets at ON at.Securities_Type = hv.securities_type
-            ORDER BY ABS(COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) DESC,
-                     ABS(hv.value_eur / NULLIF(tv.type_eur,0)
-                         * ((COALESCE(at.Target_Pct,0) - tv.type_eur/NULLIF(g.total,0)*100) / 100 * g.total)) DESC
-        """, conn)
-    return _df_to_list(df)
-
-
 @router.get("/net-worth-report")
 def get_net_worth_report(
     start_date: str = Query("2020-01-01"),
@@ -3035,35 +2805,6 @@ def get_holdings_snapshot(as_of: str = Query(None), account_ids: Optional[str] =
     return _df_to_list(df)
 
 
-# ── Sector Allocation ─────────────────────────────────────────────────────────
-@router.get("/sector-allocation")
-def get_sector_allocation(account_ids: Optional[str] = Query(None)):
-    acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    query = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
-    holdings_value AS (
-        SELECT COALESCE(NULLIF(TRIM(s.Sector),''),'Other / Unknown') AS sector,
-               COALESCE(NULLIF(TRIM(s.Industry),''),'Other / Unknown') AS industry,
-               s.Securities_Type::text AS securities_type,
-               SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
-        LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
-        LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-        WHERE h.Quantity > 0{acct_clause} GROUP BY sector, industry, securities_type
-    ),
-    total AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
-    SELECT hv.sector, hv.industry, hv.securities_type,
-           ROUND(hv.value_eur::numeric,2) AS value_eur,
-           ROUND((hv.value_eur/NULLIF(t.grand_total,0)*100)::numeric,2) AS actual_pct
-    FROM holdings_value hv CROSS JOIN total t
-    WHERE hv.value_eur > 0 ORDER BY hv.value_eur DESC
-    """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
-
-
 # ── FX Exposure ───────────────────────────────────────────────────────────────
 @router.get("/fx-exposure")
 def get_fx_exposure(account_ids: Optional[str] = Query(None)):
@@ -3116,7 +2857,10 @@ def get_fx_exposure(account_ids: Optional[str] = Query(None)):
 @router.get("/xray/sector-weighting")
 def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
     """Sector summary, plus a per-security detail breakdown (which security
-    contributed how much/what % to each sector) for the UI's click-to-drill-down."""
+    contributed how much/what % to each sector, and which industry within that
+    sector for direct holdings — Yahoo's fund sector weightings have no
+    industry-level breakdown, so fund-attributed rows carry a NULL industry)
+    for the UI's click-to-drill-down: sector -> industry -> securities."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
     holdings_cte = f"""
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
@@ -3138,7 +2882,9 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
     """
     detail_cte = """
     , direct_detail AS (
-        SELECT hv.sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        SELECT hv.sector,
+               COALESCE(NULLIF(TRIM(s.Industry),''), 'Other / Unknown') AS industry,
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
@@ -3146,8 +2892,12 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         -- Yahoo's own sector-weighting keys are underscore_separated except
         -- 'realestate' (no underscore) — special-cased so it reads "Real Estate"
         -- like the GICS sector name direct holdings already use, instead of
-        -- "Realestate" landing as a separate, near-duplicate bucket.
+        -- "Realestate" landing as a separate, near-duplicate bucket. Yahoo's
+        -- fund sector weightings have no industry-level breakdown, so these
+        -- rows carry a NULL industry — the UI groups them into their own
+        -- "Fund Look-Through" bucket rather than dropping them silently.
         SELECT CASE WHEN je.key = 'realestate' THEN 'Real Estate' ELSE INITCAP(REPLACE(je.key,'_',' ')) END AS sector,
+               NULL::text AS industry,
                hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
                hv.value_eur * je.value::numeric AS value_eur
         FROM holdings_value hv
@@ -3160,7 +2910,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         -- Yahoo has no sector weightings for this fund, but the user already
         -- manually classified it via the Asset Class Override (e.g. a physical
         -- commodity ETC) — reuse that instead of leaving it "Uncovered".
-        SELECT fc.Asset_Class_Override AS sector, hv.Securities_Id AS securities_id,
+        SELECT fc.Asset_Class_Override AS sector, NULL::text AS industry, hv.Securities_Id AS securities_id,
                s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
@@ -3174,7 +2924,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         -- give. Bucketed separately from Bond Quality's own credit-rating
         -- split (Fund_Composition.Bond_Ratings), which is a different, more
         -- reliable signal than trying to infer a single sector from it.
-        SELECT 'Bonds (No Sector Data)' AS sector, hv.Securities_Id AS securities_id,
+        SELECT 'Bonds (No Sector Data)' AS sector, NULL::text AS industry, hv.Securities_Id AS securities_id,
                s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
@@ -3188,7 +2938,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM fund_detail_bond_fallback
     ),
     uncovered_detail AS (
-        SELECT 'Uncovered Fund Exposure' AS sector, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+        SELECT 'Uncovered Fund Exposure' AS sector, NULL::text AS industry, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
           AND NOT EXISTS (
@@ -3210,11 +2960,11 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
     """
     detail_query = holdings_cte + detail_cte + """
     , sector_totals AS (SELECT sector, SUM(value_eur) AS sector_total FROM detail_combined GROUP BY sector)
-    SELECT dc.sector, dc.securities_id, dc.name, dc.ticker,
+    SELECT dc.sector, dc.industry, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(dc.value_eur)/NULLIF(st.sector_total,0)*100)::numeric,2) AS pct
     FROM detail_combined dc JOIN sector_totals st ON st.sector = dc.sector
-    GROUP BY dc.sector, dc.securities_id, dc.name, dc.ticker, st.sector_total
+    GROUP BY dc.sector, dc.industry, dc.securities_id, dc.name, dc.ticker, st.sector_total
     ORDER BY dc.sector, value_eur DESC
     """
     with get_db() as conn:
@@ -3228,9 +2978,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
     """Asset-class summary, plus a per-security detail breakdown (which security
     contributed how much/what % to each class) for the UI's click-to-drill-down.
     Cash/Bank accounts (Cash, Checking, Savings, Credit Card) in the preset also
-    contribute their balance to the 'Cash' bucket, same account-type exclusion
-    list get_allocation's scope='all' cash bucket already uses — Holdings alone
-    would otherwise never surface real cash, only a fund's own cash sleeve."""
+    contribute their balance to the 'Cash' bucket — Holdings alone would
+    otherwise never surface real cash, only a fund's own cash sleeve."""
     parsed_acct_ids = _parse_account_ids(account_ids)
     acct_clause = _acct_clause(parsed_acct_ids, "h.Accounts_Id")
     cash_clause = _acct_clause(parsed_acct_ids, "a.Accounts_Id")
@@ -3324,9 +3073,16 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
     """
     summary_query = holdings_cte + detail_cte + """
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
-    SELECT asset_class, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
-           ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
-    FROM detail_combined GROUP BY asset_class ORDER BY value_eur DESC
+    , by_class AS (SELECT asset_class, SUM(value_eur) AS value_eur FROM detail_combined GROUP BY asset_class)
+    SELECT bc.asset_class, ROUND(bc.value_eur::numeric,2) AS value_eur,
+           ROUND((bc.value_eur/NULLIF(t.grand_total,0)*100)::numeric,2) AS pct,
+           COALESCE(xat.Target_Pct, 0) AS target_pct,
+           ROUND((bc.value_eur/NULLIF(t.grand_total,0)*100 - COALESCE(xat.Target_Pct,0))::numeric,2) AS delta_pct,
+           ROUND(((COALESCE(xat.Target_Pct,0) - bc.value_eur/NULLIF(t.grand_total,0)*100)/100*t.grand_total)::numeric,2) AS rebalance_eur
+    FROM by_class bc
+    CROSS JOIN totals t
+    LEFT JOIN XRay_Allocation_Targets xat ON xat.Asset_Class = bc.asset_class
+    ORDER BY bc.value_eur DESC
     """
     detail_query = holdings_cte + detail_cte + """
     , class_totals AS (SELECT asset_class, SUM(value_eur) AS class_total FROM detail_combined GROUP BY asset_class)
@@ -3341,6 +3097,33 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
         summary_df = pd.read_sql(summary_query, conn)
         detail_df = pd.read_sql(detail_query, conn)
     return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+
+
+@router.get("/xray/asset-allocation-targets")
+def get_xray_asset_allocation_targets():
+    """Saved target percentages for X-Ray Asset Allocation's look-through classes."""
+    with get_db() as conn:
+        df = pd.read_sql(
+            "SELECT Asset_Class AS asset_class, Target_Pct AS target_pct FROM XRay_Allocation_Targets ORDER BY Asset_Class",
+            conn,
+        )
+    return _df_to_list(df)
+
+
+@router.post("/xray/asset-allocation-targets")
+def save_xray_asset_allocation_targets(payload: dict):
+    """Upsert {asset_class: target_pct} map into XRay_Allocation_Targets."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        for asset_class, pct in payload.items():
+            cur.execute(
+                """INSERT INTO XRay_Allocation_Targets (Asset_Class, Target_Pct)
+                   VALUES (%s, %s)
+                   ON CONFLICT (Asset_Class)
+                   DO UPDATE SET Target_Pct = EXCLUDED.Target_Pct""",
+                (asset_class, float(pct)),
+            )
+    return {"ok": True}
 
 
 @router.get("/xray/style-box")

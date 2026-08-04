@@ -437,13 +437,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
-          Holdings, Allocation, Sector &amp; Industry, FX Exposure, X-Ray) to a saved set of accounts — see the same
+          Holdings, FX Exposure, Portfolio Analysis) to a saved set of accounts — see the same
           control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}
-          alongside investment accounts: include one in a preset and Allocation shows its balance as a{' '}
-          <b>Cash &amp; Savings</b> slice instead of only ever breaking down investment holdings.
+          alongside investment accounts: include one in a preset and Portfolio Analysis → Asset Allocation shows
+          its balance as a <b>Cash</b> slice instead of only ever breaking down investment holdings.
         </Note>
         <Note>
-          <b>X-Ray</b> looks through held ETFs/Mutual Funds into their underlying composition (sector weights,
+          <b>Portfolio Analysis</b> looks through held ETFs/Mutual Funds into their underlying composition (sector weights,
           asset mix, top holdings, Morningstar-style category, expense ratio, bond quality/duration — sourced
           from Yahoo Finance, no Morningstar account needed) and blends it with your direct stock/bond holdings:
           True Asset Allocation, Sector Weighting, Style Box, Bond Quality &amp; Duration, Stock Overlap (e.g. how
@@ -453,13 +453,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           one fund) to refresh it; it also refreshes monthly on its own. Funds with no cached data yet show up as
           "Uncovered Fund Exposure" rather than being silently left out of the totals. Asset Allocation, Sector
           Weighting, and Style Box also include any <b>Cash &amp; Savings accounts</b> selected in the current
-          Account Preset as a "Cash" bucket. Every X-Ray view supports click-to-drill-down: click a bucket/row (in
+          Account Preset as a "Cash" bucket. Every Portfolio Analysis view supports click-to-drill-down: click a bucket/row (in
           the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,
-          Sector Weighting, Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for
-          Stock Overlap. Sector Weighting has two further fallbacks so "Uncovered Fund Exposure" only means
-          "genuinely no usable data": a fund with an Asset Class Override set (see below) uses it for its sector
-          bucket too, and a bond-dominant fund — Yahoo doesn't provide sector weightings for bond funds at all,
-          it's an equity-fund concept — lands in a distinct "Bonds (No Sector Data)" bucket instead.
+          Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for Stock Overlap.{' '}
+          <b>Sector Weighting</b> goes two levels deep: click a sector to see its <b>Industry</b> breakdown, then
+          an industry to see the individual securities in it — industry data only exists for direct holdings (a
+          fund's look-through contribution has no industry breakdown from Yahoo, and groups into a{' '}
+          "Fund Look-Through (No Industry Data)" bucket instead). Sector Weighting has two further fallbacks so
+          "Uncovered Fund Exposure" only means "genuinely no usable data": a fund with an Asset Class Override set
+          (see below) uses it for its sector bucket too, and a bond-dominant fund — Yahoo doesn't provide sector
+          weightings for bond funds at all, it's an equity-fund concept — lands in a distinct
+          "Bonds (No Sector Data)" bucket instead.
         </Note>
         <Note>
           Funds Yahoo doesn't report a Morningstar category for no longer collapse into one opaque "N/A" bucket
@@ -467,13 +471,21 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
           <b>"N/A (no data)"</b> only when the fund has no cached composition at all. To assign a real category,
           open that fund's Security Detail → <b>Composition &amp; Holdings</b> tab and pick one from the dropdown
-          there; X-Ray reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
+          there; Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
           Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
           physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it
           routes the fund's whole value to the class you pick instead. Similarly, direct bonds land in Bond
           Quality's <b>"Direct / Unrated"</b> bucket until you record a real rating: add the issuer under Static
           Data → <b>Issuers</b> (name + Moody's/S&amp;P/Fitch), then link it from that bond's Security Detail →
           Setup tab (<b>Issuer</b> field).
+        </Note>
+        <Note>
+          <b>Portfolio Analysis → Asset Allocation</b> has its own <b>⚙️ Edit Target Allocations</b>, an Actual vs. Target
+          chart, and a Rebalancing Delta table (Value, Actual %, Target %, Delta %, Rebalance €) built on its
+          look-through classes (Stocks/Cash/Bonds/Commodities/Crypto/Other/Preferred/Convertible), so a fund's
+          value counts under its actual underlying composition rather than one opaque bucket. There's no
+          per-security trade plan — once a fund spans multiple classes there's no longer one clean security to
+          buy/sell to fix a specific class's deficit, so this view stops at the class-level Rebalance € figure.
         </Note>
 
         <H3>💹 Inv. Performance</H3>
@@ -559,7 +571,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Payees</b> — who you pay/receive from; supports merging duplicates.</li>
           <li><b>Categories</b> — the Income/Expense/Transfer/etc. taxonomy; also mergeable.</li>
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
-          <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves X-Ray's Bond Quality view instead of "Direct / Unrated".</li>
+          <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves Portfolio Analysis's Bond Quality view instead of "Direct / Unrated".</li>
           <li><b>Accounts</b> — the full account list with type, currency, institution, active status.</li>
           <li><b>Tax Rules</b> — capital-gains/dividend/income tax treatment per tax category.</li>
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
@@ -583,7 +595,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Investment
           Transactions (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
           Anomalies, Dividends, Corporate Actions, News, Alerts, Downloads, and — for ETF/Mutual Fund securities
-          only — <b>Composition &amp; Holdings</b> (that fund's own X-Ray look-through data), all for that one
+          only — <b>Composition &amp; Holdings</b> (that fund's own Portfolio Analysis look-through data), all for that one
           security.
         </P>
         <Note>

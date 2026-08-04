@@ -6,14 +6,13 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import {
-  getPortfolioSummary, getAllocationReport,
-  getAllocationTargets, saveAllocationTargets, getAllocationDelta, getRebalancingPlan,
+  getPortfolioSummary,
   getHoldingsSnapshot,
   getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
   getCashFlowForecastFull, getPnl,
-  getNetWorthByAccount, getInvestmentPositionsHistory, getSectorAllocation, getFxExposure,
-  getXraySectorWeighting, getXrayAssetAllocation, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
+  getNetWorthByAccount, getInvestmentPositionsHistory, getFxExposure,
+  getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
   getSpendingTrends, getSavingsRateDetail,
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
@@ -723,50 +722,6 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
   return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} />
 }
 
-function SectorTab({ accountIds }: { accountIds?: number[] }) {
-  const { isDark } = useTheme()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['sector-allocation', accountIds], queryFn: () => getSectorAllocation(accountIds), refetchInterval: liveRefetchMs })
-  const rows = data as Row[]
-  const { sorted: sectorSorted, sortKey: sectorSK, sortDir: sectorSD, toggleSort: sectorSort } = useSortTable(rows, 'value_eur', 'desc')
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const bySector: Record<string, number> = {}
-  for (const r of rows) bySector[String(r.sector)] = (bySector[String(r.sector)] ?? 0) + Number(r.value_eur ?? 0)
-  const sectors = Object.entries(bySector).sort((a, b) => b[1] - a[1])
-  return (
-    <div className="space-y-4">
-      <Plot
-        data={[{ x: sectors.map(s => s[1]), y: sectors.map(s => s[0]), type: 'bar', orientation: 'h', marker: { color: '#3b82f6' }, text: sectors.map(s => fmtEur(s[1])), textposition: 'outside' }]}
-        layout={{ height: Math.max(300, sectors.length * 28), margin: { t: 10, r: 100, b: 40, l: 200 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            <tr className="bg-slate-50 text-xs text-slate-500">
-              <ColHeader label="Sector" sortKey="sector" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Industry" sortKey="industry" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Weight %" sortKey="actual_pct" currentKey={sectorSK} currentDir={sectorSD} onSort={sectorSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-            </tr>
-          </thead>
-          <tbody>
-            {sectorSorted.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5">{String(r.sector)}</td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.industry)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{Number(r.actual_pct).toFixed(1)}%</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </WithCopy>
-    </div>
-  )
-}
-
 function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -813,6 +768,8 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
 // on MarketData/SecurityDetail Downloads tabs) blended with direct stock/bond
 // holdings — see api/routers/reports.py's xray/* endpoints for the blend logic.
 
+const SECTOR_NO_INDUSTRY_BUCKET = 'Fund Look-Through (No Industry Data)'
+
 function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -822,7 +779,32 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
   const detail = resp?.detail ?? []
   const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
   const [selectedSector, setSelectedSector] = useState<string | null>(null)
-  const detailRows = selectedSector ? detail.filter(r => String(r.sector) === selectedSector) : []
+  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null)
+  const selectSector = (sec: string) => {
+    setSelectedSector(c => c === sec ? null : sec)
+    setSelectedIndustry(null)
+  }
+  const sectorDetailRows = selectedSector ? detail.filter(r => String(r.sector) === selectedSector) : []
+  const sectorTotal = sectorDetailRows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
+
+  // Industry-level rollup within the selected sector — direct holdings carry a
+  // real Industry; fund look-through rows (Yahoo's sector weightings have no
+  // industry breakdown) group into one bucket instead of being dropped.
+  const industryRows = useMemo(() => {
+    const byIndustry = new Map<string, number>()
+    for (const r of sectorDetailRows) {
+      const ind = r.industry ? String(r.industry) : SECTOR_NO_INDUSTRY_BUCKET
+      byIndustry.set(ind, (byIndustry.get(ind) ?? 0) + Number(r.value_eur ?? 0))
+    }
+    return [...byIndustry.entries()]
+      .map(([industry, value_eur]) => ({ industry, value_eur, pct: sectorTotal ? value_eur / sectorTotal * 100 : 0 }))
+      .sort((a, b) => b.value_eur - a.value_eur)
+  }, [sectorDetailRows, sectorTotal])
+
+  const industryDetailRows = selectedIndustry
+    ? sectorDetailRows.filter(r => (r.industry ? String(r.industry) : SECTOR_NO_INDUSTRY_BUCKET) === selectedIndustry)
+    : []
+  const industryTotal = industryDetailRows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
@@ -837,7 +819,7 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
         onClick={(e: { points?: { y?: string }[] }) => {
           const label = e?.points?.[0]?.y
-          if (label) setSelectedSector(c => c === label ? null : label)
+          if (label) selectSector(label)
         }} />
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
@@ -853,7 +835,7 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
             {sorted.map((r, i) => {
               const sec = String(r.sector)
               return (
-                <tr key={i} onClick={() => setSelectedSector(c => c === sec ? null : sec)}
+                <tr key={i} onClick={() => selectSector(sec)}
                   className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedSector === sec ? 'bg-blue-50' : ''}`}>
                   <td className="px-2 py-1.5">{sec}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
@@ -869,8 +851,40 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
       {selectedSector && (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedSector}"</p>
-            <button onClick={() => setSelectedSector(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Industries in "{selectedSector}"</p>
+            <button onClick={() => { setSelectedSector(null); setSelectedIndustry(null) }} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+          </div>
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="bg-slate-50 text-xs text-slate-500">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Industry</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedSector})</th>
+                </tr>
+              </thead>
+              <tbody>
+                {industryRows.map((r, i) => (
+                  <tr key={i} onClick={() => setSelectedIndustry(c => c === r.industry ? null : r.industry)}
+                    className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedIndustry === r.industry ? 'bg-blue-50' : ''}`}>
+                    <td className="px-2 py-1.5">{r.industry}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(r.value_eur)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(r.pct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        </div>
+      )}
+
+      {selectedIndustry && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedIndustry}" · {selectedSector}</p>
+            <button onClick={() => setSelectedIndustry(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
@@ -879,15 +893,15 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
                 <tr className="bg-slate-50 text-xs text-slate-500">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
-                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedSector})</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedIndustry})</th>
                 </tr>
               </thead>
               <tbody>
-                {detailRows.map((r, i) => (
+                {industryDetailRows.map((r, i) => (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(industryTotal ? Number(r.value_eur) / industryTotal * 100 : 0)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -989,20 +1003,104 @@ function XrayStyleBoxTab({ accountIds }: { accountIds?: number[] }) {
 
 function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data, isLoading } = useQuery({ queryKey: ['xray', 'asset-allocation', accountIds], queryFn: () => getXrayAssetAllocation(accountIds), refetchInterval: liveRefetchMs })
+  const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['xray-allocation-targets'], queryFn: getXrayAssetAllocationTargets })
   const resp = data as { summary: Row[]; detail: Row[] } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
   const [selectedClass, setSelectedClass] = useState<string | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
   const detailRows = selectedClass ? detail.filter(r => String(r.asset_class) === selectedClass) : []
   const total = rows.reduce((s, r) => s + Number(r.value_eur ?? 0), 0)
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  // Local editable target state, pre-filled from current holdings' classes and any
+  // previously saved targets — same pattern as the older Allocation tab's editor.
+  const [localTargets, setLocalTargets] = useState<Record<string, number>>({})
+  useEffect(() => {
+    if ((targets as Row[]).length > 0) {
+      const m: Record<string, number> = {}
+      ;(targets as Row[]).forEach(r => { m[String(r.asset_class)] = Number(r.target_pct) })
+      setLocalTargets(m)
+    }
+  }, [targets])
+
+  const saveMutation = useMutation({
+    mutationFn: saveXrayAssetAllocationTargets,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['xray-allocation-targets'] })
+      qc.invalidateQueries({ queryKey: ['xray', 'asset-allocation'] })
+      setEditOpen(false)
+    },
+  })
+
+  const sumTargets = Object.values(localTargets).reduce((s, v) => s + v, 0)
+  const sumOk = Math.abs(sumTargets - 100) < 0.01
+
+  if (isLoading || targetsLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
     <div className="space-y-4">
+      {/* Edit Target Allocations */}
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <button
+          className="w-full flex items-center gap-2 px-4 py-3 bg-slate-50 hover:bg-slate-100 text-sm font-medium text-left"
+          onClick={() => setEditOpen(v => !v)}
+        >
+          <span>{editOpen ? '▼' : '▶'}</span>
+          <span>⚙️ Edit Target Allocations</span>
+        </button>
+        {editOpen && (
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-slate-500">Rows are pre-filled from your current look-through holdings and any previously saved targets. All changes are saved on click.</p>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead><tr className="bg-slate-50 text-slate-500">
+                  <th className="text-left px-3 py-2 border-b border-slate-200">Asset Class</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Actual %</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Target %</th>
+                </tr></thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const key = String(r.asset_class)
+                    return (
+                      <tr key={i} className="border-b border-slate-100">
+                        <td className="px-3 py-2 font-medium">{key}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="number" min={0} max={100} step={0.5}
+                            value={localTargets[key] ?? 0}
+                            onChange={e => setLocalTargets(prev => ({ ...prev, [key]: parseFloat(e.target.value) || 0 }))}
+                            className="w-20 text-right border border-slate-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                          %
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className={`text-sm font-medium ${sumOk ? 'text-green-600' : 'text-red-500'}`}>
+                Sum of targets: {sumTargets.toFixed(1)}% {sumOk ? '✓' : '✗ (must equal 100%)'}
+              </span>
+              <button
+                disabled={!sumOk || saveMutation.isPending}
+                onClick={() => saveMutation.mutate(localTargets)}
+                className="px-4 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-40"
+              >
+                {saveMutation.isPending ? 'Saving…' : 'Save Targets'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <div>
+          <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
           <Plot
             data={[{
               values: rows.map(r => Number(r.value_eur)), labels: rows.map(r => String(r.asset_class)),
@@ -1020,38 +1118,60 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
               if (label) setSelectedClass(c => c === label ? null : label)
             }} />
         </div>
-        <WithCopy>
-        <div className="overflow-x-auto text-xs">
-          <table className="w-full border-collapse">
-            <thead><tr className="bg-slate-50 text-xs text-slate-500">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200">Asset Class</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight %</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r, i) => {
-                const cls = String(r.asset_class)
-                return (
-                  <tr key={i} onClick={() => setSelectedClass(c => c === cls ? null : cls)}
-                    className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedClass === cls ? 'bg-blue-50' : ''}`}>
-                    <td className="px-2 py-1.5">{cls}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="font-semibold text-slate-700">
-                <td className="px-2 py-1.5 border-t border-slate-200">Total</td>
-                <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">{fmtEur(total)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">100.0%</td>
-              </tr>
-            </tfoot>
-          </table>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-600 mb-2">Actual vs. Target (%)</h3>
+          <Plot
+            data={[
+              { x: rows.map(r => String(r.asset_class)), y: rows.map(r => Number(r.pct)), name: 'Actual %', type: 'bar', marker: { color: '#3b82f6' } },
+              { x: rows.map(r => String(r.asset_class)), y: rows.map(r => Number(r.target_pct)), name: 'Target %', type: 'bar', marker: { color: '#f59e0b' } },
+            ]}
+            layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
+            config={{ displayModeBar: false, responsive: true }}
+            style={{ width: '100%' }}
+          />
         </div>
-        </WithCopy>
       </div>
+
+      <WithCopy>
+      <div className="overflow-x-auto text-xs">
+        <table className="w-full border-collapse">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500">
+            <th className="text-left px-2 py-1.5 border-b border-slate-200">Asset Class</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Actual %</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Target %</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Delta %</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200">Rebalance €</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const cls = String(r.asset_class)
+              const deltaPct = Number(r.delta_pct ?? 0)
+              const reb = Number(r.rebalance_eur ?? 0)
+              return (
+                <tr key={i} onClick={() => setSelectedClass(c => c === cls ? null : cls)}
+                  className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedClass === cls ? 'bg-blue-50' : ''}`}>
+                  <td className="px-2 py-1.5">{cls}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.target_pct))}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${deltaPct > 0 ? 'text-red-500' : deltaPct < 0 ? 'text-green-600' : ''}`}>{deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(2)}%</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${reb > 0 ? 'text-green-600' : reb < 0 ? 'text-red-500' : ''}`}>{reb > 0 ? '+' : ''}{fmtEur(reb)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="font-semibold text-slate-700">
+              <td className="px-2 py-1.5 border-t border-slate-200">Total</td>
+              <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">{fmtEur(total)}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">100.0%</td>
+              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={3}></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      </WithCopy>
 
       {selectedClass && (
         <div>
@@ -1352,285 +1472,6 @@ function XRayTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
-function AllocationReport({ accountIds }: { accountIds?: number[] }) {
-  const { isDark } = useTheme()
-  const qc = useQueryClient()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const [editOpen, setEditOpen] = useState(false)
-  const [cash, setCash] = useState(0)
-
-  // A preset that includes any Cash/Bank-type account should surface a "Cash &
-  // Savings" slice — scope='all' is what makes get_allocation compute that
-  // bucket, restricted (via accountIds) to just the cash accounts selected.
-  const { data: accountsForScope = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
-  const hasCashAccount = !!accountIds && accountIds.some(id => {
-    const acc = (accountsForScope as Row[]).find(a => Number(a.id) === id)
-    return acc && !INV_ACCOUNT_TYPES.includes(String(acc.type))
-  })
-  const scope: 'investments' | 'all' = hasCashAccount ? 'all' : 'investments'
-
-  const { data: donut = [], isLoading: donutLoading } = useQuery({ queryKey: ['allocation', scope, accountIds], queryFn: () => getAllocationReport(scope, accountIds), refetchInterval: liveRefetchMs })
-  const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['allocation-targets'], queryFn: getAllocationTargets })
-  const { data: delta = [], isLoading: deltaLoading } = useQuery({ queryKey: ['allocation-delta', scope, accountIds], queryFn: () => getAllocationDelta(scope, accountIds), refetchInterval: liveRefetchMs })
-  const { data: plan = [], isLoading: planLoading } = useQuery({ queryKey: ['rebalancing-plan', scope, accountIds], queryFn: () => getRebalancingPlan(scope, accountIds), refetchInterval: liveRefetchMs })
-
-  // Local editable target state
-  const [localTargets, setLocalTargets] = useState<Record<string, number>>({})
-  useEffect(() => {
-    if ((targets as Row[]).length > 0) {
-      const m: Record<string, number> = {}
-      ;(targets as Row[]).forEach(r => { m[String(r.securities_type)] = Number(r.target_pct) })
-      setLocalTargets(m)
-    }
-  }, [targets])
-
-  const saveMutation = useMutation({
-    mutationFn: saveAllocationTargets,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['allocation-targets'] })
-      qc.invalidateQueries({ queryKey: ['allocation-delta'] })
-      qc.invalidateQueries({ queryKey: ['rebalancing-plan'] })
-      setEditOpen(false)
-    },
-  })
-
-  const d = donut as Row[]
-  const deltaRows = delta as Row[]
-  const planRows = plan as Row[]
-
-  const sumTargets = Object.values(localTargets).reduce((s, v) => s + v, 0)
-  const sumOk = Math.abs(sumTargets - 100) < 0.01
-
-  // Actual vs target bar chart data
-  const barTypes = deltaRows.map(r => String(r.securities_type))
-  const actualPcts = deltaRows.map(r => Number(r.actual_pct))
-  const targetPcts = deltaRows.map(r => Number(r.target_pct))
-
-  // Rebalancing plan with optional extra cash
-  const portfolioTotal = planRows.length > 0 ? Number(planRows[0].portfolio_total_eur ?? 0) : 0
-  const planWithCash: (Row & { total_delta_eur: number; est_shares: number })[] = planRows.map(r => {
-    const baseDelta = Number(r.suggested_delta_eur ?? 0)
-    const typeTgt = Number(r.type_target_pct ?? 0)
-    const cashForType = portfolioTotal > 0 ? (typeTgt / 100) * cash : 0
-    const typeWeight = Number(r.value_eur ?? 0) / (deltaRows.find(d2 => String(d2.securities_type) === String(r.type))?.value_eur as number || 1)
-    const totalDelta = baseDelta + typeWeight * cashForType
-    const estShares = Number(r.price ?? 0) > 0 ? totalDelta / (Number(r.price) * Number(r.fx_rate ?? 1)) : 0
-    return { ...r, total_delta_eur: totalDelta, est_shares: estShares }
-  }).filter(r => Math.abs(r.total_delta_eur) > 0.5)
-
-  const totalBuy = planWithCash.filter(r => r.total_delta_eur > 0).reduce((s, r) => s + r.total_delta_eur, 0)
-  const totalSell = planWithCash.filter(r => r.total_delta_eur < 0).reduce((s, r) => s + r.total_delta_eur, 0)
-
-  if (donutLoading || targetsLoading || deltaLoading || planLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-
-  return (
-    <div className="space-y-6">
-      {/* Edit Target Allocations */}
-      <div className="border border-slate-200 rounded-lg overflow-hidden">
-        <button
-          className="w-full flex items-center gap-2 px-4 py-3 bg-slate-50 hover:bg-slate-100 text-sm font-medium text-left"
-          onClick={() => setEditOpen(v => !v)}
-        >
-          <span>{editOpen ? '▼' : '▶'}</span>
-          <span>⚙️ Edit Target Allocations</span>
-        </button>
-        {editOpen && (
-          <div className="p-4 space-y-3">
-            <p className="text-xs text-slate-500">Rows are pre-filled from your current holdings and any previously saved targets. All changes are saved on click.</p>
-            <div className="overflow-x-auto text-xs">
-              <table className="w-full border-collapse">
-                <thead><tr className="bg-slate-50 text-slate-500">
-                  <th className="text-left px-3 py-2 border-b border-slate-200">Asset Type</th>
-                  <th className="text-right px-3 py-2 border-b border-slate-200">Actual %</th>
-                  <th className="text-right px-3 py-2 border-b border-slate-200">Target %</th>
-                </tr></thead>
-                <tbody>
-                  {d.map((r, i) => {
-                    const key = String(r.label)
-                    return (
-                      <tr key={i} className="border-b border-slate-100">
-                        <td className="px-3 py-2 font-medium">{key}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">
-                          {(Number(r.value_eur) / d.reduce((s, x) => s + Number(x.value_eur), 0) * 100).toFixed(2)}%
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <input
-                            type="number" min={0} max={100} step={0.5}
-                            value={localTargets[key] ?? 0}
-                            onChange={e => setLocalTargets(prev => ({ ...prev, [key]: parseFloat(e.target.value) || 0 }))}
-                            className="w-20 text-right border border-slate-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
-                          />
-                          %
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className={`text-sm font-medium ${sumOk ? 'text-green-600' : 'text-red-500'}`}>
-                Sum of targets: {sumTargets.toFixed(1)}% {sumOk ? '✓' : '✗ (must equal 100%)'}
-              </span>
-              <button
-                disabled={!sumOk || saveMutation.isPending}
-                onClick={() => saveMutation.mutate(localTargets)}
-                className="px-4 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-40"
-              >
-                {saveMutation.isPending ? 'Saving…' : 'Save Targets'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Donut + Bar charts side by side */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
-          <Plot
-            data={[{ values: d.map(r => Number(r.value_eur)), labels: d.map(r => String(r.label)), type: 'pie', hole: 0.45, textinfo: 'label+percent' }]}
-            layout={{ height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' }, ...plotLayout(isDark) }}
-            config={{ displayModeBar: false, responsive: true }}
-            style={{ width: '100%' }}
-          />
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-slate-600 mb-2">Actual vs. Target (%)</h3>
-          <Plot
-            data={[
-              { x: barTypes, y: actualPcts, name: 'Actual %', type: 'bar', marker: { color: '#3b82f6' } },
-              { x: barTypes, y: targetPcts, name: 'Target %', type: 'bar', marker: { color: '#f59e0b' } },
-            ]}
-            layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
-            config={{ displayModeBar: false, responsive: true }}
-            style={{ width: '100%' }}
-          />
-        </div>
-      </div>
-
-      {/* Rebalancing Delta */}
-      {deltaRows.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Rebalancing Delta</h3>
-          <WithCopy>
-          <div className="overflow-x-auto text-xs">
-            <table className="w-full border-collapse">
-              <thead><tr className="bg-slate-50 text-slate-500 text-xs">
-                <th className="text-left px-3 py-2 border-b border-slate-200">Asset Type</th>
-                <th className="text-right px-3 py-2 border-b border-slate-200">Value (€)</th>
-                <th className="text-right px-3 py-2 border-b border-slate-200">Actual %</th>
-                <th className="text-right px-3 py-2 border-b border-slate-200">Target %</th>
-                <th className="text-right px-3 py-2 border-b border-slate-200">Delta %</th>
-                <th className="text-right px-3 py-2 border-b border-slate-200">Rebalance €</th>
-              </tr></thead>
-              <tbody>
-                {deltaRows.map((r, i) => {
-                  const delta = Number(r.delta_pct ?? 0)
-                  const reb = Number(r.rebalance_eur ?? 0)
-                  return (
-                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium">{String(r.securities_type)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{Number(r.actual_pct).toFixed(2)}%</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{Number(r.target_pct).toFixed(2)}%</td>
-                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${delta > 0 ? 'text-red-500' : delta < 0 ? 'text-green-600' : ''}`}>{delta > 0 ? '+' : ''}{delta.toFixed(2)}%</td>
-                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${reb > 0 ? 'text-green-600' : reb < 0 ? 'text-red-500' : ''}`}>{reb > 0 ? '+' : ''}{fmtEur(reb)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          </WithCopy>
-        </div>
-      )}
-
-      {/* Rebalancing Action Plan */}
-      {planRows.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">⚖️ Rebalancing Action Plan</h3>
-          </div>
-          <p className="text-xs text-slate-500 mb-3">Trades are distributed proportionally within each asset type. Only types with a saved target are included. Positive = buy, negative = sell.</p>
-          <div className="flex items-center gap-3 mb-3">
-            <label className="text-xs text-slate-600 font-medium">Available cash to deploy (€)</label>
-            <div className="flex items-center border border-slate-200 rounded overflow-hidden">
-              <button onClick={() => setCash(c => Math.max(0, c - 100))} className="px-2 py-1 text-slate-500 hover:bg-slate-100 text-sm">−</button>
-              <input type="number" min={0} value={cash} onChange={e => setCash(parseFloat(e.target.value) || 0)}
-                className="w-28 text-center border-none text-xs px-2 py-1 focus:outline-none" />
-              <button onClick={() => setCash(c => c + 100)} className="px-2 py-1 text-slate-500 hover:bg-slate-100 text-sm">+</button>
-            </div>
-          </div>
-          <WithCopy>
-          <div className="overflow-x-auto text-xs max-h-[520px] overflow-y-auto">
-            <table className="border-collapse" style={{ minWidth: '100%' }}>
-              <thead className="sticky top-0 z-20"><tr className="bg-slate-50 text-slate-500 text-xs">
-                <th className="sticky left-0 z-30 bg-slate-50 text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Action</th>
-                <th className="sticky left-[72px] z-30 bg-slate-50 text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Security</th>
-                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type</th>
-                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Ticker</th>
-                <th className="text-left px-2 py-2 border-b border-slate-200 whitespace-nowrap">Ccy</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Qty</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Price</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Value (€)</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Weight %</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Act %</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Tgt %</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Type Δ %</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Trade (€)</th>
-                <th className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">Est. Shares</th>
-              </tr></thead>
-              <tbody>
-                {planWithCash.map((r, i) => {
-                  const isBuy = r.total_delta_eur > 0
-                  const typeDelta = Number(r.type_delta_pct ?? 0)
-                  const rowBg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50'
-                  return (
-                    <tr key={i} className={`border-b border-slate-100 hover:bg-blue-50 ${rowBg}`}>
-                      <td className={`sticky left-0 z-10 ${rowBg} px-2 py-1.5 whitespace-nowrap`}>
-                        <span className={`inline-flex items-center gap-1 font-bold text-xs px-1.5 py-0.5 rounded ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
-                          <span className={`w-2 h-2 rounded-full ${isBuy ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                          {isBuy ? 'BUY' : 'SELL'}
-                        </span>
-                      </td>
-                      <td className={`sticky left-[72px] z-10 ${rowBg} px-2 py-1.5 font-medium max-w-[200px] truncate whitespace-nowrap`}><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
-                      <td className="px-2 py-1.5 text-slate-500">{String(r.type)}</td>
-                      <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-                      <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.qty), 4)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.price), 4)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.weight_pct).toFixed(2)}%</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.type_actual_pct).toFixed(2)}%</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.type_target_pct).toFixed(2)}%</td>
-                      <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${typeDelta > 0 ? 'text-red-500' : 'text-green-600'}`}>
-                        {typeDelta > 0 ? '+' : ''}{typeDelta.toFixed(2)}%
-                      </td>
-                      <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
-                        {isBuy ? '+' : ''}{fmtEur(r.total_delta_eur)}
-                      </td>
-                      <td className={`px-2 py-1.5 text-right tabular-nums ${isBuy ? 'text-green-600' : 'text-red-500'}`}>
-                        {isBuy ? '+' : ''}{r.est_shares.toFixed(4)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          </WithCopy>
-          <div className="grid grid-cols-3 gap-4 mt-4">
-            <KpiCard label="Total to Buy" value={fmtEur(totalBuy)} color="text-green-600" />
-            <KpiCard label="Total to Sell" value={fmtEur(totalSell)} color="text-red-500" />
-            <KpiCard label="Net Cash Needed" value={fmtEur(totalBuy + totalSell)} color="text-slate-700" />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['portfolio-summary', accountIds], queryFn: () => getPortfolioSummary(accountIds), refetchInterval: liveRefetchMs })
@@ -1753,6 +1594,10 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
 
 function InvPositionsSection({ startDate: initialStartDate }: { startDate: string }) {
   const [tab, setTab] = usePersist('inv_positions_tab', 'Graph')
+  // One-time migration: this sub-tab was labeled 'X-Ray' before the rename to
+  // 'Portfolio Analysis' — a user with that value already persisted would
+  // otherwise land on a blank pane, since nothing below matches the old label.
+  useEffect(() => { if (tab === 'X-Ray') setTab('Portfolio Analysis') }, [tab, setTab])
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
 
   // Default to Dec 31 of the previous calendar year
@@ -1780,15 +1625,13 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
         </button>
       </div>
 
-      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Allocation', 'Sector & Industry', 'FX Exposure', 'X-Ray']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'FX Exposure', 'Portfolio Analysis']} active={tab} onChange={setTab} />
       {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Summary' && <InvPositionsSummary startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
       {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
-      {tab === 'Allocation' && <AllocationReport accountIds={presetAccountIds} />}
-      {tab === 'Sector & Industry' && <SectorTab accountIds={presetAccountIds} />}
       {tab === 'FX Exposure' && <FxExposureTab accountIds={presetAccountIds} />}
-      {tab === 'X-Ray' && <XRayTab accountIds={presetAccountIds} />}
+      {tab === 'Portfolio Analysis' && <XRayTab accountIds={presetAccountIds} />}
     </div>
   )
 }
@@ -3638,7 +3481,7 @@ const FULL_PORTFOLIO = 'Full Portfolio'
 const INV_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Investment']
 // Investment Position's preset picker also offers Cash/Bank accounts, since a
 // position/allocation report can legitimately want to include cash as a bucket
-// (see AllocationReport's scope='all' handling) — not just investment accounts.
+// (see X-Ray Asset Allocation's Cash bucket) — not just investment accounts.
 const INV_POSITION_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Investment', 'Cash', 'Checking', 'Savings', 'Credit Card']
 // Net Worth can meaningfully include any account type at all — reuses the
 // pre-existing ALL_ACCOUNT_TYPES constant defined further down this file.
