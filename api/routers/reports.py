@@ -3241,7 +3241,21 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
     """
     detail_cte = """
     , fund_bond AS (
-        SELECT INITCAP(REPLACE(je.key,'_',' ')) AS quality,
+        -- Normalizes Yahoo's lowercase snake_case rating keys (aaa, bbb, us_government, ...)
+        -- onto the same labels direct_bond hardcodes below, so e.g. a fund's 'bbb' bucket
+        -- merges with a direct bond's 'BBB' instead of showing up as a separate 'Bbb' row.
+        SELECT CASE UPPER(je.key)
+                 WHEN 'AAA' THEN 'AAA'
+                 WHEN 'AA' THEN 'AA'
+                 WHEN 'A' THEN 'A'
+                 WHEN 'BBB' THEN 'BBB'
+                 WHEN 'BB' THEN 'BB'
+                 WHEN 'B' THEN 'B'
+                 WHEN 'BELOW_B' THEN 'Below B'
+                 WHEN 'US_GOVERNMENT' THEN 'Us Government'
+                 WHEN 'OTHER' THEN 'Other'
+                 ELSE INITCAP(REPLACE(je.key,'_',' '))
+               END AS quality,
                hv.Securities_Id AS securities_id, hv.name, hv.ticker,
                hv.value_eur * je.value::numeric AS value_eur,
                fc.Bond_Duration AS duration_years
@@ -3273,12 +3287,18 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
         WHERE hv.sec_type = 'Bond'
     ),
     uncovered AS (
+        -- Only funds that actually hold bonds but lack a ratings breakdown belong here.
+        -- Excludes funds we already know hold no bonds at all (e.g. commodity ETCs with
+        -- Asset_Class_Override set, or Asset_Bond_Pct=0) so they don't inflate this bucket.
         SELECT 'Uncovered Fund Bond Exposure' AS quality,
                hv.Securities_Id AS securities_id, hv.name, hv.ticker, hv.value_eur,
                NULL::numeric AS duration_years
         FROM holdings_value hv
+        LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
-          AND NOT EXISTS (SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id AND fc.Bond_Ratings IS NOT NULL)
+          AND fc.Bond_Ratings IS NULL
+          AND (fc.Asset_Class_Override IS NULL OR fc.Asset_Class_Override = 'Bonds')
+          AND COALESCE(fc.Asset_Bond_Pct, 1) > 0
     ),
     detail_combined AS (
         SELECT * FROM fund_bond
