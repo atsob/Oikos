@@ -8,6 +8,7 @@ import {
 import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtEur, cn } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
+import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -105,8 +106,6 @@ interface ModalProps {
   installmentFreq: string
   setInstallmentFreq: (v: string) => void
 }
-
-const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
 /** Payee selector with inline "＋ Add new payee" when no match is found. */
 export function PayeeSelect({ value, onChange, payees, onPayeeCreated }: {

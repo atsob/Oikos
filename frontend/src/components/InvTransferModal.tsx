@@ -4,7 +4,7 @@ import { getHoldings, getSecurities, previewInvestmentTransfer, executeInvestmen
 import { Button, Select, Input, SearchableSelect, Spinner, useEscapeKey, AccountOptions } from '@/components/ui'
 import { fmtCur, fmtQty } from '@/lib/utils'
 import { X, ArrowRight, AlertTriangle } from 'lucide-react'
-import { INVESTMENT_ACCOUNT_TYPES } from '@/pages/Investments'
+import { INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 
 type FeeType = 'none' | 'source' | 'destination' | 'cash'
 

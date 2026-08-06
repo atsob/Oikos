@@ -18,10 +18,7 @@ import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
-import { LINKABLE_ACCOUNT_TYPES } from '@/pages/StaticData'
-import { CASH_ACCOUNT_TYPES } from '@/pages/Register'
-
-export const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
+import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 
 
 // ── Date helpers ──────────────────────────────────────────────────────────────

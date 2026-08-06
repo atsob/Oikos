@@ -15,18 +15,12 @@ import {
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
+import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
 
 const TABS = ['Payees', 'Categories', 'Institutions', 'Issuers', 'Accounts', 'Tax Rules', 'Instrument Tax']
 
 const ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
-const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investment', 'Margin']
-// Bank/cash-like account types eligible as an investment account's Linked Account
-// (its cash settlement account) — deliberately narrower than the broader
-// CASH_ACCOUNT_TYPES used elsewhere (Register/TxModal), which also includes
-// Loan/Real Estate/Vehicle/Asset — none of which make sense as a linked
-// settlement account for an investment.
-export const LINKABLE_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card']
 const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 const INSTITUTION_TYPES = ['Bank', 'Credit Union', 'Insurance', 'Pension Fund', 'Broker', 'Crypto Exchange', 'Internal', 'Other']
 

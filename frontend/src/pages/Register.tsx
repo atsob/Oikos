@@ -12,11 +12,10 @@ import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBal
 import { fmtCur, fmtDate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
+import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 
 const PAGE_SIZE = 200
 const DEFAULT_TO_DATE = '2099-12-31'   // "no upper bound" — includes future-dated/scheduled transactions
-
-export const CASH_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Other']
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function monthsAgo(n: number) {
