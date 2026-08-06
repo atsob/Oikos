@@ -633,7 +633,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           The <b>Setup</b> tab shows a read-only <b>Price Scale</b> field (only when non-default) for securities
           quoted in a minor currency unit, e.g. London Stock Exchange shares priced in pence (GBp/GBX) rather than
           pounds — this is what keeps their Market Value, Analyst Target Price, and other price-like figures
-          correctly scaled to pounds everywhere in the app.
+          correctly scaled to pounds everywhere in the app, including daily price downloads from both Yahoo and
+          TradingView.
         </Note>
         <Note>
           For Greek government bonds/T-bills, the <b>Downloads</b> tab has a <b>Greek Bonds (Solidus)</b> section

@@ -7,6 +7,11 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **Recurring → New/Edit Template no longer lists inactive accounts by default** in the Account and Transfer to Account dropdowns — a "Show inactive" checkbox next to the Account field reveals them again when needed. Editing a template that already points at an inactive account still shows that account regardless of the checkbox, so opening an existing template never blanks out its current selection.
 
+### Fixed
+- **TradingView price downloads for GBp/GBX-quoted LSE holdings (Aviva, BAE Systems, Barclays, BP, Legal & General, Lloyds, National Grid, RELX, Rolls-Royce, Shell) were being silently rejected as "suspicious" and skipped** — TradingView returns these in pence, but the stored price is in pounds (via `Securities.Price_Scale`); the TradingView downloader never applied that scale before comparing against the stored price, unlike the Yahoo downloader, so every update looked like a 100× jump and got dropped. All ten securities' recent history was backfilled after the fix.
+- **Taiwan Semiconductor Manufacturing Company Limited (2330.TW)'s TradingView price was ~30× too high and getting skipped** — its TradingView symbol/exchange were mismapped to `TSM`/`BCBA`, the Buenos Aires CEDEAR of the NYSE ADR (priced in Argentine Pesos), instead of its actual Taiwan Stock Exchange listing. Corrected to `2330`/`TWSE`, confirmed to match the already-stored data exactly.
+- **TradingView price downloads never stored "today" for most exchanges (NYSE, NASDAQ, ATHEX, XETR, EURONEXT, AMEX, CBOE, BME, FWB, TSX, NYMEX) — silently, every day** — the `exchange_calendars` package the downloader uses to tell whether a market is pre-market/open/closed right now was never added to `requirements.txt`, so it always failed to import; the resulting exception was swallowed at debug level and treated as "unknown," which the downloader deliberately skips (to avoid storing TradingView's pre-market garbage as if it were a real close). Added the missing dependency and backfilled today's price everywhere it was missing (~9,700 rows across 304 securities). The failure is now logged at warning level instead of debug, so a regression like this shows up in the scheduler log instead of silently starving every mapped exchange of same-day prices again.
+
 ## 2026-08-05
 
 ### Added

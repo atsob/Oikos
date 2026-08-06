@@ -163,7 +163,10 @@ def _today_price_state(tv_exchange: str) -> str:
         return "closed"
 
     except Exception as exc:
-        logging.debug("_today_price_state(%s): %s", exch, exc)
+        # "unknown" makes Guard 1.5 skip today's price for every security on this
+        # exchange — a missing/broken exchange_calendars install silently does this
+        # for every mapped exchange, every day, so this needs to be loud, not debug.
+        logging.warning("_today_price_state(%s) failed, treating as unknown: %s", exch, exc)
         return "unknown"
 
 
@@ -1706,8 +1709,15 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                     _tv_instances.append(tv)
         return _tv_local.tv
 
-    def _fetch(sec_id, sec_name, tv_symbol, tv_exchange):
-        """Fetch OHLCV history for one security; returns (sec_id, sec_name, symbol, rows, error)."""
+    def _fetch(sec_id, sec_name, tv_symbol, tv_exchange, price_scale):
+        """Fetch OHLCV history for one security; returns (sec_id, sec_name, symbol, rows, error).
+
+        price_scale normalizes securities TradingView quotes in a minor currency unit
+        (e.g. LSE ordinary shares in GBp/GBX pence, 100 to the pound) back to the major
+        unit — see Securities.Price_Scale, set by download_securities_info_from_yahoo.
+        Without this, the ratio guard below compares an unscaled incoming close against
+        an already-scaled stored close and flags every update as suspicious.
+        """
         def _try_fetch(bars: int):
             df = _get_tv().get_hist(
                 symbol=tv_symbol,
@@ -1717,6 +1727,7 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
             )
             if df is None or df.empty:
                 return []
+            scale = float(price_scale) if price_scale else 1.0
             rows = []
             for date, row in df.iterrows():
                 try:
@@ -1726,9 +1737,9 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                 rows.append((
                     int(sec_id),
                     date_str,
-                    float(row["close"]),
-                    None if pd.isna(row["high"])   else float(row["high"]),
-                    None if pd.isna(row["low"])    else float(row["low"]),
+                    float(row["close"]) / scale,
+                    None if pd.isna(row["high"])   else float(row["high"]) / scale,
+                    None if pd.isna(row["low"])    else float(row["low"])  / scale,
                     0    if pd.isna(row["volume"]) else int(row["volume"]),
                 ))
             return rows
@@ -1755,7 +1766,7 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
 
     try:
         query = """
-            SELECT Securities_Id, Securities_Name, TV_Symbol, TV_Exchange
+            SELECT Securities_Id, Securities_Name, TV_Symbol, TV_Exchange, COALESCE(Price_Scale, 1)
             FROM   Securities
             WHERE  TV_Symbol   IS NOT NULL AND TV_Symbol   != ''
               AND  TV_Exchange IS NOT NULL AND TV_Exchange != ''
@@ -1784,8 +1795,8 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
         all_rows = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {
-                pool.submit(_fetch, sid, sname, sym, exch): sname
-                for sid, sname, sym, exch in securities
+                pool.submit(_fetch, sid, sname, sym, exch, scale): sname
+                for sid, sname, sym, exch, scale in securities
             }
             for f in as_completed(futures):
                 sec_id, sec_name, tv_symbol, rows, err = f.result()
@@ -1833,8 +1844,8 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
         today_str           = datetime.today().strftime("%Y-%m-%d")
 
         # Build per-security lookups for readable log messages and exchange calendars
-        sec_name_lkp:   dict[int, str] = {sid: sname for sid, sname, _, _ in securities}
-        sid_to_exchange: dict[int, str] = {sid: exch  for sid, _, _, exch in securities}
+        sec_name_lkp:   dict[int, str] = {sid: sname for sid, sname, _, _, _ in securities}
+        sid_to_exchange: dict[int, str] = {sid: exch  for sid, _, _, exch, _ in securities}
 
         if all_rows:
             # Fetch existing closes for every (securities_id, date) pair we are
