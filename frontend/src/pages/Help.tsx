@@ -363,6 +363,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           categories (a "Recent for this payee" group), the same suggestion behavior as the regular New
           Transaction form — handy for filling in a template's splits for the first time.
         </Note>
+        <Note>
+          The New/Edit Template form's Account and Transfer to Account dropdowns hide inactive accounts by
+          default (opposite of Net Worth's historical reports, since a new/edited template is a forward-looking
+          thing — you're very unlikely to want to point it at a closed account) — tick <b>Show inactive</b> next
+          to the Account field to bring them back. A template already pointing at an inactive account keeps
+          showing it either way, so opening an existing template never blanks out its current selection.
+        </Note>
       </>
     ),
   },

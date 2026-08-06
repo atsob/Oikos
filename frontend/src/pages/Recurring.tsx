@@ -74,6 +74,17 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
   useEscapeKey(onClose)
   const set = (k: keyof TplForm, v: unknown) => onChange({ ...form, [k]: v as string & boolean })
 
+  // Inactive accounts are hidden by default so they don't clutter the picker for new
+  // templates; the checkbox reveals them. Whichever account(s) the template already
+  // points at stay visible either way, so editing an existing template never blanks
+  // out its current selection.
+  const [showInactiveAccounts, setShowInactiveAccounts] = useState(false)
+  const visibleAccounts = useMemo(() => {
+    if (showInactiveAccounts) return accounts
+    return accounts.filter(a =>
+      a.is_active !== false || String(a.id) === form.accounts_id || String(a.id) === form.accounts_id_target)
+  }, [accounts, showInactiveAccounts, form.accounts_id, form.accounts_id_target])
+
   const addSplit = () => onSplitsChange([...splits, { categories_id: '', amount: '', memo: '' }])
   const removeSplit = (i: number) => onSplitsChange(splits.filter((_, j) => j !== i))
   const setSplit = (i: number, k: keyof SplitRow, v: string) =>
@@ -125,10 +136,16 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
           {/* Account + Payee */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-slate-500">Account *</label>
+                <label className="flex items-center gap-1 text-xs text-slate-500">
+                  <input type="checkbox" checked={showInactiveAccounts} onChange={e => setShowInactiveAccounts(e.target.checked)} className="rounded" />
+                  Show inactive
+                </label>
+              </div>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => set('accounts_id', e.target.value)}>
                 <option value="">— select —</option>
-                <AccountOptions accounts={accounts as Record<string, unknown>[]} />
+                <AccountOptions accounts={visibleAccounts as Record<string, unknown>[]} />
               </select>
             </div>
             <div>
@@ -175,7 +192,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
             <label className="text-xs font-medium text-slate-500 block mb-1">Transfer to Account (optional)</label>
             <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id_target} onChange={e => set('accounts_id_target', e.target.value)}>
               <option value="">— none —</option>
-              <AccountOptions accounts={accounts as Record<string, unknown>[]} />
+              <AccountOptions accounts={visibleAccounts as Record<string, unknown>[]} />
             </select>
           </div>
 

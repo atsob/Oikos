@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-06
+
+### Added
+- **Recurring → New/Edit Template no longer lists inactive accounts by default** in the Account and Transfer to Account dropdowns — a "Show inactive" checkbox next to the Account field reveals them again when needed. Editing a template that already points at an inactive account still shows that account regardless of the checkbox, so opening an existing template never blanks out its current selection.
+
 ## 2026-08-05
 
 ### Added
