@@ -118,6 +118,18 @@ function SecuritiesAlertsPanel() {
     mutationFn: (sid: number) => acknowledgeSignal(sid),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
+  // Signal Change alerts are per-security and re-trigger on the next algo/analyst
+  // move, unlike Price Alerts (no dismiss here — those clear on their own once the
+  // price crosses back, and are managed as standing alerts under Market Data).
+  const signalSecIds = React.useMemo(() => [...new Set(
+    (alerts as Record<string, unknown>[])
+      .filter(a => a.type === 'signal_change' && a.securities_id != null)
+      .map(a => Number(a.securities_id)),
+  )], [alerts])
+  const dismissAllMut = useMutation({
+    mutationFn: () => Promise.all(signalSecIds.map(sid => acknowledgeSignal(sid))),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+  })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   if (!(alerts as unknown[]).length) return null
 
@@ -134,12 +146,23 @@ function SecuritiesAlertsPanel() {
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
-        <span className="text-sm font-semibold text-orange-700">
-          🔔 {(alerts as unknown[]).length} triggered alert{(alerts as unknown[]).length !== 1 ? 's' : ''}
-        </span>
-        {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
-      </button>
+      <div className="w-full flex items-center justify-between px-4 py-3">
+        <button className="flex-1 flex items-center gap-2 text-left" onClick={() => setOpen(!open)}>
+          <span className="text-sm font-semibold text-orange-700">
+            🔔 {(alerts as unknown[]).length} triggered alert{(alerts as unknown[]).length !== 1 ? 's' : ''}
+          </span>
+          {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
+        </button>
+        {signalSecIds.length > 1 && (
+          <button
+            className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline ml-3"
+            disabled={dismissAllMut.isPending}
+            onClick={() => dismissAllMut.mutate()}
+            title="Dismiss all Signal Change alerts">
+            {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss all Signal Changes'}
+          </button>
+        )}
+      </div>
       {open && (
         <CardBody className="pt-0 space-y-2">
           {(alerts as Record<string, unknown>[]).map((a, i) => {

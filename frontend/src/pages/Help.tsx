@@ -165,7 +165,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
           Maturity/Coupon</b>, <b>Dividend Payment</b> — is clickable through to that security's Security Detail
           page. <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal
-          Change's <b>Dismiss</b> button still works on its own without triggering navigation.
+          Change's <b>Dismiss</b> button still works on its own without triggering navigation. When there's more
+          than one Signal Change alert, a <b>Dismiss all Signal Changes</b> button next to the panel header
+          acknowledges all of them in one click — Price Alerts don't have a dismiss (individually or in bulk)
+          since they clear on their own once the price crosses back.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —

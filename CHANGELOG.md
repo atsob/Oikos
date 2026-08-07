@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-07
+
+### Added
+- **Dashboard → the triggered alerts panel has a "Dismiss all Signal Changes" button** next to the header, when there's more than one — batch-acknowledges every currently-listed Signal Change alert in one click instead of dismissing them one by one. Price Alerts (which don't have a per-item dismiss here) are untouched either way.
+
 ## 2026-08-06
 
 ### Added
