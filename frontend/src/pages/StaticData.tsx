@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridApi } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -59,7 +60,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Payees Tab ────────────────────────────────────────────────────────────────
-function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
+function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }: {
+  search: string; onSearchChange: (v: string) => void
+  deepLinkEditId?: string | null; onDeepLinkHandled?: () => void
+}) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [editName, setEditName] = useState('')
@@ -94,6 +98,16 @@ function PayeesTab({ search, onSearchChange }: { search: string; onSearchChange:
     setEditTrackForNews(Boolean(row.track_for_news))
     setError(null)
   }
+
+  // Arriving here via a "?tab=Payees&edit=123" link (e.g. from News) — open that
+  // payee's edit modal once its data has loaded, then tell the parent to clear the
+  // link so it doesn't reopen on a later re-render or a manual tab switch back.
+  useEffect(() => {
+    if (!deepLinkEditId || isLoading) return
+    const row = (payees as Record<string, unknown>[]).find(p => String(p.id) === deepLinkEditId)
+    if (row) openEdit(row)
+    onDeepLinkHandled?.()
+  }, [deepLinkEditId, isLoading, payees]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     if (!editRow) return
@@ -726,7 +740,10 @@ function useRatingOptions() {
   }
 }
 
-function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
+function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }: {
+  search: string; onSearchChange: (v: string) => void
+  deepLinkEditId?: string | null; onDeepLinkHandled?: () => void
+}) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -745,6 +762,15 @@ function InstitutionsTab({ search, onSearchChange }: { search: string; onSearchC
     setForm(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v != null ? String(v) : ''])))
     setError(null)
   }
+
+  // Arriving here via a "?tab=Institutions&edit=123" link (e.g. from News) — see
+  // PayeesTab's identical effect above for why.
+  useEffect(() => {
+    if (!deepLinkEditId || isLoading) return
+    const row = (data as Record<string, unknown>[]).find(d => String(d.id) === deepLinkEditId)
+    if (row) openEdit(row)
+    onDeepLinkHandled?.()
+  }, [deepLinkEditId, isLoading, data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openNew = () => {
     setEditRow({})
@@ -1411,6 +1437,18 @@ export default function StaticData() {
   const [tab, setTab] = usePersist('static_data_tab', 'Payees')
   const [search, setSearch] = useState('')
 
+  // Deep-link support: "?tab=Payees&edit=123" (used by News' Company/Institution
+  // links) switches to that tab and opens that row's edit modal. Cleared once the
+  // target tab has consumed it, so it doesn't reopen on a later re-render or a
+  // manual tab switch back.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkTab = searchParams.get('tab')
+  const deepLinkEditId = searchParams.get('edit')
+  useEffect(() => {
+    if (deepLinkTab && TABS.includes(deepLinkTab)) setTab(deepLinkTab)
+  }, [deepLinkTab]) // eslint-disable-line react-hooks/exhaustive-deps
+  const clearDeepLink = () => setSearchParams({}, { replace: true })
+
   return (
     <div>
       <PageHeader title="Static Data" subtitle="Master reference data" />
@@ -1425,9 +1463,11 @@ export default function StaticData() {
         </div>
 
         <Card className="overflow-hidden">
-          {tab === 'Payees'       && <PayeesTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Payees'       && <PayeesTab search={search} onSearchChange={setSearch}
+            deepLinkEditId={deepLinkTab === 'Payees' ? deepLinkEditId : null} onDeepLinkHandled={clearDeepLink} />}
           {tab === 'Categories'   && <CategoriesTab search={search} onSearchChange={setSearch} />}
-          {tab === 'Institutions' && <InstitutionsTab search={search} onSearchChange={setSearch} />}
+          {tab === 'Institutions' && <InstitutionsTab search={search} onSearchChange={setSearch}
+            deepLinkEditId={deepLinkTab === 'Institutions' ? deepLinkEditId : null} onDeepLinkHandled={clearDeepLink} />}
           {tab === 'Issuers' && <IssuersTab search={search} onSearchChange={setSearch} />}
           {tab === 'Accounts'     && <AccountsTab search={search} onSearchChange={setSearch} />}
           {tab === 'Tax Rules'      && <TaxRulesTab />}

@@ -660,6 +660,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           the background (see System → Scheduled Tasks, job <b>News Fetch</b>). A <b>Security Detail</b> page's{' '}
           own <b>News</b> tab shows the same feed pre-filtered to just that security.
         </P>
+        <Note>
+          Each item's source badge is its own link, separate from clicking the row (which opens the article) — a{' '}
+          <b>Security</b> badge goes to that security's Security Detail page; an <b>Institution</b> or{' '}
+          <b>Company</b> badge opens Static Data on the matching tab with that row's edit modal already open.
+          Search results with no resolved source aren't linkable.
+        </Note>
         <Ul>
           <li><b>Securities</b> — every security currently held or on your Market Data → Watchlist, sourced from Yahoo Finance.</li>
           <li><b>Institutions</b> — every bank/broker/exchange you have an active account with (Static Data → Institutions), sourced from a web news search on the institution's name (DuckDuckGo, Bing, and Yahoo News, combined).</li>

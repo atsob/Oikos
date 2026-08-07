@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Added
 - **Dashboard → the triggered alerts panel has a "Dismiss all Signal Changes" button** next to the header, when there's more than one — batch-acknowledges every currently-listed Signal Change alert in one click instead of dismissing them one by one. Price Alerts (which don't have a per-item dismiss here) are untouched either way.
+- **News → the source badge on each item is now its own link**, separate from clicking the row itself (which still opens the article) — a Security badge goes to that security's Security Detail page, an Institution badge opens Static Data → Institutions with that institution's edit modal already open, and a Company badge does the same on the Payees tab. Search-result items with no resolved source aren't linkable.
 
 ## 2026-08-06
 

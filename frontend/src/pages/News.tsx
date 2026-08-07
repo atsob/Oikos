@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getNews, generateNews, markNewsRead, searchNews } from '@/lib/api'
 import { PageHeader, Card, Button, Badge, Spinner, Tooltip, Input } from '@/components/ui'
@@ -43,29 +44,57 @@ function fmtWhen(item: NewsItem): string {
   return `${fmtDate(iso)} · ${time}`
 }
 
+// Where a news item's source badge should navigate to when clicked, separately from
+// clicking the row itself (which opens the article). Search-result items have no
+// resolved source_type/source_id and aren't linkable.
+function sourceLinkPath(item: NewsItem): string | null {
+  if (item.source_id == null) return null
+  if (item.source_type === 'Security') return `/securities/${item.source_id}`
+  if (item.source_type === 'Institution') return `/static-data?tab=Institutions&edit=${item.source_id}`
+  if (item.source_type === 'Payee') return `/static-data?tab=Payees&edit=${item.source_id}`
+  return null
+}
+
 export function NewsList({ items, onOpen }: { items: NewsItem[]; onOpen: (item: NewsItem) => void }) {
+  const navigate = useNavigate()
   return (
     <Card className="divide-y divide-slate-100">
-      {items.map((item, i) => (
-        <button
-          key={item.id ?? `${item.url}-${i}`}
-          onClick={() => onOpen(item)}
-          className="w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors flex items-start gap-3"
-        >
-          <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${item.is_read ? 'bg-transparent' : 'bg-blue-500'}`} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-0.5">
-              <Badge label={item.source_name ?? item.source_type ?? 'Web'} variant={BADGE_VARIANT[item.source_type ?? ''] ?? 'gray'} />
-              {item.ticker && <span className="text-xs text-slate-400">{item.ticker}</span>}
-              <span className="text-xs text-slate-400">{fmtWhen(item)}</span>
-              {item.publisher && <span className="text-xs text-slate-400">· {item.publisher}</span>}
+      {items.map((item, i) => {
+        const linkPath = sourceLinkPath(item)
+        return (
+          <div
+            key={item.id ?? `${item.url}-${i}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(item)}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onOpen(item) }}
+            className="w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors flex items-start gap-3 cursor-pointer"
+          >
+            <span className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${item.is_read ? 'bg-transparent' : 'bg-blue-500'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                {linkPath ? (
+                  <button
+                    onClick={e => { e.stopPropagation(); navigate(linkPath) }}
+                    title={`Go to ${item.source_type} setup`}
+                    className="hover:opacity-70 transition-opacity"
+                  >
+                    <Badge label={item.source_name ?? item.source_type ?? 'Web'} variant={BADGE_VARIANT[item.source_type ?? ''] ?? 'gray'} />
+                  </button>
+                ) : (
+                  <Badge label={item.source_name ?? item.source_type ?? 'Web'} variant={BADGE_VARIANT[item.source_type ?? ''] ?? 'gray'} />
+                )}
+                {item.ticker && <span className="text-xs text-slate-400">{item.ticker}</span>}
+                <span className="text-xs text-slate-400">{fmtWhen(item)}</span>
+                {item.publisher && <span className="text-xs text-slate-400">· {item.publisher}</span>}
+              </div>
+              <p className={`text-sm ${item.is_read ? 'text-slate-600' : 'text-slate-900 font-medium'}`}>{item.title}</p>
+              {item.summary && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.summary}</p>}
             </div>
-            <p className={`text-sm ${item.is_read ? 'text-slate-600' : 'text-slate-900 font-medium'}`}>{item.title}</p>
-            {item.summary && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.summary}</p>}
+            <ExternalLink size={14} className="text-slate-300 shrink-0 mt-1" />
           </div>
-          <ExternalLink size={14} className="text-slate-300 shrink-0 mt-1" />
-        </button>
-      ))}
+        )
+      })}
     </Card>
   )
 }
