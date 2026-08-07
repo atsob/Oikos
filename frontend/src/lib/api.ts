@@ -816,8 +816,14 @@ export const upsertGoal = (data: object) =>
 export const deleteGoal = (id: number) =>
   api.delete(`/reports/goals/${id}`).then(r => r.data)
 
-export const getSavingsAccounts = () =>
-  api.get('/reports/savings-accounts').then(r => r.data)
+export const getSavingsAccounts = (period = 'All Time', startDate?: string, endDate?: string) =>
+  api.get('/reports/savings-accounts', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)
+
+export const getSavingsForecast = (period: 'eoy' | '6m' | '12m' = '12m') =>
+  api.get('/reports/savings-forecast', { params: { period } }).then(r => r.data)
+
+export const getSavingsRecommendations = () =>
+  api.get('/reports/savings-recommendations').then(r => r.data)
 
 export const getDividendsTracker = (period: string, startDate?: string, endDate?: string) =>
   api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)

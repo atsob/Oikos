@@ -421,12 +421,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🔄 Cash Flow Forecast</H3>
         <P>
-          Projects future cash flow from four sources, shown separately: <b>explicitly scheduled</b> future
+          Projects future cash flow from five sources, shown separately: <b>explicitly scheduled</b> future
           transactions already entered, <b>active Recurring Templates</b> (see Recurring) projected forward from
           each template's own due date and frequency, <b>statistically-detected patterns</b> — payee/category
           combinations seen in every one of the last few complete months, for recurring bills you haven't set up
-          a template for — and <b>projected dividend income</b> for currently-held securities, using the same
-          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view.
+          a template for — <b>projected dividend income</b> for currently-held securities, using the same
+          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view, and{' '}
+          <b>projected interest income</b> for savings accounts, using the same last-real-interest-period
+          APY%/cadence compounding as the Savings tab's own Forecast view.
         </P>
         <Note>
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
@@ -519,6 +521,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           to pay outside the window simply doesn't show up. Each row also shows its full annualized rate
           alongside the period amount for reference. Portfolio YOC always stays annualized regardless of period,
           and "Upcoming payments (next 3 months)" is a separate, fixed near-term view unaffected by the selector.
+        </Note>
+        <Note>
+          <b>Savings</b> has the same Actual/Forecast/Recommendations structure as Dividend Tracker. <b>Actual</b>{' '}
+          has its own period selector, scoping interest/principal/YOC%/APY% to that window; the "Detail for Last
+          Interest Period" table below it always shows each account's most recent real interest period,
+          regardless of the selected period. <b>Forecast</b> (Till EOY / Next 6 Months / Next 12 Months) projects
+          each account's future interest by compounding its current balance forward at that last real period's
+          APY% and payment cadence — that's also what feeds Cash Flow Forecast's Expected Interest Income.{' '}
+          <b>Recommendations</b> ranks your savings accounts by that same APY% and flags idle balances sitting in
+          0%-yield Cash/Checking accounts, estimating the annual gain from moving them into your best-performing
+          savings account in the same currency — there's no external market of savings accounts to recommend
+          opening, only what you already have.
         </Note>
         <Note>
           In the Performance tab, security names in the <b>Top 15 Gainers/Losers</b> tables link to that

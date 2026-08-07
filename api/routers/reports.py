@@ -2325,6 +2325,8 @@ def get_cash_flow_forecast_full(
             WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
         """, conn)
 
+        df_savings = _savings_last_period_df(conn)
+
     # Filter scheduled to horizon
     if not df_future.empty:
         df_future['date'] = pd.to_datetime(df_future['date'])
@@ -2472,6 +2474,44 @@ def get_cash_flow_forecast_full(
 
     dividend_rows.sort(key=lambda x: x['date'])
 
+    # Project savings interest income, using the same last-real-interest-period
+    # APY%/cadence compounding logic as the Savings tab's own Forecast view
+    # (/savings-forecast), bounded by this endpoint's own day-based horizon instead
+    # of eoy/6m/12m. Compounding happens in the account's own currency; only the
+    # resulting payments are converted to EUR here, for a consistent cash-flow total.
+    interest_rows = []
+    if not df_savings.empty:
+        for _, r in df_savings.iterrows():
+            balance = _fnum(r.get("current_balance"))
+            apy = _fnum(r.get("apy_pct_last"))
+            hd = r.get("holding_days_last")
+            cadence_days = int(hd) if pd.notna(hd) else 0
+            last_date = r.get("last_interest_date")
+            fx = _fnum(r.get("fx_rate"), default=1.0)
+
+            if balance <= 0 or apy <= 0 or cadence_days <= 0 or pd.isna(last_date):
+                continue
+
+            next_dt = pd.Timestamp(last_date).date()
+            while next_dt <= today:
+                next_dt += _dt.timedelta(days=cadence_days)
+
+            running_balance = balance
+            while next_dt <= cutoff:
+                payment = running_balance * ((1 + apy / 100) ** (cadence_days / 365) - 1)
+                running_balance += payment
+                interest_rows.append({
+                    'date': next_dt.isoformat(),
+                    'payees_name': str(r['accounts_name']),
+                    'accounts_id': int(r['accounts_id']),
+                    'amount_eur': round(payment * fx, 2),
+                    'currency': str(r['currency']),
+                    'frequency': f'Every {cadence_days}d',
+                })
+                next_dt += _dt.timedelta(days=cadence_days)
+
+    interest_rows.sort(key=lambda x: x['date'])
+
     # Build scheduled list
     scheduled = []
     if not df_f.empty:
@@ -2492,12 +2532,14 @@ def get_cash_flow_forecast_full(
     recur_in  = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] > 0)
     recur_out = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] < 0)
     div_in    = sum(r['amount_eur'] for r in dividend_rows)
+    int_in    = sum(r['amount_eur'] for r in interest_rows)
 
     return {
         'scheduled': scheduled,
         'templates': template_rows,
         'recurring': recur_rows,
         'dividends': dividend_rows,
+        'interest': interest_rows,
         'metrics': {
             'sched_in':  round(sched_in,  2),
             'sched_out': round(sched_out, 2),
@@ -2506,7 +2548,8 @@ def get_cash_flow_forecast_full(
             'recur_in':  round(recur_in,  2),
             'recur_out': round(recur_out, 2),
             'div_in':    round(div_in,    2),
-            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out + div_in, 2),
+            'int_in':    round(int_in,    2),
+            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out + div_in + int_in, 2),
         },
     }
 
@@ -4254,9 +4297,12 @@ def delete_goal(goal_id: int):
 
 
 # ── Savings Accounts — Yield over Cost & APY ───────────────────────────────────
-@router.get("/savings-accounts")
-def get_savings_accounts():
-    """Per-savings-account principal, interest, YOC%, and APY% — lifetime and last interest period."""
+def _savings_last_period_df(conn) -> pd.DataFrame:
+    """Per-savings-account current balance and most recent real interest period's
+    YOC%/APY% — independent of any selected date range. Shared basis for the Savings
+    tab's "Detail for Last Interest Period" table, the Forecast tab's projections
+    (/savings-forecast), and the Recommendations tab's account ranking
+    (/savings-recommendations)."""
     query = """
     WITH CategorizedSplits AS (
         SELECT
@@ -4341,6 +4387,7 @@ def get_savings_accounts():
         a.Accounts_Type AS accounts_type,
         c.Currencies_ShortName AS currency,
         a.Accounts_Balance AS current_balance,
+        COALESCE(fx3.FX_Rate, 1) AS fx_rate,
         ast.first_tx_date::text AS first_tx_date,
         ast.last_tx_date::text AS last_tx_date,
         lid.last_interest_date::text AS last_interest_date,
@@ -4358,26 +4405,16 @@ def get_savings_accounts():
     LEFT JOIN LastInterestDate lid ON lid.Accounts_Id = a.Accounts_Id
     LEFT JOIN LastPeriodInterest lpi ON lpi.Accounts_Id = a.Accounts_Id
     LEFT JOIN PeriodAverageBalance pab ON pab.Accounts_Id = a.Accounts_Id
+    LEFT JOIN Last_FXRates fx3 ON fx3.Accounts_Id = a.Accounts_Id
     WHERE a.Accounts_Type = 'Savings'
     ORDER BY a.Accounts_Name
     """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn)
-
+    df = pd.read_sql(query, conn)
     if df.empty:
-        return {"summary": {}, "detail": [], "detail_last": []}
+        return df
 
     for dc in ["first_tx_date", "last_tx_date", "last_interest_date", "prior_interest_date"]:
         df[dc] = pd.to_datetime(df[dc], errors="coerce")
-
-    df["holding_days_total"] = (df["last_tx_date"] - df["first_tx_date"]).dt.days.clip(lower=1)
-    principal_safe = df["principal"].replace(0, float("nan"))
-
-    df["annual_interest_cash"] = df["total_interest"] / df["holding_days_total"] * 365
-    df["annual_yoc_pct"] = (df["annual_interest_cash"] / principal_safe * 100).fillna(0)
-
-    r_total = df["total_interest"] / principal_safe
-    df["apy_pct"] = (((1 + r_total) ** (365 / df["holding_days_total"]) - 1) * 100).fillna(0)
 
     period_start = df["prior_interest_date"].fillna(df["first_tx_date"])
     df["period_start_date"] = period_start
@@ -4390,47 +4427,375 @@ def get_savings_accounts():
 
     r_last = df["last_interest_sum"] / avg_p_safe
     df["apy_pct_last"] = (((1 + r_last) ** (365 / df["holding_days_last"]) - 1) * 100).fillna(0)
+    return df
 
-    savings_accounts_count = len(df)
-    total_principal_eur = float(df["principal_eur"].sum())
-    total_interest_eur = float(df["total_interest_eur"].sum())
-    yoc_nonzero = df["annual_yoc_pct"].replace(0, float("nan"))
-    apy_nonzero = df["apy_pct"].replace(0, float("nan"))
-    avg_yoc = float(yoc_nonzero.mean()) if not yoc_nonzero.dropna().empty else None
-    avg_apy = float(apy_nonzero.mean()) if not apy_nonzero.dropna().empty else None
 
-    detail_cols = [
-        "accounts_name", "accounts_type", "currency",
-        "principal", "total_interest", "annual_interest_cash",
-        "current_balance", "annual_yoc_pct", "apy_pct",
-        "holding_days_total", "first_tx_date", "last_tx_date",
-    ]
+@router.get("/savings-accounts")
+def get_savings_accounts(
+    period: str = Query("All Time"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+):
+    """Per-savings-account interest income and yield for a selected period (the
+    Dividend-Tracker-style Actual view), plus each account's most recent real interest
+    period, which stays independent of the selected period since it's also the basis
+    Forecast (/savings-forecast) projects forward from."""
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    period_days = {"1 Year": 365, "2 Years": 730, "3 Years": 1095, "5 Years": 1825}
+    if period == "Custom":
+        sd = _date.fromisoformat(start_date) if start_date else today - _td(days=365)
+        ed = _date.fromisoformat(end_date) if end_date else today
+    elif period == "All Time":
+        sd, ed = _date(1900, 1, 1), today
+    elif period == "YTD":
+        sd, ed = _date(today.year, 1, 1), today
+    elif period == "Previous Year":
+        sd, ed = _date(today.year - 1, 1, 1), _date(today.year - 1, 12, 31)
+    elif period in period_days:
+        sd, ed = today - _td(days=period_days[period]), today
+    else:
+        sd, ed = _date(today.year, 1, 1), today
+    period_label = {
+        "All Time": "All Time", "Custom": "Custom",
+        "YTD": f"YTD {today.year}",
+        "Previous Year": str(today.year - 1),
+    }.get(period, f"Last {period}")
+
+    splits_query = """
+    WITH NonEURAccounts AS (
+        SELECT DISTINCT a.Accounts_Id, a.Currencies_Id
+        FROM Accounts a
+        WHERE a.Accounts_Type = 'Savings'
+          AND a.Currencies_Id NOT IN (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+    ),
+    Last_FXRates AS (
+        SELECT nea.Accounts_Id, hfx.FX_Rate
+        FROM Historical_FX hfx
+        JOIN NonEURAccounts nea ON nea.Currencies_Id = hfx.Currencies_Id_1
+        WHERE hfx.Currencies_Id_2 = (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+          AND hfx.Date = (
+                SELECT MAX(h2.Date) FROM Historical_FX h2
+                WHERE h2.Currencies_Id_1 = hfx.Currencies_Id_1 AND h2.Currencies_Id_2 = hfx.Currencies_Id_2
+                  AND h2.Date <= CURRENT_DATE
+              )
+    )
+    SELECT t.Accounts_Id AS accounts_id, t.Date::text AS date,
+           CASE WHEN t.Transfers_Id IS NOT NULL THEN t.Total_Amount ELSE s.Amount END AS amount,
+           CASE WHEN t.Transfers_Id IS NOT NULL THEN 'Principal'
+                WHEN cat.Categories_Type = 'Interest' THEN 'Interest'
+                ELSE 'Principal' END AS kind,
+           COALESCE(fx.FX_Rate, 1) AS fx_rate
+    FROM Transactions t
+    LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+    LEFT JOIN Categories cat ON cat.Categories_Id = s.Categories_Id
+    JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+    LEFT JOIN Last_FXRates fx ON fx.Accounts_Id = t.Accounts_Id
+    WHERE a.Accounts_Type = 'Savings'
+    ORDER BY t.Accounts_Id, t.Date
+    """
+    accounts_query = """
+        SELECT a.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name,
+               a.Accounts_Type AS accounts_type, c.Currencies_ShortName AS currency,
+               a.Accounts_Balance AS current_balance
+        FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
+        WHERE a.Accounts_Type = 'Savings'
+        ORDER BY a.Accounts_Name
+    """
+    with get_db() as conn:
+        last_period_df = _savings_last_period_df(conn)
+        splits_df = pd.read_sql(splits_query, conn)
+        accounts_df = pd.read_sql(accounts_query, conn)
+
+    if accounts_df.empty:
+        return {"period": period, "period_label": period_label, "summary": {}, "detail": [], "detail_last": [], "monthly": []}
+
     detail_cols_last = [
-        "accounts_name", "accounts_type", "currency",
+        "accounts_id", "accounts_name", "accounts_type", "currency", "current_balance",
         "avg_principal_last", "last_interest_sum", "annual_interest_cash_last",
         "annual_yoc_pct_last", "apy_pct_last",
         "holding_days_last", "period_start_date", "last_interest_date",
     ]
+    detail_last_records = _df_to_list(last_period_df[detail_cols_last].copy()) if not last_period_df.empty else []
 
-    detail_df = df[detail_cols].copy()
-    detail_last_df = df[detail_cols_last].copy()
+    # Period-scoped Detail: a time-weighted walk of each account's running-balance step
+    # function across [sd, ed], instead of a per-calendar-day SQL scan — cheap even for
+    # an "All Time" window spanning decades, since it only visits actual transaction
+    # dates rather than every day in between.
+    splits_df["date"] = pd.to_datetime(splits_df["date"]).dt.date
+    detail_rows: list = []
+    monthly_totals: dict = {}
+    for _, acc in accounts_df.iterrows():
+        aid = int(acc["accounts_id"])
+        acc_splits = splits_df[splits_df["accounts_id"] == aid].sort_values("date")
+        if acc_splits.empty:
+            continue
+
+        in_period = acc_splits[(acc_splits["date"] >= sd) & (acc_splits["date"] <= ed)]
+        principal_rows = in_period[in_period["kind"] == "Principal"]
+        interest_rows  = in_period[in_period["kind"] == "Interest"]
+        principal_period     = float(principal_rows["amount"].sum())
+        principal_period_eur = float((principal_rows["amount"] * principal_rows["fx_rate"]).sum())
+        interest_period       = float(interest_rows["amount"].sum())
+        interest_period_eur   = float((interest_rows["amount"] * interest_rows["fx_rate"]).sum())
+        if interest_period == 0 and principal_period == 0:
+            continue
+
+        balance = float(acc_splits.loc[acc_splits["date"] < sd, "amount"].sum())
+        day_events = in_period.groupby("date")["amount"].sum()
+        cursor = sd
+        weighted_sum = 0.0
+        for ev_date, amt in day_events.items():
+            weighted_sum += balance * (ev_date - cursor).days
+            balance += float(amt)
+            cursor = ev_date
+        weighted_sum += balance * ((ed - cursor).days + 1)
+        holding_days_period = max((ed - sd).days + 1, 1)
+        avg_balance_period = weighted_sum / holding_days_period
+
+        annual_interest_cash = interest_period / holding_days_period * 365
+        avg_safe = avg_balance_period if avg_balance_period > 0 else None
+        annual_yoc_pct = (annual_interest_cash / avg_safe * 100) if avg_safe else 0.0
+        r = (interest_period / avg_safe) if avg_safe else 0.0
+        apy_pct = (((1 + r) ** (365 / holding_days_period) - 1) * 100) if avg_safe and r > -1 else 0.0
+
+        detail_rows.append({
+            "accounts_id": aid, "accounts_name": acc["accounts_name"],
+            "accounts_type": acc["accounts_type"], "currency": acc["currency"],
+            "principal": round(principal_period, 2), "principal_eur": round(principal_period_eur, 2),
+            "total_interest": round(interest_period, 2), "total_interest_eur": round(interest_period_eur, 2),
+            "annual_interest_cash": round(annual_interest_cash, 2),
+            "avg_balance": round(avg_balance_period, 2),
+            "current_balance": float(acc["current_balance"]),
+            "annual_yoc_pct": round(annual_yoc_pct, 4), "apy_pct": round(apy_pct, 4),
+            "holding_days": holding_days_period,
+        })
+
+        for _, ev in interest_rows.iterrows():
+            key = str(ev["date"].replace(day=1))
+            monthly_totals[key] = monthly_totals.get(key, 0.0) + float(ev["amount"]) * float(ev["fx_rate"])
+
+    total_principal_eur = sum(r["principal_eur"] for r in detail_rows)
+    total_interest_eur = sum(r["total_interest_eur"] for r in detail_rows)
+    yocs = [r["annual_yoc_pct"] for r in detail_rows if r["annual_yoc_pct"] != 0]
+    apys = [r["apy_pct"] for r in detail_rows if r["apy_pct"] != 0]
+    avg_yoc = sum(yocs) / len(yocs) if yocs else None
+    avg_apy = sum(apys) / len(apys) if apys else None
+
+    # Inclusive calendar-month count spanned by [sd, ed] (e.g. Jan-Jul = 7), matching
+    # the number of bars the monthly chart could show, not just the months that
+    # actually had interest — same convention as Dividend Tracker's own Actual view.
+    months_in_period = max((ed.year - sd.year) * 12 + (ed.month - sd.month) + 1, 1)
 
     summary = {
-        "savings_accounts_count": savings_accounts_count,
+        "savings_accounts_count": len(detail_rows),
         "total_principal_eur": round(total_principal_eur, 2),
         "total_interest_eur": round(total_interest_eur, 2),
+        "avg_monthly_interest_eur": round(total_interest_eur / months_in_period, 2),
         "avg_yoc_pct": round(avg_yoc, 4) if avg_yoc is not None else None,
         "avg_apy_pct": round(avg_apy, 4) if avg_apy is not None else None,
-        "chart": [
-            {"accounts_name": r["accounts_name"], "annual_yoc_pct": round(float(r["annual_yoc_pct"]), 4)}
-            for _, r in df[df["annual_yoc_pct"] != 0].sort_values("annual_yoc_pct").iterrows()
-        ],
     }
+    monthly = sorted([{"month": k, "income_eur": round(v, 2)} for k, v in monthly_totals.items()], key=lambda x: x["month"])
 
     return {
+        "period": period,
+        "period_label": period_label,
         "summary": summary,
-        "detail": _df_to_list(detail_df),
-        "detail_last": _df_to_list(detail_last_df),
+        "detail": detail_rows,
+        "detail_last": detail_last_records,
+        "monthly": monthly,
+    }
+
+
+@router.get("/savings-forecast")
+def get_savings_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
+    """Projects future interest income for savings accounts by compounding each
+    account's current balance forward at its last real interest period's APY% and
+    payment cadence — the savings equivalent of Dividend Tracker Forecast's "project
+    from what you actually have," using APY (compounding) since savings accounts have
+    no stated forward yield to fall back on."""
+    import calendar as _cal
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+
+    def _add_months(d: _date, n: int) -> _date:
+        m = d.month + n
+        y = d.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        return d.replace(year=y, month=m, day=min(d.day, _cal.monthrange(y, m)[1]))
+
+    if period == "eoy":
+        cutoff = _date(today.year, 12, 31)
+    elif period == "6m":
+        cutoff = _add_months(today, 6)
+    else:
+        cutoff = _add_months(today, 12)
+
+    with get_db() as conn:
+        df = _savings_last_period_df(conn)
+
+    if df.empty:
+        return {"period": period, "summary": {}, "monthly_forecast": [], "by_account": []}
+
+    monthly_map: dict = {}
+    rows: list = []
+    for _, r in df.iterrows():
+        balance = _fnum(r.get("current_balance"))
+        apy = _fnum(r.get("apy_pct_last"))
+        hd = r.get("holding_days_last")
+        cadence_days = int(hd) if pd.notna(hd) else 0
+        last_date = r.get("last_interest_date")
+        fx = _fnum(r.get("fx_rate"), default=1.0)
+
+        if balance <= 0 or apy <= 0 or cadence_days <= 0 or pd.isna(last_date):
+            continue
+
+        next_date = pd.Timestamp(last_date).date()
+        while next_date <= today:
+            next_date += _td(days=cadence_days)
+
+        # Compounding happens in the account's own currency (balance, APY%, and
+        # cadence are all intrinsic to it) — only the resulting payments are
+        # converted to EUR afterward, for cross-currency totals/monthly chart.
+        running_balance = balance
+        period_total = 0.0
+        payments: list = []
+        while next_date <= cutoff:
+            payment = running_balance * ((1 + apy / 100) ** (cadence_days / 365) - 1)
+            running_balance += payment
+            period_total += payment
+            payments.append((next_date, payment))
+            next_date += _td(days=cadence_days)
+
+        if not payments:
+            continue
+
+        for pay_date, amt in payments:
+            key = str(pay_date.replace(day=1))
+            monthly_map[key] = monthly_map.get(key, 0.0) + amt * fx
+
+        rows.append({
+            "accounts_id":            int(r["accounts_id"]),
+            "accounts_name":          str(r["accounts_name"]),
+            "accounts_type":          str(r["accounts_type"]),
+            "currency":               str(r["currency"]),
+            "current_balance":        round(balance, 2),
+            "current_balance_eur":    round(balance * fx, 2),
+            "apy_pct":                round(apy, 4),
+            "cadence_days":           cadence_days,
+            "period_forecast_eur":    round(period_total * fx, 2),
+            "projected_balance_eur":  round(running_balance, 2),
+            "next_payment_date":      str(payments[0][0]),
+            "payments_in_period":     len(payments),
+        })
+
+    if not rows:
+        return {"period": period, "summary": {}, "monthly_forecast": [], "by_account": []}
+
+    total_period    = sum(r["period_forecast_eur"] for r in rows)
+    total_balance   = sum(r["current_balance_eur"] for r in rows)
+    total_annual    = sum(r["current_balance_eur"] * r["apy_pct"] / 100 for r in rows)
+    months_in_period = max(1, round((cutoff - today).days / 30.44))
+    total_monthly   = total_period / months_in_period
+    portfolio_apy   = (total_annual / total_balance * 100) if total_balance > 0 else 0
+
+    by_account = sorted(rows, key=lambda x: x["period_forecast_eur"], reverse=True)
+    monthly_forecast = sorted([{"month": k, "income_eur": round(v, 2)} for k, v in monthly_map.items()], key=lambda x: x["month"])
+
+    return {
+        "period": period,
+        "summary": {
+            "total_period_eur":  round(total_period, 2),
+            "total_annual_eur":  round(total_annual, 2),
+            "total_monthly_eur": round(total_monthly, 2),
+            "accounts_count":    len(by_account),
+            "portfolio_apy_pct": round(portfolio_apy, 2),
+        },
+        "monthly_forecast": monthly_forecast,
+        "by_account":       by_account,
+    }
+
+
+@router.get("/savings-recommendations")
+def get_savings_recommendations():
+    """Ranks your existing savings accounts by last-real-period APY%, and flags idle
+    balances sitting in 0%-yield Cash/Checking accounts with a suggestion to move them
+    into your best-performing savings account in the same currency instead. There's no
+    external market of savings accounts to recommend opening — only your own."""
+    MATERIALITY_EUR = 50  # ignore idle balances too small to bother moving
+
+    with get_db() as conn:
+        savings_df = _savings_last_period_df(conn)
+        idle_df = pd.read_sql("""
+            SELECT a.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name,
+                   a.Accounts_Type AS accounts_type, c.Currencies_ShortName AS currency,
+                   a.Accounts_Balance AS balance
+            FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
+            WHERE a.Accounts_Type IN ('Cash','Checking') AND a.Accounts_Balance > 0
+            ORDER BY a.Accounts_Balance DESC
+        """, conn)
+        fx_df = pd.read_sql("""
+            SELECT c.Currencies_ShortName AS currency,
+                   COALESCE((
+                       SELECT hfx.FX_Rate FROM Historical_FX hfx
+                       WHERE hfx.Currencies_Id_1 = c.Currencies_Id
+                         AND hfx.Currencies_Id_2 = (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName='EUR')
+                       ORDER BY hfx.Date DESC LIMIT 1
+                   ), 1) AS fx_rate
+            FROM Currencies c
+        """, conn)
+    fx_map = dict(zip(fx_df["currency"], fx_df["fx_rate"]))
+    fx_map.setdefault("EUR", 1.0)
+
+    ranking: list = []
+    if not savings_df.empty:
+        for _, r in savings_df.sort_values("apy_pct_last", ascending=False).iterrows():
+            ranking.append({
+                "accounts_id":        int(r["accounts_id"]),
+                "accounts_name":      str(r["accounts_name"]),
+                "currency":           str(r["currency"]),
+                "current_balance":    round(_fnum(r.get("current_balance")), 2),
+                "apy_pct":            round(_fnum(r.get("apy_pct_last")), 4),
+                "annual_yoc_pct":     round(_fnum(r.get("annual_yoc_pct_last")), 4),
+                "last_interest_date": str(r["last_interest_date"].date()) if pd.notna(r.get("last_interest_date")) else None,
+            })
+
+    # Best savings account per currency — an idle EUR balance can only usefully move
+    # into a EUR savings account, not a GBP one, without introducing FX risk/cost.
+    best_by_currency: dict = {}
+    for r in ranking:
+        cur = r["currency"]
+        if r["apy_pct"] > 0 and (cur not in best_by_currency or r["apy_pct"] > best_by_currency[cur]["apy_pct"]):
+            best_by_currency[cur] = r
+
+    idle_opportunities: list = []
+    for _, r in idle_df.iterrows():
+        cur = str(r["currency"])
+        balance = _fnum(r.get("balance"))
+        best = best_by_currency.get(cur)
+        if not best or balance < MATERIALITY_EUR:
+            continue
+        potential_gain = balance * best["apy_pct"] / 100
+        idle_opportunities.append({
+            "accounts_id":               int(r["accounts_id"]),
+            "accounts_name":             str(r["accounts_name"]),
+            "accounts_type":             str(r["accounts_type"]),
+            "currency":                  cur,
+            "balance":                   round(balance, 2),
+            "target_accounts_id":        best["accounts_id"],
+            "target_accounts_name":      best["accounts_name"],
+            "target_apy_pct":            best["apy_pct"],
+            "potential_annual_gain":     round(potential_gain, 2),
+            "potential_annual_gain_eur": round(potential_gain * fx_map.get(cur, 1), 2),
+        })
+    idle_opportunities.sort(key=lambda x: x["potential_annual_gain_eur"], reverse=True)
+
+    return {
+        "ranking": ranking,
+        "idle_opportunities": idle_opportunities,
+        "total_potential_gain_eur": round(sum(o["potential_annual_gain_eur"] for o in idle_opportunities), 2),
     }
 
 

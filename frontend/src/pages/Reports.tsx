@@ -17,6 +17,7 @@ import {
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
+  getSavingsForecast, getSavingsRecommendations,
   getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull,
@@ -2453,6 +2454,7 @@ function DividendTrackerTab() {
                   title: `Projected Monthly Dividend Income (€) — ${FC_PERIOD_LABELS[fcPeriod]}`,
                   height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
                   yaxis: { title: 'Projected Income (€)' },
+                  xaxis: { tickformat: '%b %Y', dtick: 'M1', type: 'date' as const },
                   ...plotLayout(isDark),
                 }}
                 config={{ displayModeBar: false }} style={{ width: '100%' }}
@@ -2737,6 +2739,7 @@ function DividendTrackerTab() {
               title: `Monthly Dividend & Interest Income (€) — ${result.period_label}`,
               height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
               yaxis: { title: 'Income (€)' },
+              xaxis: { tickformat: '%b %Y', dtick: 'M1', type: 'date' as const },
               ...plotLayout(isDark),
             }}
             config={{ displayModeBar: false }} style={{ width: '100%' }}
@@ -3126,88 +3129,350 @@ function PerformanceTab() {
 function SavingsAccountsTab() {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['savings-accounts'], queryFn: getSavingsAccounts, refetchInterval: liveRefetchMs })
-  const result = data as { summary: Row; detail: Row[]; detail_last: Row[] } | undefined
+  const [savView, setSavView] = usePersist<'actual' | 'forecast' | 'recommendations'>('sav_view', 'actual')
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  if (!result || !result.detail?.length) return <p className="text-slate-400 text-sm py-8 text-center">No savings accounts found.</p>
+  // ── Actual state ─────────────────────────────────────────────────────────────
+  const [period, setPeriod] = usePersist('sav_period', 'All Time')
+  const [customFrom, setCustomFrom] = usePersist('sav_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
+  const [customTo, setCustomTo] = usePersist('sav_to', new Date().toISOString().slice(0, 10))
 
-  const s = result.summary
+  const { data, isLoading } = useQuery({
+    queryKey: ['savings-accounts', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
+    queryFn: () => getSavingsAccounts(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
+    refetchInterval: liveRefetchMs,
+  })
+
+  // ── Forecast state ────────────────────────────────────────────────────────────
+  const [fcPeriod, setFcPeriod] = usePersist<'eoy' | '6m' | '12m'>('sav_forecast_period', '12m')
+  const { data: fcData, isLoading: fcLoading } = useQuery({
+    queryKey: ['savings-forecast', fcPeriod],
+    queryFn: () => getSavingsForecast(fcPeriod),
+    enabled: savView === 'forecast',
+  })
+
+  // ── Recommendations state ─────────────────────────────────────────────────────
+  const { data: recData, isLoading: recLoading } = useQuery({
+    queryKey: ['savings-recommendations'],
+    queryFn: getSavingsRecommendations,
+    enabled: savView === 'recommendations',
+  })
+
+  type ActualResult = {
+    period_label: string
+    summary: Row; detail: Row[]; detail_last: Row[]; monthly: { month: string; income_eur: number }[]
+  }
+  type ForecastResult = {
+    summary: { total_period_eur: number; total_annual_eur: number; total_monthly_eur: number; accounts_count: number; portfolio_apy_pct: number }
+    monthly_forecast: { month: string; income_eur: number }[]
+    by_account: Row[]
+  }
+  type RecResult = { ranking: Row[]; idle_opportunities: Row[]; total_potential_gain_eur: number }
+
+  const result    = data    as ActualResult   | undefined
+  const fcResult  = fcData  as ForecastResult | undefined
+  const recResult = recData as RecResult      | undefined
+
+  const { sorted: detailSorted, sortKey: detailSK, sortDir: detailSD, toggleSort: detailSort } =
+    useSortTablePersisted(result?.detail ?? [], 'savings-actual-sort', 'total_interest_eur', 'desc')
+  const { sorted: fcSorted, sortKey: fcSK, sortDir: fcSD, toggleSort: fcSort } =
+    useSortTablePersisted(fcResult?.by_account ?? [], 'savings-forecast-sort', 'period_forecast_eur', 'desc')
+  const { sorted: rankSorted, sortKey: rankSK, sortDir: rankSD, toggleSort: rankSort } =
+    useSortTablePersisted(recResult?.ranking ?? [], 'savings-ranking-sort', 'apy_pct', 'desc')
+  const { sorted: idleSorted, sortKey: idleSK, sortDir: idleSD, toggleSort: idleSort } =
+    useSortTablePersisted(recResult?.idle_opportunities ?? [], 'savings-idle-sort', 'potential_annual_gain_eur', 'desc')
+
   const pct = (v: unknown) => v != null ? `${Number(v).toFixed(2)}%` : '—'
   const days = (v: unknown) => v != null ? String(Math.round(Number(v))) : '—'
   const dateStr = (v: unknown) => v ? String(v).slice(0, 10) : '—'
-  const chart = (s.chart as unknown as { accounts_name: string; annual_yoc_pct: number }[]) ?? []
+
+  // ── View toggle ───────────────────────────────────────────────────────────────
+  const VIEW_LABELS: Record<string, string> = { actual: '📋 Actual', forecast: '🔮 Forecast', recommendations: '💡 Recommendations' }
+  const ViewToggle = (
+    <div className="flex gap-1 mb-4">
+      {(['actual', 'forecast', 'recommendations'] as const).map(v => (
+        <button key={v} onClick={() => setSavView(v)}
+          className={`px-4 py-1.5 text-xs rounded-full font-medium border transition-colors ${savView === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+          {VIEW_LABELS[v]}
+        </button>
+      ))}
+    </div>
+  )
+
+  // ── Forecast view ─────────────────────────────────────────────────────────────
+  const FC_PERIOD_LABELS: Record<'eoy' | '6m' | '12m', string> = { eoy: 'Till EOY', '6m': 'Next 6 Months', '12m': 'Next 12 Months' }
+  const FC_PERIOD_SHORT:  Record<'eoy' | '6m' | '12m', string> = { eoy: 'EOY', '6m': '6mo', '12m': '12mo' }
+  if (savView === 'forecast') {
+    return (
+      <div className="space-y-4">
+        {ViewToggle}
+        <div className="flex gap-1.5">
+          {(['eoy', '6m', '12m'] as const).map(p => (
+            <button key={p} onClick={() => setFcPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded border font-medium ${fcPeriod === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {FC_PERIOD_LABELS[p]}
+            </button>
+          ))}
+        </div>
+        {fcLoading ? <div className="flex justify-center py-12"><Spinner /></div>
+          : !fcResult || !fcResult.by_account?.length ? (
+            <p className="text-slate-400 text-sm py-8 text-center">No forecast data for this period — no savings account has a last real interest period to project from yet.</p>
+          ) : (
+          <>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Total projected interest ${fcPeriod === 'eoy' ? 'between now and the end of this year' : `over the ${fcPeriod === '6m' ? 'next 6 months' : 'next 12 months'}`}, compounding each account's current balance forward at its last real interest period's APY%.`}>Projected ({FC_PERIOD_SHORT[fcPeriod]})</Tooltip></p>
+                <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_period_eur)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Projected period total divided by the number of months in the period.">Monthly Average</Tooltip></p>
+                <p className="text-xl font-bold">{fmtEur(fcResult.summary.total_monthly_eur)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of savings accounts with a projected payment within this period.">Accounts</Tooltip></p>
+                <p className="text-xl font-bold">{fcResult.summary.accounts_count}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-xs text-slate-500 mb-1"><Tooltip text="Balance-weighted average of each account's last real interest period APY%, regardless of the period selected above.">Portfolio APY</Tooltip></p>
+                <p className="text-xl font-bold">{fcResult.summary.portfolio_apy_pct.toFixed(2)}%</p>
+              </div>
+            </div>
+
+            {fcResult.monthly_forecast.length > 0 && (
+              <Plot
+                data={[{ x: fcResult.monthly_forecast.map(m => m.month), y: fcResult.monthly_forecast.map(m => m.income_eur), type: 'bar', marker: { color: '#3b82f6' }, name: 'Projected' }]}
+                layout={{
+                  title: `Projected Monthly Interest Income (€) — ${FC_PERIOD_LABELS[fcPeriod]}`,
+                  height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
+                  yaxis: { title: 'Projected Income (€)' },
+                  xaxis: { tickformat: '%b %Y', dtick: 'M1', type: 'date' as const },
+                  ...plotLayout(isDark),
+                }}
+                config={{ displayModeBar: false }} style={{ width: '100%' }}
+              />
+            )}
+
+            <WithCopy>
+              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                    <ColHeader label="Account" sortKey="accounts_name" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Savings account name." />
+                    <ColHeader label="Curr" sortKey="currency" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Account currency." />
+                    <ColHeader label="Current Balance" sortKey="current_balance" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current ledger balance — the principal this forecast compounds forward." />
+                    <ColHeader label="APY %" sortKey="apy_pct" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Compound annualised rate from the account's last real interest period — the rate this forecast assumes going forward." />
+                    <ColHeader label="Cadence (days)" sortKey="cadence_days" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Days between this account's last two interest payments — used as the assumed payment interval going forward." />
+                    <ColHeader label={`Amt (${FC_PERIOD_SHORT[fcPeriod]})`} sortKey="period_forecast_eur" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Sum of projected interest payments landing within the selected period, compounding on the running balance." />
+                    <ColHeader label="Projected Balance" sortKey="projected_balance_eur" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current balance plus all projected interest payments through the end of the period." />
+                    <ColHeader label="Next Payment" sortKey="next_payment_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected date of the next interest payment, based on the account's historical cadence." />
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fcSorted.map((r, i) => (
+                      <tr key={i} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                        <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{days(r.cadence_days)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.period_forecast_eur))}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.projected_balance_eur), 2)}</td>
+                        <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.next_payment_date)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── Recommendations view ──────────────────────────────────────────────────────
+  if (savView === 'recommendations') {
+    return (
+      <div className="space-y-4">
+        {ViewToggle}
+        <p className="text-xs text-slate-400">Ranks your own savings accounts and flags idle cash — there's no external market of savings accounts to recommend opening, only what you already have.</p>
+
+        {recLoading ? <div className="flex justify-center py-12"><Spinner /></div>
+          : !recResult || !recResult.ranking?.length ? (
+            <p className="text-slate-400 text-sm py-8 text-center">No savings accounts with a last real interest period to rank yet.</p>
+          ) : (
+          <>
+            <div>
+              <h4 className="text-sm font-semibold text-slate-700 mb-2">Your Savings Accounts, Ranked by APY%</h4>
+              <WithCopy>
+                <div className="overflow-x-auto overflow-y-auto max-h-96">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                      <ColHeader label="Account" sortKey="accounts_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Savings account name." />
+                      <ColHeader label="Curr" sortKey="currency" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Account currency." />
+                      <ColHeader label="Current Balance" sortKey="current_balance" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Current ledger balance." />
+                      <ColHeader label="APY %" sortKey="apy_pct" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Compound annualised rate from the account's last real interest period." />
+                      <ColHeader label="Ann. YOC %" sortKey="annual_yoc_pct" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Simple annualised Yield on Cost from the same last real interest period." />
+                      <ColHeader label="Last Interest" sortKey="last_interest_date" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Date of the most recent interest payment this ranking is based on." />
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rankSorted.map((r, i) => (
+                        <tr key={i} className={`hover:bg-slate-50 ${i === 0 ? 'bg-green-50' : ''}`}>
+                          <td className="px-3 py-2 font-medium">{i === 0 && '🏆 '}{String(r.accounts_name)}</td>
+                          <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{pct(r.apy_pct)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">{pct(r.annual_yoc_pct)}</td>
+                          <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_interest_date)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </WithCopy>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-slate-700">Idle Cash Opportunities</h4>
+                {recResult.idle_opportunities.length > 0 && (
+                  <span className="text-xs text-slate-500">Total potential gain: <span className="font-semibold text-green-600">{fmtEur(recResult.total_potential_gain_eur)}/yr</span></span>
+                )}
+              </div>
+              {recResult.idle_opportunities.length === 0 ? (
+                <p className="text-slate-400 text-sm py-8 text-center">No material idle balances found in Cash/Checking accounts — nothing to redirect right now.</p>
+              ) : (
+                <WithCopy>
+                  <div className="overflow-x-auto overflow-y-auto max-h-96">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                        <ColHeader label="Idle In" sortKey="accounts_name" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Cash/Checking account currently holding the idle balance." />
+                        <ColHeader label="Type" sortKey="accounts_type" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Account type." />
+                        <ColHeader label="Curr" sortKey="currency" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Account currency." />
+                        <ColHeader label="Balance" sortKey="balance" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="Current balance sitting idle, earning no structured interest." />
+                        <ColHeader label="Move To" sortKey="target_accounts_name" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Your best-performing savings account in the same currency." />
+                        <ColHeader label="Target APY %" sortKey="target_apy_pct" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="That account's last real interest period APY%." />
+                        <ColHeader label="Potential Gain/yr" sortKey="potential_annual_gain_eur" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="Estimated additional annual interest if this balance earned the target account's APY% instead of sitting idle." />
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {idleSorted.map((r, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                            <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                            <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.balance), 2)}</td>
+                            <td className="px-3 py-2 text-blue-700">→ {String(r.target_accounts_name)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{pct(r.target_apy_pct)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.potential_annual_gain_eur))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </WithCopy>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── Actual view ───────────────────────────────────────────────────────────────
+  if (isLoading) return <div className="space-y-4">{ViewToggle}<div className="flex justify-center py-12"><Spinner /></div></div>
 
   return (
     <div className="space-y-4">
-      <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500">
-        <strong>Principal</strong> = non-interest cash inflows (deposits/transfers in, excluding interest). <strong>Total Interest</strong> = sum of splits categorised as 'Interest'. <strong>Cumulative YoC</strong> = Total Interest ÷ Principal × 100. <strong>APY</strong> = (1 + Total Interest / Principal) ^ (365 / holding days) − 1, i.e. the compound annualised rate implied by actual interest earned over the holding period.
-      </div>
-
-      <div className="grid grid-cols-5 gap-3">
-        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of savings accounts tracked (accounts whose transactions include interest income).">Savings Accounts</Tooltip></p><p className="text-xl font-bold">{Number(s.savings_accounts_count ?? 0)}</p></div>
-        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Sum of non-interest inflows (deposits and transfers in) across all savings accounts.">Total Principal</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(s.total_principal_eur ?? 0))}</p></div>
-        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest credited to all savings accounts, from all time.">Total Interest Received</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(Number(s.total_interest_eur ?? 0))}</p></div>
-        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average Annual Yield on Cost: interest ÷ principal × 100, averaged across all accounts.">Avg Annual YOC</Tooltip></p><p className="text-xl font-bold">{pct(s.avg_yoc_pct)}</p></div>
-        <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average Annual Percentage Yield: compound annualised rate implied by actual interest earned over the holding period — (1 + interest/principal)^(365/days) − 1.">Avg APY</Tooltip></p><p className="text-xl font-bold">{pct(s.avg_apy_pct)}</p></div>
-      </div>
-
-      {chart.length > 0 && (
-        <Plot
-          data={[{
-            type: 'bar', orientation: 'h',
-            x: chart.map(c => c.annual_yoc_pct),
-            y: chart.map(c => c.accounts_name),
-            text: chart.map(c => `${c.annual_yoc_pct.toFixed(2)}%`),
-            textposition: 'outside',
-            marker: { color: chart.map(c => c.annual_yoc_pct), colorscale: 'RdYlGn' },
-          }]}
-          layout={{ title: 'Annual Yield over Cost (%) per Savings Account', height: Math.max(280, chart.length * 45), margin: { t: 40, l: 10, r: 40, b: 40 }, yaxis: { automargin: true }, xaxis: { title: '%' }, ...plotLayout(isDark) }}
-          config={{ displayModeBar: false }} style={{ width: '100%' }}
-        />
-      )}
-
+      {ViewToggle}
       <div>
-        <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail</h4>
-        <WithCopy>
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
-                <th className="px-3 py-2 text-left"><Tooltip text="Account type (e.g. Savings, Fixed Deposit).">Type</Tooltip></th>
-                <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Total non-interest cash inflows (deposits and transfers in).">Principal</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Sum of all interest income credited to this account.">Total Interest</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annualised interest based on the most recent interest payment, extrapolated over a full year.">Annual Interest (cash)</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Current ledger balance of the account.">Current Balance</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annual Yield on Cost: total interest ÷ principal × 100. Reflects what the account has actually returned relative to deposits.">Annual YOC%</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annual Percentage Yield: compound annualised rate — (1 + interest/principal)^(365/holding_days) − 1.">APY%</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Total number of days between the first and last transaction recorded for this account.">Holding Days</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Date of the earliest recorded transaction.">First Tx</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Date of the most recent recorded transaction.">Last Tx</Tooltip></th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {result.detail.map((r, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
-                    <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
-                    <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.principal ?? 0), 2)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.annual_interest_cash ?? 0), 2)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtNum(Number(r.current_balance ?? 0), 2)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_total)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.first_tx_date)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_tx_date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Time window for aggregating savings interest income. Custom lets you pick any date range.">Period:</Tooltip></label>
+        <div className="flex flex-wrap gap-1.5">
+          {DIV_PERIODS.map(p => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-xs rounded border font-medium ${period === p ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+        {period === 'Custom' && (
+          <div className="flex items-center gap-2 mt-2">
+            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+            <span className="text-slate-400 text-xs">to</span>
+            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
           </div>
-        </WithCopy>
+        )}
       </div>
+
+      {!result || !result.detail.length ? (
+        <p className="text-slate-400 text-sm py-8 text-center">No savings interest found for the selected period.</p>
+      ) : (
+        <>
+          <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-500">
+            <strong>Principal</strong> = non-interest cash inflows within the selected period (deposits/transfers in, excluding interest). <strong>Total Interest</strong> = interest received within the selected period. <strong>Ann. YOC%</strong> = annualised interest ÷ time-weighted average balance over the period × 100. <strong>APY%</strong> = (1 + interest/avg balance) ^ (365/period days) − 1, the compound annualised rate implied by actual interest earned over the period.
+          </div>
+
+          <h4 className="text-sm font-semibold text-slate-700">Interest by Account — {result.period_label}</h4>
+          <div className="grid grid-cols-4 gap-4">
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest received across all savings accounts in the selected period.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(Number(result.summary.total_interest_eur ?? 0))}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest for the selected period divided by the number of calendar months it spans.">Monthly Average</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.avg_monthly_interest_eur ?? 0))}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of savings accounts with principal or interest activity in the selected period.">Accounts</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.savings_accounts_count ?? 0)}</p></div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Average Annual Percentage Yield across accounts for the selected period.">Avg APY</Tooltip></p><p className="text-xl font-bold">{pct(result.summary.avg_apy_pct)}</p></div>
+          </div>
+
+          {result.monthly.length > 0 && (
+            <Plot
+              data={[{
+                x: result.monthly.map(m => m.month),
+                y: result.monthly.map(m => m.income_eur),
+                type: 'bar', marker: { color: '#2ecc71' },
+              }]}
+              layout={{
+                title: `Monthly Interest Income (€) — ${result.period_label}`,
+                height: 320, margin: { t: 50, r: 20, b: 40, l: 60 },
+                yaxis: { title: 'Income (€)' },
+                xaxis: { tickformat: '%b %Y', dtick: 'M1', type: 'date' as const },
+                ...plotLayout(isDark),
+              }}
+              config={{ displayModeBar: false }} style={{ width: '100%' }}
+            />
+          )}
+
+          <div>
+            <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail — {result.period_label}</h4>
+            <WithCopy>
+              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                    <ColHeader label="Account" sortKey="accounts_name" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Savings account name." />
+                    <ColHeader label="Type" sortKey="accounts_type" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Account type." />
+                    <ColHeader label="Curr" sortKey="currency" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Account currency." />
+                    <ColHeader label="Principal" sortKey="principal" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Non-interest cash inflows within the selected period." />
+                    <ColHeader label="Total Interest" sortKey="total_interest" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Interest received within the selected period." />
+                    <ColHeader label="Avg Balance" sortKey="avg_balance" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Time-weighted average balance during the selected period — the base the yield figures below are computed against." />
+                    <ColHeader label="Current Balance" sortKey="current_balance" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Today's ledger balance (not scoped to the period)." />
+                    <ColHeader label="Ann. YOC%" sortKey="annual_yoc_pct" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Annualised Yield on Cost for the period: annualised interest ÷ average balance × 100." />
+                    <ColHeader label="APY%" sortKey="apy_pct" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Compound annualised rate for the period." />
+                    <ColHeader label="Days" sortKey="holding_days" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Number of days in the selected period." />
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {detailSorted.map((r, i) => (
+                      <tr key={i} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                        <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                        <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.principal ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.avg_balance ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtNum(Number(r.current_balance ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+          </div>
+        </>
+      )}
 
       <div>
         <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail for Last Interest Period</h4>
@@ -3215,24 +3480,24 @@ function SavingsAccountsTab() {
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left"><Tooltip text="Savings account name.">Account</Tooltip></th>
-                <th className="px-3 py-2 text-left"><Tooltip text="Account type.">Type</Tooltip></th>
-                <th className="px-3 py-2 text-left"><Tooltip text="Account currency.">Curr</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Average principal balance during the last interest period.">Avg Principal</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Total interest received in the most recent interest period.">Last Interest</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Last period's interest extrapolated to a full year.">Annual Interest (cash)</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Annual Yield on Cost for the last period: interest ÷ average principal × 100.">Annual YOC%</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Compound annualised rate for the last period — (1 + interest/principal)^(365/days) − 1.">APY%</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Number of days in the last interest period.">Holding Days</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Start date of the last interest period.">Period Start</Tooltip></th>
-                <th className="px-3 py-2 text-right"><Tooltip text="Date when the last interest payment was credited.">Last Interest Date</Tooltip></th>
+                <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Savings account name.">Account</Tooltip></th>
+                <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Account type.">Type</Tooltip></th>
+                <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Account currency.">Curr</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Average principal balance during the last interest period.">Avg Principal</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Total interest received in the most recent interest period.">Last Interest</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Last period's interest extrapolated to a full year.">Annual Interest (cash)</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Annual Yield on Cost for the last period: interest ÷ average principal × 100.">Annual YOC%</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Compound annualised rate for the last period — (1 + interest/principal)^(365/days) − 1. This is what Forecast projects forward.">APY%</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Number of days in the last interest period.">Holding Days</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Start date of the last interest period.">Period Start</Tooltip></th>
+                <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Date when the last interest payment was credited.">Last Interest Date</Tooltip></th>
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {result.detail_last.map((r, i) => (
+                {(result?.detail_last ?? []).map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
-                    <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
-                    <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">{String(r.accounts_name)}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.currency)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-green-700">{r.last_interest_sum != null ? fmtNum(Number(r.last_interest_sum), 2) : '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.annual_interest_cash_last != null ? fmtNum(Number(r.annual_interest_cash_last), 2) : '—'}</td>
@@ -5310,6 +5575,7 @@ const CF_COLOR_MAP: Record<string, string> = {
   'Income · Recurring (est.)':    '#82E0AA',
   'Expense · Recurring (est.)':   '#F1948A',
   'Income · Dividends (est.)':    '#9B59B6',
+  'Income · Interest (est.)':     '#1ABC9C',
 }
 
 function CashFlowSection() {
@@ -5327,7 +5593,8 @@ function CashFlowSection() {
     templates: Row[]
     recurring: Row[]
     dividends: Row[]
-    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; div_in: number; net_total: number }
+    interest: Row[]
+    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; div_in: number; int_in: number; net_total: number }
   } | undefined
 
   // Build chart data: aggregate scheduled + templates + recurring + dividends by calendar month
@@ -5345,6 +5612,7 @@ function CashFlowSection() {
     for (const r of result.templates) addRow(String(r.date), Number(r.amount_eur), 'Recurring Template')
     for (const r of result.recurring) addRow(String(r.date), Number(r.amount_eur), 'Recurring (est.)')
     for (const r of result.dividends ?? []) addRow(String(r.date), Number(r.amount_eur), 'Dividends (est.)')
+    for (const r of result.interest ?? []) addRow(String(r.date), Number(r.amount_eur), 'Interest (est.)')
 
     const allMonths = [...new Set([
       ...Object.values(bySeriesMonth).flatMap(m => Object.keys(m))
@@ -5366,6 +5634,7 @@ function CashFlowSection() {
   const templates = result?.templates ?? []
   const recurring = result?.recurring ?? []
   const dividends = result?.dividends ?? []
+  const interest = result?.interest ?? []
 
   const KPI_METRICS = m ? [
     { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.' },
@@ -5375,7 +5644,8 @@ function CashFlowSection() {
     { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.' },
     { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.' },
     { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).' },
-    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, and dividend in/out amounts within the horizon.' },
+    { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected savings interest within the horizon, compounding each account's current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view." },
+    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon.' },
   ] : []
 
   return (
@@ -5407,7 +5677,7 @@ function CashFlowSection() {
 
       {/* KPI metrics */}
       {KPI_METRICS.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3">
           {KPI_METRICS.map(k => (
             <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
               <Tooltip text={k.tip}>
@@ -5595,6 +5865,45 @@ function CashFlowSection() {
                     <td className="px-3 py-2 tabular-nums text-slate-600 whitespace-nowrap">{String(r.date)}</td>
                     <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.payees_name || '—')}</SecLink></td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-purple-700">
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.frequency || '—')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
+
+      {/* Interest Income */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">🏦 Expected Interest Income</h3>
+        <p className="text-xs text-slate-400 mb-2">
+          Projected savings interest within this horizon, compounding each account's current balance forward at its
+          last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view.
+        </p>
+        {interest.length === 0 ? (
+          <p className="text-sm text-slate-400">No savings interest projected within this horizon.</p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Pay Date</th>
+                  <th className="px-3 py-2 text-left">Account</th>
+                  <th className="px-3 py-2 text-right">Amount (€)</th>
+                  <th className="px-3 py-2 text-left">Cadence</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {interest.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600 whitespace-nowrap">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-teal-700">
                       {fmtEur(Number(r.amount_eur))}
                     </td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.frequency || '—')}</td>
