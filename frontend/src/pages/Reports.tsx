@@ -26,7 +26,7 @@ import {
   updateTransaction, upsertSplits, getSplits, getCategories, getPayees, deleteTransaction,
   getTransactionById,
   addPrice,
-  getSecurities,
+  getSecurities, lookupTicker, upsertSecurity,
   api,
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
@@ -1301,25 +1301,49 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
 }
 
 function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
+  const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds], queryFn: () => getXrayStockOverlap(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const totalPortfolio = rows.length > 0 ? Number(rows[0].total_portfolio_eur ?? 0) : 0
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
+  const [importingSymbol, setImportingSymbol] = useState<string | null>(null)
+  const [importErrors, setImportErrors] = useState<Record<string, string>>({})
 
   const bySymbol = useMemo(() => {
-    const m: Record<string, { name: string; total: number; sources: { label: string; value: number }[] }> = {}
+    const m: Record<string, { name: string; total: number; securitiesId: number | null; sources: { label: string; value: number }[] }> = {}
     for (const r of rows) {
       const sym = String(r.symbol ?? '—')
-      if (!m[sym]) m[sym] = { name: String(r.name ?? ''), total: 0, sources: [] }
+      if (!m[sym]) m[sym] = { name: String(r.name ?? ''), total: 0, securitiesId: null, sources: [] }
       const val = Number(r.value_eur ?? 0)
       m[sym].total += val
+      if (r.securities_id != null) m[sym].securitiesId = Number(r.securities_id)
       m[sym].sources.push({ label: r.source_type === 'Direct' ? 'Direct' : `via ${String(r.source_label)}`, value: val })
     }
     return Object.entries(m).sort((a, b) => b[1].total - a[1].total)
   }, [rows])
 
   const detailRows = selectedSymbol ? bySymbol.find(([sym]) => sym === selectedSymbol)?.[1].sources ?? [] : []
+
+  // One-click import: a fund's top-10 constituent that isn't already a Securities row
+  // (you don't hold it directly, and it's never been imported before) — fetches its
+  // Yahoo Finance metadata and creates the row directly, no form to fill in, since the
+  // exact ticker is already known from the fund's holdings data.
+  const handleImport = async (sym: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setImportingSymbol(sym)
+    setImportErrors(prev => { const next = { ...prev }; delete next[sym]; return next })
+    try {
+      const info = await lookupTicker(sym) as Record<string, unknown>
+      await upsertSecurity({ ...info, ticker: info.ticker || sym })
+      qc.invalidateQueries({ queryKey: ['xray', 'stock-overlap'] })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (err instanceof Error ? err.message : 'Import failed')
+      setImportErrors(prev => ({ ...prev, [sym]: msg }))
+    } finally {
+      setImportingSymbol(null)
+    }
+  }
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
@@ -1334,6 +1358,7 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
               <th className="text-right px-2 py-1.5 border-b border-slate-200">Total Value (€)</th>
               <th className="text-right px-2 py-1.5 border-b border-slate-200">% of Portfolio</th>
               <th className="text-left px-2 py-1.5 border-b border-slate-200">Sources</th>
+              <th className="text-left px-2 py-1.5 border-b border-slate-200"></th>
             </tr>
           </thead>
           <tbody>
@@ -1341,11 +1366,23 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
               <tr key={i} onClick={() => setSelectedSymbol(c => c === sym ? null : sym)}
                 className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedSymbol === sym ? 'bg-slate-100' : ''}`}>
                 <td className="px-2 py-1.5 font-mono font-medium">{sym}</td>
-                <td className="px-2 py-1.5 text-slate-500">{v.name}</td>
+                <td className="px-2 py-1.5 text-slate-500"><SecLink id={v.securitiesId}>{v.name}</SecLink></td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(v.total)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(totalPortfolio > 0 ? v.total / totalPortfolio * 100 : 0)}</td>
                 <td className="px-2 py-1.5 text-slate-500">
                   {v.sources.map((s) => `${s.label} (${fmtPct(totalPortfolio > 0 ? s.value / totalPortfolio * 100 : 0)})`).join(', ')}
+                </td>
+                <td className="px-2 py-1.5">
+                  {v.securitiesId == null && sym !== '—' && (
+                    <button
+                      onClick={e => handleImport(sym, e)}
+                      disabled={importingSymbol === sym}
+                      title={`Look up ${sym} on Yahoo Finance and add it to Securities`}
+                      className="text-blue-600 hover:text-blue-800 underline disabled:opacity-50 disabled:no-underline whitespace-nowrap">
+                      {importingSymbol === sym ? 'Importing…' : 'Import from Yahoo'}
+                    </button>
+                  )}
+                  {importErrors[sym] && <span className="text-red-600 block mt-0.5">{importErrors[sym]}</span>}
                 </td>
               </tr>
             ))}
@@ -1355,6 +1392,7 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
       </WithCopy>
       <p className="text-xs text-slate-400">
         Fund contributions only capture each fund's top 10 constituents — true overlap for broad-market funds may be higher than shown here.
+        Constituents not already in Securities (not held directly, never imported) show an <b>Import from Yahoo</b> button to add them.
       </p>
 
       {selectedSymbol && (

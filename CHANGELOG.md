@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-08-08
 
+### Added
+- **Portfolio Analysis → Stock Overlap can now import unregistered fund constituents from Yahoo Finance in one click** — a fund's top-10 holding that isn't already a Securities row (not held directly, never imported) shows an **Import from Yahoo** button instead of plain text; since the exact ticker is already known from the fund's own holdings data, there's no form to fill in — it fetches the security's Yahoo metadata and creates the row directly. Registered symbols (existing or freshly imported) now link through to Security Detail, same as everywhere else in the app.
+
 ### Fixed
 - **Inv. Portfolio's "As of date" control showed on every sub-tab, even ones that ignore it** — Current Holdings, FX Exposure, and Portfolio Analysis all show live data regardless of the selected date, but the control stayed visible and editable there anyway, implying it did something. Now hidden on those three; still shown (and functional) on Graph, Summary, and Detail Analysis, the only ones that actually use it.
 

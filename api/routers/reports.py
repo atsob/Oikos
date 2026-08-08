@@ -3392,23 +3392,29 @@ def get_xray_stock_overlap(account_ids: Optional[str] = Query(None)):
     totals AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value),
     direct_stock AS (
         SELECT Yahoo_Ticker AS symbol, Securities_Name AS name, 'Direct' AS source_type,
-               NULL::text AS source_label, value_eur
+               NULL::text AS source_label, value_eur, Securities_Id AS securities_id
         FROM holdings_value
         WHERE sec_type NOT IN ('ETF','Mutual Fund') AND Yahoo_Ticker IS NOT NULL AND Yahoo_Ticker <> ''
     ),
     fund_constituents AS (
+        -- A fund's top-10 constituent is "registered" if its symbol matches an existing
+        -- Securities row (e.g. you also hold it directly, or previously imported it from
+        -- here) — lets the frontend offer a one-click "Import from Yahoo" only where a
+        -- security genuinely doesn't exist yet, instead of guessing from Yahoo_Ticker text.
         SELECT fth.Symbol AS symbol, fth.Holding_Name AS name, 'Fund' AS source_type,
-               s.Securities_Name AS source_label, hv.value_eur * fth.Weight_Pct AS value_eur
+               s.Securities_Name AS source_label, hv.value_eur * fth.Weight_Pct AS value_eur,
+               sec2.Securities_Id AS securities_id
         FROM Fund_Top_Holdings fth
         JOIN holdings_value hv ON hv.Securities_Id = fth.Securities_Id
         JOIN Securities s ON s.Securities_Id = fth.Securities_Id
+        LEFT JOIN Securities sec2 ON sec2.Yahoo_Ticker = fth.Symbol
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
     )
-    SELECT symbol, name, source_type, source_label, ROUND(value_eur::numeric,2) AS value_eur,
+    SELECT symbol, name, source_type, source_label, ROUND(value_eur::numeric,2) AS value_eur, securities_id,
            (SELECT grand_total FROM totals) AS total_portfolio_eur
     FROM direct_stock
     UNION ALL
-    SELECT symbol, name, source_type, source_label, ROUND(value_eur::numeric,2) AS value_eur,
+    SELECT symbol, name, source_type, source_label, ROUND(value_eur::numeric,2) AS value_eur, securities_id,
            (SELECT grand_total FROM totals) AS total_portfolio_eur
     FROM fund_constituents
     ORDER BY value_eur DESC

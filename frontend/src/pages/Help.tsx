@@ -489,6 +489,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           doesn't show up as two separate rows with different casing.
         </Note>
         <Note>
+          <b>Stock Overlap</b> rows link through to Security Detail when the symbol is already a registered
+          Security. A fund's top-10 constituent that isn't (not held directly, never imported) shows an{' '}
+          <b>Import from Yahoo</b> button instead — since the fund's holdings data already gives the exact ticker,
+          it fetches that security's Yahoo metadata and creates the row in one click, no form to fill in.
+        </Note>
+        <Note>
           Funds Yahoo doesn't report a Morningstar category for no longer collapse into one opaque "N/A" bucket
           in Style Box — instead they're bucketed by their own dominant asset mix (e.g. <b>"Equity Fund (Uncategorized)"</b>,
           "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
