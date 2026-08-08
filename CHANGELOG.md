@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-08
+
+### Fixed
+- **Inv. Portfolio's "As of date" control showed on every sub-tab, even ones that ignore it** — Current Holdings, FX Exposure, and Portfolio Analysis all show live data regardless of the selected date, but the control stayed visible and editable there anyway, implying it did something. Now hidden on those three; still shown (and functional) on Graph, Summary, and Detail Analysis, the only ones that actually use it.
+
 ## 2026-08-07
 
 ### Added

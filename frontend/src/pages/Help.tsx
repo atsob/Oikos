@@ -448,6 +448,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>📈 Inv. Portfolio</H3>
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
+          The <b>As of date</b> control only applies to <b>Graph</b>, <b>Summary</b>, and <b>Detail Analysis</b> —
+          it's hidden on <b>Current Holdings</b>, <b>FX Exposure</b>, and <b>Portfolio Analysis</b>, which always
+          show live data regardless of the date.
+        </Note>
+        <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
           Holdings, FX Exposure, Portfolio Analysis) to a saved set of accounts — see the same
           control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}

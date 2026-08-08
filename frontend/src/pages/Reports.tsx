@@ -1609,22 +1609,26 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
     <div className="space-y-3">
       <PortfolioPresetBar reportScope="inv_positions" eligibleTypes={INV_POSITION_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
 
-      {/* Shared date control — applies to Graph, Summary and Detail Analysis */}
-      <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
-        <label className="text-sm text-slate-500 font-medium whitespace-nowrap">As of date:</label>
-        <input
-          type="date"
-          value={asOf}
-          onChange={e => setAsOf(e.target.value)}
-          className="border border-slate-200 rounded px-3 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-        />
-        <button
-          onClick={() => setAsOf(defaultDate)}
-          className="text-xs text-slate-400 hover:text-slate-600 underline"
-        >
-          Reset to {defaultDate}
-        </button>
-      </div>
+      {/* Shared date control — applies to Graph, Summary and Detail Analysis only; hidden
+          elsewhere since Current Holdings, FX Exposure, and Portfolio Analysis always
+          show live data and ignore it, which was confusing to leave visible. */}
+      {(tab === 'Graph' || tab === 'Summary' || tab === 'Detail Analysis') && (
+        <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
+          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">As of date:</label>
+          <input
+            type="date"
+            value={asOf}
+            onChange={e => setAsOf(e.target.value)}
+            className="border border-slate-200 rounded px-3 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <button
+            onClick={() => setAsOf(defaultDate)}
+            className="text-xs text-slate-400 hover:text-slate-600 underline"
+          >
+            Reset to {defaultDate}
+          </button>
+        </div>
+      )}
 
       <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'FX Exposure', 'Portfolio Analysis']} active={tab} onChange={setTab} />
       {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
