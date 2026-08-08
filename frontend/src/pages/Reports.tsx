@@ -10,7 +10,7 @@ import {
   getHoldingsSnapshot,
   getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
-  getCashFlowForecastFull, getPnl,
+  getCashFlowForecastFull, getPnl, getPnlPeriod,
   getNetWorthByAccount, getInvestmentPositionsHistory, getFxExposure,
   getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
   getSpendingTrends, getSavingsRateDetail,
@@ -1682,13 +1682,42 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
 // ════════════════════════════════════════════════════════════════════════════
 // 3. INVESTMENT PERFORMANCE
 // ════════════════════════════════════════════════════════════════════════════
-type PnlWindow = 'dtd' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | 'all'
+type PnlWindow = 'dtd' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | '1y' | '3y' | '5y' | 'all'
 const PNL_WINDOWS = [
   { k: 'dtd' as PnlWindow, label: 'D' }, { k: 'wtd' as PnlWindow, label: 'W' },
   { k: 'mtd' as PnlWindow, label: 'M' }, { k: 'qtd' as PnlWindow, label: 'Q' },
-  { k: 'ytd' as PnlWindow, label: 'YTD' }, { k: 'all' as PnlWindow, label: 'All' },
+  { k: 'ytd' as PnlWindow, label: 'YTD' },
+  { k: '1y' as PnlWindow, label: '1Y' }, { k: '3y' as PnlWindow, label: '3Y' }, { k: '5y' as PnlWindow, label: '5Y' },
+  { k: 'all' as PnlWindow, label: 'All' },
 ]
 function pnlKey(w: PnlWindow) { return w === 'all' ? 'pnl_net_all_time_eur' : `pnl_${w}_eur` }
+const LONG_TERM_YEARS: Record<string, number> = { '1y': 1, '3y': 3, '5y': 5, '1Y': 1, '3Y': 3, '5Y': 5 }
+
+// Long-term P&L (1Y/3Y/5Y) lives in its own endpoint/query, separate from the base P&L
+// data (which covers DTD/WTD/MTD/QTD/YTD/All-Time and is live-refetched) — this only
+// fetches when one of those long-term periods is actually selected (`years` non-null),
+// and merges its per-(account,security) result into the base rows on demand.
+function useLongTermPnl(years: number | null) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['pnl-period', years],
+    queryFn: () => getPnlPeriod(years as number),
+    enabled: years != null,
+  })
+  return useMemo(() => {
+    const map = new Map<string, { eur: number; pct: number | null }>()
+    for (const r of (data ?? []) as Row[]) {
+      map.set(`${r.accounts_id}-${r.securities_id}`, { eur: Number(r.pnl_eur ?? 0), pct: r.pnl_percent != null ? Number(r.pnl_percent) : null })
+    }
+    return { map, isLoading: years != null && isLoading }
+  }, [data, isLoading, years])
+}
+function mergeLongTermPnl(rows: Row[], eurKey: string | null, pctKey: string | null, map: Map<string, { eur: number; pct: number | null }>): Row[] {
+  if (!eurKey) return rows
+  return rows.map(r => {
+    const hit = map.get(`${r.accounts_id}-${r.securities_id}`)
+    return { ...r, [eurKey]: hit?.eur ?? 0, ...(pctKey ? { [pctKey]: hit?.pct ?? null } : {}) }
+  })
+}
 
 function PnlCell({ val, pct }: { val: number; pct?: number | null }) {
   const color = val >= 0 ? 'text-green-700' : 'text-red-600'
@@ -1768,9 +1797,14 @@ function PnlReport() {
   }
 
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01'), refetchInterval: liveRefetchMs })
+  const ltYears = LONG_TERM_YEARS[win] ?? null
+  const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
 
   // Derive all data BEFORE any early return so hooks are always called in the same order
-  const rows = data as Row[]
+  const rows = useMemo(
+    () => mergeLongTermPnl(data as Row[], ltYears ? pnlKey(win) : null, ltYears ? `pnl_${win}_percent` : null, ltMap),
+    [data, win, ltYears, ltMap],
+  )
   const pk = pnlKey(win)
   const mktKey = win === 'dtd' ? 'pnl_dtd_market_eur' : win === 'ytd' ? 'pnl_ytd_market_eur' : null
   const fxKey  = win === 'dtd' ? 'pnl_dtd_fx_eur'     : win === 'ytd' ? 'pnl_ytd_fx_eur'     : null
@@ -1841,7 +1875,7 @@ function PnlReport() {
   const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTablePersisted(accounts, 'pnl-accounts-sort', 'value', 'desc')
   const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTablePersisted(drillRows ?? [], 'pnl-drill-sort', 'current_value_eur', 'desc')
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (isLoading || ltLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const checkboxBar = (
     <div className="flex flex-wrap gap-4 items-center py-2 px-1 border-b border-slate-100">
@@ -2914,6 +2948,9 @@ const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
   'MTD':      ['pnl_mtd_eur',          'pnl_mtd_pct',              null],
   'QTD':      ['pnl_qtd_eur',          'pnl_qtd_pct',              null],
   'YTD':      ['pnl_ytd_eur',          'pnl_ytd_percent',          null],
+  '1Y':       ['pnl_1y_eur',           'pnl_1y_percent',           null],
+  '3Y':       ['pnl_3y_eur',           'pnl_3y_percent',           null],
+  '5Y':       ['pnl_5y_eur',           'pnl_5y_percent',           null],
   'All-Time': ['pnl_net_all_time_eur', 'pnl_net_all_time_percent', 'gross_invested_all_time_eur'],
 }
 
@@ -2926,13 +2963,19 @@ function PerformanceTab() {
   const [topN, setTopN] = usePersist('perf_top_n', 15)
   const [rankedOpen, setRankedOpen] = useState(false)
 
-  const rows = data as Row[]
+  const ltYears = LONG_TERM_YEARS[period] ?? null
+  const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
+  const rows = useMemo(
+    () => mergeLongTermPnl(data as Row[], ltYears ? PERF_PERIOD_MAP[period][0] : null, null, ltMap),
+    [data, period, ltYears, ltMap],
+  )
 
   const bySec = useMemo(() => {
     const agg: Record<string, Record<string, number>> = {}
     const secId: Record<string, unknown> = {}
     const sumCols = ['current_value_eur', 'gross_invested_all_time_eur', 'pnl_net_all_time_eur',
-      'unrealized_pnl_eur', 'realized_pnl_eur', 'pnl_dtd_eur', 'pnl_ytd_eur', 'pnl_qtd_eur', 'pnl_mtd_eur', 'pnl_wtd_eur']
+      'unrealized_pnl_eur', 'realized_pnl_eur', 'pnl_dtd_eur', 'pnl_ytd_eur', 'pnl_qtd_eur', 'pnl_mtd_eur', 'pnl_wtd_eur',
+      'pnl_1y_eur', 'pnl_3y_eur', 'pnl_5y_eur']
     for (const r of rows) {
       const name = String(r.securities_name)
       if (!agg[name]) agg[name] = {}
@@ -2954,10 +2997,14 @@ function PerformanceTab() {
         v.pnl_wtd_pct = v.pnl_wtd_eur / inv * 100
         v.pnl_mtd_pct = v.pnl_mtd_eur / inv * 100
         v.pnl_qtd_pct = v.pnl_qtd_eur / inv * 100
+        v.pnl_1y_percent = v.pnl_1y_eur / inv * 100
+        v.pnl_3y_percent = v.pnl_3y_eur / inv * 100
+        v.pnl_5y_percent = v.pnl_5y_eur / inv * 100
       } else {
         v.pnl_dtd_pct = NaN
         v.pnl_net_all_time_percent = NaN; v.pnl_ytd_percent = NaN
         v.pnl_wtd_pct = NaN; v.pnl_mtd_pct = NaN; v.pnl_qtd_pct = NaN
+        v.pnl_1y_percent = NaN; v.pnl_3y_percent = NaN; v.pnl_5y_percent = NaN
       }
     }
     return list
@@ -2981,7 +3028,7 @@ function PerformanceTab() {
 
   const allRanked = [...sortable].sort((a, b) => b[primary] - a[primary])
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (isLoading || ltLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
     <tr className="hover:bg-slate-50">
@@ -3018,6 +3065,9 @@ function PerformanceTab() {
               ['MTD',      'Month-to-date: since 1st of this month'],
               ['QTD',      'Quarter-to-date: since start of this quarter'],
               ['YTD',      'Year-to-date: since 1 Jan'],
+              ['1Y',       'Since 1 year ago today'],
+              ['3Y',       'Since 3 years ago today'],
+              ['5Y',       'Since 5 years ago today'],
               ['All-Time', 'Total P&L since the first recorded purchase'],
             ] as const).map(([p, tip]) => (
               <button key={p} title={tip} onClick={() => setPeriod(p)}

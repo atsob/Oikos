@@ -607,6 +607,7 @@ def get_pnl(
             GROUP BY a.Accounts_Id
         )
         SELECT
+            pf.Accounts_Id AS accounts_id,
             pf.Securities_Id AS securities_id,
             pf.Accounts_Name, pf.Securities_Name,
             pf.qty_today,
@@ -675,6 +676,110 @@ def get_pnl(
         LEFT JOIN Currencies c ON c.Currencies_Id = pf.sec_curr_id
         WHERE (pf.qty_today != 0 OR cf.cf_all_time IS NOT NULL)
         ORDER BY pf.Accounts_Name, pf.Securities_Name
+    """
+    with get_db() as conn:
+        df = pd.read_sql(query, conn)
+    return _df_to_list(df)
+
+
+@router.get("/pnl-period")
+def get_pnl_period(years: int = Query(..., ge=1, le=10)):
+    """Single-period P&L (since N years ago) per (account, security) — same formula as
+    get_pnl's YTD window, just measured from a different reference date.
+
+    Deliberately kept as its own endpoint rather than folded into get_pnl, which already
+    computes six period variants (DTD/WTD/MTD/QTD/YTD/All-Time) in one query that's
+    live-refetched on every P&L/Performance tab load — adding a 7th+ variant there would
+    make that query (and its polling) proportionally heavier for everyone, all the time.
+    This one only runs when a long-term period (1Y/3Y/5Y) is actually selected in the UI."""
+    query = f"""
+    WITH periods AS (
+        SELECT (CURRENT_DATE - INTERVAL '{years} years')::date AS ref_start, CURRENT_DATE AS today
+    ),
+    historical_entities AS (
+        SELECT Accounts_Id, Securities_Id FROM Holdings
+        UNION
+        SELECT Accounts_Id, Securities_Id FROM Investments
+    ),
+    historical_holdings AS (
+        SELECT
+            p.*, he.Accounts_Id, he.Securities_Id,
+            COALESCE(inv.qty_today, 0) AS qty_today,
+            COALESCE(inv.qty_ref,   0) AS qty_ref
+        FROM periods p
+        CROSS JOIN historical_entities he
+        LEFT JOIN LATERAL (
+            SELECT
+                SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                         WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
+                    FILTER (WHERE Date <= p.today)     AS qty_today,
+                SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                         WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END)
+                    FILTER (WHERE Date <= p.ref_start) AS qty_ref
+            FROM Investments
+            WHERE Accounts_Id = he.Accounts_Id AND Securities_Id = he.Securities_Id
+        ) inv ON true
+    ),
+    prices_fx AS (
+        SELECT
+            hh.*,
+            hp_today.Close AS price_today,
+            hp_ref.Close   AS price_ref,
+            fx_today.FX_Rate AS fx_today,
+            fx_ref.FX_Rate   AS fx_ref,
+            s.Currencies_Id AS sec_curr_id
+        FROM historical_holdings hh
+        JOIN Securities s ON hh.Securities_Id = s.Securities_Id
+        LEFT JOIN LATERAL (
+            SELECT
+                MAX(Date) FILTER (WHERE Date <= hh.today)     AS d_today,
+                MAX(Date) FILTER (WHERE Date <= hh.ref_start) AS d_ref
+            FROM Historical_Prices WHERE Securities_Id = hh.Securities_Id
+        ) pd ON true
+        LEFT JOIN Historical_Prices hp_today ON hp_today.Securities_Id = hh.Securities_Id AND hp_today.Date = pd.d_today
+        LEFT JOIN Historical_Prices hp_ref   ON hp_ref.Securities_Id   = hh.Securities_Id AND hp_ref.Date   = pd.d_ref
+        LEFT JOIN LATERAL (
+            SELECT
+                MAX(Date) FILTER (WHERE Date <= hh.today)     AS d_today,
+                MAX(Date) FILTER (WHERE Date <= hh.ref_start) AS d_ref
+            FROM Historical_FX WHERE Currencies_Id_1 = s.Currencies_Id
+        ) fxd ON true
+        LEFT JOIN Historical_FX fx_today ON fx_today.Currencies_Id_1 = s.Currencies_Id AND fx_today.Date = fxd.d_today
+        LEFT JOIN Historical_FX fx_ref   ON fx_ref.Currencies_Id_1   = s.Currencies_Id AND fx_ref.Date   = fxd.d_ref
+    ),
+    cash_flows AS (
+        SELECT
+            i.Accounts_Id, i.Securities_Id,
+            SUM(CASE WHEN i.Date > (SELECT ref_start FROM periods) THEN
+                (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn')
+                        THEN COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close + COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
+                      WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut')
+                        THEN -COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close - COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
+                      ELSE 0 END)
+            ELSE 0 END) AS cf_ref_eur
+        FROM Investments i
+        JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
+        JOIN Securities s ON i.Securities_Id = s.Securities_Id
+        LEFT JOIN Historical_FX hfx     ON hfx.Currencies_Id_1     = a.Currencies_Id AND hfx.Date     = i.Date
+        LEFT JOIN Historical_FX hfx_sec ON hfx_sec.Currencies_Id_1 = s.Currencies_Id AND hfx_sec.Date = i.Date
+        LEFT JOIN LATERAL (
+            SELECT hp.Close FROM Historical_Prices hp
+            WHERE hp.Securities_Id = i.Securities_Id AND hp.Date <= i.Date
+            ORDER BY hp.Date DESC LIMIT 1
+        ) hist_price ON i.Action = 'Reinvest'
+                     AND (i.Price_Per_Share = 0 OR i.Price_Per_Share IS NULL)
+                     AND (i.Total_Amount_SecCur = 0 OR i.Total_Amount_SecCur IS NULL)
+        GROUP BY i.Accounts_Id, i.Securities_Id
+    )
+    SELECT
+        pf.Accounts_Id AS accounts_id, pf.Securities_Id AS securities_id,
+        ((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_ref * pf.price_ref * COALESCE(pf.fx_ref, 1)) - COALESCE(cf.cf_ref_eur, 0)) AS pnl_eur,
+        CASE WHEN (pf.qty_ref * pf.price_ref * COALESCE(pf.fx_ref, 1)) = 0 THEN 0
+             ELSE (((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_ref * pf.price_ref * COALESCE(pf.fx_ref, 1)) - COALESCE(cf.cf_ref_eur, 0)) / (pf.qty_ref * pf.price_ref * COALESCE(pf.fx_ref, 1))) * 100
+        END AS pnl_percent
+    FROM prices_fx pf
+    LEFT JOIN cash_flows cf ON pf.Accounts_Id = cf.Accounts_Id AND pf.Securities_Id = cf.Securities_Id
+    WHERE (pf.qty_today != 0 OR cf.cf_ref_eur IS NOT NULL)
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn)

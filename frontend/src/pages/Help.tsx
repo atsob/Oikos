@@ -519,7 +519,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>💹 Inv. Performance</H3>
         <P>
-          Ten sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/All, per account with drill-down to security level),{' '}
+          Ten sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
           <b>Performance</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
           <b>Bond Schedule</b>, <b>Benchmark</b> (compare against an index), <b>Risk Metrics</b>,{' '}
           <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and money-weighted
@@ -548,6 +548,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           In the Performance tab, security names in the <b>Top 15 Gainers/Losers</b> tables link to that
           security's Security Detail page, same as every other securities table in the app.
+        </Note>
+        <Note>
+          <b>1Y/3Y/5Y</b> (P&amp;L and Performance both) are computed on demand — selecting one fetches just that
+          window from its own endpoint instead of adding a 7th+ variant to the main P&amp;L query, which already
+          computes six windows at once and is kept live-refetched. D/W/M/Q/YTD/All-Time load exactly as before,
+          unaffected either way.
         </Note>
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the

@@ -148,6 +148,12 @@ export const getNetWorthReport = (startDate: string, endDate: string, grouping =
 export const getPnl = (startDate = '1900-01-01', endDate?: string) =>
   api.get('/reports/pnl', { params: { start_date: startDate, ...(endDate ? { end_date: endDate } : {}) } }).then(r => r.data)
 
+// Single-period P&L (since N years ago) — kept separate from getPnl so selecting a
+// long-term window (1Y/3Y/5Y) doesn't add cost to that already-heavy, live-refetched
+// query; only fetched on demand when one of those periods is actually selected.
+export const getPnlPeriod = (years: number) =>
+  api.get('/reports/pnl-period', { params: { years } }).then(r => r.data)
+
 export const getIncomeExpenseDetail = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/income-expense-detail', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
 
