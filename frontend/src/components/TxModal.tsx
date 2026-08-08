@@ -775,6 +775,27 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
     try {
       const statusFields = { is_draft: form.is_draft, cleared: form.cleared, reconciled: form.reconciled }
 
+      // Shared by every save path below (transfer or not) — previously only wired into
+      // the plain-transaction path, so checking "Save as recurring template" on a
+      // transfer (new or edited) silently saved the transaction but created no template.
+      const maybeCreateRecurringTemplate = async (
+        accountsIdTarget: number | null,
+        splitsForTemplate: { categories_id: number | null; amount: number; memo: string | null }[],
+      ) => {
+        if (!recurringEnabled || !recurringName.trim()) return
+        await createRecurringTemplate({
+          name: recurringName.trim(),
+          accounts_id: form.accounts_id,
+          payees_id: form.payees_id ? Number(form.payees_id) : null,
+          description: form.description || null,
+          total_amount: parseFloat(form.total_amount),
+          periodicity: recurringFreq,
+          next_due_date: recurringNextDue,
+          accounts_id_target: accountsIdTarget,
+          splits: splitsForTemplate,
+        })
+      }
+
       if (form.is_transfer && !form.id) {
         if (!form.transfer_account_id) throw new Error('Select a target account for the transfer')
         await createTransfer({
@@ -786,6 +807,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
           payees_id: form.payees_id ? Number(form.payees_id) : null,
           ...statusFields,
         })
+        await maybeCreateRecurringTemplate(Number(form.transfer_account_id), [])
       } else if (form.is_transfer && form.id) {
         await updateTransaction(form.id, {
           date: form.date,
@@ -795,6 +817,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
           accounts_id_target: form.transfer_account_id ? Number(form.transfer_account_id) : null,
           ...statusFields,
         })
+        await maybeCreateRecurringTemplate(form.transfer_account_id ? Number(form.transfer_account_id) : null, [])
       } else if (!form.id && installmentEnabled && parseInt(installmentCount) >= 2) {
         const n = parseInt(installmentCount)
         const baseDesc = form.description || ''
@@ -890,19 +913,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
             }]
         if (!useSplits || finalSplits.length > 0) await upsertSplits(txId, finalSplits)
 
-        if (recurringEnabled && recurringName.trim()) {
-          await createRecurringTemplate({
-            name: recurringName.trim(),
-            accounts_id: form.accounts_id,
-            payees_id: form.payees_id ? Number(form.payees_id) : null,
-            description: form.description || null,
-            total_amount: parseFloat(form.total_amount),
-            periodicity: recurringFreq,
-            next_due_date: recurringNextDue,
-            accounts_id_target: null,
-            splits: finalSplits,
-          })
-        }
+        await maybeCreateRecurringTemplate(null, finalSplits)
       }
 
       onSaved()

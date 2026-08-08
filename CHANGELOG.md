@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-09
+
+### Fixed
+- **"Save as recurring template" silently did nothing when saving a transfer** (new or edited) — the transaction/transfer itself saved fine, but no template was created. The transaction save logic has five separate paths (new transfer, edited transfer, new/converted installment series, plain transaction); the recurring-template creation was only wired into the plain-transaction path, so both transfer paths skipped it entirely. Now shared across all three transaction-save paths that support it.
+
 ## 2026-08-08
 
 ### Added
