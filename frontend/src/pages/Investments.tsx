@@ -1,9 +1,9 @@
-import { useState, useCallback, useMemo, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
-import type { ColDef } from 'ag-grid-community'
+import type { ColDef, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
   getHoldings, getInvestments, getAccounts, getSecurities,
   updateHolding, stakingReinvest, getLinkedAccount,
@@ -46,13 +46,15 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   }) },
   { field: 'ticker', headerName: 'Ticker', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
   { field: 'security', headerName: 'Security', flex: 2, minWidth: 160,
-    cellRenderer: (p: { value: string; data: Record<string, unknown> }) =>
-      p.data.securities_id
-        ? <button onClick={() => navigate(`/securities/${p.data.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+    // data is undefined while the infinite row model is still fetching the block
+    // that will contain this row — AG Grid renders a loading placeholder for it.
+    cellRenderer: (p: { value: string; data?: Record<string, unknown> }) =>
+      !p.data ? null : p.data.securities_id
+        ? <button onClick={() => navigate(`/securities/${p.data!.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
         : <span>{p.value}</span>
   },
   { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
-  { field: 'qty_held', headerName: 'Qty Held', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
+  { field: 'qty_held', headerName: 'Qty Held', width: 110, type: 'numericColumn', sortable: false, valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
   // Price, Commission and Total (sec) are all in the security's own native currency
   // (row.currency) — never the account's currency, so they must NOT go through the
   // reporting-currency FX conversion that fmtEur applies.
@@ -257,7 +259,6 @@ export default function Investments() {
   const [toDate, setToDate] = useState('2099-12-31')
   const [activePeriod, setActivePeriod] = useState('6M')
   const [actionFilter, setActionFilter] = useState('')
-  const [offset, setOffset] = useState(0)
   const [txSearch, setTxSearch] = useState('')
   const [cashSearch, setCashSearch] = useState('')
   const PAGE_SIZE = 200
@@ -320,13 +321,52 @@ export default function Investments() {
     refetchInterval: liveRefetchMs,
   })
 
-  const invParams = { account_id: accountId ?? undefined, from_date: fromDate, to_date: toDate, action: actionFilter || undefined, limit: PAGE_SIZE, offset }
-  const { data: invData, isLoading: invLoading } = useQuery({
-    queryKey: ['investments', invParams],
-    queryFn: () => getInvestments(invParams),
-    enabled: tab === 'transactions',
-    refetchInterval: liveRefetchMs,
-  })
+  // Grid refresh (server-side, so no more query-cache invalidation for the transactions
+  // grid — just tell the infinite row model's currently-loaded blocks to refetch).
+  const refreshTxGrid = useCallback(() => {
+    txGridRef.current?.api?.refreshInfiniteCache()
+  }, [])
+
+  // Transaction count for the "N transactions" label — updated from whatever the
+  // datasource's most recent response said; reset on any filter change so a stale
+  // count from the previous account/date range/search/action doesn't linger.
+  const [txTotalCount, setTxTotalCount] = useState<number | null>(null)
+  useEffect(() => { setTxTotalCount(null) }, [accountId, fromDate, toDate, actionFilter, txSearch])
+
+  // The account's own ledger balance shown in the page subtitle — the newest
+  // transaction's running_balance, from whichever block happened to load row 0
+  // (always the first block fetched, since the grid defaults to date-desc sort).
+  const [invLatestBalance, setInvLatestBalance] = useState<number | null>(null)
+  useEffect(() => { setInvLatestBalance(null) }, [accountId, fromDate, toDate, actionFilter, txSearch])
+
+  // AG Grid Infinite Row Model datasource: fetches one block of rows at a time as the
+  // user scrolls, with sorting done server-side (see investments.py's whitelist) rather
+  // than only sorting whatever page happened to already be loaded. Recreated whenever
+  // the account/date range/action/search changes, which — since it's a new object — is
+  // what tells the grid to throw away its cache and reload from scratch.
+  const invDatasource = useMemo<IDatasource>(() => ({
+    getRows: (params: IGetRowsParams) => {
+      const sortModel = params.sortModel[0]
+      getInvestments({
+        account_id: accountId ?? undefined,
+        from_date: fromDate,
+        to_date: toDate,
+        action: actionFilter || undefined,
+        search: txSearch || undefined,
+        sort_by: sortModel?.colId,
+        sort_dir: sortModel?.sort,
+        limit: params.endRow - params.startRow,
+        offset: params.startRow,
+      }).then((result: { total: number; investments: Record<string, unknown>[] }) => {
+        setTxTotalCount(result.total)
+        if (params.startRow === 0) {
+          setInvLatestBalance(result.investments.length > 0 ? Number(result.investments[0].running_balance ?? 0) : 0)
+        }
+        const lastRow = result.total <= params.endRow ? result.total : -1
+        params.successCallback(result.investments, lastRow)
+      }).catch(() => params.failCallback())
+    },
+  }), [accountId, fromDate, toDate, actionFilter, txSearch])
 
   // ── Cash tab state ────────────────────────────────────────────────────────
   const [cashFromDate, setCashFromDate] = useState(monthsAgo(6))
@@ -368,31 +408,15 @@ export default function Investments() {
   const txColDefs = useMemo(() => [
     { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
     ...makeInvCols(navigate),
-    { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, pinned: 'right' as const,
+    { field: 'running_balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, pinned: 'right' as const, sortable: false,
       cellRenderer: CashBalanceCell,
     },
   ], [navigate])
   const txGridCols = useGridColumnState('investments-transactions', txColDefs)
   const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi(api => api.autoSizeAllColumns())
 
-  const CASH_OUT_ACTIONS = new Set(['Buy', 'MiscExp', 'CashOut'])
-  const CASH_IN_ACTIONS = new Set(['Sell', 'Dividend', 'IntInc', 'CashIn', 'RtrnCap', 'MiscInc'])
-  const invWithBalance = useMemo(() => {
-    const rows = [...(invData?.investments ?? [])] as Record<string, unknown>[]
-    let balance = 0
-    const ascending = [...rows].reverse().map(r => {
-      const action = String(r.action)
-      const amount = Number(r.total ?? 0)
-      if (CASH_OUT_ACTIONS.has(action)) balance -= amount
-      else if (CASH_IN_ACTIONS.has(action)) balance += amount
-      // ShrIn, ShrOut, Split, Grant, Vest, Exercise, Expire — no cash movement
-      return { ...r, running_balance: Math.round(balance * 100) / 100 }
-    })
-    return ascending.reverse()
-  }, [invData])
-
   const setPeriod = (label: string, from: string) => {
-    setFromDate(from); setActivePeriod(label); setOffset(0)
+    setFromDate(from); setActivePeriod(label)
   }
 
   const handleSave = async () => {
@@ -415,7 +439,7 @@ export default function Investments() {
     }
     try {
       if (editId) { await updateInvestment(editId, payload) } else { await createInvestment(payload) }
-      qc.invalidateQueries({ queryKey: ['investments'] })
+      refreshTxGrid()
       qc.invalidateQueries({ queryKey: ['holdings'] })
       setModalOpen(false); setEditId(null); setForm(emptyInvForm())
     } catch (e: unknown) {
@@ -428,7 +452,7 @@ export default function Investments() {
     setSaving(true); setSaveError(null)
     try {
       await deleteInvestment(editId)
-      qc.invalidateQueries({ queryKey: ['investments'] })
+      refreshTxGrid()
       qc.invalidateQueries({ queryKey: ['holdings'] })
       setModalOpen(false); setEditId(null); setForm(emptyInvForm())
     } catch (e: unknown) {
@@ -441,7 +465,7 @@ export default function Investments() {
     try {
       const changes = batchAction === 'account' ? { accounts_id: targetAccountId } : { cash_account_id: targetAccountId }
       const res = await batchUpdateInvestments(selectedTxIds, changes)
-      qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+      refreshTxGrid()
       qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
       qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
@@ -460,7 +484,7 @@ export default function Investments() {
     setBatchSaving(true); setBatchMsg(null)
     try {
       const res = await batchDeleteInvestments(selectedTxIds)
-      qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+      refreshTxGrid()
       qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
       qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
@@ -546,11 +570,10 @@ export default function Investments() {
         title="Investments"
         subtitle={(() => {
           const accName = selectedAccount ? String(selectedAccount.name) + ' · ' : ''
-          const runningBalance = invWithBalance.length > 0 ? Number((invWithBalance[0] as Record<string, unknown>).running_balance ?? 0) : 0
           if (tab === 'holdings') return `${accName}Portfolio: ${fmtEur(totalValue)} · Unrealized: ${fmtEur(totalGain)}`
           // totalValue (EUR, summed across holdings) takes priority; the running-balance
           // fallback is the account's own ledger balance, in the account's native currency.
-          if (selectedAccount) return `${accName}Balance: ${totalValue !== 0 ? fmtEur(totalValue) : fmtCur(runningBalance, String(selectedAccount.currency ?? 'EUR'))}`
+          if (selectedAccount) return `${accName}Balance: ${totalValue !== 0 ? fmtEur(totalValue) : fmtCur(invLatestBalance ?? 0, String(selectedAccount.currency ?? 'EUR'))}`
           return 'Investment transaction history'
         })()}
         actions={
@@ -579,7 +602,7 @@ export default function Investments() {
                 await syncBalances(target)
                 await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
                 await qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
-                await qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+                refreshTxGrid()
                 await qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
               }}
             />
@@ -600,7 +623,7 @@ export default function Investments() {
       <div className="px-6 py-4 space-y-4">
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap">
-          <select className="w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => { setAccountId(Number(e.target.value) || null); setOffset(0) }}>
+          <select className="w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value) || null)}>
             <option value="">All accounts</option>
             <AccountOptions accounts={investmentAccounts as Record<string, unknown>[]} />
           </select>
@@ -747,72 +770,66 @@ export default function Investments() {
           )}
 
           {tab === 'transactions' && (
-            invLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
-              <>
-                {batchMsg && (
-                  <div className={`mx-4 mt-2 rounded-lg px-4 py-2 text-sm flex items-start justify-between gap-3 ${batchMsg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
-                    <div>
-                      <div>{batchMsg}</div>
-                      {batchWarnings.length > 0 && (
-                        <ul className="mt-1 text-amber-700 list-disc list-inside">
-                          {batchWarnings.map((w, i) => (
-                            <li key={i}>{w.security} in {w.account} is now negative ({fmtQty(w.quantity, 8)})</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    <button onClick={() => { setBatchMsg(null); setBatchWarnings([]) }} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={14} /></button>
-                  </div>
-                )}
-                <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <div className="relative">
-                      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
-                    </div>
-                    <span className="text-xs text-slate-400 whitespace-nowrap">{invData?.total ?? invWithBalance.length} transactions</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {selectedTxIds.length > 0 && (
-                      <>
-                        <span className="text-xs text-slate-500 whitespace-nowrap">{selectedTxIds.length} selected</span>
-                        <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>
-                        <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>
-                        <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
-                      </>
+            <>
+              {batchMsg && (
+                <div className={`mx-4 mt-2 rounded-lg px-4 py-2 text-sm flex items-start justify-between gap-3 ${batchMsg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
+                  <div>
+                    <div>{batchMsg}</div>
+                    {batchWarnings.length > 0 && (
+                      <ul className="mt-1 text-amber-700 list-disc list-inside">
+                        {batchWarnings.map((w, i) => (
+                          <li key={i}>{w.security} in {w.account} is now negative ({fmtQty(w.quantity, 8)})</li>
+                        ))}
+                      </ul>
                     )}
-                    <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
-                    <CopyToExcelButton gridApi={txGridApi} />
                   </div>
+                  <button onClick={() => { setBatchMsg(null); setBatchWarnings([]) }} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={14} /></button>
                 </div>
-                <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
-                  <AgGridReact
-                    theme="legacy"
-                    ref={txGridRef}
-                    rowData={invWithBalance}
-                    quickFilterText={txSearch}
-                    columnDefs={txGridCols.colDefs}
-                    defaultColDef={{ resizable: true, sortable: true, filter: true }}
-                    rowSelection="multiple"
-                    onSelectionChanged={e => setSelectedTxIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
-                    onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
-                    onGridReady={onTxGridReady}
-                    onColumnMoved={txGridCols.onColumnMoved}
-                    onColumnResized={txGridCols.onColumnResized}
-                    onSortChanged={txGridCols.onSortChanged}
-                    onFirstDataRendered={e => e.api.autoSizeAllColumns()}
-                    onRowDataUpdated={e => e.api.autoSizeAllColumns()}
-                  />
-                </div>
-                {(invData?.total ?? 0) > PAGE_SIZE && (
-                  <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100 text-sm text-slate-600">
-                    <Button variant="secondary" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
-                    <span>Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.ceil((invData?.total ?? 0) / PAGE_SIZE)}</span>
-                    <Button variant="secondary" size="sm" disabled={offset + PAGE_SIZE >= (invData?.total ?? 0)} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</Button>
+              )}
+              <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
                   </div>
-                )}
-              </>
-            )
+                  <span className="text-xs text-slate-400 whitespace-nowrap">{txTotalCount != null ? `${txTotalCount.toLocaleString()} transactions` : ''}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedTxIds.length > 0 && (
+                    <>
+                      <span className="text-xs text-slate-500 whitespace-nowrap">{selectedTxIds.length} selected</span>
+                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>
+                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>
+                      <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
+                    </>
+                  )}
+                  <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
+                  <CopyToExcelButton gridApi={txGridApi} />
+                </div>
+              </div>
+              {/* Infinite row model: rows stream in as you scroll instead of clicking through
+                  numbered pages — see invDatasource above for how blocks are fetched. */}
+              <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
+                <AgGridReact
+                  theme="legacy"
+                  ref={txGridRef}
+                  rowModelType="infinite"
+                  datasource={invDatasource}
+                  cacheBlockSize={PAGE_SIZE}
+                  columnDefs={txGridCols.colDefs}
+                  defaultColDef={{ resizable: true, sortable: true }}
+                  rowSelection="multiple"
+                  onSelectionChanged={e => setSelectedTxIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
+                  onRowClicked={e => { if (e.data && e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
+                  onGridReady={onTxGridReady}
+                  onColumnMoved={txGridCols.onColumnMoved}
+                  onColumnResized={txGridCols.onColumnResized}
+                  onSortChanged={txGridCols.onSortChanged}
+                  onFirstDataRendered={e => e.api.autoSizeAllColumns()}
+                  getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}
+                />
+              </div>
+            </>
           )}
         </Card>
       </div>
@@ -874,7 +891,7 @@ export default function Investments() {
           onClose={() => setTransferOpen(false)}
           onDone={() => {
             qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
-            qc.invalidateQueries({ queryKey: ['investments'], exact: false })
+            refreshTxGrid()
           }}
         />
       )}

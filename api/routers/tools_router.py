@@ -876,7 +876,10 @@ _MISSING_SPLIT_TX_SQL = """
                                WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
                                ELSE 0 END) AS qty_held
                     FROM investments i
-                    WHERE i.securities_id = ca.securities_id AND i.date <= ca.effective_date
+                    -- Strictly before the effective date, not <= : same-day activity (e.g. a
+                    -- brand-new post-split buy into a previously-closed position) must not be
+                    -- swept into the pre-split baseline this split's ratio multiplies.
+                    WHERE i.securities_id = ca.securities_id AND i.date < ca.effective_date
                     GROUP BY i.accounts_id
                     HAVING SUM(CASE
                                WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity

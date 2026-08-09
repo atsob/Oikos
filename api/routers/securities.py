@@ -488,7 +488,9 @@ def _apply_split_to_holdings(cur, ca_id: int) -> tuple[int, list[dict]]:
                    ELSE 0 END), 0) AS qty_held
         FROM investments i
         JOIN accounts a ON a.accounts_id = i.accounts_id
-        WHERE i.securities_id = %s AND i.date <= %s
+        -- Strictly before the effective date — see the matching note in
+        -- tools_router.py's _MISSING_SPLIT_TX_SQL for why <= would be wrong here.
+        WHERE i.securities_id = %s AND i.date < %s
         GROUP BY a.accounts_id
     """, (sec_id, eff_date))
     holdings = [(r[0], float(r[1])) for r in cur.fetchall() if r[1] != 0]

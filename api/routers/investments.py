@@ -88,6 +88,28 @@ def _df(df: pd.DataFrame) -> list:
     return [{k: None if isinstance(v, float) and math.isnan(v) else v for k, v in r.items()} for r in records]
 
 
+# Whitelisted so sort_by can never be interpolated as raw SQL. qty_held isn't
+# included — it's a running total inherently tied to chronological order, same
+# reasoning as register.py excluding running_balance.
+_SORTABLE_COLUMNS = {
+    "date": "i.date",
+    "action": "i.action",
+    "ticker": "s.ticker",
+    "security": "s.securities_name",
+    "quantity": "i.quantity",
+    "price": "i.price_per_share",
+    "commission": "i.commission",
+    "tax_amount": "i.tax_amount",
+    "total_seccur": "i.total_amount_seccur",
+    "total": "i.total_amount_acccur",
+    "fx_rate": "i.fx_rate",
+    "currency": "c.currencies_shortname",
+    "instrument_type": "i.instrument_type",
+    "account": "a.accounts_name",
+    "cash_account": "a_cash.accounts_name",
+}
+
+
 @router.get("/list")
 def get_investments(
     account_id: Optional[int] = Query(None),
@@ -95,12 +117,20 @@ def get_investments(
     to_date: str = Query("2099-12-31"),
     action: Optional[str] = Query(None),
     ticker: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: str = Query("desc"),
     limit: int = Query(500),
     offset: int = Query(0),
 ):
     acc_clause = "AND i.Accounts_Id = %(acc)s" if account_id else ""
     action_clause = "AND i.Action = %(action)s" if action else ""
     ticker_clause = "AND LOWER(s.Ticker) LIKE %(ticker)s" if ticker else ""
+    search_clause = "AND (s.securities_name ILIKE %(search)s OR s.ticker ILIKE %(search)s OR i.description ILIKE %(search)s)" if search else ""
+
+    sort_expr = _SORTABLE_COLUMNS.get(sort_by, "i.date")
+    sort_direction = "ASC" if sort_dir == "asc" else "DESC"
+    order_clause = f"{sort_expr} {sort_direction}, i.investments_id {sort_direction}"
 
     query = f"""
         WITH full_running AS (
@@ -112,7 +142,19 @@ def get_investments(
                            PARTITION BY accounts_id, securities_id
                            ORDER BY date, investments_id
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                       ) AS qty_held
+                       ) AS qty_held,
+                   -- Cash-impact running balance across every security in the account
+                   -- (ShrIn/ShrOut/Split/Grant/Vest/Exercise/Expire move no cash).
+                   -- Rounded outside the window, not inside the SUM, so rounding error
+                   -- doesn't compound across thousands of rows.
+                   SUM(CASE
+                       WHEN action IN ('Buy','MiscExp','CashOut') THEN -total_amount_acccur
+                       WHEN action IN ('Sell','Dividend','IntInc','CashIn','RtrnCap','MiscInc') THEN total_amount_acccur
+                       ELSE 0 END) OVER (
+                           PARTITION BY accounts_id
+                           ORDER BY date, investments_id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS running_balance
             FROM Investments
         )
         SELECT
@@ -138,7 +180,8 @@ def get_investments(
             i.transactions_id AS transactions_id,
             tx.accounts_id AS cash_account_id,
             a_cash.accounts_name AS cash_account,
-            fr.qty_held AS qty_held
+            fr.qty_held AS qty_held,
+            ROUND(fr.running_balance::numeric, 2) AS running_balance
         FROM Investments i
         LEFT JOIN Securities s ON i.securities_id = s.securities_id
         JOIN Accounts a ON i.accounts_id = a.accounts_id
@@ -148,8 +191,8 @@ def get_investments(
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
         LEFT JOIN full_running fr ON fr.investments_id = i.investments_id
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
-          {acc_clause} {action_clause} {ticker_clause}
-        ORDER BY i.date DESC, i.investments_id DESC
+          {acc_clause} {action_clause} {ticker_clause} {search_clause}
+        ORDER BY {order_clause}
         LIMIT %(limit)s OFFSET %(offset)s
     """
     params: dict = {"from_date": from_date, "to_date": to_date, "limit": limit, "offset": offset}
@@ -159,6 +202,8 @@ def get_investments(
         params["action"] = action
     if ticker:
         params["ticker"] = f"%{ticker.lower()}%"
+    if search:
+        params["search"] = f"%{search}%"
 
     with get_db() as conn:
         df = pd.read_sql(query, conn, params=params)
@@ -168,7 +213,7 @@ def get_investments(
         FROM Investments i
         LEFT JOIN Securities s ON i.Securities_Id = s.Securities_Id
         WHERE i.Date BETWEEN %(from_date)s AND %(to_date)s
-          {acc_clause} {action_clause} {ticker_clause}
+          {acc_clause} {action_clause} {ticker_clause} {search_clause}
     """
     with get_db() as conn:
         total = pd.read_sql(count_query, conn, params=params).iloc[0]["total"]
