@@ -876,10 +876,15 @@ _MISSING_SPLIT_TX_SQL = """
                                WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
                                ELSE 0 END) AS qty_held
                     FROM investments i
-                    -- Strictly before the effective date, not <= : same-day activity (e.g. a
-                    -- brand-new post-split buy into a previously-closed position) must not be
-                    -- swept into the pre-split baseline this split's ratio multiplies.
-                    WHERE i.securities_id = ca.securities_id AND i.date < ca.effective_date
+                    -- Inclusive of the effective date: a same-day transaction is just as
+                    -- likely to be the closing leg of the pre-split position (recorded in
+                    -- pre-split units, netting the holding to its true pre-split baseline —
+                    -- e.g. a position fully sold the same day the split takes effect) as it
+                    -- is a fresh post-split trade. Excluding it caused a real false positive
+                    -- (a closed position whose same-day closing Sell was ignored, leaving a
+                    -- phantom "still needs adjusting" balance) — the manually-entered-split
+                    -- check below is what actually guards against double-counting.
+                    WHERE i.securities_id = ca.securities_id AND i.date <= ca.effective_date
                     GROUP BY i.accounts_id
                     HAVING SUM(CASE
                                WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
