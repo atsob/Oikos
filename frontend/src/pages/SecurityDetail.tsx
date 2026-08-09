@@ -18,9 +18,9 @@ import {
   getSecurityFundComposition, setSecurityCategoryOverride, setSecurityAssetClassOverride,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
-  previewCorporateAction, executeCorporateAction,
+  previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
+  downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals, getPnl, getIssuers,
@@ -432,6 +432,7 @@ const ALL_TRANSACTIONS_COLS = [
   { field: 'date', headerName: 'Date', width: 120 },
   { field: 'action', headerName: 'Action', width: 100 },
   { field: 'quantity', headerName: 'Quantity', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+  { field: 'qty_held', headerName: 'Qty Held', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
   { field: 'price_per_share', headerName: 'Price/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
   { field: 'commission', headerName: 'Commission', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
   { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : null },
@@ -1116,6 +1117,52 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const deleteMut = useMutation({ mutationFn: (id: number) => deleteCorporateAction(secId, id), onSuccess: () => { invalidateCA(); setDeleteId('') } })
   const updateMut = useMutation({ mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateCorporateAction(secId, id, d), onSuccess: () => { invalidateCA(); setEditRow(null) } })
 
+  // ── edit-flow: preview + apply transactions for a not-yet-applied split ────
+  const [editPreview, setEditPreview] = useState<Record<string, unknown>[] | null>(null)
+  const [editPreviewLoading, setEditPreviewLoading] = useState(false)
+  const [editApplyMsg, setEditApplyMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const isEditSplitType = ['Split', 'Reverse Split'].includes(editForm.type ?? '')
+  const isBareEditSplit = isEditSplitType && editRow != null && !(editRow.has_transactions as boolean)
+
+  const applySplitMut = useMutation({
+    mutationFn: (caId: number) => applySplitCorporateAction(secId, caId),
+    onSuccess: (res: unknown) => {
+      const r = res as { transactions_inserted: number; skipped: { accounts_id: number; existing_investments_id: number }[] }
+      const skipNote = r.skipped.length > 0
+        ? ` Skipped ${r.skipped.length} account(s) with an existing unlinked ShrIn/ShrOut on this date — review manually (investments_id: ${r.skipped.map(s => s.existing_investments_id).join(', ')}).`
+        : ''
+      setEditApplyMsg({ ok: r.skipped.length === 0, text: `Saved — ${r.transactions_inserted} transaction(s) inserted.${skipNote}` })
+      invalidateCA()
+      qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+      qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
+    },
+    onError: (e: Error) => setEditApplyMsg({ ok: false, text: e.message }),
+  })
+
+  const handleEditPreview = async () => {
+    setEditPreviewLoading(true)
+    setEditPreview(null)
+    try {
+      const rows = await previewCorporateAction(secId, {
+        event_group: 'split', account_names: null,
+        date: editForm.date, ratio_new: editForm.ratio_new, ratio_old: editForm.ratio_old,
+      }) as Record<string, unknown>[]
+      setEditPreview(rows)
+    } finally {
+      setEditPreviewLoading(false)
+    }
+  }
+
+  const handleSaveEdit = () => {
+    const caId = Number(editRow!.id)
+    const shouldApply = isBareEditSplit
+    setEditApplyMsg(null)
+    updateMut.mutate(
+      { id: caId, d: { type: editForm.type, date: editForm.date, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } },
+      { onSuccess: () => { if (shouldApply) applySplitMut.mutate(caId) } },
+    )
+  }
+
   // ── new CA form ───────────────────────────────────────────────────────────
   const [eventGroup, setEventGroup] = useState<EventGroup>('split')
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
@@ -1191,8 +1238,11 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const executeMut = useMutation({
     mutationFn: () => executeCorporateAction(secId, buildPayload()),
     onSuccess: (res: unknown) => {
-      const r = res as { transactions_inserted: number }
-      setExecuteMsg({ ok: true, text: `Done — ${r.transactions_inserted} transaction(s) inserted.` })
+      const r = res as { transactions_inserted: number; skipped_accounts?: number[] }
+      const skipNote = r.skipped_accounts && r.skipped_accounts.length > 0
+        ? ` Skipped ${r.skipped_accounts.length} account(s) with an existing unlinked ShrIn/ShrOut on this date — review manually.`
+        : ''
+      setExecuteMsg({ ok: !skipNote, text: `Done — ${r.transactions_inserted} transaction(s) inserted.${skipNote}` })
       setPreview(null)
       invalidateCA()
       qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
@@ -1242,7 +1292,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     {
       colId: 'actions', headerName: '', width: 75, pinned: 'right' as const,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
-        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }) }}
+        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }); setEditPreview(null); setEditApplyMsg(null) }}
           className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
           <Pencil size={11} /> Edit
         </button>
@@ -1291,12 +1341,12 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 )}
                 <div className="flex flex-wrap gap-3">
                   <div><label className="text-xs text-slate-500 block mb-1">Date</label>
-                    <Input type="date" className="w-36" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} /></div>
+                    <Input type="date" className="w-36" value={editForm.date} onChange={e => { setEditForm(f => ({ ...f, date: e.target.value })); setEditPreview(null) }} /></div>
                   {['Split', 'Reverse Split'].includes(editForm.type) && <>
                     <div><label className="text-xs text-slate-500 block mb-1">Ratio New</label>
-                      <Input className="w-24" value={editForm.ratio_new} onChange={e => setEditForm(f => ({ ...f, ratio_new: e.target.value }))} /></div>
+                      <Input className="w-24" value={editForm.ratio_new} onChange={e => { setEditForm(f => ({ ...f, ratio_new: e.target.value })); setEditPreview(null) }} /></div>
                     <div><label className="text-xs text-slate-500 block mb-1">Ratio Old</label>
-                      <Input className="w-24" value={editForm.ratio_old} onChange={e => setEditForm(f => ({ ...f, ratio_old: e.target.value }))} /></div>
+                      <Input className="w-24" value={editForm.ratio_old} onChange={e => { setEditForm(f => ({ ...f, ratio_old: e.target.value })); setEditPreview(null) }} /></div>
                   </>}
                   {['Dividend', 'Return of Capital'].includes(editForm.type) && <>
                     <div><label className="text-xs text-slate-500 block mb-1">Gross/Share</label>
@@ -1314,11 +1364,60 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                   <div className="flex-1 min-w-48"><label className="text-xs text-slate-500 block mb-1">Description</label>
                     <Input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
                 </div>
+
+                {isEditSplitType && (editRow.has_transactions ? (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    This split already has linked transactions — saving only updates the record's fields, existing transactions are left untouched.
+                  </p>
+                ) : (
+                  <div className="space-y-2 border-t border-blue-200 pt-3">
+                    <p className="text-xs text-slate-500">
+                      This split has no linked transactions yet. Saving will also insert the ShrIn/ShrOut transaction
+                      for every account that held the security as of the effective date.
+                    </p>
+                    <Button size="sm" variant="secondary" disabled={editPreviewLoading} onClick={handleEditPreview}>
+                      {editPreviewLoading ? 'Loading…' : 'Preview affected holdings'}
+                    </Button>
+                    {editPreview && (
+                      editPreview.length === 0 ? (
+                        <p className="text-xs text-slate-400">No accounts held this security as of {editForm.date}.</p>
+                      ) : (
+                        <div className="overflow-auto border border-slate-200 rounded max-h-48">
+                          <table className="w-full text-xs">
+                            <thead className="bg-slate-50"><tr>
+                              <th className="text-left px-2 py-1">Account</th>
+                              <th className="text-right px-2 py-1">Action</th>
+                              <th className="text-right px-2 py-1">Qty Before</th>
+                              <th className="text-right px-2 py-1">Delta</th>
+                              <th className="text-right px-2 py-1">Qty After</th>
+                            </tr></thead>
+                            <tbody>
+                              {editPreview.map((r, i) => (
+                                <tr key={i} className="border-t border-slate-100">
+                                  <td className="px-2 py-1">{String(r.account)}</td>
+                                  <td className="px-2 py-1 text-right">{String(r.action)}</td>
+                                  <td className="px-2 py-1 text-right">{fmt(r.qty_before, 8)}</td>
+                                  <td className="px-2 py-1 text-right">{fmt(r.delta, 8)}</td>
+                                  <td className="px-2 py-1 text-right">{fmt(r.qty_after, 8)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    )}
+                  </div>
+                ))}
+
+                {editApplyMsg && (
+                  <p className={`text-xs ${editApplyMsg.ok ? 'text-green-700' : 'text-red-600'}`}>{editApplyMsg.text}</p>
+                )}
+
                 <div className="flex gap-2">
-                  <Button size="sm" disabled={updateMut.isPending} onClick={() => updateMut.mutate({ id: Number(editRow.id), d: { type: editForm.type, date: editForm.date, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } })}>
-                    <Save size={13} /> Save
+                  <Button size="sm" disabled={updateMut.isPending || applySplitMut.isPending} onClick={handleSaveEdit}>
+                    <Save size={13} /> {isBareEditSplit ? 'Save & Apply' : 'Save'}
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setEditRow(null)}><X size={13} /> Cancel</Button>
+                  <Button size="sm" variant="secondary" onClick={() => { setEditRow(null); setEditPreview(null); setEditApplyMsg(null) }}><X size={13} /> Cancel</Button>
                 </div>
               </div>
             )}
@@ -1899,6 +1998,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
     if (hasYahoo) {
       jobs.push(['yahoo-info', () => downloadYahooInfo(secId)])
       jobs.push(['yahoo-divs', () => downloadYahooDividends(secId)])
+      jobs.push(['yahoo-splits', () => downloadStockSplits(secId)])
       if (isFund) jobs.push(['fund-composition', () => downloadFundComposition(secId)])
       jobs.push(['yahoo-px',   () => downloadYahooPrices('max', secId)])
     }
@@ -1943,6 +2043,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
             <ActionRow id="yahoo-info" label="Update Security Info" onClick={() => run('yahoo-info', () => downloadYahooInfo(secId))} />
             <ActionRow id="yahoo-divs" label="Download Dividend History" onClick={() => run('yahoo-divs', () => downloadYahooDividends(secId))} />
+            <ActionRow id="yahoo-splits" label="Download Split History" onClick={() => run('yahoo-splits', () => downloadStockSplits(secId))} />
             {isFund && <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(secId))} />}
             <ActionRow id="yahoo-px" label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, secId))} />
           </div>

@@ -103,6 +103,18 @@ def get_investments(
     ticker_clause = "AND LOWER(s.Ticker) LIKE %(ticker)s" if ticker else ""
 
     query = f"""
+        WITH full_running AS (
+            SELECT investments_id,
+                   SUM(CASE
+                       WHEN action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN quantity
+                       WHEN action IN ('Sell','ShrOut','Expire') THEN -quantity
+                       ELSE 0 END) OVER (
+                           PARTITION BY accounts_id, securities_id
+                           ORDER BY date, investments_id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS qty_held
+            FROM Investments
+        )
         SELECT
             i.investments_id AS id,
             i.date::text AS date,
@@ -125,7 +137,8 @@ def get_investments(
             i.description AS notes,
             i.transactions_id AS transactions_id,
             tx.accounts_id AS cash_account_id,
-            a_cash.accounts_name AS cash_account
+            a_cash.accounts_name AS cash_account,
+            fr.qty_held AS qty_held
         FROM Investments i
         LEFT JOIN Securities s ON i.securities_id = s.securities_id
         JOIN Accounts a ON i.accounts_id = a.accounts_id
@@ -133,6 +146,7 @@ def get_investments(
         LEFT JOIN Currencies ac ON a.currencies_id = ac.currencies_id
         LEFT JOIN Transactions tx ON i.transactions_id = tx.transactions_id
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
+        LEFT JOIN full_running fr ON fr.investments_id = i.investments_id
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
           {acc_clause} {action_clause} {ticker_clause}
         ORDER BY i.date DESC, i.investments_id DESC

@@ -855,6 +855,106 @@ def fix_transfer_mirrors(req: FixMirrorsRequest):
     return {"created": created, "errors": errors}
 
 
+# ── Missing Split Transactions ──────────────────────────────────────────────────
+
+_MISSING_SPLIT_TX_SQL = """
+    WITH ca_holdings AS (
+        SELECT
+            ca.corporate_actions_id,
+            ca.securities_id,
+            s.securities_name,
+            ca.action_type,
+            ca.effective_date::text AS date,
+            ca.ratio_new,
+            ca.ratio_old,
+            ca.description,
+            (
+                SELECT COUNT(*) FROM (
+                    SELECT i.accounts_id,
+                           SUM(CASE
+                               WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
+                               WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
+                               ELSE 0 END) AS qty_held
+                    FROM investments i
+                    WHERE i.securities_id = ca.securities_id AND i.date <= ca.effective_date
+                    GROUP BY i.accounts_id
+                    HAVING SUM(CASE
+                               WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
+                               WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
+                               ELSE 0 END) != 0
+                       -- exclude accounts that already have an unlinked ShrIn/ShrOut on this exact
+                       -- date (a split adjustment entered manually before this record existed) —
+                       -- applying on top of one of these would double-count the shares
+                       AND NOT EXISTS (
+                           SELECT 1 FROM investments i3
+                           WHERE i3.securities_id = ca.securities_id AND i3.accounts_id = i.accounts_id
+                             AND i3.date = ca.effective_date AND i3.action IN ('ShrIn', 'ShrOut')
+                             AND i3.corporate_actions_id IS NULL
+                       )
+                ) h
+            ) AS affected_accounts,
+            (
+                SELECT COUNT(*) FROM investments i4
+                WHERE i4.securities_id = ca.securities_id AND i4.date = ca.effective_date
+                  AND i4.action IN ('ShrIn', 'ShrOut') AND i4.corporate_actions_id IS NULL
+            ) AS existing_unlinked_entries
+        FROM corporate_actions ca
+        JOIN securities s ON s.securities_id = ca.securities_id
+        WHERE ca.action_type IN ('Split', 'Reverse Split')
+          AND NOT EXISTS (
+              SELECT 1 FROM investments i2 WHERE i2.corporate_actions_id = ca.corporate_actions_id
+          )
+    )
+    SELECT * FROM ca_holdings
+    WHERE affected_accounts > 0
+    ORDER BY date DESC
+"""
+
+@router.get("/missing-split-transactions")
+def missing_split_transactions():
+    with get_db() as conn:
+        df = pd.read_sql(_MISSING_SPLIT_TX_SQL, conn)
+    return _df_records(df)
+
+
+class FixSplitTxRequest(BaseModel):
+    ids: List[int]  # corporate_actions_ids to fix
+
+@router.post("/fix-split-transactions")
+def fix_split_transactions(req: FixSplitTxRequest):
+    from api.routers.securities import _apply_split_to_holdings
+    from database.crud import update_holdings
+
+    created = 0
+    errors = []
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        for ca_id in req.ids:
+            try:
+                inserted, skipped = _apply_split_to_holdings(cur, ca_id)
+                created += inserted
+                for s in skipped:
+                    errors.append(
+                        f"CA #{ca_id}: skipped account {s['accounts_id']} — an unlinked ShrIn/ShrOut "
+                        f"(#{s['existing_investments_id']}) already exists on this date, review manually."
+                    )
+            except Exception as e:
+                errors.append(f"CA #{ca_id}: {e}")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+    if created:
+        update_holdings()
+
+    return {"created": created, "errors": errors}
+
+
 # ── Unlinked Transfer Pairs ────────────────────────────────────────────────────
 
 _UNLINKED_SQL = """
@@ -1388,7 +1488,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "recurring_drafts", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "news_fetch", "fund_composition",
 }
 
 _SEED_JOBS = [
@@ -1399,6 +1499,7 @@ _SEED_JOBS = [
     ("monthly_summary",    "Monthly AI Summary",     "Generates the AI monthly financial summary for the previous month.",                                               "1st of month at 07:00",          True),
     ("securities_info",    "Securities Info",        "Downloads securities metadata (sector, industry, analyst targets, dividends) from Yahoo Finance and TradingView.", "Once per calendar day",          True),
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
+    ("stock_splits",       "Stock Splits",           "Downloads stock split history for all tracked securities from Yahoo Finance and raises a dashboard alert for any newly discovered split.", "Sunday at 07:00", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and records any changes for dashboard notifications.",               "Every 30 min, 24×7",             True),
     ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
@@ -1478,6 +1579,9 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "dividend_history":
             from data.downloaders import download_dividend_history
             download_dividend_history()
+        elif job_id == "stock_splits":
+            from data.downloaders import download_stock_splits
+            download_stock_splits()
         elif job_id == "recurring_drafts":
             from database.crud import generate_draft_transactions
             generate_draft_transactions()

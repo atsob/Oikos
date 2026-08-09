@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { usePersist, useSettings } from '@/lib/hooks'
 import { SETTINGS_DEFAULTS } from '@/lib/settings'
 import type { AppSettings } from '@/lib/settings'
@@ -13,6 +14,7 @@ import {
   getBackupDbInfo, listBackups, downloadBackupUrl, deleteBackup, restoreBackup, restoreBackupUpload,
   getInvestmentConsistency, updateInvestmentRow,
   getMissingTransferMirrors, fixTransferMirrors,
+  getMissingSplitTransactions, fixSplitTransactions,
   getUnlinkedTransferPairs, linkTransferPairs,
   getTransferSignMismatches, fixTransferSign,
   getMissingInvCashLinks, fixInvCashLinks,
@@ -1314,6 +1316,117 @@ function FixMissingTransferMirrors() {
   )
 }
 
+// ── Fix Missing Split Transactions ─────────────────────────────────────────────
+function FixMissingSplitTransactions() {
+  const navigate = useNavigate()
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [confirm, setConfirm] = useState<'selected' | 'all' | null>(null)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
+
+  const { data: rows = [], isLoading, refetch } = useQuery({
+    queryKey: ['missing-split-transactions'], queryFn: getMissingSplitTransactions, staleTime: 30_000,
+  })
+  const allRows = rows as Row[]
+
+  const { sorted: fmtSorted, sortKey: fmtSK, sortDir: fmtSD, toggleSort: fmtSort } = useSortTable(allRows, 'date', 'desc')
+
+  const COLS = ['corporate_actions_id', 'securities_name', 'action_type', 'date', 'ratio_new', 'ratio_old', 'affected_accounts', 'existing_unlinked_entries', 'description']
+
+  const fixMut = useMutation({
+    mutationFn: (ids: number[]) => fixSplitTransactions(ids),
+    onSuccess: (d: { created: number; errors: string[] }) => {
+      setMsg({ type: d.errors.length > 0 ? 'warning' : 'success', text: `Created ${d.created} transaction(s). ${d.errors.join(' ')}` })
+      setChecked(new Set()); setConfirm(null); refetch()
+    },
+    onError: () => { setMsg({ type: 'error', text: 'Fix failed.' }); setConfirm(null) },
+  })
+
+  const selectedIds = allRows.filter((_, i) => checked.has(i)).map(r => r.corporate_actions_id as number)
+
+  if (isLoading) return <Spinner />
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>🔀 Splits/Reverse Splits Missing Transactions</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-xs text-slate-500">
+          Detects Split/Reverse Split records with no linked investment transactions — recorded but never applied to
+          holdings (e.g. downloaded from Yahoo, or logged manually without using Preview → Execute). Applying inserts
+          the required ShrIn/ShrOut transaction for every account that held the security as of the effective date.
+          Accounts that already have an unlinked ShrIn/ShrOut on that exact date (a split entered manually before
+          this tool existed) are skipped automatically to avoid double-counting — see{' '}
+          <b>existing_unlinked_entries</b> and check those accounts by hand.
+        </p>
+
+        {allRows.length === 0 ? (
+          <Alert type="success">✅ No splits are missing their transactions.</Alert>
+        ) : (
+          <>
+            <Alert type="warning">⚠️ {allRows.length.toLocaleString()} split(s) with no linked transactions.</Alert>
+
+            {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+            {confirm === 'selected' && (
+              <ConfirmBanner
+                message={`Apply ${selectedIds.length} split(s) — insert the required ShrIn/ShrOut transactions? Cannot be undone.`}
+                onYes={() => fixMut.mutate(selectedIds)} onNo={() => setConfirm(null)}
+                yesLabel="✅ Yes, apply" isPending={fixMut.isPending} />
+            )}
+            {confirm === 'all' && (
+              <ConfirmBanner
+                message={`Apply all ${allRows.length} split(s) — insert the required ShrIn/ShrOut transactions? Cannot be undone.`}
+                onYes={() => fixMut.mutate(allRows.map(r => r.corporate_actions_id as number))}
+                onNo={() => setConfirm(null)} yesLabel="✅ Yes, apply all" isPending={fixMut.isPending} />
+            )}
+
+            <div className="flex gap-2">
+              <Button size="sm" variant={checked.size > 0 ? 'primary' : 'secondary'}
+                disabled={checked.size === 0} onClick={() => setConfirm('selected')}>
+                🔀 Apply {checked.size > 0 ? `${checked.size} selected` : 'selected'}
+              </Button>
+              <Button size="sm" onClick={() => setConfirm('all')}>
+                🔀 Apply all {allRows.length}
+              </Button>
+            </div>
+
+            <div className="overflow-auto border border-slate-200 rounded-lg max-h-96">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-2"><input type="checkbox"
+                      checked={allRows.length > 0 && checked.size === allRows.length}
+                      onChange={e => setChecked(e.target.checked ? new Set(allRows.map((_, i) => i)) : new Set())} /></th>
+                    {COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={fmtSK} currentDir={fmtSD} onSort={fmtSort} className="px-3 py-2 text-left text-slate-600" />)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {fmtSorted.map((row) => { const i = allRows.indexOf(row); return (
+                    <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
+                      <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
+                        setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
+                      }} /></td>
+                      {COLS.map(c => (
+                        <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">
+                          {c === 'securities_name' ? (
+                            <button onClick={() => navigate(`/securities/${row.securities_id}`)}
+                              className="text-blue-600 hover:underline text-left">
+                              {String(row[c] ?? '')}
+                            </button>
+                          ) : String(row[c] ?? '')}
+                        </td>
+                      ))}
+                    </tr>
+                  )})}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 function UnlinkedTransferPairs() {
   const [filterAcc, setFilterAcc] = useState<string>('')
   const [checked, setChecked] = useState<Set<number>>(new Set())
@@ -2456,6 +2569,7 @@ const CATEGORIES: Record<string, string[]> = {
     '🔗 Fix Missing Investment Cash Links',
     '🧩 Fix Duplicate Investment Cash Links',
     '🏦 Fix Missing Investment Account on Cash Tx',
+    '✂️ Splits/Reverse Splits Missing Transactions',
   ],
   '⚙️ System': [
     '⚙️ App Settings',
@@ -2482,6 +2596,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
   '🔗 Fix Missing Investment Cash Links': FixMissingInvCashLinks,
   '🧩 Fix Duplicate Investment Cash Links': FixDuplicateInvCashLinks,
   '🏦 Fix Missing Investment Account on Cash Tx': FixInvAccountTarget,
+  '✂️ Splits/Reverse Splits Missing Transactions': FixMissingSplitTransactions,
   '📥 Fill Missing Prices': FillMissingPrices,
   '🔍 Price Quality': PriceQuality,
   '⚖ Normalize Investments': NormalizeInvestments,

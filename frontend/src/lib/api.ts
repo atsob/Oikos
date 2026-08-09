@@ -46,6 +46,8 @@ export const getAlerts = () =>
   api.get('/dashboard/alerts').then(r => r.data)
 export const acknowledgeSignal = (securitiesId: number) =>
   api.post(`/dashboard/alerts/acknowledge-signal/${securitiesId}`).then(r => r.data)
+export const acknowledgeSplit = (corporateActionsId: number) =>
+  api.post(`/dashboard/alerts/acknowledge-split/${corporateActionsId}`).then(r => r.data)
 
 export const getUpcomingBills = (days = 14) =>
   api.get('/dashboard/upcoming-bills', { params: { days } }).then(r => r.data)
@@ -298,6 +300,9 @@ export const downloadYahooInfo = (securityId?: number) =>
 export const downloadYahooDividends = (securityId?: number) =>
   api.post('/market-data/download/yahoo-dividends', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
+export const downloadStockSplits = (securityId?: number) =>
+  api.post('/market-data/download/stock-splits', securityId ? { security_id: securityId } : {}).then(r => r.data)
+
 export const downloadFundComposition = (securityId?: number) =>
   api.post('/market-data/download/fund-composition', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
@@ -464,6 +469,9 @@ export const previewCorporateAction = (secId: number, data: Record<string, unkno
 
 export const executeCorporateAction = (secId: number, data: Record<string, unknown>) =>
   api.post(`/securities/${secId}/corporate-actions/execute`, data).then(r => r.data)
+
+export const applySplitCorporateAction = (secId: number, caId: number) =>
+  api.post(`/securities/${secId}/corporate-actions/${caId}/apply-split`).then(r => r.data)
 
 export const getSecurityPriceAnomalies = (secId: number, thresholdPct = 100) =>
   api.get(`/securities/${secId}/price-anomalies`, { params: { threshold_pct: thresholdPct } }).then(r => r.data)
@@ -692,6 +700,9 @@ export const updateInvestmentRow = (investments_id: number, fields: Record<strin
 export const getMissingTransferMirrors = () => api.get('/tools/missing-transfer-mirrors').then(r => r.data)
 export const fixTransferMirrors = (ids: number[]) =>
   api.post('/tools/fix-transfer-mirrors', { ids }).then(r => r.data)
+export const getMissingSplitTransactions = () => api.get('/tools/missing-split-transactions').then(r => r.data)
+export const fixSplitTransactions = (ids: number[]) =>
+  api.post('/tools/fix-split-transactions', { ids }).then(r => r.data)
 export const getUnlinkedTransferPairs = () => api.get('/tools/unlinked-transfer-pairs').then(r => r.data)
 export const linkTransferPairs = (pairs: Record<string, number>[]) =>
   api.post('/tools/link-transfer-pairs', { pairs }).then(r => r.data)

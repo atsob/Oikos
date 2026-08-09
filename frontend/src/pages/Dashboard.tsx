@@ -6,7 +6,7 @@ import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getDraftTransactions, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
-  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal,
+  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton } from '@/components/ui'
@@ -118,6 +118,10 @@ function SecuritiesAlertsPanel() {
     mutationFn: (sid: number) => acknowledgeSignal(sid),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
+  const ackSplitMut = useMutation({
+    mutationFn: (caId: number) => acknowledgeSplit(caId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+  })
   // Signal Change alerts are per-security and re-trigger on the next algo/analyst
   // move, unlike Price Alerts (no dismiss here — those clear on their own once the
   // price crosses back, and are managed as standing alerts under Market Data).
@@ -169,6 +173,8 @@ function SecuritiesAlertsPanel() {
             const level = String(a.level ?? 'info')
             const secId = a.securities_id != null ? Number(a.securities_id) : null
             const isSignal = a.type === 'signal_change' && secId != null
+            const caId = a.corporate_actions_id != null ? Number(a.corporate_actions_id) : null
+            const isSplit = a.type === 'stock_split' && caId != null
             return (
               <div key={i}
                 className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${secId != null ? 'cursor-pointer hover:brightness-95' : ''}`}
@@ -180,6 +186,14 @@ function SecuritiesAlertsPanel() {
                   <button
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
                     onClick={(e) => { e.stopPropagation(); ackMut.mutate(secId!) }}
+                    title="Dismiss this notification">
+                    Dismiss
+                  </button>
+                )}
+                {isSplit && (
+                  <button
+                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                    onClick={(e) => { e.stopPropagation(); ackSplitMut.mutate(caId!) }}
                     title="Dismiss this notification">
                     Dismiss
                   </button>

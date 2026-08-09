@@ -52,6 +52,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
         : <span>{p.value}</span>
   },
   { field: 'quantity', headerName: 'Qty', width: 100, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
+  { field: 'qty_held', headerName: 'Qty Held', width: 110, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtQty(Number(p.value), 8) : '—' },
   // Price, Commission and Total (sec) are all in the security's own native currency
   // (row.currency) — never the account's currency, so they must NOT go through the
   // reporting-currency FX conversion that fmtEur applies.

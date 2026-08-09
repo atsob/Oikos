@@ -35,6 +35,7 @@ from data.downloaders import (
     download_securities_info_from_yahoo,
     download_securities_info_from_tradingview,
     download_dividend_history,
+    download_stock_splits,
     download_fund_composition,
 )
 from ai.update_vector import update_all_embeddings
@@ -72,6 +73,9 @@ MONTHLY_SUMMARY_MINUTE = 0
 DIVIDEND_HISTORY_WEEKDAY = 6  # Sunday at 06:30
 DIVIDEND_HISTORY_HOUR    = 6
 DIVIDEND_HISTORY_MINUTE  = 30
+STOCK_SPLITS_WEEKDAY    = 6   # Sunday at 07:00 — offset from dividend_history to avoid contention
+STOCK_SPLITS_HOUR       = 7
+STOCK_SPLITS_MINUTE     = 0
 FUND_COMPOSITION_DAY     = 2  # 2nd of month at 07:30 — avoids colliding with monthly_summary (day 1)
 FUND_COMPOSITION_HOUR    = 7
 FUND_COMPOSITION_MINUTE  = 30
@@ -285,6 +289,22 @@ def _dividend_history_job():
         _record_job("dividend_history", "error", str(e))
 
 
+def _stock_splits_job():
+    """Download stock split history once per week (Sunday at 07:00).
+
+    Runs weekly, same cadence as dividend history — split events are rare and
+    each call fetches a full time series per ticker.
+    """
+    logging.info("Running weekly stock split refresh…")
+    try:
+        download_stock_splits()
+        logging.info("Stock split refresh complete.")
+        _record_job("stock_splits", "success", "Completed OK")
+    except Exception as e:
+        logging.error(f"Stock split refresh failed: {e}", exc_info=True)
+        _record_job("stock_splits", "error", str(e))
+
+
 def _fund_composition_job():
     """Download ETF/Mutual Fund look-through composition once per month.
 
@@ -468,6 +488,9 @@ if __name__ == "__main__":
     # Dividend history: weekly — skip if already ran this week
     _last_dividend_history_week: date = date.min
 
+    # Stock splits: weekly — skip if already ran this week
+    _last_stock_splits_week: date = date.min
+
     # Monthly summary: skip if already ran this month
     _last_monthly_summary_month: int = -1
 
@@ -539,6 +562,12 @@ if __name__ == "__main__":
         if now.weekday() == dh_wd and _in_window(now, dh_h, dh_m) and _last_dividend_history_week != _this_week_start:
             _dividend_history_job()
             _last_dividend_history_week = _this_week_start
+
+        # ── Stock splits: weekly ───────────────────────────────────────────────
+        ss_wd, ss_h, ss_m = _parse_weekly(sc.get('stock_splits', ''), STOCK_SPLITS_WEEKDAY, STOCK_SPLITS_HOUR, STOCK_SPLITS_MINUTE)
+        if now.weekday() == ss_wd and _in_window(now, ss_h, ss_m) and _last_stock_splits_week != _this_week_start:
+            _stock_splits_job()
+            _last_stock_splits_week = _this_week_start
 
         # ── Fund composition (Portfolio X-Ray): monthly ───────────────────────
         fc_d, fc_h, fc_m = _parse_monthly(sc.get('fund_composition', ''), FUND_COMPOSITION_DAY, FUND_COMPOSITION_HOUR, FUND_COMPOSITION_MINUTE)

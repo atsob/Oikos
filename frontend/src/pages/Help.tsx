@@ -675,6 +675,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           to pull that bond's price from the daily Solidus PDF, matched by ISIN — the same downloader available in
           bulk on Market Data → Downloads, scoped here to just this security.
         </Note>
+        <Note>
+          A security's <b>Downloads</b> tab can also pull <b>stock split history</b> from Yahoo Finance
+          (also available in bulk on Market Data → Downloads, and as the weekly <b>Stock Splits</b> scheduled
+          job) — this only creates plain reference records under <b>Corporate Actions</b>, it doesn't touch
+          holdings. Editing one of those records there, while it still has no linked transactions, offers a{' '}
+          <b>Preview affected holdings</b> step and a <b>Save &amp; Apply</b> button that inserts the resulting
+          ShrIn/ShrOut transactions for every account that held the security as of the effective date. Once
+          applied, editing it again goes back to updating the record's fields only.
+        </Note>
       </>
     ),
   },
@@ -819,7 +828,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li>
             <b>💾 Database</b> — Backup &amp; Restore, DB Maintenance (table health, recalculate balances,
             referential integrity), SQL Interface (raw queries), Data Export, and several targeted "Fix …"
-            tools for transfer mirrors, sign mismatches, and investment cash links.
+            tools for transfer mirrors, sign mismatches, investment cash links, and Split/Reverse Split
+            corporate actions recorded but never applied to holdings.
           </li>
           <li>
             <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting

@@ -5840,6 +5840,64 @@ def acknowledge_signal_notification(securities_id: int):
         conn.close()
 
 
+def _ensure_corporate_action_notifications_table():
+    """Create Corporate_Action_Notifications table if it does not exist.
+
+    One row per newly-discovered corporate action (currently populated only by the
+    scheduled Yahoo split download) that the dashboard should surface until acknowledged.
+    Keyed by Corporate_Actions_Id rather than Securities_Id (unlike Signal_Notifications)
+    since a security can have several distinct split events worth separate notifications.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Corporate_Action_Notifications (
+                    Corporate_Actions_Id INTEGER PRIMARY KEY
+                                          REFERENCES corporate_actions(corporate_actions_id) ON DELETE CASCADE,
+                    Acknowledged         BOOLEAN DEFAULT FALSE,
+                    Created_At           TIMESTAMP DEFAULT NOW()
+                )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_new_split_notifications(corporate_actions_ids: list):
+    """Insert a pending dashboard notification for each newly-downloaded split."""
+    if not corporate_actions_ids:
+        return
+    _ensure_corporate_action_notifications_table()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            from psycopg2.extras import execute_batch
+            execute_batch(cur, """
+                INSERT INTO Corporate_Action_Notifications (Corporate_Actions_Id)
+                VALUES (%s)
+                ON CONFLICT (Corporate_Actions_Id) DO NOTHING
+            """, [(cid,) for cid in corporate_actions_ids])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def acknowledge_split_notification(corporate_actions_id: int):
+    """Mark a new-split notification as acknowledged (user has seen it)."""
+    _ensure_corporate_action_notifications_table()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Corporate_Action_Notifications SET Acknowledged=TRUE WHERE Corporate_Actions_Id=%s",
+                (corporate_actions_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _compute_current_signals() -> pd.DataFrame:
     """Compute final_signal for ALL securities using the same logic as get_portfolio_signals.
 
@@ -6164,6 +6222,7 @@ def check_triggered_alerts() -> list:
     try:
         _ensure_alerts_table()
         _ensure_signal_notifications_table()
+        _ensure_corporate_action_notifications_table()
         conn = get_connection()
         alerts_df = pd.read_sql(
             "SELECT * FROM Alerts WHERE Is_Active = TRUE", conn)
@@ -6275,6 +6334,39 @@ def check_triggered_alerts() -> list:
                                 f"{row['previous_signal'] or '—'} → **{row['current_signal']}**{suffix}"),
                     'securities_id': int(row['securities_id']),
                     'type': 'signal_change',
+                })
+        except Exception:
+            pass
+
+        # ── new stock split notifications (downloaded by scheduler) ────────────
+        try:
+            conn3 = get_connection()
+            pending_splits = pd.read_sql("""
+                SELECT can.Corporate_Actions_Id AS corporate_actions_id,
+                       ca.securities_id AS securities_id,
+                       s.Securities_Name AS securities_name,
+                       ca.Action_Type AS action_type,
+                       ca.Effective_Date::text AS effective_date,
+                       ca.Ratio_New AS ratio_new,
+                       ca.Ratio_Old AS ratio_old
+                FROM Corporate_Action_Notifications can
+                JOIN corporate_actions ca ON ca.corporate_actions_id = can.Corporate_Actions_Id
+                JOIN Securities s ON s.Securities_Id = ca.securities_id
+                WHERE can.Acknowledged = FALSE
+                ORDER BY can.Created_At DESC
+            """, conn3)
+            conn3.close()
+            for _, row in pending_splits.iterrows():
+                ratio_new = row.get('ratio_new')
+                ratio_old = row.get('ratio_old') or 1
+                ratio_txt = f"{float(ratio_new):g}-for-{float(ratio_old):g} " if ratio_new else ''
+                results.append({
+                    'level': 'info',
+                    'message': (f"🔀 **{row['action_type']}** — {row['securities_name']}: "
+                                f"{ratio_txt}effective {row['effective_date']}"),
+                    'corporate_actions_id': int(row['corporate_actions_id']),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'stock_split',
                 })
         except Exception:
             pass

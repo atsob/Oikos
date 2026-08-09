@@ -766,6 +766,135 @@ def download_dividend_history(target_sec_id=None):
         conn.close()
 
 
+def download_stock_splits(target_sec_id=None):
+    """Download stock split history from Yahoo Finance into corporate_actions.
+
+    Creates plain reference records only (Split / Reverse Split, ratio_new=<Yahoo's
+    ratio>, ratio_old=1 — same multiplier convention the Corporate Action Preview/
+    Execute flow already uses) — it doesn't touch Investments/Holdings, same as how
+    Download Dividend History populates Securities_Dividends without creating actual
+    dividend transactions. To apply a downloaded split to shares you actually held
+    on that date, use the Corporate Actions tab's own Split entry (Preview → Execute)
+    with the same date/ratio, same as recording one manually.
+
+    corporate_actions has no unique constraint on (securities_id, effective_date,
+    action_type), so re-running this checks for an existing Split/Reverse Split row
+    on the same date before inserting, to stay idempotent.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    MAX_WORKERS = 5
+
+    conn = get_connection()
+    cur  = conn.cursor()
+    custom_session = get_custom_session()
+
+    def _fetch(sec_id, sec_name, symbol):
+        try:
+            import logging as _logging
+            _yf_logger = _logging.getLogger("yfinance")
+            _prev_level = _yf_logger.level
+            _yf_logger.setLevel(_logging.CRITICAL)
+            try:
+                ticker = yf.Ticker(symbol, session=custom_session)
+                splits = ticker.splits      # pandas Series, index = effective date, value = ratio
+            finally:
+                _yf_logger.setLevel(_prev_level)
+            if splits is None or splits.empty:
+                return sec_id, sec_name, symbol, [], None
+            rows = []
+            for ts, ratio in splits.items():
+                eff_date = ts.date() if hasattr(ts, 'date') else None
+                ratio = float(ratio)
+                if eff_date is None or ratio <= 0 or ratio == 1:
+                    continue
+                if ratio >= 1:
+                    action_type, desc = 'Split', f"{ratio:g}-for-1 stock split (Yahoo Finance)"
+                else:
+                    action_type, desc = 'Reverse Split', f"1-for-{1/ratio:g} reverse split (Yahoo Finance)"
+                rows.append((sec_id, action_type, eff_date, ratio, 1.0, desc))
+            return sec_id, sec_name, symbol, rows, None
+        except Exception as exc:
+            return sec_id, sec_name, symbol, [], str(exc)
+
+    try:
+        base_query = """
+            SELECT Securities_Id, Securities_Name, Yahoo_Ticker
+            FROM   Securities
+            WHERE  Yahoo_Ticker IS NOT NULL
+              AND  Yahoo_Ticker != ''
+              AND  Securities_Name NOT LIKE 'Hellenic T-Bill%'
+        """
+        if target_sec_id:
+            base_query += f" AND Securities_Id = {int(target_sec_id)}"
+        base_query += " ORDER BY Securities_Name ASC"
+
+        cur.execute(base_query)
+        securities = cur.fetchall()
+
+        if not securities:
+            logging.warning("No securities with Yahoo Ticker found.")
+            return
+
+        total = len(securities)
+        print(f"Downloading stock split history for {total} securities…")
+
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(_fetch, sid, sname, sym): sname for sid, sname, sym in securities}
+            for f in as_completed(futures):
+                results.append(f.result())
+
+        all_rows = []   # (sec_id, action_type, eff_date, ratio_new, ratio_old, description)
+        for sec_id, sec_name, symbol, rows, err in results:
+            if err:
+                print(f"  ⚠️ {sec_name} ({symbol}): {err}")
+                logging.warning(f"Stock split history error {sec_name}: {err}")
+                continue
+            if rows:
+                print(f"  ✔ {sec_name}: {len(rows)} split(s)")
+                all_rows.extend(rows)
+
+        if not all_rows:
+            print("Stock split history complete — no splits found.")
+            return
+
+        sec_ids = list({r[0] for r in all_rows})
+        cur.execute(
+            "SELECT securities_id, effective_date, action_type FROM corporate_actions "
+            "WHERE securities_id = ANY(%s) AND action_type IN ('Split','Reverse Split')",
+            (sec_ids,),
+        )
+        existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+        new_rows = [r for r in all_rows if (r[0], r[2], r[1]) not in existing]
+
+        new_ca_ids = []
+        if new_rows:
+            for row in new_rows:
+                cur.execute("""
+                    INSERT INTO corporate_actions
+                        (securities_id, action_type, effective_date, ratio_new, ratio_old, description)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING corporate_actions_id
+                """, row)
+                new_ca_ids.append(cur.fetchone()[0])
+            conn.commit()
+
+            from database.queries import record_new_split_notifications
+            record_new_split_notifications(new_ca_ids)
+
+        skipped = len(all_rows) - len(new_rows)
+        print(f"Stock split history complete — {len(new_rows)} new record(s) inserted"
+              f"{f', {skipped} already on record' if skipped else ''}.")
+        logging.info(f"Stock splits: {len(new_rows)} rows inserted.")
+
+    except Exception as e:
+        logging.error(f"❌ Error: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
 _FUND_COMPOSITION_COLUMNS = [
     "Asset_Cash_Pct", "Asset_Stock_Pct", "Asset_Bond_Pct", "Asset_Preferred_Pct",
     "Asset_Convertible_Pct", "Asset_Other_Pct", "Sector_Weightings", "Category_Name",

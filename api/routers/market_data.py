@@ -378,6 +378,19 @@ def download_yahoo_dividends(data: dict = {}):
         raise HTTPException(500, str(e))
 
 
+@router.post("/download/stock-splits")
+def download_stock_splits(data: dict = {}):
+    """Download stock split history from Yahoo Finance into Corporate Actions
+    (reference records only — doesn't touch holdings; use the Corporate Actions
+    tab's Split entry, Preview -> Execute, to apply one to shares actually held)."""
+    try:
+        from data.downloaders import download_stock_splits as _download_stock_splits
+        _download_stock_splits(target_sec_id=data.get("security_id"))
+        return {"ok": True, "message": "Stock split history downloaded"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/download/fund-composition")
 def download_fund_composition_endpoint(data: dict = {}):
     """Download ETF/Mutual Fund look-through composition from Yahoo Finance (Portfolio X-Ray)."""

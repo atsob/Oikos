@@ -262,6 +262,17 @@ def acknowledge_signal(securities_id: int):
         raise HTTPException(500, str(e))
 
 
+@router.post("/alerts/acknowledge-split/{corporate_actions_id}")
+def acknowledge_split(corporate_actions_id: int):
+    """Dismiss a new-split notification for a corporate action."""
+    try:
+        from database.queries import acknowledge_split_notification
+        acknowledge_split_notification(corporate_actions_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/upcoming-bills")
 def get_upcoming_bills(days: int = Query(14)):
     """Upcoming bills: confirmed future transactions + pattern-detected recurring payees."""

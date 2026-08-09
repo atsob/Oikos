@@ -56,13 +56,21 @@ def get_security_transactions(sec_id: int):
                    c.currencies_shortname AS currency,
                    i.description,
                    i.transactions_id,
-                   tx.accounts_id AS cash_account_id
+                   tx.accounts_id AS cash_account_id,
+                   SUM(CASE
+                       WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
+                       WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
+                       ELSE 0 END) OVER (
+                           PARTITION BY i.accounts_id
+                           ORDER BY i.date, i.investments_id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS qty_held
             FROM investments i
             JOIN accounts a ON a.accounts_id = i.accounts_id
             LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
             LEFT JOIN transactions tx ON tx.transactions_id = i.transactions_id
             WHERE i.securities_id = %(sid)s
-            ORDER BY i.date DESC
+            ORDER BY i.date DESC, i.investments_id DESC
         """, conn, params={"sid": sec_id})
     return _df(df)
 
@@ -252,16 +260,19 @@ def delete_security_dividend(sec_id: int, dividend_id: int):
 def get_corporate_actions(sec_id: int):
     with get_db() as conn:
         df = pd.read_sql("""
-            SELECT corporate_actions_id AS id,
-                   effective_date::text AS date,
-                   action_type AS type,
-                   ratio_new,
-                   ratio_old,
-                   gross_per_share,
-                   tax_rate,
-                   description,
-                   created_at::text AS recorded_at
-            FROM corporate_actions
+            SELECT ca.corporate_actions_id AS id,
+                   ca.effective_date::text AS date,
+                   ca.action_type AS type,
+                   ca.ratio_new,
+                   ca.ratio_old,
+                   ca.gross_per_share,
+                   ca.tax_rate,
+                   ca.description,
+                   ca.created_at::text AS recorded_at,
+                   EXISTS (
+                       SELECT 1 FROM investments i WHERE i.corporate_actions_id = ca.corporate_actions_id
+                   ) AS has_transactions
+            FROM corporate_actions ca
             WHERE securities_id = %(sid)s
             ORDER BY effective_date DESC
         """, conn, params={"sid": sec_id})
@@ -431,6 +442,85 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_da
                  sc.currencies_shortname, s.currencies_id
     """, conn, params=params)
     return df[df["qty_held"] != 0]
+
+
+def _apply_split_to_holdings(cur, ca_id: int) -> tuple[int, list[dict]]:
+    """Apply an existing Split/Reverse Split corporate action to holdings.
+
+    Inserts the ShrIn/ShrOut investment transactions the split implies, linked
+    back to the action via corporate_actions_id, for every account that held
+    the security as of the action's effective date. Unlike execute_corporate_action,
+    this does NOT insert a new corporate_actions row — it applies to one that
+    already exists (e.g. a bare record from the Yahoo split downloader, or one
+    entered manually without going through the Preview/Execute flow).
+
+    Before inserting for a given account, checks whether a ShrIn/ShrOut for this
+    security already exists on the exact effective date with no corporate_actions_id
+    link — i.e. a split adjustment entered manually before this record existed, or
+    before it was linked. Such accounts are skipped (not inserted for) rather than
+    risking a duplicate — this was found the hard way: an early run of this function
+    double-counted a security whose split had already been recorded manually.
+
+    Caller is responsible for verifying the action has no linked transactions yet
+    (call sites only offer this for not-yet-applied actions) and for commit/rollback.
+    Returns (transactions_inserted, skipped) where skipped is a list of
+    {accounts_id, existing_investments_id} for accounts left untouched because a
+    plausible pre-existing entry was found — these need manual review.
+    """
+    cur.execute("""
+        SELECT securities_id, action_type, effective_date::text, ratio_new, ratio_old, description
+        FROM corporate_actions WHERE corporate_actions_id = %s
+    """, (ca_id,))
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"Corporate action {ca_id} not found")
+    sec_id, action_type, eff_date, ratio_new, ratio_old, description = row
+    if action_type not in ("Split", "Reverse Split"):
+        raise ValueError(f"Corporate action {ca_id} is not a Split/Reverse Split")
+    ratio_new = float(ratio_new or 1)
+    ratio_old = float(ratio_old or 1)
+
+    cur.execute("""
+        SELECT a.accounts_id,
+               COALESCE(SUM(CASE
+                   WHEN i.action IN ('Buy','ShrIn','Reinvest','Grant','Vest','Exercise') THEN i.quantity
+                   WHEN i.action IN ('Sell','ShrOut','Expire') THEN -i.quantity
+                   ELSE 0 END), 0) AS qty_held
+        FROM investments i
+        JOIN accounts a ON a.accounts_id = i.accounts_id
+        WHERE i.securities_id = %s AND i.date <= %s
+        GROUP BY a.accounts_id
+    """, (sec_id, eff_date))
+    holdings = [(r[0], float(r[1])) for r in cur.fetchall() if r[1] != 0]
+
+    inserted = 0
+    skipped: list[dict] = []
+    for accounts_id, qty in holdings:
+        delta = round(qty * (ratio_new / ratio_old - 1), 8)
+        if delta == 0:
+            continue
+
+        cur.execute("""
+            SELECT investments_id FROM investments
+            WHERE securities_id = %s AND accounts_id = %s AND date = %s
+              AND action IN ('ShrIn', 'ShrOut') AND corporate_actions_id IS NULL
+            LIMIT 1
+        """, (sec_id, accounts_id, eff_date))
+        existing = cur.fetchone()
+        if existing:
+            skipped.append({"accounts_id": accounts_id, "existing_investments_id": existing[0]})
+            continue
+
+        inv_action = "ShrIn" if delta > 0 else "ShrOut"
+        cur.execute("""
+            INSERT INTO investments
+                (accounts_id, securities_id, date, action, quantity,
+                 price_per_share, commission, total_amount_acccur, total_amount_seccur,
+                 fx_rate, description, corporate_actions_id)
+            VALUES (%s, %s, %s, %s, %s, 0, 0, 0, 0, 1, %s, %s)
+        """, (accounts_id, sec_id, eff_date, inv_action, abs(delta), description or None, ca_id))
+        inserted += 1
+    return inserted, skipped
 
 
 @router.post("/{sec_id}/corporate-actions/preview")
@@ -631,6 +721,7 @@ def execute_corporate_action(sec_id: int, data: dict):
         payee_id = _find_or_create_payee(cur, sec_name) if sec_name else None
 
         # 5. Insert investment transactions (and linked cash transactions where applicable)
+        skipped_split_accounts: list[int] = []
         for accounts_id, qty in holdings:
             tax_amount = None
             _needs_fx = False
@@ -639,6 +730,18 @@ def execute_corporate_action(sec_id: int, data: dict):
                 ratio_old = float(data.get("ratio_old") or 1)
                 delta = round(qty * (ratio_new / ratio_old - 1), 8)
                 if delta == 0:
+                    continue
+                # Skip accounts that already have an unlinked ShrIn/ShrOut for this security on
+                # this exact date (a split adjustment entered manually before this record existed)
+                # — inserting on top of it would double-count the shares.
+                cur.execute("""
+                    SELECT investments_id FROM investments
+                    WHERE securities_id = %s AND accounts_id = %s AND date = %s
+                      AND action IN ('ShrIn', 'ShrOut') AND corporate_actions_id IS NULL
+                    LIMIT 1
+                """, (sec_id, accounts_id, date))
+                if cur.fetchone():
+                    skipped_split_accounts.append(accounts_id)
                     continue
                 inv_action = "ShrIn" if delta > 0 else "ShrOut"
                 inv_qty, price, total = abs(delta), 0, 0
@@ -721,7 +824,53 @@ def execute_corporate_action(sec_id: int, data: dict):
 
     from database.crud import update_holdings
     update_holdings()
-    return {"ok": True, "corporate_action_id": ca_id, "transactions_inserted": len(holdings)}
+    return {
+        "ok": True, "corporate_action_id": ca_id, "transactions_inserted": len(holdings) - len(skipped_split_accounts),
+        "skipped_accounts": skipped_split_accounts,
+    }
+
+
+@router.post("/{sec_id}/corporate-actions/{ca_id}/apply-split")
+def apply_split_corporate_action(sec_id: int, ca_id: int):
+    """Produce the ShrIn/ShrOut transactions for an existing Split/Reverse Split record.
+
+    For use from the Edit flow on a corporate action that was recorded as a plain
+    reference row (e.g. downloaded from Yahoo, or entered manually) and has never
+    had its transactions generated. Refuses if any transactions are already linked
+    to this action, to avoid double-applying a split — editing an already-applied
+    one still only updates the record's fields, same as before.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action_type FROM corporate_actions WHERE corporate_actions_id=%s AND securities_id=%s",
+            (ca_id, sec_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Corporate action not found")
+        if row[0] not in ("Split", "Reverse Split"):
+            raise HTTPException(400, "Only Split / Reverse Split actions can be applied this way")
+
+        cur.execute("SELECT COUNT(*) FROM investments WHERE corporate_actions_id=%s", (ca_id,))
+        if cur.fetchone()[0] > 0:
+            raise HTTPException(400, "This action already has linked transactions")
+
+        inserted, skipped = _apply_split_to_holdings(cur, ca_id)
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+    from database.crud import update_holdings
+    update_holdings()
+    return {"ok": True, "transactions_inserted": inserted, "skipped": skipped}
 
 
 # ── Price Anomalies ───────────────────────────────────────────────────────────
