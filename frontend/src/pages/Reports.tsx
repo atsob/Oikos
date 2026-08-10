@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -4557,89 +4557,92 @@ function PortfolioActionSignalsTab() {
       { field: 'wall_street_view', headerName: 'Analyst View', width: 130,
         headerTooltip: 'Wall Street analyst consensus rating.',
         cellRenderer: (p: { value: string | null }) => analystBadge(p.value) },
-      { field: 'current_value_eur', headerName: 'Value (€)', type: 'numericColumn', width: 110,
+      { field: 'current_value_eur', headerName: 'Value (€)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Current market value of the position in EUR.', valueFormatter: eurFmt },
-      { field: 'unrealized_pnl_eur', headerName: 'Unreal. P&L', type: 'numericColumn', width: 110,
+      { field: 'unrealized_pnl_eur', headerName: 'Unreal. P&L', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Unrealized P&L: market value minus FIFO cost basis.', valueFormatter: eurFmt, cellClass: pnlCellClass },
-      { field: 'unrealized_pnl_pct', headerName: 'P&L %', type: 'numericColumn', width: 90,
+      { field: 'unrealized_pnl_pct', headerName: 'P&L %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 90,
         headerTooltip: 'Unrealized P&L as % of cost basis.', valueFormatter: p => pctFmt(p.value), cellClass: pnlCellClass },
-      { field: 'realized_pnl_eur', headerName: 'Realized P&L', type: 'numericColumn', width: 120,
+      { field: 'realized_pnl_eur', headerName: 'Realized P&L', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120,
         headerTooltip: 'All-time realized P&L (FIFO), summed across every account this security has ever been held in.',
         valueFormatter: eurFmt, cellClass: pnlCellClass },
-      { field: 'shares_held', headerName: 'Shares Held', type: 'numericColumn', width: 100,
+      { field: 'shares_held', headerName: 'Shares Held', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Current quantity held across all accounts.', valueFormatter: numFmt(4) },
-      { field: 'cost_basis_eur', headerName: 'Cost Basis (€)', type: 'numericColumn', width: 110,
+      { field: 'cost_basis_eur', headerName: 'Cost Basis (€)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'FIFO cost basis in EUR.', valueFormatter: eurFmt },
-      { field: 'avg_cost_per_share_eur', headerName: 'Avg Cost/Share (€)', type: 'numericColumn', width: 130, hide: true,
+      { field: 'avg_cost_per_share_eur', headerName: 'Avg Cost/Share (€)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 130, hide: true,
         headerTooltip: 'Cost basis divided by shares held, in EUR.', valueFormatter: numFmt(4) },
-      { field: 'change', headerName: 'Change', type: 'numericColumn', width: 100, hide: true,
+      { field: 'change', headerName: 'Change', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
         headerTooltip: 'Price change vs previous close, in the security’s own currency.', valueFormatter: numFmt(4), cellClass: pnlCellClass },
-      { field: 'pct_change', headerName: '% Change', type: 'numericColumn', width: 100, hide: true,
+      { field: 'pct_change', headerName: '% Change', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
         headerTooltip: 'Price change vs previous close, as a percentage.', valueFormatter: p => pctFmt(p.value), cellClass: pnlCellClass },
-      { field: 'fwd_yield_pct', headerName: 'Fwd Yield %', type: 'numericColumn', width: 110,
+      { field: 'fwd_yield_pct', headerName: 'Fwd Yield %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Forward dividend yield based on analyst estimates.',
         valueFormatter: p => p.value != null && Number(p.value) > 0 ? `${Number(p.value).toFixed(2)}%` : '—', cellClass: () => 'text-blue-700' },
-      { field: 'sharpe_ratio', headerName: 'Sharpe', type: 'numericColumn', width: 90,
+      { field: 'sharpe_ratio', headerName: 'Sharpe', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 90,
         headerTooltip: 'Sharpe ratio: excess return divided by annual volatility.',
         valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—',
         cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 1 ? 'text-green-700' : Number(p.value ?? 0) < 0 ? 'text-red-600' : 'text-slate-600'}` },
-      { field: 'quality_score', headerName: 'Quality', type: 'numericColumn', width: 90,
+      { field: 'quality_score', headerName: 'Quality', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 90,
         headerTooltip: 'Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).',
         valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
-      { field: 'vol_1y_ann', headerName: 'Volatility (1Y)', type: 'numericColumn', width: 120,
+      { field: 'vol_1y_ann', headerName: 'Volatility (1Y)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120,
         headerTooltip: 'Annualized volatility over the last 1 year.',
         valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
-      { field: 'vol_1m_ann', headerName: 'Volatility (1M)', type: 'numericColumn', width: 120, hide: true,
+      { field: 'vol_1m_ann', headerName: 'Volatility (1M)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true,
         headerTooltip: 'Annualized volatility over the last 1 month.',
         valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
-      { field: 'vol_3m_ann', headerName: 'Volatility (3M)', type: 'numericColumn', width: 120, hide: true,
+      { field: 'vol_3m_ann', headerName: 'Volatility (3M)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true,
         headerTooltip: 'Annualized volatility over the last 3 months.',
         valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
-      { field: 'vol_ytd_ann', headerName: 'Volatility (YTD)', type: 'numericColumn', width: 120, hide: true,
+      { field: 'vol_ytd_ann', headerName: 'Volatility (YTD)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true,
         headerTooltip: 'Annualized volatility year-to-date.',
         valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
-      { field: 'price_today', headerName: 'Price', type: 'numericColumn', width: 100,
+      { field: 'price_today', headerName: 'Price', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Most recent available market price, in the security’s own currency.', valueFormatter: numFmt(4) },
-      { field: 'day_open', headerName: 'Open', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
-      { field: 'prev_close', headerName: 'Prev Close', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
-      { field: 'day_high', headerName: 'Day High', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
-      { field: 'day_low', headerName: 'Day Low', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
-      { field: 'high_3y', headerName: '3Y High', type: 'numericColumn', width: 100,
+      { field: 'day_open', headerName: 'Open', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'prev_close', headerName: 'Prev Close', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'day_high', headerName: 'Day High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'day_low', headerName: 'Day Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true, valueFormatter: numFmt(4) },
+      { field: 'high_3y', headerName: '3Y High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Highest price in the last 3 years (post-split adjusted).', valueFormatter: numFmt(4) },
-      { field: 'pct_from_high_3y', headerName: '% from High', type: 'numericColumn', width: 110,
+      { field: 'pct_from_high_3y', headerName: '% from High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Current price vs 3-year high as a percentage.', valueFormatter: p => pctFmt(p.value),
         cellClass: (p: { value: unknown }) => Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600' },
-      { field: 'low_3y', headerName: '3Y Low', type: 'numericColumn', width: 100,
+      { field: 'low_3y', headerName: '3Y Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Lowest price in the last 3 years (post-split adjusted).', valueFormatter: numFmt(4) },
-      { field: 'pct_from_low_3y', headerName: '% from Low', type: 'numericColumn', width: 110,
+      { field: 'pct_from_low_3y', headerName: '% from Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Current price vs 3-year low as a percentage.', valueFormatter: p => pctFmt(p.value),
         cellClass: (p: { value: unknown }) => Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600' },
-      { field: 'week52_high', headerName: '52-Week High', type: 'numericColumn', width: 120, hide: true, valueFormatter: numFmt(4) },
-      { field: 'week52_low', headerName: '52-Week Low', type: 'numericColumn', width: 120, hide: true, valueFormatter: numFmt(4) },
-      { field: 'volume', headerName: 'Volume', type: 'numericColumn', width: 110, hide: true,
+      { field: 'week52_high', headerName: '52-Week High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true, valueFormatter: numFmt(4) },
+      { field: 'week52_low', headerName: '52-Week Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true, valueFormatter: numFmt(4) },
+      { field: 'volume', headerName: 'Volume', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110, hide: true,
         valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
-      { field: 'avg_volume', headerName: 'Avg Vol', type: 'numericColumn', width: 110, hide: true,
+      { field: 'avg_volume', headerName: 'Avg Vol', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110, hide: true,
         valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
-      { field: 'trailing_pe', headerName: 'P/E', type: 'numericColumn', width: 90, hide: true, valueFormatter: numFmt(2) },
-      { field: 'market_cap', headerName: 'Market Cap', type: 'numericColumn', width: 140, hide: true,
+      { field: 'trailing_pe', headerName: 'P/E', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 90, hide: true, valueFormatter: numFmt(2) },
+      { field: 'market_cap', headerName: 'Market Cap', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 140, hide: true,
         valueFormatter: p => p.value != null ? Number(p.value).toLocaleString() : '—' },
-      { field: 'dividend_rate', headerName: 'Ann Div/Shr', type: 'numericColumn', width: 110, hide: true, valueFormatter: numFmt(4) },
+      { field: 'dividend_rate', headerName: 'Ann Div/Shr', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110, hide: true, valueFormatter: numFmt(4) },
       { field: 'ex_dividend_date', headerName: 'Ex-Div Date', width: 110, hide: true,
         valueFormatter: p => typeof p.value === 'string' ? p.value.slice(0, 10) : '—' },
       { field: 'sec_type', headerName: 'Type', width: 100, hide: true },
       { field: 'industry', headerName: 'Industry', width: 160, hide: true },
       { field: 'currency', headerName: 'Currency', width: 90, hide: true },
       { field: 'exchange', headerName: 'Exchange', width: 100, hide: true },
-      { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', width: 100,
+      { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Analyst target price vs current price — expected upside.', valueFormatter: p => pctFmt(p.value),
         cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}` },
-      { field: 'target_price', headerName: 'Target', type: 'numericColumn', width: 100,
+      { field: 'target_price', headerName: 'Target', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Analyst consensus target price.', valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
     ]
     return cols
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('portfolio-action-signals', colDefs)
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('portfolio-action-signals')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -4663,6 +4666,12 @@ function PortfolioActionSignalsTab() {
           onChange={e => setSearch(e.target.value)}
           className="px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
         />
+        {gridFilter.hasFilters && (
+          <button onClick={() => gridFilter.clearFilters(gridApi)}
+            className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+            ✕ Clear Filters
+          </button>
+        )}
         <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
         <CopyToExcelButton gridApi={gridApi} />
       </div>
@@ -4679,6 +4688,7 @@ function PortfolioActionSignalsTab() {
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
+          onFilterChanged={gridFilter.onFilterChanged}
           getRowClass={(p: { data?: Row }) => Number(p.data?.current_value_eur ?? 0) === 0 ? 'opacity-60' : ''}
         />
       </div>

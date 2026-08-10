@@ -147,7 +147,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
     { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
     { field: 'track_for_news', headerName: 'News', width: 70, valueFormatter: (p: { value: boolean }) => p.value ? 'Yes' : '—' },
-    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
+    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const, filter: 'agNumberColumnFilter' },
     { field: 'last_transaction', headerName: 'Last Used', width: 110, valueFormatter: (p: { value: string | null }) => p.value?.slice(0, 10) ?? '—' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
@@ -367,8 +367,8 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
     { field: 'type', headerName: 'Type', width: 120 },
-    { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' as const },
-    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const },
+    { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' as const, filter: 'agNumberColumnFilter' },
+    { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const, filter: 'agNumberColumnFilter' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -588,7 +588,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
     { field: 'currency', headerName: 'Currency', width: 90 },
-    { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
+    { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
     { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
     { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
     { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },

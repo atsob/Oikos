@@ -100,8 +100,8 @@ const makeCashCols = (currency: string): ColDef[] => [
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140 },
   { field: 'target_account', headerName: 'Transfer To', width: 130 },
   { field: 'memo', headerName: 'Memo', width: 140 },
-  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: CashAmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
-  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: CashBalanceCell, cellRendererParams: { currency }, type: 'numericColumn' },
+  { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: CashAmountCell, cellRendererParams: { currency }, type: 'numericColumn', filter: 'agNumberColumnFilter' },
+  { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: CashBalanceCell, cellRendererParams: { currency }, type: 'numericColumn', filter: 'agNumberColumnFilter' },
   { colId: 'status', headerName: 'Status', width: 170, cellRenderer: CashStatusCell },
 ]
 

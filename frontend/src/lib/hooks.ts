@@ -144,6 +144,40 @@ export function useGridColumnState<T extends { colId?: string; field?: string; h
   return { colDefs: orderedColDefs, onColumnMoved, onColumnResized, onSortChanged, columns, toggleColumn }
 }
 
+/**
+ * Persists an ag-Grid's column filter model server-side via usePersist, keyed by
+ * `key`, so applied filters survive navigating away and back (e.g. clicking through
+ * to Security Detail then hitting Back) instead of being lost on remount — ag-Grid's
+ * own filter state lives only in the live grid instance, gone the moment the
+ * component unmounts. Restore it from onGridReady, save on every filter change,
+ * and clearFilters() resets both the grid and the saved copy for a "Clear Filters"
+ * button:
+ *
+ *   const gridFilter = useGridFilterState('portfolio-action-signals')
+ *   const { gridApi, onGridReady } = useGridApi(api => {
+ *     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+ *   })
+ *   <AgGridReact onGridReady={onGridReady} onFilterChanged={gridFilter.onFilterChanged} .../>
+ *   <Button onClick={() => gridFilter.clearFilters(gridApi)}>Clear Filters</Button>
+ */
+export function useGridFilterState(key: string) {
+  const [filterModel, setFilterModel] = usePersist<Record<string, unknown> | null>(`grid_filter_${key}`, null)
+
+  const onFilterChanged = useCallback((e: { api: GridApi }) => {
+    const model = e.api.getFilterModel()
+    setFilterModel(Object.keys(model).length ? model : null)
+  }, [setFilterModel])
+
+  const hasFilters = !!filterModel && Object.keys(filterModel).length > 0
+
+  const clearFilters = useCallback((api: GridApi | null) => {
+    api?.setFilterModel(null)
+    setFilterModel(null)
+  }, [setFilterModel])
+
+  return { filterModel, onFilterChanged, clearFilters, hasFilters } as const
+}
+
 // ── useGridApi ───────────────────────────────────────────────────────────────
 // Captures a grid's GridApi for use outside ag-Grid (e.g. CopyToExcelButton),
 // via onGridReady. Pass an optional onReady for anything else a grid already

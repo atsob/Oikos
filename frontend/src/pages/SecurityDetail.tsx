@@ -1285,8 +1285,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     { field: 'type', headerName: 'Type', width: 140 },
     { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
     { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
-    { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
-    { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn' as const, valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
+    { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
+    { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
     { field: 'description', headerName: 'Description', flex: 1 },
     { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
     {
