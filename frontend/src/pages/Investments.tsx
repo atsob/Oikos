@@ -11,7 +11,7 @@ import {
   syncBalances, batchUpdateInvestments, batchDeleteInvestments,
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -753,6 +753,7 @@ export default function Investments() {
                       quickFilterText={cashSearch}
                       columnDefs={cashGridCols.colDefs}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                      columnTypes={AG_GRID_COLUMN_TYPES}
                       rowSelection="multiple"
                       onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                       onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}

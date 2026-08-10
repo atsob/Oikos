@@ -14,7 +14,7 @@ import {
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
   getCreditRatings, getIssuers, upsertIssuer,
 } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
@@ -195,7 +195,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 
@@ -415,7 +415,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 
@@ -642,7 +642,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 
@@ -859,7 +859,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 
@@ -1024,7 +1024,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 

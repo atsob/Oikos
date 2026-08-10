@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton } from '@/components/ui'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
@@ -248,7 +248,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
       </div>
       <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
         <AgGridReact theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -404,7 +404,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
         <AgGridReact theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -609,7 +609,7 @@ function FxPricesTab() {
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
             />
           </div>
         </div>
@@ -893,7 +893,7 @@ function SecuritiesPricesTab() {
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
             />
           </div>
         </div>
@@ -1499,7 +1499,7 @@ export default function MarketData() {
                   </div>
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
                     <AgGridReact theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
-                      defaultColDef={{ resizable: true, sortable: true, filter: true }}
+                      defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
                       onColumnMoved={anomalyGridCols.onColumnMoved}
                       onColumnResized={anomalyGridCols.onColumnResized} />
                   </div>

@@ -5,6 +5,14 @@ import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check } from 'luci
 import { usePersist } from '@/lib/hooks'
 import type { GridApi } from 'ag-grid-community'
 
+// AG Grid's built-in 'numericColumn' type only sets alignment (right-aligned header/cell) —
+// it doesn't include a filter, so columns using it still fall back to defaultColDef's text
+// filter (Contains/Equals/...). Pass this as the columnTypes prop on every AgGridReact
+// instance so those columns get numeric operators (>, <, =, etc.) instead.
+export const AG_GRID_COLUMN_TYPES = {
+  numericColumn: { filter: 'agNumberColumnFilter' as const },
+}
+
 // ── Escape-key hook (call inside any modal with the close handler) ────────────
 export function useEscapeKey(onClose: () => void) {
   useEffect(() => {

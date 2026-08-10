@@ -29,7 +29,7 @@ import {
   getSecurities, lookupTicker, upsertSecurity,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
@@ -4586,6 +4586,18 @@ function PortfolioActionSignalsTab() {
       { field: 'quality_score', headerName: 'Quality', type: 'numericColumn', width: 90,
         headerTooltip: 'Quality score: composite momentum (50% 1M + 30% 3M + 20% 1Y return).',
         valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
+      { field: 'vol_1y_ann', headerName: 'Volatility (1Y)', type: 'numericColumn', width: 120,
+        headerTooltip: 'Annualized volatility over the last 1 year.',
+        valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
+      { field: 'vol_1m_ann', headerName: 'Volatility (1M)', type: 'numericColumn', width: 120, hide: true,
+        headerTooltip: 'Annualized volatility over the last 1 month.',
+        valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
+      { field: 'vol_3m_ann', headerName: 'Volatility (3M)', type: 'numericColumn', width: 120, hide: true,
+        headerTooltip: 'Annualized volatility over the last 3 months.',
+        valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
+      { field: 'vol_ytd_ann', headerName: 'Volatility (YTD)', type: 'numericColumn', width: 120, hide: true,
+        headerTooltip: 'Annualized volatility year-to-date.',
+        valueFormatter: p => p.value != null ? `${Number(p.value).toFixed(2)}%` : '—' },
       { field: 'price_today', headerName: 'Price', type: 'numericColumn', width: 100,
         headerTooltip: 'Most recent available market price, in the security’s own currency.', valueFormatter: numFmt(4) },
       { field: 'day_open', headerName: 'Open', type: 'numericColumn', width: 100, hide: true, valueFormatter: numFmt(4) },
@@ -4662,6 +4674,7 @@ function PortfolioActionSignalsTab() {
           rowData={filtered}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          columnTypes={AG_GRID_COLUMN_TYPES}
           quickFilterText={search}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}

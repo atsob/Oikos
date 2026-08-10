@@ -4,6 +4,10 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-08-10
 
+### Added
+- **Numeric columns in ag-Grid tables now offer numeric filter operators** (equals, greater than, less than, in range, etc.) instead of the text-filter defaults (Contains, Begins with, ...) — applied wherever a column already used the numeric type: Securities Analysis, Market Data, Static Data, Security Detail, and Investments' Holdings tab. Grids using infinite scroll (Cash Register, Investments → Transactions) don't have column filters at all — client-side filtering doesn't make sense there — so they're unaffected.
+- **Securities Analysis → Portfolio Action Signals gains Volatility columns** (1M/3M/1Y/YTD annualized, same figures as the dedicated Volatility tab) — 1Y shown by default, the others available via the Columns menu — so volatility can be sorted/filtered alongside signals and P&L instead of only in its own separate high/low list.
+
 ### Fixed
 - **Weekly AI Summary reverted to its earlier, more readable format** — a "Here is your weekly summary:" lead-in and a closing numbered list of the week's top 5 transactions (payee, amount, expense/income). A later prompt revision had switched it to a stricter no-list, no-greeting narrative that lost that structure.
 

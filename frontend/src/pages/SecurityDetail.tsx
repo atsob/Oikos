@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES,
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -321,7 +321,7 @@ function PricesTab({ secId }: { secId: number }) {
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
       </div>
 
@@ -747,7 +747,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             onColumnMoved={txGridCols.onColumnMoved}
             onColumnResized={txGridCols.onColumnResized}
             columnDefs={txGridCols.colDefs}
-            defaultColDef={{ resizable: true, sortable: true, filter: true }}
+            defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
             rowStyle={{ cursor: 'pointer' }}
             onRowDoubleClicked={e => { if (e.data) openEdit(e.data as Record<string, unknown>) }}
           />
@@ -1072,7 +1072,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }}
+              defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
               rowSelection="multiple"
               suppressRowClickSelection
               onSelectionChanged={e => setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
