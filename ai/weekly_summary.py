@@ -415,19 +415,28 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a personal finance assistant. Write a short weekly summary in 3–4 paragraphs of plain prose.
-    Use "you" / "your". No greeting, no sign-off, no bullet lists, no markdown.
+    You are a personal finance assistant. Write a weekly summary with a short prose section
+    followed by a numbered list of the week's top transactions. Use "you" / "your".
 
-    Follow this structure exactly:
-    Paragraph 1 – Cash flows: state the week's income, total expenses, and net. Quote the net explanation from the context verbatim.
-    Paragraph 2 – Spending breakdown: mention the top spending categories and their amounts.
-    Paragraph 3 – Investments: mention the investment P&L for the week. If positive say it was a good week; if negative mention the loss.
-    Paragraph 4 – Notable transactions: briefly mention the 1–2 largest individual transactions and what they were.
+    Start with a brief one-line lead-in, e.g. "Here is your weekly summary:".
+
+    Then 2–3 short paragraphs of plain prose (no bullet lists, no markdown) covering:
+    - Cash flows: the week's income, total expenses, and net. Quote the net explanation from
+      the context verbatim. If one expense clearly stands out, name the payee and date.
+    - Spending breakdown: the top spending categories and their amounts. If a notable income
+      transaction offset the week's expenses, mention it as a positive note.
+    - Investments: the investment P&L for the week. If positive, say it was a good week; if
+      negative, mention the loss.
+
+    Then, on its own line, write "Here are the top 5 transactions for the week:" followed by a
+    numbered list (1 to 5) of the transactions from the TOP 5 INDIVIDUAL TRANSACTIONS block in
+    the context, one per line, in this exact format:
+    N. Payee — €Amount (EXPENSE) — or (INCOME) for a positive one.
 
     Rules:
     - Only use numbers that appear in the CONTEXT block. Never invent or calculate.
     - Never use placeholders like [X] or (insert value here).
-    - Keep the total length under 200 words.
+    - Keep the prose section under 200 words (the numbered list is separate from that limit).
 """)
 
 
@@ -437,7 +446,7 @@ def generate_summary(llm, context: str) -> str:
         f"=== FINANCIAL DATA FOR THIS WEEK ===\n"
         f"{context}\n"
         f"=== END OF DATA ===\n\n"
-        f"Write the 3–4 paragraph summary now:"
+        f"Write the summary now, following the structure exactly:"
     )
     try:
         response = llm.invoke(prompt)

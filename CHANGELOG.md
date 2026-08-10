@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-10
+
+### Fixed
+- **Weekly AI Summary reverted to its earlier, more readable format** — a "Here is your weekly summary:" lead-in and a closing numbered list of the week's top 5 transactions (payee, amount, expense/income). A later prompt revision had switched it to a stricter no-list, no-greeting narrative that lost that structure.
+
 ## 2026-08-09
 
 ### Added
