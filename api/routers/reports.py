@@ -2190,7 +2190,9 @@ def get_cash_flow_forecast_full(
         'Bi-Monthly': relativedelta(months=2), 'Quarterly': relativedelta(months=3),
         'Semi-Annual': relativedelta(months=6), 'Annual': relativedelta(years=1),
     }
-    mb = max(2, min(6, int(months_back)))
+    # Upper bound raised from 6 to 12 to accommodate the frontend's YTD option (complete
+    # calendar months elapsed this year), which can be as high as 11 in December.
+    mb = max(2, min(12, int(months_back)))
 
     with get_db() as conn:
         df_future = pd.read_sql("""

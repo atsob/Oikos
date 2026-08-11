@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-11
+
+### Added
+- **Cash Flow Forecast → Horizon gains an EOY option** — projects through Dec 31 of the current year, recalculated each time you click it rather than a fixed day count.
+- **Cash Flow Forecast → Recurring window gains a YTD checkbox** — uses every complete calendar month so far this year instead of the 2–6 month slider, without discarding your manual slider position (unchecking restores it). The backend's recurring-window cap was raised from 6 to 12 months to accommodate this — previously anything above 6 was silently clamped down.
+
 ## 2026-08-10
 
 ### Added
@@ -10,6 +16,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Portfolio Action Signals now remembers applied column filters** across navigation (e.g. clicking through to a Security Detail page and back), the same way column order/width/sort already did — previously any filter you'd applied was silently lost. Also adds a **Clear Filters** button, shown only while a filter is active.
 
 ### Fixed
+- **Typing into a Portfolio Action Signals column filter closed the filter popup after a moment** — saving the newly-persisted filter on every change re-rendered the component with a freshly-recreated `defaultColDef` object, which ag-Grid treated as a column-config change and reset for, closing whatever filter popup was open mid-keystroke. Given a stable reference instead.
 - **Weekly AI Summary reverted to its earlier, more readable format** — a "Here is your weekly summary:" lead-in and a closing numbered list of the week's top 5 transactions (payee, amount, expense/income). A later prompt revision had switched it to a stricter no-list, no-greeting narrative that lost that structure.
 
 ## 2026-08-09

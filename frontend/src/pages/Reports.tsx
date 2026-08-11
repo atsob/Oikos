@@ -4432,6 +4432,14 @@ function InvestmentSignalsTab() {
   )
 }
 
+// A fresh object literal every render (the usual inline defaultColDef={{...}} pattern)
+// makes ag-Grid treat column config as "changed" on any re-render, which normally goes
+// unnoticed since nothing re-renders this component while a filter popup is open — but
+// this grid's own filter-change handler now saves the filter server-side on every
+// keystroke, re-rendering the component mid-typing and closing the open popup as a
+// result. A stable reference sidesteps that entirely.
+const PORTFOLIO_SIGNALS_DEFAULT_COL_DEF = { resizable: true, sortable: true, filter: true }
+
 // ── Portfolio Action Signals Tab ──────────────────────────────────────────────
 function PortfolioActionSignalsTab() {
   const navigate = useNavigate()
@@ -4682,7 +4690,7 @@ function PortfolioActionSignalsTab() {
           onGridReady={onGridReady}
           rowData={filtered}
           columnDefs={gridCols.colDefs}
-          defaultColDef={{ resizable: true, sortable: true, filter: true }}
+          defaultColDef={PORTFOLIO_SIGNALS_DEFAULT_COL_DEF}
           columnTypes={AG_GRID_COLUMN_TYPES}
           quickFilterText={search}
           onColumnMoved={gridCols.onColumnMoved}
@@ -5682,6 +5690,19 @@ const CF_HORIZONS = [
   { label: '6m',  days: 180 },
   { label: '12m', days: 365 },
 ]
+// Days from today through Dec 31 of the current year — recomputed on each use (not a
+// fixed CF_HORIZONS entry) since "today" changes daily, unlike the other fixed presets.
+function daysUntilEndOfYear(): number {
+  const now = new Date()
+  const eoy = new Date(now.getFullYear(), 11, 31)
+  return Math.max(1, Math.ceil((eoy.getTime() - now.getTime()) / 86400000))
+}
+// Complete calendar months elapsed so far this year (Jan = 0 of them, Aug = 7, Dec = 11) —
+// floored at the slider's own minimum of 2 so early-year YTD doesn't request a degenerately
+// short recurring window.
+function ytdMonthsBack(): number {
+  return Math.max(2, new Date().getMonth())
+}
 const CF_COLOR_MAP: Record<string, string> = {
   'Income · Scheduled':           '#2ECC71',
   'Expense · Scheduled':          '#E74C3C',
@@ -5697,10 +5718,13 @@ function CashFlowSection() {
   const { isDark } = useTheme()
   const [days, setDays] = usePersist<number>('cf_days', 60)
   const [monthsBack, setMonthsBack] = usePersist<number>('cf_months_back', 2)
+  const [ytdRecurring, setYtdRecurring] = usePersist<boolean>('cf_recurring_ytd', false)
+  const eoyDays = daysUntilEndOfYear()
+  const effectiveMonthsBack = ytdRecurring ? ytdMonthsBack() : monthsBack
 
   const { data, isLoading } = useQuery({
-    queryKey: ['cash-flow-forecast-full', days, monthsBack],
-    queryFn: () => getCashFlowForecastFull(days, monthsBack),
+    queryKey: ['cash-flow-forecast-full', days, effectiveMonthsBack],
+    queryFn: () => getCashFlowForecastFull(days, effectiveMonthsBack),
   })
 
   const result = data as {
@@ -5778,15 +5802,28 @@ function CashFlowSection() {
                 {h.label}
               </button>
             ))}
+            <Tooltip text="Project through Dec 31 of the current year.">
+              <button onClick={() => setDays(eoyDays)}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${days === eoyDays ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                EOY
+              </button>
+            </Tooltip>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Tooltip text={`A payee + category pair must appear in every one of the last ${monthsBack} complete calendar months to be classified as recurring. Increase to require a longer consistent history; decrease to catch newer patterns.`}>
-            <span className="text-sm text-slate-500 cursor-help underline decoration-dotted">Recurring window: <strong>{monthsBack}m</strong></span>
+          <Tooltip text={`A payee + category pair must appear in every one of the last ${effectiveMonthsBack} complete calendar months to be classified as recurring. Increase to require a longer consistent history; decrease to catch newer patterns.`}>
+            <span className="text-sm text-slate-500 cursor-help underline decoration-dotted">Recurring window: <strong>{effectiveMonthsBack}m</strong></span>
           </Tooltip>
-          <input type="range" min={2} max={6} step={1} value={monthsBack}
+          <input type="range" min={2} max={6} step={1} value={monthsBack} disabled={ytdRecurring}
             onChange={e => setMonthsBack(Number(e.target.value))}
-            className="w-24 accent-blue-600" />
+            className="w-24 accent-blue-600 disabled:opacity-40" />
+          <Tooltip text="Use every complete calendar month so far this year instead of the slider above.">
+            <label className="flex items-center gap-1.5 text-sm text-slate-500 cursor-pointer">
+              <input type="checkbox" checked={ytdRecurring} onChange={e => setYtdRecurring(e.target.checked)}
+                className="accent-blue-600" />
+              YTD
+            </label>
+          </Tooltip>
         </div>
       </div>
 
