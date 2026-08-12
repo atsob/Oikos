@@ -4195,6 +4195,8 @@ type Signal = {
   wall_street_view: string | null
   target_price: number | null
   upside_pct: number | null
+  fair_value: number | null
+  fair_value_upside_pct: number | null
   high_3y: number | null
   low_3y: number | null
   pct_from_high_3y: number | null
@@ -4643,6 +4645,13 @@ function PortfolioActionSignalsTab() {
         cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}` },
       { field: 'target_price', headerName: 'Target', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Analyst consensus target price.', valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
+      { field: 'fair_value_upside_pct', headerName: 'vs Fair Value %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 130,
+        headerTooltip: "Oikos's own fair-value estimate vs current price — this security's own historical median P/E times its current normalized EPS. Approximates the idea behind services like GuruFocus's GF Value, not a reproduction of their actual (undisclosed) formula. Blank for bonds/ETFs/crypto or loss-making companies.",
+        valueFormatter: p => pctFmt(p.value),
+        cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}` },
+      { field: 'fair_value', headerName: 'Fair Value (Est.)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 130,
+        headerTooltip: "Oikos's own fair-value estimate: historical median P/E × current normalized EPS. See vs Fair Value % for the full explanation.",
+        valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
     ]
     return cols
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps

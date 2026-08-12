@@ -8,7 +8,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -467,7 +467,7 @@ function pctVal(v: unknown): string {
 
 // Sized generously — cols (below) already keeps each section to one row, so
 // there's no need to shrink the cards themselves to fit one screen.
-function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
+function MiniStat({ label, value, color }: { label: React.ReactNode; value: string; color?: string }) {
   return (
     <div className="bg-white rounded-lg border border-slate-200 px-3 py-3 text-center">
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wide leading-tight">{label}</p>
@@ -530,9 +530,15 @@ function AnalysisTab({ secId }: { secId: number }) {
         <MiniStat label="% from Low" value={pctVal(signal.pct_from_low_3y)} color={pctColor(signal.pct_from_low_3y)} />
       </AnalysisSection>
 
-      <AnalysisSection title="Valuation" cols={3}>
+      <AnalysisSection title="Valuation" cols={5}>
         <MiniStat label="Analyst Target" value={signal.target_price != null ? fmt(signal.target_price, 2) : '—'} />
         <MiniStat label="Upside %" value={pctVal(signal.upside_pct)} color={pctColor(signal.upside_pct)} />
+        <MiniStat
+          label={<Tooltip text="Oikos's own estimate: this security's own historical median P/E (from its price history and up to ~4 years of annual EPS — Yahoo's free-tier limit) times its current normalized EPS. Approximates the 'reversion to historical multiple' idea behind services like GuruFocus's GF Value — not a fetch of their actual number, which uses a longer history and an undisclosed formula. Blank for bonds/ETFs/crypto or loss-making companies.">Fair Value (Est.)</Tooltip>}
+          value={signal.fair_value != null ? fmt(signal.fair_value, 2) : '—'} />
+        <MiniStat
+          label={<Tooltip text="How far the current price sits above (+) or below (−) the Fair Value estimate.">vs Fair Value %</Tooltip>}
+          value={pctVal(signal.fair_value_upside_pct)} color={pctColor(signal.fair_value_upside_pct)} />
         <MiniStat label="Fwd Dividend Yield" value={signal.fwd_yield_pct != null && Number(signal.fwd_yield_pct) > 0 ? `${Number(signal.fwd_yield_pct).toFixed(2)}%` : '—'} />
       </AnalysisSection>
     </div>

@@ -1232,6 +1232,10 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 sec.Analyst_Rating as wall_street_view,
                 sec.Analyst_Target_Price as target_price,
                 ROUND((((sec.Analyst_Target_Price / NULLIF(sig.price_today, 0)) - 1) * 100)::numeric, 2) as upside_pct,
+                sq.Fair_Value as fair_value,
+                sq.Fair_Value_Pe as fair_value_pe,
+                sq.Fair_Value_Years as fair_value_years,
+                ROUND((((sq.Fair_Value / NULLIF(sig.price_today, 0)) - 1) * 100)::numeric, 2) as fair_value_upside_pct,
                 r3.high_3y,
                 r3.low_3y,
                 ROUND((((sig.price_today / NULLIF(r3.high_3y, 0)) - 1) * 100)::numeric, 2) as pct_from_high_3y,
@@ -1249,6 +1253,7 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
             JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
             LEFT JOIN range_3y r3 ON r3.Securities_Id = sig.Securities_Id
             LEFT JOIN latest_fx fx ON fx.Currencies_Id_1 = sec.Currencies_Id
+            LEFT JOIN Securities_Quote sq ON sq.Securities_Id = sig.Securities_Id
         )
         SELECT *,
             CASE
@@ -5858,6 +5863,43 @@ def _ensure_corporate_action_notifications_table():
                     Acknowledged         BOOLEAN DEFAULT FALSE,
                     Created_At           TIMESTAMP DEFAULT NOW()
                 )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _ensure_fair_value_schema():
+    """Create Securities_Annual_EPS and add the Fair_Value columns to Securities_Quote,
+    if they don't already exist.
+
+    Securities_Annual_EPS holds raw historical Diluted EPS per fiscal year (from Yahoo's
+    income_stmt — free tier only exposes ~4 years, so this is a thin history, not the
+    decade-plus GuruFocus itself uses). Fair_Value on Securities_Quote is the resulting
+    estimate: this security's own historical median P/E (computed from Historical_Prices
+    joined against these EPS points) times its current normalized EPS — an approximation
+    of GF Value's "reversion to historical trading multiple" approach, not a reproduction
+    of GuruFocus's undisclosed exact formula. Fair_Value_Pe/Fair_Value_Eps/Fair_Value_Years
+    are kept alongside for transparency (what multiple/EPS/lookback actually produced it).
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Securities_Annual_EPS (
+                    Securities_Id    INTEGER NOT NULL
+                                     REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+                    Fiscal_Year_End  DATE NOT NULL,
+                    Diluted_EPS      NUMERIC,
+                    PRIMARY KEY (Securities_Id, Fiscal_Year_End)
+                )
+            """)
+            cur.execute("""
+                ALTER TABLE Securities_Quote
+                ADD COLUMN IF NOT EXISTS Fair_Value       NUMERIC,
+                ADD COLUMN IF NOT EXISTS Fair_Value_Pe     NUMERIC,
+                ADD COLUMN IF NOT EXISTS Fair_Value_Eps    NUMERIC,
+                ADD COLUMN IF NOT EXISTS Fair_Value_Years  INTEGER
             """)
         conn.commit()
     finally:

@@ -648,9 +648,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;
           Volatility (Sharpe ratio plus 1M/3M/1Y/YTD annualized volatility), Price Performance (1D through 3Y and
-          YTD % change), 3-Year Range, and Valuation (analyst target, upside %, forward dividend yield) — the same
-          figures as Securities Analysis → Portfolio Action Signals / Volatility, at a glance without leaving the
-          security. Shows for any security with signal data, even one you don't currently hold.
+          YTD % change), 3-Year Range, and Valuation (analyst target, upside %, Fair Value estimate, forward
+          dividend yield) — the same figures as Securities Analysis → Portfolio Action Signals / Volatility, at a
+          glance without leaving the security. Shows for any security with signal data, even one you don't
+          currently hold.
+        </Note>
+        <Note>
+          <b>Fair Value (Est.)</b> is Oikos's own approximation of the "reversion to historical trading multiple"
+          idea behind services like GuruFocus's GF Value — not a reproduction of any such service's actual,
+          undisclosed formula, and not fetched from one. It's this security's own historical median P/E (computed
+          from Historical_Prices joined against up to ~4 years of annual EPS — Yahoo's free tier's limit, versus
+          the decade-plus those services typically use) times its current normalized EPS (average of trailing and
+          forward EPS). Only computed for securities with a Yahoo_Ticker, positive EPS, and enough price history to
+          get a trustworthy median — blank otherwise (bonds, ETFs, crypto, loss-making companies). Refreshed on the
+          same schedule as the other Yahoo-sourced fields (Sector, Analyst Rating, dividends, etc.).
         </Note>
         <Note>
           Investment Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
