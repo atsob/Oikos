@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-12
+
+### Added
+- **Split amount mismatches now raise a Dashboard alert and get a Tools → Database fix tool** — flags cash transactions where the existing Splits don't sum to the transaction's Total_Amount (e.g. a category was assigned but only for part of the amount), distinct from the pre-existing "uncategorized transactions" case (zero splits at all, already surfaced separately). The alert is live-computed and clears on its own once fixed, no dismiss needed. "Fix Split Amount Mismatches" lists the affected transactions and, on apply, corrects a single-split transaction by setting that split's own amount to the full total (a lone split was almost certainly meant to cover the whole thing); for a multi-split transaction, where it's unclear which existing split drifted, it instead adds a new uncategorized split for the remainder, leaving the existing splits untouched — assign it a category via the Register afterwards. Total_Amount itself is never changed.
+
 ## 2026-08-11
 
 ### Added

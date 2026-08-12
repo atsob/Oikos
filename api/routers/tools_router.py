@@ -1305,6 +1305,110 @@ def fix_inv_account_target():
     return {"updated": updated}
 
 
+# ── Split Amount Mismatches ─────────────────────────────────────────────────────
+# A transaction's Splits should always sum to its Total_Amount. Scoped to
+# transactions that already have at least one categorized split — a transaction
+# with zero splits is the separate, much more common "uncategorized" case
+# (surfaced by GET /dashboard/uncategorized-transactions instead); this is
+# specifically the rarer case where categorization was started but the amounts
+# drifted out of sync (e.g. an edited/partial split), leaving a real Splits row
+# whose sum doesn't match. Same transfer/investment-account/draft exclusions as
+# the uncategorized-transactions query, since transfers legitimately carry no
+# splits and investment-account cash movements aren't split-categorized.
+
+_SPLIT_MISMATCH_SQL = """
+    SELECT t.Transactions_Id AS transactions_id,
+           t.Date::text AS date,
+           a.Accounts_Name AS account,
+           a.Accounts_Id AS account_id,
+           COALESCE(p.Payees_Name, '') AS payee,
+           t.Description AS description,
+           t.Total_Amount AS total_amount,
+           COALESCE(SUM(s.Amount), 0) AS splits_sum,
+           ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) AS diff,
+           COUNT(s.Splits_Id) AS split_count
+    FROM Transactions t
+    JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+    LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
+    LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+    WHERE t.Is_Draft = FALSE
+      AND t.Transfers_Id IS NULL
+      AND t.Accounts_Id_Target IS NULL
+      AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+    GROUP BY t.Transactions_Id, t.Date, a.Accounts_Name, a.Accounts_Id, p.Payees_Name, t.Description, t.Total_Amount
+    HAVING COUNT(s.Splits_Id) > 0
+       AND ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) != 0
+    ORDER BY t.Date DESC, t.Transactions_Id DESC
+"""
+
+@router.get("/split-amount-mismatches")
+def split_amount_mismatches():
+    with get_db() as conn:
+        df = pd.read_sql(_SPLIT_MISMATCH_SQL, conn)
+    return _df_records(df)
+
+
+class FixSplitMismatchesRequest(BaseModel):
+    ids: List[int]  # transactions_ids to fix
+
+@router.post("/fix-split-amount-mismatches")
+def fix_split_amount_mismatches(req: FixSplitMismatchesRequest):
+    """Single-split transactions: correct that split's own Amount to the full
+    Total_Amount — a lone split was almost certainly meant to cover the whole
+    transaction, so the split itself is what drifted (e.g. edited independently
+    of the total), not a second category the user forgot. Multi-split
+    transactions: can't tell which existing split is wrong, so instead plug the
+    gap with a new, uncategorized split for the remainder, leaving the existing
+    splits untouched — the user can then assign it a category via the Register.
+    Total_Amount (the bank-imported source of truth) is never changed either way.
+    """
+    from database.crud import update_accounts_balances
+
+    with get_db() as conn:
+        df = pd.read_sql(_SPLIT_MISMATCH_SQL, conn)
+    sel = df[df["transactions_id"].isin(req.ids)]
+
+    fixed = 0
+    errors = []
+    affected: set = set()
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        for _, row in sel.iterrows():
+            tx_id = int(row["transactions_id"])
+            split_count = int(row["split_count"])
+            try:
+                if split_count == 1:
+                    cur.execute("SELECT Splits_Id FROM Splits WHERE Transactions_Id = %s", (tx_id,))
+                    split_id = cur.fetchone()[0]
+                    cur.execute(
+                        "UPDATE Splits SET Amount = %s WHERE Splits_Id = %s",
+                        (float(row["total_amount"]), split_id),
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo) VALUES (%s, NULL, %s, 'Uncategorized remainder (auto-fix)')",
+                        (tx_id, float(row["diff"])),
+                    )
+                affected.add(int(row["account_id"]))
+                fixed += 1
+            except Exception as e:
+                errors.append(f"TX #{tx_id}: {e}")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+    for acc_id in affected:
+        update_accounts_balances(acc_id)
+
+    return {"fixed": fixed, "errors": errors}
+
+
 # ── Duplicate Investment Cash Links ─────────────────────────────────────────────
 # Two Investments rows can end up pointing at the same Transactions_Id (seen once
 # in production: a same-day, same-amount CD rollover — a maturing CD's Sell and the

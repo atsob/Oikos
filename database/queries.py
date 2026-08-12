@@ -6129,6 +6129,55 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
     return results
 
 
+def _get_split_mismatch_alerts() -> list:
+    """Flag cash transactions whose Splits don't sum to Total_Amount — live-
+    computed (no acknowledge table) since the condition should only ever clear
+    by actually being fixed via Tools -> Database -> Fix Split Amount
+    Mismatches, not by dismissal. Scoped to transactions with at least one
+    existing split; a transaction with zero splits is the separate, far more
+    common "uncategorized" case already surfaced by the Dashboard's
+    Uncategorized Transactions panel.
+    """
+    conn = get_connection()
+    try:
+        df = pd.read_sql("""
+            SELECT t.Transactions_Id AS transactions_id,
+                   COALESCE(p.Payees_Name, t.Description, '') AS label,
+                   t.Total_Amount AS total_amount,
+                   ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) AS diff
+            FROM Transactions t
+            JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+            LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
+            LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+            WHERE t.Is_Draft = FALSE
+              AND t.Transfers_Id IS NULL
+              AND t.Accounts_Id_Target IS NULL
+              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+            GROUP BY t.Transactions_Id, p.Payees_Name, t.Description, t.Total_Amount
+            HAVING COUNT(s.Splits_Id) > 0
+               AND ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) != 0
+        """, conn)
+    finally:
+        conn.close()
+
+    if df.empty:
+        return []
+
+    results = []
+    for _, row in df.iterrows():
+        tx_id = int(row['transactions_id'])
+        label = row['label'] or f'TX #{tx_id}'
+        results.append({
+            'level': 'warning',
+            'message': (f"🧮 **Split Mismatch** — {label}: "
+                        f"splits are off by **€{row['diff']:,.2f}** from the transaction total "
+                        f"(€{row['total_amount']:,.2f}). Fix via Tools → Database → Fix Split Amount Mismatches."),
+            'transactions_id': tx_id,
+            'type': 'split_mismatch',
+        })
+    return results
+
+
 def _get_dividend_alerts(lead_days: int = None) -> list:
     """Upcoming-payment heads-up for every currently held dividend-paying
     security — no per-security setup required, same rationale as bonds.
@@ -6380,6 +6429,12 @@ def check_triggered_alerts() -> list:
         # ── dividend payment heads-up (live-computed, no per-security setup) ───
         try:
             results.extend(_get_dividend_alerts())
+        except Exception:
+            pass
+
+        # ── split amount mismatches (live-computed, clears once actually fixed) ─
+        try:
+            results.extend(_get_split_mismatch_alerts())
         except Exception:
             pass
 

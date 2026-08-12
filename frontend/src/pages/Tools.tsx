@@ -15,6 +15,7 @@ import {
   getInvestmentConsistency, updateInvestmentRow,
   getMissingTransferMirrors, fixTransferMirrors,
   getMissingSplitTransactions, fixSplitTransactions,
+  getSplitAmountMismatches, fixSplitAmountMismatches,
   getUnlinkedTransferPairs, linkTransferPairs,
   getTransferSignMismatches, fixTransferSign,
   getMissingInvCashLinks, fixInvCashLinks,
@@ -1427,6 +1428,112 @@ function FixMissingSplitTransactions() {
   )
 }
 
+function FixSplitAmountMismatches() {
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [confirm, setConfirm] = useState<'selected' | 'all' | null>(null)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null)
+
+  const { data: rows = [], isLoading, refetch } = useQuery({
+    queryKey: ['split-amount-mismatches'], queryFn: getSplitAmountMismatches, staleTime: 30_000,
+  })
+  const allRows = rows as Row[]
+
+  const { sorted: samSorted, sortKey: samSK, sortDir: samSD, toggleSort: samSort } = useSortTable(allRows, 'date', 'desc')
+
+  const COLS = ['transactions_id', 'date', 'account', 'payee', 'description', 'total_amount', 'splits_sum', 'diff', 'split_count']
+
+  const fixMut = useMutation({
+    mutationFn: (ids: number[]) => fixSplitAmountMismatches(ids),
+    onSuccess: (d: { fixed: number; errors: string[] }) => {
+      setMsg({ type: d.errors.length > 0 ? 'warning' : 'success', text: `Fixed ${d.fixed} transaction(s) — single-split ones had their split corrected to the full total; multi-split ones got an uncategorized split added for the remainder (assign it a category via the Register). ${d.errors.join(' ')}` })
+      setChecked(new Set()); setConfirm(null); refetch()
+    },
+    onError: () => { setMsg({ type: 'error', text: 'Fix failed.' }); setConfirm(null) },
+  })
+
+  const selectedIds = allRows.filter((_, i) => checked.has(i)).map(r => r.transactions_id as number)
+
+  if (isLoading) return <Spinner />
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>🧮 Fix Split Amount Mismatches</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-xs text-slate-500">
+          Detects cash transactions where the existing Splits don't sum to the transaction's Total_Amount — e.g. a
+          category was assigned but only for part of the amount. Excludes transfers and transactions with zero
+          splits (see the Dashboard's Uncategorized Transactions panel for those instead). Applying corrects a
+          <b> single-split</b> transaction by setting that split's own amount to the full total — a lone split was
+          almost certainly meant to cover the whole transaction. For a <b>multi-split</b> transaction, it's unclear
+          which existing split drifted, so instead a new, uncategorized split is added for the remainder, leaving
+          the existing splits untouched — go to the Register afterwards to assign it a category. Total_Amount is
+          never changed either way.
+        </p>
+
+        {allRows.length === 0 ? (
+          <Alert type="success">✅ No split amount mismatches found.</Alert>
+        ) : (
+          <>
+            <Alert type="warning">⚠️ {allRows.length.toLocaleString()} transaction(s) with splits that don't sum to the total.</Alert>
+
+            {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+
+            {confirm === 'selected' && (
+              <ConfirmBanner
+                message={`Fix ${selectedIds.length} transaction(s) — insert an uncategorized split for the remainder on each?`}
+                onYes={() => fixMut.mutate(selectedIds)} onNo={() => setConfirm(null)}
+                yesLabel="✅ Yes, fix" isPending={fixMut.isPending} />
+            )}
+            {confirm === 'all' && (
+              <ConfirmBanner
+                message={`Fix all ${allRows.length} transaction(s) — insert an uncategorized split for the remainder on each?`}
+                onYes={() => fixMut.mutate(allRows.map(r => r.transactions_id as number))}
+                onNo={() => setConfirm(null)} yesLabel="✅ Yes, fix all" isPending={fixMut.isPending} />
+            )}
+
+            <div className="flex gap-2">
+              <Button size="sm" variant={checked.size > 0 ? 'primary' : 'secondary'}
+                disabled={checked.size === 0} onClick={() => setConfirm('selected')}>
+                🧮 Fix {checked.size > 0 ? `${checked.size} selected` : 'selected'}
+              </Button>
+              <Button size="sm" onClick={() => setConfirm('all')}>
+                🧮 Fix all {allRows.length}
+              </Button>
+            </div>
+
+            <div className="overflow-auto border border-slate-200 rounded-lg max-h-96">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-2"><input type="checkbox"
+                      checked={allRows.length > 0 && checked.size === allRows.length}
+                      onChange={e => setChecked(e.target.checked ? new Set(allRows.map((_, i) => i)) : new Set())} /></th>
+                    {COLS.map(c => <ColHeader key={c} label={c} sortKey={c} currentKey={samSK} currentDir={samSD} onSort={samSort} className="px-3 py-2 text-left text-slate-600" />)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {samSorted.map((row) => { const i = allRows.indexOf(row); return (
+                    <tr key={i} className={cn(checked.has(i) ? 'bg-blue-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50')}>
+                      <td className="px-2 py-1.5"><input type="checkbox" checked={checked.has(i)} onChange={() => {
+                        setChecked(prev => { const s = new Set(prev); s.has(i) ? s.delete(i) : s.add(i); return s })
+                      }} /></td>
+                      {COLS.map(c => (
+                        <td key={c} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">
+                          {String(row[c] ?? '')}
+                        </td>
+                      ))}
+                    </tr>
+                  )})}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 function UnlinkedTransferPairs() {
   const [filterAcc, setFilterAcc] = useState<string>('')
   const [checked, setChecked] = useState<Set<number>>(new Set())
@@ -2566,6 +2673,7 @@ const CATEGORIES: Record<string, string[]> = {
     '📤 Data Export',
     '🔄 Fix Missing Transfer Mirrors',
     '🔀 Fix Transfer Sign Mismatches',
+    '🧮 Fix Split Amount Mismatches',
     '🔗 Fix Missing Investment Cash Links',
     '🧩 Fix Duplicate Investment Cash Links',
     '🏦 Fix Missing Investment Account on Cash Tx',
@@ -2593,6 +2701,7 @@ const TOOL_COMPONENTS: Record<string, React.ComponentType> = {
   '📅 Scheduled Tasks': ScheduledTasks,
   '🔄 Fix Missing Transfer Mirrors': FixMissingTransferMirrors,
   '🔀 Fix Transfer Sign Mismatches': FixTransferSignMismatches,
+  '🧮 Fix Split Amount Mismatches': FixSplitAmountMismatches,
   '🔗 Fix Missing Investment Cash Links': FixMissingInvCashLinks,
   '🧩 Fix Duplicate Investment Cash Links': FixDuplicateInvCashLinks,
   '🏦 Fix Missing Investment Account on Cash Tx': FixInvAccountTarget,

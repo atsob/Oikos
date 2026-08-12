@@ -703,6 +703,9 @@ export const fixTransferMirrors = (ids: number[]) =>
 export const getMissingSplitTransactions = () => api.get('/tools/missing-split-transactions').then(r => r.data)
 export const fixSplitTransactions = (ids: number[]) =>
   api.post('/tools/fix-split-transactions', { ids }).then(r => r.data)
+export const getSplitAmountMismatches = () => api.get('/tools/split-amount-mismatches').then(r => r.data)
+export const fixSplitAmountMismatches = (ids: number[]) =>
+  api.post('/tools/fix-split-amount-mismatches', { ids }).then(r => r.data)
 export const getUnlinkedTransferPairs = () => api.get('/tools/unlinked-transfer-pairs').then(r => r.data)
 export const linkTransferPairs = (pairs: Record<string, number>[]) =>
   api.post('/tools/link-transfer-pairs', { pairs }).then(r => r.data)
