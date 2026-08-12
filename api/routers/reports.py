@@ -383,16 +383,50 @@ def get_pnl(
             UNION
             SELECT Accounts_Id, Securities_Id FROM Investments
         ),
+        -- Cumulative split/reverse-split ratio per security, for splits that happened
+        -- strictly between a reference date and today — see the matching comment in
+        -- get_pnl_period below for the full rationale. Only DTD/WTD/MTD/QTD/YTD need
+        -- this (their reference date can predate a split within the same window);
+        -- All-Time is untouched since it's computed from actual recorded cash flows,
+        -- never from a reference-date quantity × price snapshot.
+        --
+        -- Collapses same-security, same-ratio records less than 10 days apart into
+        -- one application before taking the product — some downloaded corporate
+        -- actions (seen: MIG, Piraeus, CrediaBank) carry the same real split twice
+        -- under two nearby dates (record vs. effective date, most likely), and
+        -- applying the ratio once per duplicate would compound it (e.g. a real
+        -- 1-for-30 reverse split wrongly applied as 1-for-900).
+        security_splits AS (
+            SELECT Securities_Id, ratio, MIN(Effective_Date) AS Effective_Date
+            FROM (
+                SELECT
+                    Securities_Id, Effective_Date, ratio,
+                    SUM(is_new_cluster) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) AS cluster_id
+                FROM (
+                    SELECT
+                        Securities_Id, Effective_Date, ratio,
+                        CASE WHEN LAG(Effective_Date) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) IS NULL
+                               OR Effective_Date - LAG(Effective_Date) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) > 10
+                             THEN 1 ELSE 0 END AS is_new_cluster
+                    FROM (
+                        SELECT Securities_Id, Effective_Date, Ratio_New / NULLIF(Ratio_Old, 0) AS ratio
+                        FROM Corporate_Actions
+                        WHERE Action_Type IN ('Split', 'Reverse Split')
+                    ) base
+                ) flagged
+            ) clustered
+            GROUP BY Securities_Id, ratio, cluster_id
+        ),
         historical_holdings AS (
             SELECT
                 p.*,
                 he.Accounts_Id, he.Securities_Id,
                 COALESCE(inv.qty_today, 0) as qty_today,
-                COALESCE(inv.qty_dtd,   0) as qty_dtd,
-                COALESCE(inv.qty_wtd,   0) as qty_wtd,
-                COALESCE(inv.qty_mtd,   0) as qty_mtd,
-                COALESCE(inv.qty_qtd,   0) as qty_qtd,
-                COALESCE(inv.qty_ytd,   0) as qty_ytd
+                COALESCE(inv.qty_dtd, 0) * COALESCE(mult.mult_dtd, 1) as qty_dtd,
+                COALESCE(inv.qty_wtd, 0) * COALESCE(mult.mult_wtd, 1) as qty_wtd,
+                COALESCE(inv.qty_mtd, 0) * COALESCE(mult.mult_mtd, 1) as qty_mtd,
+                COALESCE(inv.qty_qtd, 0) * COALESCE(mult.mult_qtd, 1) as qty_qtd,
+                COALESCE(inv.qty_ytd, 0) * COALESCE(mult.mult_ytd, 1) as qty_ytd
             FROM periods p
             CROSS JOIN historical_entities he
             LEFT JOIN LATERAL (
@@ -418,6 +452,16 @@ def get_pnl(
                 FROM Investments
                 WHERE Accounts_Id = he.Accounts_Id AND Securities_Id = he.Securities_Id
             ) inv ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.dtd_start)) AS mult_dtd,
+                    EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.wtd_start)) AS mult_wtd,
+                    EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.mtd_start)) AS mult_mtd,
+                    EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.qtd_start)) AS mult_qtd,
+                    EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.ytd_start)) AS mult_ytd
+                FROM security_splits
+                WHERE Securities_Id = he.Securities_Id AND Effective_Date <= p.today
+            ) mult ON true
         ),
         prices_fx AS (
             SELECT
@@ -701,11 +745,51 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
         UNION
         SELECT Accounts_Id, Securities_Id FROM Investments
     ),
+    -- Cumulative split/reverse-split ratio per security, for splits that happened
+    -- strictly between a reference date and today. Historical_Prices comes back
+    -- from both Yahoo and TradingView already split-adjusted — continuous across
+    -- a split, priced in today's-share-equivalent terms even for dates before the
+    -- split (confirmed empirically: neither provider's history endpoint exposes a
+    -- raw/unadjusted series for this app to fall back to) — while Investments.
+    -- Quantity stays in as-transacted, raw terms by design (a split is recorded as
+    -- a forward ShrIn/ShrOut delta on the effective date, not a rescale of old
+    -- lots). Multiplying a reference-date's raw quantity by this ratio converts it
+    -- to the same today's-share basis the (adjusted) reference-date price is
+    -- already on, so qty_ref * price_ref is a real comparable value instead of a
+    -- phantom one inflated/deflated by the split ratio.
+    --
+    -- Collapses same-security, same-ratio records less than 10 days apart into
+    -- one application before taking the product — some downloaded corporate
+    -- actions (seen: MIG, Piraeus, CrediaBank) carry the same real split twice
+    -- under two nearby dates (record vs. effective date, most likely), and
+    -- applying the ratio once per duplicate would compound it (e.g. a real
+    -- 1-for-30 reverse split wrongly applied as 1-for-900).
+    security_splits AS (
+        SELECT Securities_Id, ratio, MIN(Effective_Date) AS Effective_Date
+        FROM (
+            SELECT
+                Securities_Id, Effective_Date, ratio,
+                SUM(is_new_cluster) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) AS cluster_id
+            FROM (
+                SELECT
+                    Securities_Id, Effective_Date, ratio,
+                    CASE WHEN LAG(Effective_Date) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) IS NULL
+                           OR Effective_Date - LAG(Effective_Date) OVER (PARTITION BY Securities_Id, ratio ORDER BY Effective_Date) > 10
+                         THEN 1 ELSE 0 END AS is_new_cluster
+                FROM (
+                    SELECT Securities_Id, Effective_Date, Ratio_New / NULLIF(Ratio_Old, 0) AS ratio
+                    FROM Corporate_Actions
+                    WHERE Action_Type IN ('Split', 'Reverse Split')
+                ) base
+            ) flagged
+        ) clustered
+        GROUP BY Securities_Id, ratio, cluster_id
+    ),
     historical_holdings AS (
         SELECT
             p.*, he.Accounts_Id, he.Securities_Id,
             COALESCE(inv.qty_today, 0) AS qty_today,
-            COALESCE(inv.qty_ref,   0) AS qty_ref
+            COALESCE(inv.qty_ref, 0) * COALESCE(mult.mult_ref, 1) AS qty_ref
         FROM periods p
         CROSS JOIN historical_entities he
         LEFT JOIN LATERAL (
@@ -719,6 +803,11 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
             FROM Investments
             WHERE Accounts_Id = he.Accounts_Id AND Securities_Id = he.Securities_Id
         ) inv ON true
+        LEFT JOIN LATERAL (
+            SELECT EXP(SUM(LN(ratio)) FILTER (WHERE Effective_Date > p.ref_start)) AS mult_ref
+            FROM security_splits
+            WHERE Securities_Id = he.Securities_Id AND Effective_Date <= p.today
+        ) mult ON true
     ),
     prices_fx AS (
         SELECT
