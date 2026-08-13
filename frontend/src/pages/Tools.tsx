@@ -2328,6 +2328,25 @@ function AppSettingsPanel() {
             </p>
           </div>
 
+          {/* Risk-free rate */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Risk-Free Rate</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Sharpe Ratio proxy</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.riskFreeRateSource} onChange={e => set('riskFreeRateSource', e.target.value)}>
+              <option value="eur_estr">EUR Overnight Rate (€STR)</option>
+              <option value="us_tbill">US 13-Week T-Bill (^IRX)</option>
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              The "risk-free" rate subtracted from a security's 1-year return before dividing by its volatility, in
+              every Sharpe Ratio shown across the app (Securities Analysis, Security Detail's Analysis tab, and the
+              Dashboard's signal-change alerts). <b>EUR Overnight Rate</b> (default) is currency-consistent with this
+              app's EUR-denominated figures — read from the Xtrackers €STR swap ETF's own 1-year return, since €STR
+              (the ECB's official reference rate) has no simple standalone Yahoo ticker. <b>US 13-Week T-Bill</b> is
+              the textbook-standard proxy regardless of portfolio currency.
+            </p>
+          </div>
+
           {/* Live data refresh */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Live Data Refresh</h3>

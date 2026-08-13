@@ -10,6 +10,7 @@ export interface AppSettings {
   bondAlertLeadDays: number // Dashboard heads-up window for bond maturity/coupon dates
   dividendAlertLeadDays: number // Dashboard heads-up window for security dividend payments
   liveRefreshSeconds: number // auto-refresh interval for price/balance-driven views (0 = off)
+  riskFreeRateSource: string // 'eur_estr' | 'us_tbill' — Sharpe Ratio's risk-free rate proxy
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -22,6 +23,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   bondAlertLeadDays: 7,
   dividendAlertLeadDays: 3,
   liveRefreshSeconds: 60,
+  riskFreeRateSource: 'eur_estr',
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

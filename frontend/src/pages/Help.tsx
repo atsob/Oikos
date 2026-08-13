@@ -664,6 +664,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           same schedule as the other Yahoo-sourced fields (Sector, Analyst Rating, dividends, etc.).
         </Note>
         <Note>
+          <b>Sharpe Ratio</b> (here, Securities Analysis, and the Dashboard's signal-change alerts) is a security's
+          1-year return minus a risk-free rate, divided by its 1-year annualized volatility. Which risk-free rate is
+          configurable under Tools → System → App Settings → Risk-Free Rate: the <b>EUR Overnight Rate</b> (default —
+          €STR, read from the Xtrackers €STR swap ETF's own 1-year return, currency-consistent with this app's
+          EUR-denominated figures) or the <b>US 13-Week T-Bill</b> (<code>^IRX</code>, the textbook-standard proxy
+          regardless of portfolio currency). Switching it changes every Sharpe Ratio shown across the app.
+        </Note>
+        <Note>
           Investment Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
           ever been sold — the same all-time figure as Reports → Inv. Performance → P&amp;L, summed across every
           account. The % is against total capital ever invested in the position, not the cost basis of the shares

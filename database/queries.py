@@ -1101,9 +1101,9 @@ def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
 def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
     """Get signals for my investment portfolio."""
     conn = get_connection()
-    
-    # Χρησιμοποιούμε απλό τριπλό string (όχι f-string) για ασφάλεια με το pd.read_sql
-    query = """
+
+    rfr_cte = _risk_free_rate_cte()
+    query = f"""
         WITH base_data AS (
             SELECT Securities_Id, Date, Close,
                    (Close / LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date) - 1) as daily_ret
@@ -1195,12 +1195,7 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
             LEFT JOIN volatility v ON v.Securities_Id = lo.Securities_Id
         ),
-        rfr AS (
-            SELECT COALESCE(annual_chg_pct, 2.36) as value 
-            FROM performance_data 
-            WHERE Securities_Name LIKE 'Hellenic T-Bill 52W%%'
-            LIMIT 1
-        ),
+        {rfr_cte}
         investment_signals AS (
             SELECT *,
                 ROUND(((monthly_chg_pct * 0.5) + (quarterly_chg_pct * 0.3) + (annual_chg_pct * 0.2))::numeric, 2) as quality_score,
@@ -5950,7 +5945,8 @@ def _compute_current_signals() -> pd.DataFrame:
     """
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        rfr_cte = _risk_free_rate_cte()
+        query = f"""
             WITH base_data AS (
                 SELECT Securities_Id, Date, Close,
                        (Close / LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date) - 1) AS daily_ret
@@ -6009,12 +6005,7 @@ def _compute_current_signals() -> pd.DataFrame:
                 WHERE sec.Is_Active
                   AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
             ),
-            rfr AS (
-                SELECT COALESCE(annual_chg_pct, 2.36) AS value
-                FROM performance_data
-                WHERE Securities_Name LIKE 'Hellenic T-Bill 52W%%'
-                LIMIT 1
-            ),
+            {rfr_cte}
             investment_signals AS (
                 SELECT *,
                     ROUND(((monthly_chg_pct * 0.5) + (quarterly_chg_pct * 0.3) + (annual_chg_pct * 0.2))::numeric, 2) AS quality_score,
@@ -6070,7 +6061,8 @@ def _compute_current_signals() -> pd.DataFrame:
                 END AS final_signal
             FROM recommendations
             ORDER BY Securities_Name
-        """, conn)
+        """
+        df = pd.read_sql(query, conn)
         return df
     finally:
         conn.close()
@@ -6093,6 +6085,67 @@ def _get_app_setting_lead_days(setting_key: str, default: int) -> int:
     except Exception:
         pass
     return default
+
+
+def _get_app_setting_str(setting_key: str, default: str) -> str:
+    """String counterpart to _get_app_setting_lead_days — same 'app-settings'
+    preference blob, same fallback-on-any-failure behavior."""
+    try:
+        conn = get_connection()
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+            row = cur.fetchone()
+        conn.close()
+        if row and row[0] and row[0].get(setting_key):
+            return str(row[0][setting_key])
+    except Exception:
+        pass
+    return default
+
+
+def _risk_free_rate_cte() -> str:
+    """Build the 'rfr' CTE used by the Sharpe Ratio calc in both
+    get_portfolio_signals and _compute_current_signals, per the user's
+    Tools → System → App Settings "Risk-Free Rate" choice
+    (Pref_Key='app-settings'.riskFreeRateSource, default 'eur_estr' — chosen
+    over 'us_tbill' since this app's figures are EUR-denominated throughout).
+
+    The two sources need different extraction logic, not just a different
+    WHERE clause:
+      - eur_estr (default): tracked as an ordinary Security whose price
+        return over the year approximates its yield — the eSTR swap ETF's
+        NAV compounds at ~the overnight rate, so annual_chg_pct (already
+        computed in performance_data) is the right read.
+      - us_tbill (^IRX): a yield INDEX, not a discount/return instrument —
+        its *level* already IS the annualized rate (e.g. 3.71 = 3.71%), so
+        using annual_chg_pct here would be wrong (it would measure how much
+        the rate itself moved over the year, not the rate). Reads the latest
+        Historical_Prices Close directly instead.
+
+    Must be assigned to a query built with %% (not %) for any literal LIKE
+    wildcard, same as the rest of get_portfolio_signals / _compute_current_signals
+    — these CTE strings get spliced into queries passed through psycopg2's
+    %-style param substitution.
+    """
+    source = _get_app_setting_str('riskFreeRateSource', 'eur_estr')
+    if source == 'us_tbill':
+        return """
+            rfr AS (
+                SELECT COALESCE(
+                    (SELECT hp.Close FROM Historical_Prices hp
+                     JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+                     WHERE s.Yahoo_Ticker = '^IRX'
+                     ORDER BY hp.Date DESC LIMIT 1),
+                    2.36) AS value
+            ),"""
+    return """
+            rfr AS (
+                SELECT COALESCE(annual_chg_pct, 2.36) AS value
+                FROM performance_data
+                WHERE Securities_Name LIKE 'Xtrackers II EUR Overnight Rate Swap%%'
+                LIMIT 1
+            ),"""
 
 
 def _get_bond_event_alerts(lead_days: int = None) -> list:
