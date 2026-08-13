@@ -29,7 +29,7 @@ import {
   getSecurities, lookupTicker, upsertSecurity,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
@@ -121,16 +121,19 @@ function WithCopy({ children }: { children: React.ReactNode }) {
 }
 
 // ── Pivot table ───────────────────────────────────────────────────────────────
-function PivotTable({ data, groupBy, colKey, valKey, showTotal = true }: {
+function PivotTable({ data, groupBy, colKey, valKey, showTotal = true, idKey, linkType }: {
   data: Row[]; groupBy: string; colKey: string; valKey: string; showTotal?: boolean
+  idKey?: string; linkType?: string
 }) {
   const periods = [...new Set(data.map(r => String(r[colKey])))].sort()
   const categories = [...new Set(data.map(r => String(r[groupBy])))]
   const lookup: Record<string, Record<string, number>> = {}
+  const idByCategory: Record<string, number> = {}
   for (const r of data) {
     const g = String(r[groupBy]); const c = String(r[colKey])
     if (!lookup[g]) lookup[g] = {}
     lookup[g][c] = (lookup[g][c] ?? 0) + Number(r[valKey] ?? 0)
+    if (idKey && r[idKey] != null) idByCategory[g] = Number(r[idKey])
   }
   return (
     <WithCopy>
@@ -148,7 +151,9 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true }: {
               const rowTotal = periods.reduce((s, p) => s + (lookup[cat]?.[p] ?? 0), 0)
               return (
                 <tr key={cat} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 sticky left-0 bg-white">{cat}</td>
+                  <td className="px-2 py-1.5 sticky left-0 bg-white">
+                    {idKey && linkType ? <AccountLink id={idByCategory[cat]} name={cat} type={linkType} /> : cat}
+                  </td>
                   {periods.map(p => {
                     const v = lookup[cat]?.[p]
                     const c = v != null ? (v < 0 ? 'text-red-600' : '') : ''
@@ -294,10 +299,12 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
   }
 
   const lookup: Record<string, Record<string, number>> = {}
+  const idByAccount: Record<string, number> = {}
   for (const r of rows) {
     const a = String(r.accounts_name), p = String(r.period)
     if (!lookup[a]) lookup[a] = {}
     lookup[a][p] = Number(r.balance_eur ?? 0)
+    if (r.accounts_id != null) idByAccount[a] = Number(r.accounts_id)
   }
   const lastPeriod = allPeriods[allPeriods.length - 1]
   const accounts = Object.keys(accountMeta)
@@ -354,7 +361,7 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
                 </tr>
                 {sortAccounts(accs).map(acc => (
                   <tr key={acc} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="px-2 py-1.5 pl-5 sticky left-0 bg-white">{acc}</td>
+                    <td className="px-2 py-1.5 pl-5 sticky left-0 bg-white"><AccountLink id={idByAccount[acc]} name={acc} type={accountMeta[acc]} /></td>
                     <td className="px-2 py-1.5 text-slate-400 sticky left-52 bg-white text-[10px]">account</td>
                     {allPeriods.map(p => {
                       const v = lookup[acc]?.[p]
@@ -720,7 +727,7 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
   })
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
-  return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} />
+  return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} idKey="accounts_id" linkType="Brokerage" />
 }
 
 function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
@@ -1539,7 +1546,7 @@ function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
                 <td className="px-2 py-1.5 font-mono text-slate-500 text-xs"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
+                <td className="px-2 py-1.5 text-slate-500"><AccountLink id={r.accounts_id as number} name={String(r.account)} type={String(r.account_type ?? '')} /></td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.last_price ?? 0), 4)}</td>
                 <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
@@ -1607,7 +1614,7 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
         <tbody>
           {sorted.map((r, i) => (
             <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-              <td className="px-2 py-1.5 text-slate-500">{String(r.account)}</td>
+              <td className="px-2 py-1.5 text-slate-500"><AccountLink id={r.accounts_id as number} name={String(r.account)} type={String(r.account_type ?? '')} /></td>
               <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
               <td className="px-2 py-1.5 font-mono text-slate-400 text-xs">{String(r.ticker ?? '—')}</td>
               <td className="px-2 py-1.5 text-slate-500">{String(r.type ?? '—')}</td>
@@ -2868,7 +2875,7 @@ function DividendTrackerTab() {
                                   {txns.map((t, j) => (
                                     <tr key={j} className="border-b border-slate-100">
                                       <td className="px-2 py-1 text-slate-500">{String(t.date ?? '').slice(0, 10)}</td>
-                                      <td className="px-2 py-1 text-blue-700">{String(t.accounts_name ?? '')}</td>
+                                      <td className="px-2 py-1 text-blue-700"><AccountLink id={t.accounts_id as number} name={String(t.accounts_name ?? '')} type="Brokerage" /></td>
                                       <td className="px-2 py-1 text-slate-500">{String(t.action ?? '')}</td>
                                       <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(t.income_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(Number(t.income_eur ?? 0))}</td>
                                     </tr>
@@ -2924,7 +2931,7 @@ function DividendTrackerTab() {
                           <tr key={i} className="hover:bg-slate-50">
                             <td className="px-3 py-2 text-slate-500">{String(r.month).slice(0, 10)}</td>
                             <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                            <td className="px-3 py-2 text-blue-700">{String(r.accounts_name)}</td>
+                            <td className="px-3 py-2 text-blue-700"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Brokerage" /></td>
                             <td className="px-3 py-2 text-slate-500">{String(r.action)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.income_eur ?? 0))}</td>
                           </tr>
@@ -3359,7 +3366,7 @@ function SavingsAccountsTab() {
                   <tbody className="divide-y divide-slate-100">
                     {fcSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                        <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
                         <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
@@ -3407,7 +3414,7 @@ function SavingsAccountsTab() {
                     <tbody className="divide-y divide-slate-100">
                       {rankSorted.map((r, i) => (
                         <tr key={i} className={`hover:bg-slate-50 ${i === 0 ? 'bg-green-50' : ''}`}>
-                          <td className="px-3 py-2 font-medium">{i === 0 && '🏆 '}{String(r.accounts_name)}</td>
+                          <td className="px-3 py-2 font-medium">{i === 0 && '🏆 '}<AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
                           <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
                           <td className="px-3 py-2 text-right tabular-nums font-semibold">{pct(r.apy_pct)}</td>
@@ -3446,11 +3453,11 @@ function SavingsAccountsTab() {
                       <tbody className="divide-y divide-slate-100">
                         {idleSorted.map((r, i) => (
                           <tr key={i} className="hover:bg-slate-50">
-                            <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                            <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                             <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
                             <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.balance), 2)}</td>
-                            <td className="px-3 py-2 text-blue-700">→ {String(r.target_accounts_name)}</td>
+                            <td className="px-3 py-2 text-blue-700">→ <AccountLink id={r.target_accounts_id as number} name={String(r.target_accounts_name)} type="Savings" /></td>
                             <td className="px-3 py-2 text-right tabular-nums">{pct(r.target_apy_pct)}</td>
                             <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.potential_annual_gain_eur))}</td>
                           </tr>
@@ -3546,7 +3553,7 @@ function SavingsAccountsTab() {
                   <tbody className="divide-y divide-slate-100">
                     {detailSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium">{String(r.accounts_name)}</td>
+                        <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                         <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
                         <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.principal ?? 0), 2)}</td>
@@ -3587,7 +3594,7 @@ function SavingsAccountsTab() {
               <tbody className="divide-y divide-slate-100">
                 {(result?.detail_last ?? []).map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium whitespace-nowrap">{String(r.accounts_name)}</td>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.currency)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
@@ -5382,7 +5389,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                               ? `${fmtEur(Number(r.split_amount_original ?? r.split_amount))} ${String(r.original_currency ?? 'EUR') !== 'EUR' ? `(${String(r.original_currency)})` : ''}`
                               : ''}
                           </td>
-                          <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                          <td className="px-2 py-1"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name ?? '')} type={String(r.accounts_type ?? '')} /></td>
                           <td className="px-2 py-1 text-slate-400">{String(r.source_type ?? '')}</td>
                           <td className="px-2 py-1">
                             {Boolean(r.transaction_id) && (
@@ -5524,7 +5531,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                           <td className="px-2 py-1">{String(r.payees_name ?? '')}</td>
                           <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
                           <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
-                          <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                          <td className="px-2 py-1"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name ?? '')} type={String(r.accounts_type ?? '')} /></td>
                           <td className="px-2 py-1 text-slate-500">{String(r.source_type ?? '')}</td>
                           <td className="px-2 py-1">
                             {Boolean(r.transaction_id) && (
@@ -5643,7 +5650,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                             <td className="px-2 py-1 max-w-[180px] truncate">{String(r.description ?? '')}</td>
                             <td className="px-2 py-1">{String(r.category_full_path ?? '')}</td>
                             <td className={`px-2 py-1 text-right tabular-nums font-medium ${Number(r.split_amount ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(r.split_amount ?? 0))}</td>
-                            <td className="px-2 py-1">{String(r.accounts_name ?? '')}</td>
+                            <td className="px-2 py-1"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name ?? '')} type={String(r.accounts_type ?? '')} /></td>
                             <td className="px-2 py-1">
                               {Boolean(r.transaction_id) && (
                                 <button onClick={() => openEdit(r)} className="text-blue-500 hover:text-blue-700 p-0.5 rounded">
@@ -5728,6 +5735,7 @@ function CashFlowSection() {
   const [days, setDays] = usePersist<number>('cf_days', 60)
   const [monthsBack, setMonthsBack] = usePersist<number>('cf_months_back', 2)
   const [ytdRecurring, setYtdRecurring] = usePersist<boolean>('cf_recurring_ytd', false)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
   const eoyDays = daysUntilEndOfYear()
   const effectiveMonthsBack = ytdRecurring ? ytdMonthsBack() : monthsBack
 
@@ -5785,16 +5793,24 @@ function CashFlowSection() {
   const interest = result?.interest ?? []
 
   const KPI_METRICS = m ? [
-    { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.' },
-    { label: 'Scheduled Out', value: fmtEur(m.sched_out), color: 'text-red-600',   tip: 'Total expenses from explicitly scheduled future transactions within the horizon.' },
-    { label: 'Template In',   value: fmtEur(m.tmpl_in),   color: 'text-blue-700',  tip: 'Total income projected from your active Recurring Templates within the horizon.' },
-    { label: 'Template Out',  value: fmtEur(m.tmpl_out),  color: 'text-orange-600', tip: 'Total expenses projected from your active Recurring Templates within the horizon.' },
-    { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.' },
-    { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.' },
-    { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).' },
-    { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected interest within the horizon. Uses each account's manually-defined rate schedule (Static Data → Accounts → Interest Rates) where one exists, otherwise falls back to compounding the current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view." },
-    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon.' },
+    { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.', target: 'cf-scheduled' },
+    { label: 'Scheduled Out', value: fmtEur(m.sched_out), color: 'text-red-600',   tip: 'Total expenses from explicitly scheduled future transactions within the horizon.', target: 'cf-scheduled' },
+    { label: 'Template In',   value: fmtEur(m.tmpl_in),   color: 'text-blue-700',  tip: 'Total income projected from your active Recurring Templates within the horizon.', target: 'cf-templates' },
+    { label: 'Template Out',  value: fmtEur(m.tmpl_out),  color: 'text-orange-600', tip: 'Total expenses projected from your active Recurring Templates within the horizon.', target: 'cf-templates' },
+    { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.', target: 'cf-recurring' },
+    { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.', target: 'cf-recurring' },
+    { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).', target: 'cf-dividends' },
+    { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected interest within the horizon. Uses each account's manually-defined rate schedule (Static Data → Accounts → Interest Rates) where one exists, otherwise falls back to compounding the current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view.", target: 'cf-interest' },
+    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon.', target: 'cf-chart' },
   ] : []
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setHighlighted(id)
+    window.setTimeout(() => setHighlighted(h => h === id ? null : h), 1500)
+  }
 
   return (
     <div className="space-y-6">
@@ -5840,17 +5856,21 @@ function CashFlowSection() {
       {KPI_METRICS.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3">
           {KPI_METRICS.map(k => (
-            <div key={k.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+            <button
+              key={k.label} type="button" onClick={() => scrollToSection(k.target)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-left hover:bg-slate-100 hover:border-slate-300 transition-colors cursor-pointer"
+            >
               <Tooltip text={k.tip}>
                 <div className="text-xs text-slate-500 mb-0.5 cursor-help underline decoration-dotted">{k.label}</div>
               </Tooltip>
               <div className={`text-sm font-bold tabular-nums ${k.color}`}>{k.value}</div>
-            </div>
+            </button>
           ))}
         </div>
       )}
 
       {/* Bar chart */}
+      <div id="cf-chart" className={highlighted === 'cf-chart' ? 'ring-2 ring-blue-400 rounded-lg transition-shadow' : 'transition-shadow'}>
       {chartTraces.length > 0 ? (
         <Plot
           data={chartTraces}
@@ -5870,9 +5890,10 @@ function CashFlowSection() {
       ) : (
         <p className="text-sm text-slate-400 text-center py-6">No cash flows found within the selected horizon.</p>
       )}
+      </div>
 
       {/* Explicitly Scheduled Future Transactions */}
-      <div>
+      <div id="cf-scheduled" className={highlighted === 'cf-scheduled' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700 mb-2">📅 Explicitly Scheduled Future Transactions</h3>
         {scheduled.length === 0 ? (
           <p className="text-sm text-slate-400">No transactions scheduled within this horizon.</p>
@@ -5895,7 +5916,7 @@ function CashFlowSection() {
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
                     <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
-                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.accounts_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name || '—')} type={String(r.accounts_type ?? '')} /></td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {fmtEur(Number(r.amount_eur))}
@@ -5911,7 +5932,7 @@ function CashFlowSection() {
       </div>
 
       {/* Recurring Templates */}
-      <div>
+      <div id="cf-templates" className={highlighted === 'cf-templates' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">🔂 Recurring Templates</h3>
         <p className="text-xs text-slate-400 mb-2">
           Every future occurrence of your active <strong>Recurring Templates</strong> (see Recurring page) within this horizon,
@@ -5939,7 +5960,7 @@ function CashFlowSection() {
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 tabular-nums text-slate-600">{String(r.date)}</td>
                     <td className="px-3 py-2 font-medium">{String(r.payees_name || '—')}</td>
-                    <td className="px-3 py-2 text-slate-500 text-xs">{String(r.accounts_name || '—')}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name || '—')} type={String(r.accounts_type ?? '')} /></td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.category || '—')}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {fmtEur(Number(r.amount_eur))}
@@ -5956,7 +5977,7 @@ function CashFlowSection() {
       </div>
 
       {/* Projected Recurring Payments */}
-      <div>
+      <div id="cf-recurring" className={highlighted === 'cf-recurring' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">🔁 Projected Recurring Payments</h3>
         <p className="text-xs text-slate-400 mb-2">
           Payee + Category combinations detected in <strong>every one</strong> of the last <strong>{monthsBack} complete months</strong>,
@@ -6000,7 +6021,7 @@ function CashFlowSection() {
       </div>
 
       {/* Dividend Income */}
-      <div>
+      <div id="cf-dividends" className={highlighted === 'cf-dividends' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">💰 Expected Dividend Income</h3>
         <p className="text-xs text-slate-400 mb-2">
           Projected dividend payments for currently-held securities within this horizon, using the same forecast
@@ -6039,7 +6060,7 @@ function CashFlowSection() {
       </div>
 
       {/* Interest Income */}
-      <div>
+      <div id="cf-interest" className={highlighted === 'cf-interest' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">🏦 Expected Interest Income</h3>
         <p className="text-xs text-slate-400 mb-2">
           Projected interest within this horizon. Accounts with a manually-defined rate schedule (Static Data →
@@ -6505,13 +6526,13 @@ function CgTable({ rows, method }: { rows: Row[]; method: string }) {
   const costLabel = method === 'WAC' ? 'WAC Cost (€)' : method === 'FIFO' ? 'FIFO Cost (€)' : 'LIFO Cost (€)'
 
   // Group by security + account
-  type Group = { key: string; secId: unknown; security: string; ticker: string; account: string; rows: Row[]; proceeds: number; cost: number; gl: number }
+  type Group = { key: string; secId: unknown; security: string; ticker: string; accountId: unknown; account: string; rows: Row[]; proceeds: number; cost: number; gl: number }
   const groups: Group[] = []
   const groupMap = new Map<string, Group>()
   for (const r of rows) {
     const key = `${r.securities_id}__${r.account}`
     if (!groupMap.has(key)) {
-      const g: Group = { key, secId: r.securities_id, security: String(r.security), ticker: String(r.ticker ?? '—'), account: String(r.account), rows: [], proceeds: 0, cost: 0, gl: 0 }
+      const g: Group = { key, secId: r.securities_id, security: String(r.security), ticker: String(r.ticker ?? '—'), accountId: r.accounts_id, account: String(r.account), rows: [], proceeds: 0, cost: 0, gl: 0 }
       groupMap.set(key, g)
       groups.push(g)
     }
@@ -6546,7 +6567,7 @@ function CgTable({ rows, method }: { rows: Row[]; method: string }) {
                 <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
                   <td className="px-2 py-1.5 text-slate-400">{isOpen ? '▾' : '▸'}</td>
                   <td className="px-2 py-1.5 font-medium"><SecLink id={g.secId}>{g.security}</SecLink>{g.ticker !== '—' && <span className="ml-1 text-slate-400 font-mono">{g.ticker}</span>}</td>
-                  <td className="px-2 py-1.5 text-slate-600">{g.account}</td>
+                  <td className="px-2 py-1.5 text-slate-600"><AccountLink id={g.accountId as number} name={g.account} type="Brokerage" /></td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{g.rows.length}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.proceeds)}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.cost)}</td>
@@ -6605,6 +6626,17 @@ function CgTable({ rows, method }: { rows: Row[]; method: string }) {
 function CapitalGainsReport({ year }: { year: number }) {
   const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
   const [showExempt, setShowExempt] = useState(false)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
+  const scrollToSection = (id: string, expand?: () => void) => {
+    expand?.()
+    window.setTimeout(() => {
+      const el = document.getElementById(id)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setHighlighted(id)
+      window.setTimeout(() => setHighlighted(h => h === id ? null : h), 1500)
+    }, expand ? 50 : 0)
+  }
   const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
   const d = data as Row[]
 
@@ -6678,26 +6710,34 @@ function CapitalGainsReport({ year }: { year: number }) {
             const grossTaxableLosses = dTaxable.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
             return (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-slate-50 rounded-lg px-4 py-3">
+                <button type="button" disabled={dExempt.length === 0}
+                  onClick={() => scrollToSection('cg-exempt', () => setShowExempt(true))}
+                  className="bg-slate-50 rounded-lg px-4 py-3 text-left hover:bg-slate-100 disabled:hover:bg-slate-50 disabled:cursor-default transition-colors">
                   <div className="text-xs text-slate-500 mb-1">Exempt Net G/L</div>
                   <div className={`text-xl font-bold tabular-nums ${sum(dExempt) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt2(sum(dExempt))}</div>
                   <div className="text-xs text-slate-400 mt-0.5">0% tax</div>
-                </div>
-                <div className="bg-slate-50 rounded-lg px-4 py-3">
+                </button>
+                <button type="button" disabled={taxableCategories.length === 0}
+                  onClick={() => scrollToSection('cg-taxable')}
+                  className="bg-slate-50 rounded-lg px-4 py-3 text-left hover:bg-slate-100 disabled:hover:bg-slate-50 disabled:cursor-default transition-colors">
                   <div className="text-xs text-slate-500 mb-1">Taxable Gross Gains</div>
                   <div className="text-xl font-bold tabular-nums text-green-700">{fmt2(grossTaxableGains)}</div>
                   <div className="text-xs text-slate-400 mt-0.5">across all taxable categories</div>
-                </div>
-                <div className="bg-slate-50 rounded-lg px-4 py-3">
+                </button>
+                <button type="button" disabled={taxableCategories.length === 0}
+                  onClick={() => scrollToSection('cg-taxable')}
+                  className="bg-slate-50 rounded-lg px-4 py-3 text-left hover:bg-slate-100 disabled:hover:bg-slate-50 disabled:cursor-default transition-colors">
                   <div className="text-xs text-slate-500 mb-1">Capital Losses (info)</div>
                   <div className="text-xl font-bold tabular-nums text-red-600">{fmt2(grossTaxableLosses)}</div>
                   <div className="text-xs text-slate-400 mt-0.5">not deducted from tax estimate</div>
-                </div>
-                <div className="bg-amber-50 rounded-lg px-4 py-3">
+                </button>
+                <button type="button" disabled={taxableCategories.length === 0}
+                  onClick={() => scrollToSection('cg-taxable')}
+                  className="bg-amber-50 rounded-lg px-4 py-3 text-left hover:bg-amber-100 disabled:hover:bg-amber-50 disabled:cursor-default transition-colors">
                   <div className="text-xs text-amber-600 mb-1">Est. Capital Gains Tax</div>
                   <div className="text-xl font-bold tabular-nums text-amber-700">{fmt2(totalTaxEst)}</div>
                   <div className="text-xs text-slate-400 mt-0.5">on gross gains, per category rates</div>
-                </div>
+                </button>
               </div>
             )
           })()}
@@ -6705,6 +6745,7 @@ function CapitalGainsReport({ year }: { year: number }) {
           <hr className="border-slate-200" />
 
           {/* Taxable sections — one per tax category */}
+          <div id="cg-taxable" className={highlighted === 'cg-taxable' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-6 transition-shadow' : 'space-y-6 p-2 -m-2 transition-shadow'}>
           {taxableCategories.length === 0 ? (
             <p className="text-sm text-slate-400">No taxable sell transactions found for {year}.</p>
           ) : taxableCategories.map(([cat, { rows: catRows, rate, taxCode }]) => {
@@ -6737,6 +6778,7 @@ function CapitalGainsReport({ year }: { year: number }) {
               </div>
             )
           })}
+          </div>
 
           {/* Exempt section expander */}
           {dExempt.length > 0 && (() => {
@@ -6744,7 +6786,7 @@ function CapitalGainsReport({ year }: { year: number }) {
             const exemptGrossL = dExempt.filter(r => Number(r.gain_loss_eur ?? 0) < 0).reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
             const exemptNet    = sum(dExempt)
             return (
-              <div className="space-y-3">
+              <div id="cg-exempt" className={highlighted === 'cg-exempt' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-3 transition-shadow' : 'space-y-3 p-2 -m-2 transition-shadow'}>
                 <button
                   className="flex items-center gap-2 text-sm font-semibold text-green-700 hover:text-green-800"
                   onClick={() => setShowExempt(v => !v)}
@@ -6902,7 +6944,7 @@ function IncomeDetailRows({ rows, showSecLink, showIncomeTax = false }: { rows: 
                 {showSecLink && <td className="px-2 py-1 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name ?? r.security ?? '')}</SecLink></td>}
                 {!showSecLink && <td className="px-2 py-1 text-slate-500">{String(r.payee ?? '—')}</td>}
                 {!showSecLink && <td className="px-2 py-1 text-slate-500">{String(r.category ?? '')}</td>}
-                <td className="px-2 py-1 text-slate-500">{String(r.account_name ?? '')}</td>
+                <td className="px-2 py-1 text-slate-500"><AccountLink id={r.accounts_id as number} name={String(r.account_name ?? '')} type={showSecLink ? 'Brokerage' : String(r.account_type ?? '')} /></td>
                 <td className="px-2 py-1 text-slate-500">{String(r.action ?? r.currency ?? '')}</td>
                 {showSecLink && <td className="px-2 py-1 text-slate-400 text-xs">{String(r.tax_category ?? '—')}</td>}
                 <td className={`px-2 py-1 text-right tabular-nums font-medium ${gross < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(gross)}</td>
@@ -6976,7 +7018,7 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows
                   <td className="px-3 py-2 font-medium">
                     {showSecLink ? <SecLink id={g.rows[0].securities_id}>{g.label}</SecLink> : g.label}
                   </td>
-                  <td className="px-3 py-2 text-slate-500">{g.account}</td>
+                  <td className="px-3 py-2 text-slate-500"><AccountLink id={g.rows[0]?.accounts_id as number} name={g.account} type={showSecLink ? 'Brokerage' : String(g.rows[0]?.account_type ?? '')} /></td>
                   <td className="px-3 py-2 text-right text-slate-500">{g.rows.length}</td>
                   <td className={`px-3 py-2 text-right tabular-nums font-semibold ${g.total < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(g.total)}</td>
                   {hasTax && <td className="px-3 py-2 text-right tabular-nums text-red-600">{g.taxTotal != null ? fmtEur(g.taxTotal) : '—'}</td>}
@@ -7010,6 +7052,17 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows
 
 function DividendIncomeTaxTab({ year }: { year: number }) {
   const [showRoc, setShowRoc] = useState(true)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
+  const scrollToSection = (id: string, expand?: () => void) => {
+    expand?.()
+    window.setTimeout(() => {
+      const el = document.getElementById(id)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setHighlighted(id)
+      window.setTimeout(() => setHighlighted(h => h === id ? null : h), 1500)
+    }, expand ? 50 : 0)
+  }
   const qc = useQueryClient()
   useEffect(() => { qc.removeQueries({ queryKey: ['bank-interest-tax'] }) }, [])
   const invQ = useQuery({ queryKey: ['dividend-income-tax', year], queryFn: () => getDividendIncomeTax(year) })
@@ -7057,15 +7110,16 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       {/* Headline metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Dividend Income',         val: totalDiv },
-          { label: 'CD / Bond Interest',      val: totalIntInv },
-          { label: 'Bank / Savings Interest', val: totalBank },
-          { label: 'Taxable Total',           val: grandTotal },
-        ].map(({ label, val }) => (
-          <div key={label} className="bg-slate-50 rounded-lg px-4 py-3">
+          { label: 'Dividend Income',         val: totalDiv,    target: 'dit-dividend' },
+          { label: 'CD / Bond Interest',      val: totalIntInv, target: 'dit-cdbond' },
+          { label: 'Bank / Savings Interest', val: totalBank,   target: 'dit-bank' },
+          { label: 'Taxable Total',           val: grandTotal,  target: 'dit-dividend' },
+        ].map(({ label, val, target }) => (
+          <button key={label} type="button" onClick={() => scrollToSection(target)}
+            className="bg-slate-50 rounded-lg px-4 py-3 text-left hover:bg-slate-100 transition-colors">
             <div className="text-xs text-slate-500 mb-1">{label}</div>
             <div className="text-xl font-bold tabular-nums text-slate-800">{fmt2(val)}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -7073,30 +7127,34 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       {(totalWithheld !== 0 || totalLocalLiability > 0) && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {totalWithheld !== 0 && (
-            <div className="bg-red-50 rounded-lg px-4 py-3">
+            <button type="button" onClick={() => scrollToSection('dit-dividend')}
+              className="bg-red-50 rounded-lg px-4 py-3 text-left hover:bg-red-100 transition-colors">
               <div className="text-xs text-red-500 mb-1">Total Withholding Tax</div>
               <div className="text-xl font-bold tabular-nums text-red-700">{fmt2(totalWithheld)}</div>
-            </div>
+            </button>
           )}
           {totalWithheld !== 0 && (
-            <div className="bg-slate-50 rounded-lg px-4 py-3">
+            <button type="button" onClick={() => scrollToSection('dit-dividend')}
+              className="bg-slate-50 rounded-lg px-4 py-3 text-left hover:bg-slate-100 transition-colors">
               <div className="text-xs text-slate-500 mb-1">Net After Withholding</div>
               <div className="text-xl font-bold tabular-nums text-slate-800">{fmt2(grandTotal + totalWithheld)}</div>
-            </div>
+            </button>
           )}
           {totalLocalLiability > 0 && (
-            <div className="bg-amber-50 rounded-lg px-4 py-3">
+            <button type="button" onClick={() => scrollToSection('dit-dividend')}
+              className="bg-amber-50 rounded-lg px-4 py-3 text-left hover:bg-amber-100 transition-colors">
               <div className="text-xs text-amber-600 mb-1">Dividend Local Tax Liability</div>
               <div className="text-xl font-bold tabular-nums text-amber-700">{fmt2(totalLocalLiability)}</div>
               <div className="text-xs text-amber-500 mt-1">max(0, gross × local rate − WHT credited)</div>
-            </div>
+            </button>
           )}
           {totalIntTaxLiability > 0 && (
-            <div className="bg-amber-50 rounded-lg px-4 py-3">
+            <button type="button" onClick={() => scrollToSection('dit-cdbond')}
+              className="bg-amber-50 rounded-lg px-4 py-3 text-left hover:bg-amber-100 transition-colors">
               <div className="text-xs text-amber-600 mb-1">CD / Bond Interest Tax (15%)</div>
               <div className="text-xl font-bold tabular-nums text-amber-700">{fmt2(totalIntTaxLiability)}</div>
               <div className="text-xs text-amber-500 mt-1">max(0, gross × 15% − WHT withheld)</div>
-            </div>
+            </button>
           )}
         </div>
       )}
@@ -7116,7 +7174,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       )}
 
       {/* Dividend Income */}
-      <div className="space-y-2">
+      <div id="dit-dividend" className={highlighted === 'dit-dividend' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-2 transition-shadow' : 'space-y-2 p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700">Dividend Income (incl. taxable Reinvest)</h3>
         {divRows.length === 0
           ? <p className="text-xs text-slate-400">No taxable dividend income for {year}.</p>
@@ -7125,7 +7183,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
 
       {/* CD / Bond Interest */}
       {(intInvRows.length > 0 || intExempt.length > 0) && (
-        <div className="space-y-2">
+        <div id="dit-cdbond" className={highlighted === 'dit-cdbond' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-2 transition-shadow' : 'space-y-2 p-2 -m-2 transition-shadow'}>
           <h3 className="text-sm font-semibold text-slate-700">CD / Bond Interest Income</h3>
           {intInvRows.length > 0 && <IncomeTable rows={intInvRows} showIncomeTax />}
           {intExempt.length > 0 && (
@@ -7157,7 +7215,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       )}
 
       {/* Bank & Savings Interest */}
-      <div className="space-y-2">
+      <div id="dit-bank" className={highlighted === 'dit-bank' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-2 transition-shadow' : 'space-y-2 p-2 -m-2 transition-shadow'}>
         <h3 className="text-sm font-semibold text-slate-700">Bank &amp; Savings Interest</h3>
         {bankRows.length === 0
           ? <p className="text-xs text-slate-400">No bank or savings interest found for {year}.</p>
@@ -8191,7 +8249,7 @@ function CustomReportsSection() {
                                 <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap font-medium ${Number(r.amount_eur ?? 0) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
                                   {fmtEur(Number(r.amount_eur ?? 0))}
                                 </td>
-                                <td className="px-2 py-1.5 text-slate-500 text-xs">{String(r.account ?? '')}</td>
+                                <td className="px-2 py-1.5 text-slate-500 text-xs"><AccountLink id={r.accounts_id as number} name={String(r.account ?? '')} type={investmentMode ? 'Brokerage' : String(r.account_type ?? '')} /></td>
                               </tr>
                             ))}
                           </tbody>

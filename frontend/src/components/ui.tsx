@@ -1,8 +1,10 @@
 import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check } from 'lucide-react'
 import { usePersist } from '@/lib/hooks'
+import { CASH_ACCOUNT_TYPES, INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import type { GridApi } from 'ag-grid-community'
 
 // AG Grid's built-in 'numericColumn' type only sets alignment (right-aligned header/cell) —
@@ -222,6 +224,36 @@ export function AccountOptions({ accounts }: { accounts: Record<string, unknown>
         </optgroup>
       ))}
     </>
+  )
+}
+
+// ── AccountLink ───────────────────────────────────────────────────────────────
+// Renders an account name as a link into its Cash Register or Investment Register
+// entry (scoped to that one account via ?accountsId=), used wherever a report shows
+// an account name. Routes by type: CASH_ACCOUNT_TYPES -> /register, INVESTMENT_
+// ACCOUNT_TYPES -> /investments; anything else (id/type unknown, or a type with no
+// register of its own, e.g. Liability) falls back to plain text. The ?from=report
+// marker tells Register/Investments to show a Back button (plain navigate(-1) —
+// their own tab/filter state is persisted, not component-local, so browser-back
+// naturally restores it without any return-path plumbing).
+export function AccountLink({ id, name, type }: { id?: number | string | null; name: string; type?: string | null }) {
+  const navigate = useNavigate()
+  const numId = id != null ? Number(id) : null
+  if (numId == null || !Number.isFinite(numId) || !type) return <>{name}</>
+  const isCash = CASH_ACCOUNT_TYPES.includes(type)
+  const isInvestment = INVESTMENT_ACCOUNT_TYPES.includes(type)
+  if (!isCash && !isInvestment) return <>{name}</>
+  const href = isCash
+    ? `/register?accountsId=${numId}&from=report`
+    : `/investments?accountsId=${numId}&tab=transactions&from=report`
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); navigate(href) }}
+      className="text-blue-700 hover:underline text-left"
+    >
+      {name}
+    </button>
   )
 }
 

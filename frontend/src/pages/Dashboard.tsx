@@ -9,7 +9,7 @@ import {
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
-import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton } from '@/components/ui'
+import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -536,7 +536,7 @@ function AccountsPanel({ accounts, opts }: { accounts: Record<string, unknown>[]
                   return (
                     <div key={String(a.id)} className="flex items-center justify-between px-4 py-2 hover:bg-slate-50">
                       <div className="min-w-0 flex items-center gap-1.5">
-                        <span className="text-sm text-slate-800 truncate">{String(a.name)}</span>
+                        <span className="text-sm text-slate-800 truncate"><AccountLink id={a.id as number} name={String(a.name)} type={String(a.type ?? '')} /></span>
                         {a.institution ? <span className="text-xs text-slate-400 shrink-0">· {String(a.institution)}</span> : null}
                       </div>
                       <div className="flex items-center gap-2 ml-4 shrink-0">
@@ -604,15 +604,17 @@ function UpcomingBillsPanel() {
                   ? Math.ceil((new Date(dueDate + 'T00:00:00').getTime() - Date.now()) / 86400000)
                   : NaN
                 const overdue = daysUntil < 0
-                const isProjected = String(b.type) === 'Projected'
+                const type = String(b.type)
+                const typeSuffix = type === 'Projected' ? ' · projected' : type === 'Template' ? ' · recurring template' : ''
                 return (
                   <div key={idx} className="flex items-center justify-between px-4 py-2.5">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-800 truncate">{String(b.payee || '—')}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-slate-400 truncate">
                         {dueDate}
                         {b.category ? ` · ${String(b.category)}` : ''}
-                        {isProjected ? ' · projected' : ''}
+                        {b.accounts_id != null ? <> · <AccountLink id={b.accounts_id as number} name={String(b.accounts_name ?? '')} type={String(b.accounts_type ?? '')} /></> : null}
+                        {typeSuffix}
                       </p>
                     </div>
                     <div className="text-right ml-3 shrink-0">
@@ -994,11 +996,7 @@ export default function Dashboard() {
               deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
               deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
             ]}
-            onClick={pensionAccount ? () => {
-              setPref('investments_tab', 'transactions')
-              setPref('investments_accountId', Number(pensionAccount.id))
-              navigate('/investments')
-            } : undefined}
+            onClick={pensionAccount ? () => navigate(`/investments?accountsId=${Number(pensionAccount.id)}&tab=transactions&from=report`) : undefined}
           />
           <StatCard
             compact

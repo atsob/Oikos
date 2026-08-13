@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, IDatasource, IGetRowsParams } from 'ag-grid-community'
@@ -13,7 +13,7 @@ import {
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
-import { Plus, Save, RefreshCw, ArrowLeftRight, Search, X } from 'lucide-react'
+import { Plus, Save, RefreshCw, ArrowLeftRight, ArrowLeft, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -253,6 +253,20 @@ export default function Investments() {
   const liveRefetchMs = useLiveRefetchInterval()
   const [tab, setTab] = usePersist<'holdings' | 'transactions' | 'cash'>('investments_tab', 'holdings')
   const [accountId, setAccountId] = usePersist<number | null>('investments_accountId', null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Arriving here via an AccountLink from a report ("?accountsId=123&tab=transactions
+  // &from=report") — scope to that account/tab and show a Back button. Consumed once:
+  // accountsId/tab are cleared right after so navigating around afterward doesn't keep
+  // re-forcing them, and a plain page refresh doesn't re-trigger it.
+  const cameFromReport = searchParams.get('from') === 'report'
+  useEffect(() => {
+    const incomingAccount = searchParams.get('accountsId')
+    const incomingTab = searchParams.get('tab')
+    if (incomingAccount == null && incomingTab == null) return
+    if (incomingAccount != null) setAccountId(Number(incomingAccount))
+    if (incomingTab === 'holdings' || incomingTab === 'transactions' || incomingTab === 'cash') setTab(incomingTab)
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('accountsId'); p.delete('tab'); return p }, { replace: true })
+  }, [searchParams, setAccountId, setTab, setSearchParams])
   const [showInactive, setShowInactive] = useState(false)
   const [includeClosed, setIncludeClosed] = useState(false)
   const [fromDate, setFromDate] = useState(monthsAgo(6))
@@ -578,6 +592,14 @@ export default function Investments() {
         })()}
         actions={
           <div className="flex items-center gap-2">
+            {cameFromReport && (
+              <>
+                <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+                  <ArrowLeft size={13} /> Back
+                </Button>
+                <div className="w-px h-5 bg-slate-200" />
+              </>
+            )}
             <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
               onClick={() => {
                 setEditId(null)

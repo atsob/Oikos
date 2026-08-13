@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -10,7 +11,7 @@ import {
 } from '@/lib/api'
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate } from '@/lib/utils'
-import { Plus, Search, X, CheckCheck } from 'lucide-react'
+import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 
@@ -108,6 +109,19 @@ export default function Register() {
   const liveRefetchMs = useLiveRefetchInterval()
 
   const [accountId, setAccountId] = usePersist<number | null>('register_accountId', null)
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Arriving here via an AccountLink from a report ("?accountsId=123&from=report") —
+  // scope to that account and show a Back button. Consumed once: the params are
+  // cleared right after so navigating the grid/filters afterward doesn't keep
+  // re-forcing the same account, and a plain page refresh doesn't re-trigger it.
+  const cameFromReport = searchParams.get('from') === 'report'
+  useEffect(() => {
+    const incoming = searchParams.get('accountsId')
+    if (incoming == null) return
+    setAccountId(Number(incoming))
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('accountsId'); return p }, { replace: true })
+  }, [searchParams, setAccountId, setSearchParams])
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState(monthsAgo(1))
@@ -372,6 +386,14 @@ export default function Register() {
         subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}` : 'Select an account'}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            {cameFromReport && (
+              <>
+                <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+                  <ArrowLeft size={13} /> Back
+                </Button>
+                <div className="w-px h-5 bg-slate-200" />
+              </>
+            )}
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input

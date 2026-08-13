@@ -275,120 +275,44 @@ def acknowledge_split(corporate_actions_id: int):
 
 @router.get("/upcoming-bills")
 def get_upcoming_bills(days: int = Query(14)):
-    """Upcoming bills: confirmed future transactions + pattern-detected recurring payees."""
-    with get_db() as conn:
-        # 1. Confirmed: future-dated register entries (same logic as old UI)
-        df_confirmed = pd.read_sql("""
-            WITH RECURSIVE cat_path AS (
-                SELECT Categories_Id, Categories_Name::TEXT AS full_path, Categories_Id_Parent
-                FROM Categories WHERE Categories_Id_Parent IS NULL
-                UNION ALL
-                SELECT c.Categories_Id, cp.full_path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
-                FROM Categories c JOIN cat_path cp ON c.Categories_Id_Parent = cp.Categories_Id
-            )
-            SELECT
-                t.Date::text       AS date,
-                p.Payees_Name      AS payee,
-                t.Total_Amount     AS amount_eur,
-                STRING_AGG(DISTINCT cp.full_path, ', ') AS category,
-                'Confirmed'        AS type
-            FROM Transactions t
-            LEFT JOIN Payees p    ON p.Payees_Id       = t.Payees_Id
-            LEFT JOIN Splits s    ON s.Transactions_Id = t.Transactions_Id
-            LEFT JOIN cat_path cp ON cp.Categories_Id  = s.Categories_Id
-            WHERE t.Date > CURRENT_DATE
-              AND t.Date <= CURRENT_DATE + %(days)s * INTERVAL '1 day'
-              AND t.Transfers_Id IS NULL
-            GROUP BY t.Transactions_Id, t.Date, p.Payees_Name, t.Total_Amount
-            ORDER BY t.Date
-        """, conn, params={"days": days})
+    """Upcoming bills, identified the same way Reports -> Cash Flow Forecast does —
+    explicitly scheduled future transactions, active Recurring Templates projected
+    from their own next_due_date/periodicity, and statistically-detected recurring
+    payee patterns (last 3 complete months) — by calling that same function directly
+    rather than a separate, looser heuristic, so the two views always agree on what's
+    coming up. Its own dedup (a payee already covered by a scheduled transaction or
+    template is excluded from the statistical pass) applies here too.
+    """
+    from api.routers.reports import get_cash_flow_forecast_full
+    fc = get_cash_flow_forecast_full(days=days, months_back=3)
 
-        # 2. Projected: payees present in ALL of the last 3 complete months
-        df_projected = pd.read_sql("""
-            WITH RECURSIVE cat_path AS (
-                SELECT Categories_Id, Categories_Name::TEXT AS full_path, Categories_Id_Parent
-                FROM Categories WHERE Categories_Id_Parent IS NULL
-                UNION ALL
-                SELECT c.Categories_Id, cp.full_path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
-                FROM Categories c JOIN cat_path cp ON c.Categories_Id_Parent = cp.Categories_Id
-            ),
-            recent AS (
-                SELECT
-                    p.Payees_Name,
-                    DATE_TRUNC('month', t.Date)::date AS month_start,
-                    t.Date,
-                    SUM(s.Amount) AS amount,
-                    cp.full_path  AS category
-                FROM Transactions t
-                LEFT JOIN Payees p    ON p.Payees_Id       = t.Payees_Id
-                LEFT JOIN Splits s    ON s.Transactions_Id = t.Transactions_Id
-                LEFT JOIN cat_path cp ON cp.Categories_Id  = s.Categories_Id
-                WHERE t.Date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'
-                  AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
-                  AND t.Payees_Id IS NOT NULL
-                  AND t.Transfers_Id IS NULL
-                GROUP BY p.Payees_Name, t.Date, DATE_TRUNC('month', t.Date)::date, cp.full_path
-            ),
-            qualified AS (
-                SELECT Payees_Name FROM recent
-                GROUP BY Payees_Name
-                HAVING COUNT(DISTINCT month_start) = 3
-            ),
-            -- LAG must be computed before aggregating (PostgreSQL forbids window inside aggregate)
-            with_lag AS (
-                SELECT
-                    r.Payees_Name,
-                    r.category,
-                    r.amount,
-                    r.Date,
-                    (r.Date - LAG(r.Date) OVER (
-                        PARTITION BY r.Payees_Name, r.category ORDER BY r.Date
-                    ))::float AS days_since_prev
-                FROM recent r
-                JOIN qualified q ON q.Payees_Name = r.Payees_Name
-            ),
-            stats AS (
-                SELECT
-                    Payees_Name,
-                    category,
-                    AVG(amount)            AS avg_amount,
-                    MAX(Date)              AS last_date,
-                    AVG(days_since_prev)   AS avg_interval_days
-                FROM with_lag
-                GROUP BY Payees_Name, category
-            )
-            SELECT
-                (last_date + ROUND(COALESCE(avg_interval_days, 30))::int)::text AS date,
-                Payees_Name     AS payee,
-                avg_amount      AS amount_eur,
-                category        AS category,
-                'Projected'     AS type
-            FROM stats
-            WHERE (last_date + ROUND(COALESCE(avg_interval_days, 30))::int) > CURRENT_DATE
-              AND (last_date + ROUND(COALESCE(avg_interval_days, 30))::int)
-                    <= CURRENT_DATE + %(days)s * INTERVAL '1 day'
-            ORDER BY date
-        """, conn, params={"days": days})
+    bills = []
+    for r in fc['scheduled']:
+        bills.append({
+            'date': r['date'], 'payee': r['payees_name'], 'category': r.get('category'),
+            'amount_eur': r['amount_eur'], 'type': 'Confirmed',
+            'accounts_id': r.get('accounts_id'), 'accounts_name': r.get('accounts_name'),
+            'accounts_type': r.get('accounts_type'),
+        })
+    for r in fc['templates']:
+        bills.append({
+            'date': r['date'], 'payee': r['payees_name'], 'category': r.get('category'),
+            'amount_eur': r['amount_eur'], 'type': 'Template',
+            'accounts_id': r.get('accounts_id'), 'accounts_name': r.get('accounts_name'),
+            'accounts_type': r.get('accounts_type'),
+        })
+    for r in fc['recurring']:
+        # Statistically-detected patterns aren't scoped to one account (a recurring
+        # payee can be paid from different accounts across occurrences) — no account
+        # to attach here, unlike the two sources above.
+        bills.append({
+            'date': r['date'], 'payee': r['payees_name'], 'category': r.get('category'),
+            'amount_eur': r['amount_eur'], 'type': 'Projected',
+            'accounts_id': None, 'accounts_name': None, 'accounts_type': None,
+        })
 
-    # Deduplicate: drop projected rows where there's already a confirmed entry
-    # for the same payee within 7 days
-    confirmed_list = _df_to_list(df_confirmed)
-    projected_list = _df_to_list(df_projected)
-
-    def _covered(proj):
-        for c in confirmed_list:
-            if c["payee"] == proj["payee"]:
-                try:
-                    delta = abs((pd.Timestamp(c["date"]) - pd.Timestamp(proj["date"])).days)
-                    if delta <= 7:
-                        return True
-                except Exception:
-                    pass
-        return False
-
-    projected_filtered = [p for p in projected_list if not _covered(p)]
-    combined = sorted(confirmed_list + projected_filtered, key=lambda r: r.get("date") or "")
-    return combined
+    bills.sort(key=lambda b: b['date'] or '')
+    return bills
 
 
 @router.get("/anomalies")

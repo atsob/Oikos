@@ -145,13 +145,19 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           Each card is a shortcut to where that number comes from: <b>Net Worth</b> opens Reports → Net Worth,{' '}
           <b>Investments</b> opens Reports → Inv. Performance → P&amp;L, <b>Cash &amp; Savings</b> and{' '}
-          <b>Assets</b> open Cash Register, and <b>Pension</b> opens Investments → Transactions, pre-filtered to
-          the pension account.
+          <b>Assets</b> open Cash Register, and <b>Pension</b> opens Investments → Transactions, scoped to the
+          pension account — with a <b>Back</b> button to return here, same as any other account link (see below).
         </Note>
         <Note>
           The <b>Options &amp; Account Selection</b> panel lets you include/exclude specific accounts and
           toggle "Show Disabled" for closed accounts — both the current totals and the historical baseline used
           for the deltas respect this same selection, so what you see stays internally consistent.
+        </Note>
+        <Note>
+          Any account name shown on the Dashboard — the expanded <b>Accounts</b> panel, <b>Upcoming Bills</b>,
+          the <b>Pension</b> KPI card — links into that account's own Cash Register or Investments entry, scoped
+          to just it, the same as everywhere else in the app (see Reports for the full explanation). A{' '}
+          <b>Back</b> button appears there to bring you straight back to the Dashboard.
         </Note>
         <H3>Insights &amp; Alerts</H3>
         <P>
@@ -226,6 +232,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           Amounts and balances are always shown in <b>that account's own currency</b> — a USD account shows
           "$", a EUR account shows "€", regardless of your reporting-currency setting elsewhere in the app.
+        </Note>
+        <Note>
+          Account names shown throughout <b>Reports</b> are links here (or into Investments, for a Brokerage/
+          Pension/Other Investment/Margin account) scoped to just that one account. A <b>Back</b> button appears
+          at the top when you arrive this way, returning to the exact report and state you came from.
         </Note>
         <Note>
           The <b>search box in the top-right header</b> (separate from the account-scoped search below the
@@ -436,6 +447,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           by a scheduled transaction or an active Recurring Template, so setting up a template for something
           doesn't cause it to double up in the forecast.
         </Note>
+        <Note>
+          Each <b>KPI tile</b> at the top (Scheduled/Template/Recurring In-Out, Dividend Income, Interest Income,
+          Total Net) jumps to and briefly highlights the table that number is built from — handy on a long
+          horizon where the relevant table might be several scrolls down. Total Net jumps to the chart instead,
+          since that's the one place all five sources are combined.
+        </Note>
+        <Note>
+          The Dashboard's <b>Upcoming Bills</b> panel uses this exact same identification logic (Scheduled +
+          Templates + statistically-detected patterns) — the two views always agree on what's coming up.
+        </Note>
 
         <H3>🎯 Budget &amp; Spending</H3>
         <P>Three tabs: Budget vs. Actual, Spending Trends, and Savings Rate.</P>
@@ -589,6 +610,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           positions and positions that were fully closed and later reopened: cost basis is tracked per lot
           (FIFO/LIFO) or as a running average that resets at zero (WAC), so units sold off long ago never blend
           into the cost basis of a position rebuilt from scratch.
+        </Note>
+        <Note>
+          On both <b>Capital Gains</b> and <b>Interest &amp; Dividend Income</b>, the KPI tiles at the top jump to
+          and briefly highlight the section that number is built from — <b>Exempt Net G/L</b> also expands the
+          (collapsed by default) Tax-Exempt Sales section on the way there.
         </Note>
 
         <H3>🔍 Securities Analysis</H3>

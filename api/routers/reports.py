@@ -329,6 +329,7 @@ def get_portfolio_summary(account_ids: Optional[str] = Query(None)):
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
     query = f"""
     SELECT
+        a.Accounts_Id AS accounts_id,
         a.Accounts_Name AS account,
         a.Accounts_Type AS account_type,
         s.Securities_Id AS securities_id,
@@ -1217,6 +1218,7 @@ def get_dividends_tracker(
                 i.Securities_Id,
                 s.Securities_Name,
                 s.Securities_Type,
+                a.Accounts_Id,
                 a.Accounts_Name,
                 a.Currencies_Id,
                 SUM(
@@ -1233,7 +1235,7 @@ def get_dividends_tracker(
             WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
               AND i.Date BETWEEN %(start_date)s AND %(end_date)s
             GROUP BY i.Date, i.Securities_Id, s.Securities_Name, s.Securities_Type,
-                     a.Accounts_Name, a.Currencies_Id, i.Action
+                     a.Accounts_Id, a.Accounts_Name, a.Currencies_Id, i.Action
         )
         SELECT
             i.Date AS date,
@@ -1241,6 +1243,7 @@ def get_dividends_tracker(
             i.Securities_Id AS securities_id,
             i.Securities_Name AS securities_name,
             i.Securities_Type AS securities_type,
+            i.Accounts_Id AS accounts_id,
             i.Accounts_Name AS accounts_name,
             i.Action AS action,
             ROUND(i.income_eur::numeric, 2) AS income_eur,
@@ -1405,7 +1408,7 @@ def get_dividends_tracker(
 
     disp_cols = ["securities_id", "securities_name", "securities_type", "period_income_eur", "cost_basis_eur",
                  "yoc_pct", "fwd_yield_pct", "ex_div_date", "div_frequency"]
-    detail_cols = ["date", "month", "securities_id", "securities_name", "accounts_name", "action", "income_eur"]
+    detail_cols = ["date", "month", "securities_id", "securities_name", "accounts_id", "accounts_name", "action", "income_eur"]
 
     return {
         "period_label": period_label,
@@ -1978,6 +1981,7 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                 'securities_id':   sec_id,
                 'security':        row['securities_name'],
                 'ticker':          None,
+                'accounts_id':     int(row['accounts_id']),
                 'account':         row['account_name'],
                 'date':            date.date().isoformat(),
                 'action':          action,
@@ -2046,7 +2050,7 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                 if remaining > 1e-9:
                     short_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
 
-    cols = ['securities_id','security','ticker','account','date','action','quantity',
+    cols = ['securities_id','security','ticker','accounts_id','account','date','action','quantity',
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
             'holding_type','is_tax_exempt','instrument_type','securities_type',
             'tax_category','gains_taxable','gains_rate','gains_tax_code']
@@ -2084,6 +2088,7 @@ def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
                 'securities_id':   sec_id,
                 'security':        row['securities_name'],
                 'ticker':          None,
+                'accounts_id':     int(row['accounts_id']),
                 'account':         row['account_name'],
                 'date':            date.date().isoformat(),
                 'action':          action,
@@ -2150,7 +2155,7 @@ def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
                     short_avg_cost = (short_qty * short_avg_cost + remaining * cost_ps) / new_qty
                     short_qty = new_qty
 
-    cols = ['securities_id','security','ticker','account','date','action','quantity',
+    cols = ['securities_id','security','ticker','accounts_id','account','date','action','quantity',
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
             'holding_type','is_tax_exempt','instrument_type','securities_type',
             'tax_category','gains_taxable','gains_rate','gains_tax_code']
@@ -2473,7 +2478,9 @@ def get_cash_flow_forecast_full(
             SELECT
                 t.Date,
                 p.Payees_Name,
+                a.Accounts_Id,
                 a.Accounts_Name,
+                a.Accounts_Type,
                 c.Currencies_ShortName AS currency,
                 CASE WHEN c.Currencies_ShortName = 'EUR' THEN s.Amount
                      ELSE s.Amount * COALESCE(fx.FX_Rate, 1) END AS amount_eur,
@@ -2511,7 +2518,9 @@ def get_cash_flow_forecast_full(
             SELECT
                 rt.templates_id AS template_id,
                 COALESCE(py.Payees_Name, rt.name) AS payees_name,
+                a.Accounts_Id AS accounts_id,
                 a.Accounts_Name AS accounts_name,
+                a.Accounts_Type AS accounts_type,
                 tc.category,
                 rt.total_amount AS amount,
                 CASE WHEN cur.Currencies_ShortName = 'EUR' THEN rt.total_amount
@@ -2726,7 +2735,9 @@ def get_cash_flow_forecast_full(
                 template_rows.append({
                     'date': occ.date().isoformat(),
                     'payees_name': str(row['payees_name'] or ''),
+                    'accounts_id': int(row['accounts_id']),
                     'accounts_name': str(row['accounts_name'] or ''),
+                    'accounts_type': str(row['accounts_type'] or ''),
                     'category': str(row.get('category') or ''),
                     'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
                     'currency': str(row['currency'] or 'EUR'),
@@ -2919,7 +2930,9 @@ def get_cash_flow_forecast_full(
             scheduled.append({
                 'date': str(row['date'])[:10],
                 'payees_name': str(row['payees_name'] or ''),
+                'accounts_id': int(row['accounts_id']),
                 'accounts_name': str(row['accounts_name'] or ''),
+                'accounts_type': str(row['accounts_type'] or ''),
                 'category': str(row.get('category') or ''),
                 'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
                 'currency': str(row['currency'] or 'EUR'),
@@ -3166,7 +3179,7 @@ def get_investment_positions_history(start_date: str = Query("2020-01-01"), acco
             ),0),0) AS qty_at_date
         FROM dates dt CROSS JOIN inv_universe iu
     )
-    SELECT qa.date_pt::text AS date, a.Accounts_Name AS accounts_name,
+    SELECT qa.date_pt::text AS date, a.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name,
         SUM(qa.qty_at_date
             * COALESCE((SELECT Close FROM Historical_Prices WHERE Securities_Id=qa.Securities_Id AND Date<=qa.date_pt ORDER BY Date DESC LIMIT 1),0)
             * COALESCE((SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=s.Currencies_Id AND Date<=qa.date_pt ORDER BY Date DESC LIMIT 1),1)
@@ -3175,7 +3188,7 @@ def get_investment_positions_history(start_date: str = Query("2020-01-01"), acco
     JOIN Accounts a ON qa.Accounts_Id=a.Accounts_Id
     JOIN Securities s ON qa.Securities_Id=s.Securities_Id
     WHERE qa.qty_at_date > 0
-    GROUP BY qa.date_pt, a.Accounts_Name
+    GROUP BY qa.date_pt, a.Accounts_Id, a.Accounts_Name
     ORDER BY qa.date_pt ASC, a.Accounts_Name ASC
     """
     with get_db() as conn:
@@ -3225,7 +3238,9 @@ def get_holdings_snapshot(as_of: str = Query(None), account_ids: Optional[str] =
         ORDER BY Currencies_Id_1, Date DESC
     )
     SELECT
+        a.Accounts_Id                                              AS accounts_id,
         a.Accounts_Name                                            AS account,
+        a.Accounts_Type                                            AS account_type,
         s.Securities_Name                                          AS security,
         s.Ticker                                                   AS ticker,
         s.Securities_Type                                          AS type,
@@ -4368,6 +4383,7 @@ def get_dividend_income_tax(year: int = Query(None)):
         i.Date::text                        AS date,
         s.Securities_Id                     AS securities_id,
         s.Securities_Name                   AS securities_name,
+        a.Accounts_Id                       AS accounts_id,
         a.Accounts_Name                     AS account_name,
         i.Action                            AS action,
         eff.eff_tax_cat                     AS tax_category,
@@ -4543,6 +4559,7 @@ def get_bank_interest_tax(year: int = Query(None)):
     )
     SELECT
         t.Date::text                    AS date,
+        a.Accounts_Id                   AS accounts_id,
         a.Accounts_Name                 AS account_name,
         a.Accounts_Type                 AS account_type,
         COALESCE(p.Payees_Name, '—')    AS payee,

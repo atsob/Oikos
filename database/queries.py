@@ -4715,6 +4715,7 @@ def get_custom_report_investment_drill_down(date_from, date_to,
             i.Total_Amount_AccCur                   AS amount,
             CASE WHEN i.Action IN ('Buy','CashIn','MiscExp') THEN -1 ELSE 1 END
                 * {amount_eur_expr}                 AS amount_eur,
+            a.Accounts_Id                           AS accounts_id,
             a.Accounts_Name                         AS account,
             cur.Currencies_ShortName                AS currency
         FROM Investments i
@@ -4841,7 +4842,10 @@ def get_custom_report_drill_down(date_from, date_to, category_path=None,
             s.Categories_Id                                           AS categories_id,
             {amount_expr}                                             AS amount_eur,
             cur.Currencies_ShortName                                  AS currency,
-            COALESCE(s.Memo, t.Description)                          AS notes
+            COALESCE(s.Memo, t.Description)                          AS notes,
+            a.Accounts_Id                                             AS accounts_id,
+            a.Accounts_Name                                           AS account,
+            a.Accounts_Type                                           AS account_type
         FROM Splits s
         JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
         JOIN cat_path cp    ON cp.Categories_Id  = s.Categories_Id
