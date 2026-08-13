@@ -427,8 +427,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           combinations seen in every one of the last few complete months, for recurring bills you haven't set up
           a template for — <b>projected dividend income</b> for currently-held securities, using the same
           Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view, and{' '}
-          <b>projected interest income</b> for savings accounts, using the same last-real-interest-period
-          APY%/cadence compounding as the Savings tab's own Forecast view.
+          <b>projected interest income</b>: for a Savings or Checking account with a manually-defined rate schedule
+          (Static Data → Accounts → the % icon), that balance-tiered schedule; otherwise, for Savings accounts only,
+          the same last-real-interest-period APY%/cadence compounding as the Savings tab's own Forecast view.
         </P>
         <Note>
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
@@ -619,13 +620,24 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Categories</b> — the Income/Expense/Transfer/etc. taxonomy; also mergeable.</li>
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
           <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves Portfolio Analysis's Bond Quality view instead of "Direct / Unrated".</li>
-          <li><b>Accounts</b> — the full account list with type, currency, institution, active status.</li>
+          <li><b>Accounts</b> — the full account list with type, currency, institution, active status, and a free-form <b>Notes</b> field (account type, holders, etc.), hidden by default in the grid.</li>
           <li><b>Tax Rules</b> — capital-gains/dividend/income tax treatment per tax category.</li>
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
         </Ul>
         <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
           draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
+        </Note>
+        <Note>
+          A Savings or Checking account's row has a <b>% icon</b> opening its <b>Interest Rates</b> editor — enter
+          the balance tiers a bank publishes (e.g. "above €50,000: 0.30%, up to €50,000: 0.15%") with the nominal
+          rate and effective annual yield for each, dated by an effective-from date so a future announced rate
+          change can be entered ahead of time without discarding the current schedule as history. Each schedule
+          also picks a <b>Tiering Method</b>: <b>Whole Balance</b> (the entire balance earns whichever single tier
+          it falls into) or <b>Marginal</b> (tax-bracket style — each portion of the balance earns its own tier's
+          rate) — check the bank's own terms, since this varies by product, even within the same bank. Feeds
+          Reports → Cash Flow Forecast's Expected Interest Income, in place of that account's derived-from-history
+          APY% once a schedule exists for it.
         </Note>
       </>
     ),

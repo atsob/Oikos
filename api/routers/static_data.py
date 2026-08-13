@@ -531,7 +531,7 @@ def upsert_account(data: dict):
             cur.execute("""
                 UPDATE Accounts SET
                     Accounts_Name=%s, Accounts_Type=%s, IBAN=%s, Is_Active=%s,
-                    Institutions_Id=%s, Currencies_Id=%s, Credit_Limit=%s, Accounts_Id_Linked=%s
+                    Institutions_Id=%s, Currencies_Id=%s, Credit_Limit=%s, Accounts_Id_Linked=%s, Notes=%s
                 WHERE Accounts_Id=%s
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
@@ -539,18 +539,20 @@ def upsert_account(data: dict):
                   data.get('currencies_id') or None,
                   data.get('credit_limit') or 0,
                   data.get('accounts_id_linked') or None,
+                  data.get('notes') or None,
                   aid))
         else:
             cur.execute("""
                 INSERT INTO Accounts
-                    (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
+                    (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked, Notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
                   data.get('institutions_id') or None,
                   data.get('currencies_id') or None,
                   data.get('credit_limit') or 0,
-                  data.get('accounts_id_linked') or None))
+                  data.get('accounts_id_linked') or None,
+                  data.get('notes') or None))
             aid = cur.fetchone()[0]
         conn.commit()
         return {"id": aid}
@@ -616,7 +618,8 @@ def get_accounts_master(search: Optional[str] = Query(None)):
                    a.IBAN AS iban,
                    a.Credit_Limit AS credit_limit,
                    a.Accounts_Id_Linked AS accounts_id_linked,
-                   la.Accounts_Name AS linked_account_name
+                   la.Accounts_Name AS linked_account_name,
+                   a.Notes AS notes
             FROM Accounts a
             JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
             LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id
@@ -625,6 +628,117 @@ def get_accounts_master(search: Optional[str] = Query(None)):
             ORDER BY a.Accounts_Type, a.Accounts_Name
         """, conn, params=params if params else None)
     return _df(df)
+
+
+# ── Account Interest Rate Schedules ──────────────────────────────────────────
+# User-entered, balance-tiered interest rate schedules per account (as published
+# by the bank), consumed by the Cash Flow Forecast's interest-income projection.
+
+@router.get("/account-interest-rates")
+def get_account_interest_rates(accounts_id: int = Query(...)):
+    from database.queries import _ensure_account_interest_rate_schema
+    _ensure_account_interest_rate_schema()
+    with get_db() as conn:
+        schedules_df = pd.read_sql("""
+            SELECT Account_Interest_Rate_Schedules_Id AS id, Accounts_Id AS accounts_id,
+                   Effective_From AS effective_from, Compounding_Frequency AS compounding_frequency,
+                   Tiering_Method AS tiering_method, Notes AS notes
+            FROM Account_Interest_Rate_Schedules
+            WHERE Accounts_Id = %(aid)s
+            ORDER BY Effective_From DESC
+        """, conn, params={"aid": accounts_id})
+        tiers_df = pd.read_sql("""
+            SELECT t.Account_Interest_Rate_Schedules_Id AS schedule_id,
+                   t.Account_Interest_Rate_Tiers_Id AS id,
+                   t.Tier_Min_Balance AS min_balance, t.Tier_Max_Balance AS max_balance,
+                   t.Nominal_Rate_Pct AS nominal_rate_pct, t.Effective_Annual_Yield_Pct AS eay_pct
+            FROM Account_Interest_Rate_Tiers t
+            JOIN Account_Interest_Rate_Schedules s ON s.Account_Interest_Rate_Schedules_Id = t.Account_Interest_Rate_Schedules_Id
+            WHERE s.Accounts_Id = %(aid)s
+            ORDER BY t.Tier_Min_Balance ASC
+        """, conn, params={"aid": accounts_id})
+    schedules = _df(schedules_df)
+    tiers = _df(tiers_df)
+    for sch in schedules:
+        sch["tiers"] = [t for t in tiers if t["schedule_id"] == sch["id"]]
+    return schedules
+
+
+@router.post("/account-interest-rates")
+def upsert_account_interest_rate_schedule(data: dict):
+    from database.connection import get_connection
+    from database.queries import _ensure_account_interest_rate_schema
+    _ensure_account_interest_rate_schema()
+
+    tiers = data.get("tiers") or []
+    if not tiers:
+        raise HTTPException(400, "At least one balance tier is required.")
+    for t in tiers:
+        if t.get("nominal_rate_pct") is None or t.get("eay_pct") is None:
+            raise HTTPException(400, "Each tier needs a nominal rate and an effective annual yield.")
+    tiering_method = data.get("tiering_method", "Whole Balance")
+    if tiering_method not in ("Whole Balance", "Marginal"):
+        raise HTTPException(400, "tiering_method must be 'Whole Balance' or 'Marginal'.")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        sid = data.get("id")
+        if sid:
+            cur.execute("""
+                UPDATE Account_Interest_Rate_Schedules
+                SET Effective_From = %s, Compounding_Frequency = %s, Tiering_Method = %s, Notes = %s
+                WHERE Account_Interest_Rate_Schedules_Id = %s
+            """, (data.get("effective_from"), data.get("compounding_frequency", "Monthly"),
+                  tiering_method, data.get("notes") or None, sid))
+            cur.execute("DELETE FROM Account_Interest_Rate_Tiers WHERE Account_Interest_Rate_Schedules_Id = %s", (sid,))
+        else:
+            cur.execute("""
+                INSERT INTO Account_Interest_Rate_Schedules
+                    (Accounts_Id, Effective_From, Compounding_Frequency, Tiering_Method, Notes)
+                VALUES (%s, %s, %s, %s, %s) RETURNING Account_Interest_Rate_Schedules_Id
+            """, (data.get("accounts_id"), data.get("effective_from"),
+                  data.get("compounding_frequency", "Monthly"), tiering_method, data.get("notes") or None))
+            sid = cur.fetchone()[0]
+
+        for t in tiers:
+            cur.execute("""
+                INSERT INTO Account_Interest_Rate_Tiers
+                    (Account_Interest_Rate_Schedules_Id, Tier_Min_Balance, Tier_Max_Balance,
+                     Nominal_Rate_Pct, Effective_Annual_Yield_Pct)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (sid, t.get("min_balance") or 0, t.get("max_balance") or None,
+                  t.get("nominal_rate_pct"), t.get("eay_pct")))
+
+        conn.commit()
+        return {"id": sid}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        msg = str(e)
+        if "account_interest_rate_schedules_accounts_id_effective_from" in msg.lower():
+            raise HTTPException(400, "This account already has a rate schedule effective on that date.")
+        raise HTTPException(500, msg)
+    finally:
+        conn.close()
+
+
+@router.delete("/account-interest-rates/{schedule_id}")
+def delete_account_interest_rate_schedule(schedule_id: int):
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM Account_Interest_Rate_Schedules WHERE Account_Interest_Rate_Schedules_Id = %s", (schedule_id,))
+        conn.commit()
+        return {"deleted": schedule_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
 
 
 # ── Securities ────────────────────────────────────────────────────────────────

@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-13
+
+### Added
+- **Accounts can now carry a user-defined, balance-tiered interest rate schedule** — Static Data → Accounts → the new % icon (Savings/Checking accounts only) opens an Interest Rates editor matching how banks publish these (e.g. Alpha Bank's rate sheets): a set of balance tiers, each with a nominal rate and an effective annual yield (post-withholding-tax, compounding-adjusted — used directly for forecasting rather than re-derived), dated by an effective-from date so a future announced rate change can be entered ahead of time without losing the prior schedule as history. Each schedule picks one of two tiering methods per Alpha Bank's own general notes: **Whole Balance** (the entire balance earns whichever single tier it currently falls into) or **Marginal** (tax-bracket style — each portion of the balance earns its own tier's rate) — banks use both depending on the product, so it's a per-schedule choice, not a fixed rule. Cash Flow Forecast's Expected Interest Income now uses whichever schedule is effective on each forecast date for accounts that have one (any Savings or Checking account, including ones with no real interest-posting history yet); accounts without a manual schedule keep the existing behavior of compounding forward from their last real interest period's derived APY% (Savings only, unchanged). Populated with Alpha Bank's own published deposit rate sheet for the accounts it applies to (Alpha Μισθοδοσία, Alpha Έξυπνη Αποταμίευση, Σειρά Alpha 1|2|3 — all Marginal per the sheet's footnotes), each using its own real observed posting cadence where known.
+- **Accounts gain a free-form Notes field** — Static Data → Accounts edit modal, for recording account type, holders, or any other reference detail; shown as a hideable grid column.
+
+### Fixed
+- **`database/Oikos.sql` was missing several tables/columns that only ever existed as live, lazily-created schema** (`Securities_Annual_EPS`, `Corporate_Action_Notifications`, `Account_Interest_Rate_Schedules`/`_Tiers`, and `Securities_Quote`'s `Fair_Value*` columns) — brought back in sync with the live database, confirmed via a full `information_schema` diff against the file.
+
 ## 2026-08-12
 
 ### Fixed

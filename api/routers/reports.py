@@ -2270,6 +2270,7 @@ def get_cash_flow_forecast_full(
     """
     import datetime as _dt
     from dateutil.relativedelta import relativedelta
+    from database.queries import _ensure_account_interest_rate_schema
 
     today = _dt.date.today()
     cutoff = today + _dt.timedelta(days=days)
@@ -2523,6 +2524,41 @@ def get_cash_flow_forecast_full(
 
         df_savings = _savings_last_period_df(conn)
 
+        _ensure_account_interest_rate_schema()
+        df_rate_schedules = pd.read_sql("""
+            WITH NonEURAccounts AS (
+                SELECT DISTINCT a.Accounts_Id, a.Currencies_Id
+                FROM Accounts a
+                WHERE a.Currencies_Id NOT IN (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+            ),
+            Last_FXRates AS (
+                SELECT nea.Accounts_Id, hfx.FX_Rate
+                FROM Historical_FX hfx
+                JOIN NonEURAccounts nea ON nea.Currencies_Id = hfx.Currencies_Id_1
+                WHERE hfx.Currencies_Id_2 = (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')
+                  AND hfx.Date = (
+                        SELECT MAX(h2.Date) FROM Historical_FX h2
+                        WHERE h2.Currencies_Id_1 = hfx.Currencies_Id_1 AND h2.Currencies_Id_2 = hfx.Currencies_Id_2
+                          AND h2.Date <= CURRENT_DATE
+                    )
+            )
+            SELECT
+                s.Account_Interest_Rate_Schedules_Id AS schedule_id, s.Accounts_Id AS accounts_id,
+                s.Effective_From AS effective_from, s.Compounding_Frequency AS compounding_frequency,
+                s.Tiering_Method AS tiering_method,
+                t.Tier_Min_Balance AS tier_min, t.Tier_Max_Balance AS tier_max,
+                t.Effective_Annual_Yield_Pct AS eay_pct,
+                a.Accounts_Name AS accounts_name, a.Accounts_Balance AS current_balance,
+                c.Currencies_ShortName AS currency, COALESCE(fx.FX_Rate, 1) AS fx_rate
+            FROM Account_Interest_Rate_Schedules s
+            JOIN Account_Interest_Rate_Tiers t ON t.Account_Interest_Rate_Schedules_Id = s.Account_Interest_Rate_Schedules_Id
+            JOIN Accounts a ON a.Accounts_Id = s.Accounts_Id
+            JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
+            LEFT JOIN Last_FXRates fx ON fx.Accounts_Id = a.Accounts_Id
+            WHERE a.Accounts_Type IN ('Savings','Checking')
+            ORDER BY s.Accounts_Id, s.Effective_From, t.Tier_Min_Balance
+        """, conn)
+
     # Filter scheduled to horizon
     if not df_future.empty:
         df_future['date'] = pd.to_datetime(df_future['date'])
@@ -2670,14 +2706,116 @@ def get_cash_flow_forecast_full(
 
     dividend_rows.sort(key=lambda x: x['date'])
 
-    # Project savings interest income, using the same last-real-interest-period
-    # APY%/cadence compounding logic as the Savings tab's own Forecast view
-    # (/savings-forecast), bounded by this endpoint's own day-based horizon instead
-    # of eoy/6m/12m. Compounding happens in the account's own currency; only the
-    # resulting payments are converted to EUR here, for a consistent cash-flow total.
+    # Project interest income. Accounts with a user-defined rate schedule (Static Data
+    # → Accounts → Interest Rates) use that — a balance-tiered %, dated by
+    # Effective_From, compounded at the schedule's own frequency. All other Savings
+    # accounts fall back to the last-real-interest-period APY%/cadence compounding
+    # logic used by the Savings tab's own Forecast view (/savings-forecast). Either
+    # way, compounding happens in the account's own currency; only the resulting
+    # payments are converted to EUR here, for a consistent cash-flow total.
+    _COMPOUND_FREQ_MONTHS = {'Monthly': 1, 'Quarterly': 3, 'Semi-Annual': 6, 'Annual': 12}
     interest_rows = []
+    manual_account_ids: set = set()
+
+    if not df_rate_schedules.empty:
+        df_rate_schedules = df_rate_schedules.copy()
+        df_rate_schedules['effective_from'] = pd.to_datetime(df_rate_schedules['effective_from']).dt.date
+        manual_account_ids = set(int(x) for x in df_rate_schedules['accounts_id'].unique())
+
+        for accounts_id, grp in df_rate_schedules.groupby('accounts_id'):
+            first = grp.iloc[0]
+            balance = _fnum(first.get("current_balance"))
+            if balance <= 0:
+                continue
+            currency = str(first['currency'])
+            fx = _fnum(first.get("fx_rate"), default=1.0)
+            accounts_name = str(first['accounts_name'])
+
+            schedules = []
+            for (eff_from, freq, method), sgrp in grp.groupby(['effective_from', 'compounding_frequency', 'tiering_method']):
+                tiers = sorted(
+                    ((_fnum(r['tier_min']), (None if pd.isna(r['tier_max']) else _fnum(r['tier_max'])), _fnum(r['eay_pct']))
+                     for _, r in sgrp.iterrows()),
+                    key=lambda x: x[0]
+                )
+                schedules.append({'effective_from': eff_from, 'frequency': str(freq), 'method': str(method), 'tiers': tiers})
+            schedules.sort(key=lambda s: s['effective_from'])
+
+            def _active_schedule(d, _schedules=schedules):
+                active = None
+                for sch in _schedules:
+                    if sch['effective_from'] <= d:
+                        active = sch
+                    else:
+                        break
+                return active
+
+            def _period_interest(sch, bal, period_days):
+                # 'Marginal' (κλιμακωτό): each tier's own portion of the balance earns
+                # that tier's own rate, like a tax bracket. 'Whole Balance'
+                # (κλιμακούμενο): the entire balance earns whichever single tier it
+                # currently falls into — Alpha Bank's own rate sheet uses both methods
+                # depending on the product (a footnote per product name), so this
+                # isn't a fixed choice across schedules.
+                if bal <= 0 or period_days <= 0:
+                    return 0.0
+                if sch['method'] == 'Marginal':
+                    total = 0.0
+                    for tmin, tmax, eay in sch['tiers']:
+                        if bal <= tmin:
+                            continue
+                        portion = (min(bal, tmax) - tmin) if tmax is not None else (bal - tmin)
+                        if portion > 0 and eay > 0:
+                            total += portion * ((1 + eay / 100) ** (period_days / 365) - 1)
+                    return total
+                else:
+                    eay = None
+                    for tmin, _tmax, e in sch['tiers']:
+                        if bal >= tmin:
+                            eay = e
+                    if not eay or eay <= 0:
+                        return 0.0
+                    return bal * ((1 + eay / 100) ** (period_days / 365) - 1)
+
+            running_balance = balance
+            period_start = today
+            first_active = _active_schedule(today) or schedules[0]
+            next_dt = today + relativedelta(months=_COMPOUND_FREQ_MONTHS.get(first_active['frequency'], 1))
+
+            while next_dt <= cutoff:
+                active = _active_schedule(next_dt)
+                if active is None:
+                    # Schedule starts in the future — no interest accrues before its
+                    # Effective_From, so skip this stretch and step by the earliest
+                    # known schedule's cadence until it kicks in.
+                    period_start = next_dt
+                    next_dt = next_dt + relativedelta(months=_COMPOUND_FREQ_MONTHS.get(schedules[0]['frequency'], 1))
+                    continue
+
+                # Clamp to the active schedule's own start: period_start can predate
+                # it (e.g. right after a "no schedule active yet" gap, or a handoff
+                # between vintages), and days before a rate took effect don't accrue.
+                accrual_start = max(period_start, active['effective_from'])
+                period_days = (next_dt - accrual_start).days
+                payment = _period_interest(active, running_balance, period_days)
+                if payment > 0:
+                    running_balance += payment
+                    interest_rows.append({
+                        'date': next_dt.isoformat(),
+                        'payees_name': accounts_name,
+                        'accounts_id': int(accounts_id),
+                        'amount_eur': round(payment * fx, 2),
+                        'currency': currency,
+                        'frequency': active['frequency'],
+                    })
+                period_start = next_dt
+                next_dt = next_dt + relativedelta(months=_COMPOUND_FREQ_MONTHS.get(active['frequency'], 1))
+
     if not df_savings.empty:
         for _, r in df_savings.iterrows():
+            if int(r['accounts_id']) in manual_account_ids:
+                continue
+
             balance = _fnum(r.get("current_balance"))
             apy = _fnum(r.get("apy_pct_last"))
             hd = r.get("holding_days_last")

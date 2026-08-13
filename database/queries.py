@@ -5901,6 +5901,57 @@ def _ensure_fair_value_schema():
         conn.close()
 
 
+def _ensure_account_interest_rate_schema():
+    """Create Account_Interest_Rate_Schedules and Account_Interest_Rate_Tiers, if they
+    don't already exist.
+
+    Lets a Savings/Checking account carry a user-entered, balance-tiered interest rate
+    schedule as published by the bank (e.g. "above EUR50,000: 0.30%, up to EUR50,000:
+    0.15%"). Each schedule is dated by Effective_From so a future rate change can be
+    entered ahead of time and prior schedules are kept as history rather than
+    overwritten. The Cash Flow Forecast's interest projection uses whichever schedule
+    is effective on each forecast date in place of the derived-from-history APY% used
+    for accounts without a manually-defined schedule.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Account_Interest_Rate_Schedules (
+                    Account_Interest_Rate_Schedules_Id SERIAL PRIMARY KEY,
+                    Accounts_Id            INTEGER NOT NULL
+                                            REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+                    Effective_From         DATE NOT NULL,
+                    Compounding_Frequency  VARCHAR(20) NOT NULL DEFAULT 'Monthly',
+                    Notes                  VARCHAR(255),
+                    UNIQUE (Accounts_Id, Effective_From)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Account_Interest_Rate_Tiers (
+                    Account_Interest_Rate_Tiers_Id     SERIAL PRIMARY KEY,
+                    Account_Interest_Rate_Schedules_Id INTEGER NOT NULL
+                        REFERENCES Account_Interest_Rate_Schedules(Account_Interest_Rate_Schedules_Id)
+                        ON DELETE CASCADE,
+                    Tier_Min_Balance            NUMERIC(18,2) NOT NULL DEFAULT 0,
+                    Tier_Max_Balance            NUMERIC(18,2),
+                    Nominal_Rate_Pct            NUMERIC(7,4) NOT NULL,
+                    Effective_Annual_Yield_Pct  NUMERIC(7,4) NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_air_schedules_account
+                ON Account_Interest_Rate_Schedules(Accounts_Id, Effective_From DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_air_tiers_schedule
+                ON Account_Interest_Rate_Tiers(Account_Interest_Rate_Schedules_Id)
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def record_new_split_notifications(corporate_actions_ids: list):
     """Insert a pending dashboard notification for each newly-downloaded split."""
     if not corporate_actions_ids:

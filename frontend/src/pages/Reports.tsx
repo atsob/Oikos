@@ -5792,7 +5792,7 @@ function CashFlowSection() {
     { label: 'Recurring In',  value: fmtEur(m.recur_in),  color: 'text-green-600', tip: 'Estimated income from statistically-detected recurring patterns not already covered by a template, projected forward.' },
     { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.' },
     { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).' },
-    { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected savings interest within the horizon, compounding each account's current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view." },
+    { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected interest within the horizon. Uses each account's manually-defined rate schedule (Static Data → Accounts → Interest Rates) where one exists, otherwise falls back to compounding the current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view." },
     { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon.' },
   ] : []
 
@@ -6042,11 +6042,13 @@ function CashFlowSection() {
       <div>
         <h3 className="text-sm font-semibold text-slate-700 mb-1">🏦 Expected Interest Income</h3>
         <p className="text-xs text-slate-400 mb-2">
-          Projected savings interest within this horizon, compounding each account's current balance forward at its
-          last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view.
+          Projected interest within this horizon. Accounts with a manually-defined rate schedule (Static Data →
+          Accounts → Interest Rates) use that balance-tiered rate; other Savings accounts fall back to compounding
+          their current balance forward at the last real interest period's APY% and payment cadence — same basis as
+          the Savings tab's own Forecast view.
         </p>
         {interest.length === 0 ? (
-          <p className="text-sm text-slate-400">No savings interest projected within this horizon.</p>
+          <p className="text-sm text-slate-400">No interest projected within this horizon.</p>
         ) : (
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">

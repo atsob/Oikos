@@ -13,11 +13,15 @@ import {
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
   getCreditRatings, getIssuers, upsertIssuer,
+  getAccountInterestRates, upsertAccountInterestRateSchedule, deleteAccountInterestRateSchedule,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
-import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft } from 'lucide-react'
+import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent } from 'lucide-react'
+
+const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
+const COMPOUNDING_FREQUENCIES = ['Monthly', 'Quarterly', 'Semi-Annual', 'Annual']
 
 const TABS = ['Payees', 'Categories', 'Institutions', 'Issuers', 'Accounts', 'Tax Rules', 'Instrument Tax']
 
@@ -522,6 +526,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
   const [error, setError] = useState<string | null>(null)
   const [showInactive, setShowInactive] = useState(false)
   const [showInactiveLinked, setShowInactiveLinked] = useState(false)
+  const [ratesAccount, setRatesAccount] = useState<Record<string, unknown> | null>(null)
 
   const { data: accounts = [], isLoading } = useQuery({ queryKey: ['accounts-master'], queryFn: () => getAccountsMaster() })
   const { data: institutions = [] } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
@@ -544,7 +549,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
 
   const openNew = () => {
     setEditRow({})
-    setForm({ name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '' })
+    setForm({ name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '', notes: '' })
     setError(null)
   }
 
@@ -561,6 +566,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         credit_limit: form.credit_limit ? Number(form.credit_limit) : 0,
         is_active: form.is_active,
         accounts_id_linked: form.accounts_id_linked ? Number(form.accounts_id_linked) : null,
+        notes: form.notes || null,
       })
       qc.invalidateQueries({ queryKey: ['accounts-master'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -592,11 +598,15 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
     { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
     { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
+    { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 160, hide: true },
     { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
         <div className="flex gap-1 items-center h-full">
+          {INTEREST_RATE_ACCOUNT_TYPES.includes(String(p.data.type)) && (
+            <button onClick={() => setRatesAccount(p.data)} className="text-emerald-500 hover:text-emerald-700 p-1" title="Interest Rates"><Percent size={13} /></button>
+          )}
           <button onClick={() => openEdit(p.data)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
           <button onClick={() => handleDeactivate(Number(p.data.id))} className="text-red-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
         </div>
@@ -714,6 +724,13 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
               </div>
             )}
             <div className="col-span-2">
+              <Field label="Notes">
+                <textarea className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" rows={3}
+                  value={String(form.notes ?? '')} onChange={e => set('notes', e.target.value)}
+                  placeholder="Account type, holders, etc." />
+              </Field>
+            </div>
+            <div className="col-span-2">
               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                 <input type="checkbox" checked={Boolean(form.is_active)} onChange={e => set('is_active', e.target.checked)} className="rounded" />
                 Active
@@ -723,7 +740,228 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
       )}
+
+      {ratesAccount && (
+        <InterestRatesModal account={ratesAccount} onClose={() => setRatesAccount(null)} />
+      )}
     </div>
+  )
+}
+
+// ── Interest Rate Schedules modal ────────────────────────────────────────────
+type RateTierForm = { id?: number; min_balance: string; max_balance: string; nominal_rate_pct: string; eay_pct: string }
+type RateSchedule = {
+  id: number; accounts_id: number; effective_from: string; compounding_frequency: string
+  tiering_method: string; notes: string | null
+  tiers: { id: number; min_balance: number; max_balance: number | null; nominal_rate_pct: number; eay_pct: number }[]
+}
+
+const EMPTY_TIER: RateTierForm = { min_balance: '0', max_balance: '', nominal_rate_pct: '', eay_pct: '' }
+const TIERING_METHODS: { value: string; label: string; hint: string }[] = [
+  { value: 'Whole Balance', label: 'Whole Balance', hint: 'The entire balance earns whichever single tier it currently falls into.' },
+  { value: 'Marginal', label: 'Marginal', hint: "Like a tax bracket — each portion of the balance earns its own tier's rate." },
+]
+
+function InterestRatesModal({ account, onClose }: { account: Record<string, unknown>; onClose: () => void }) {
+  const qc = useQueryClient()
+  const accountsId = Number(account.id)
+  const { data: schedules = [], isLoading } = useQuery<RateSchedule[]>({
+    queryKey: ['account-interest-rates', accountsId],
+    queryFn: () => getAccountInterestRates(accountsId),
+  })
+
+  const [editSchedule, setEditSchedule] = useState<RateSchedule | 'new' | null>(null)
+  const [effectiveFrom, setEffectiveFrom] = useState('')
+  const [frequency, setFrequency] = useState('Monthly')
+  const [tieringMethod, setTieringMethod] = useState('Whole Balance')
+  const [notes, setNotes] = useState('')
+  const [tiers, setTiers] = useState<RateTierForm[]>([{ ...EMPTY_TIER }])
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const openNewSchedule = () => {
+    setEditSchedule('new')
+    setEffectiveFrom(new Date().toISOString().slice(0, 10))
+    setFrequency('Monthly')
+    setTieringMethod('Whole Balance')
+    setNotes('')
+    setTiers([{ ...EMPTY_TIER }])
+    setError(null)
+  }
+
+  const openEditSchedule = (s: RateSchedule) => {
+    setEditSchedule(s)
+    setEffectiveFrom(s.effective_from.slice(0, 10))
+    setFrequency(s.compounding_frequency)
+    setTieringMethod(s.tiering_method)
+    setNotes(s.notes ?? '')
+    setTiers(s.tiers.map(t => ({
+      id: t.id,
+      min_balance: String(t.min_balance),
+      max_balance: t.max_balance != null ? String(t.max_balance) : '',
+      nominal_rate_pct: String(t.nominal_rate_pct),
+      eay_pct: String(t.eay_pct),
+    })))
+    setError(null)
+  }
+
+  const setTier = (i: number, k: keyof RateTierForm, v: string) =>
+    setTiers(ts => ts.map((t, idx) => idx === i ? { ...t, [k]: v } : t))
+  const addTier = () => setTiers(ts => [...ts, { ...EMPTY_TIER, min_balance: '' }])
+  const removeTier = (i: number) => setTiers(ts => ts.filter((_, idx) => idx !== i))
+
+  const handleSaveSchedule = async () => {
+    setError(null)
+    if (!effectiveFrom) { setError('Effective date is required.'); return }
+    if (tiers.length === 0) { setError('At least one balance tier is required.'); return }
+    for (const t of tiers) {
+      if (t.nominal_rate_pct === '' || t.eay_pct === '') { setError('Every tier needs a nominal rate and an effective annual yield.'); return }
+    }
+    setSaving(true)
+    try {
+      await upsertAccountInterestRateSchedule({
+        id: editSchedule !== 'new' ? editSchedule?.id : undefined,
+        accounts_id: accountsId,
+        effective_from: effectiveFrom,
+        compounding_frequency: frequency,
+        tiering_method: tieringMethod,
+        notes: notes || null,
+        tiers: tiers.map(t => ({
+          id: t.id,
+          min_balance: t.min_balance === '' ? 0 : Number(t.min_balance),
+          max_balance: t.max_balance === '' ? null : Number(t.max_balance),
+          nominal_rate_pct: Number(t.nominal_rate_pct),
+          eay_pct: Number(t.eay_pct),
+        })),
+      })
+      qc.invalidateQueries({ queryKey: ['account-interest-rates', accountsId] })
+      setEditSchedule(null)
+    } catch (e: unknown) { setError(extractError(e)) }
+    finally { setSaving(false) }
+  }
+
+  const handleDeleteSchedule = async (id: number) => {
+    if (!confirm('Delete this rate schedule?')) return
+    try {
+      await deleteAccountInterestRateSchedule(id)
+      qc.invalidateQueries({ queryKey: ['account-interest-rates', accountsId] })
+    } catch (e: unknown) { setError(extractError(e)) }
+  }
+
+  return (
+    <Modal title={`Interest Rates — ${String(account.name)}`} onClose={onClose} wide
+      footer={<>
+        <span className="flex-1" />
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </>}>
+      {isLoading ? <div className="flex justify-center py-8"><Spinner /></div> : (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Balance-tiered rates as published by the bank — either <b>Whole Balance</b> (the entire balance earns
+            whichever single tier it falls into) or <b>Marginal</b> (like a tax bracket — each portion of the
+            balance earns its own tier's rate), per schedule. Dated by effective date, so a future rate change can
+            be entered ahead of time — the Cash Flow Forecast uses whichever schedule is effective on each
+            forecast date.
+          </p>
+
+          {schedules.length === 0 && editSchedule === null && (
+            <p className="text-sm text-slate-400 italic py-2">No rate schedule defined yet.</p>
+          )}
+
+          {schedules.map(s => (
+            <div key={s.id} className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-200">
+                <div className="text-sm">
+                  <span className="font-medium">Effective {s.effective_from.slice(0, 10)}</span>
+                  <span className="text-slate-400 ml-2">· {s.compounding_frequency} compounding</span>
+                  <span className="text-slate-400 ml-2">· {s.tiering_method}</span>
+                  {s.notes && <span className="text-slate-400 ml-2">· {s.notes}</span>}
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={() => openEditSchedule(s)} className="text-blue-500 hover:text-blue-700 p-1"><Pencil size={13} /></button>
+                  <button onClick={() => handleDeleteSchedule(s.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={13} /></button>
+                </div>
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-500">
+                    <th className="text-left px-3 py-1.5">Balance From</th>
+                    <th className="text-left px-3 py-1.5">Balance To</th>
+                    <th className="text-right px-3 py-1.5">Nominal Rate</th>
+                    <th className="text-right px-3 py-1.5">Effective Annual Yield</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.tiers.map(t => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="px-3 py-1.5">{fmtNum(t.min_balance, 2)}</td>
+                      <td className="px-3 py-1.5">{t.max_balance != null ? fmtNum(t.max_balance, 2) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right">{fmtNum(t.nominal_rate_pct, 4)}%</td>
+                      <td className="px-3 py-1.5 text-right">{fmtNum(t.eay_pct, 4)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          {editSchedule !== null ? (
+            <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3">
+              <p className="text-sm font-semibold text-slate-700">{editSchedule === 'new' ? 'New Rate Schedule' : 'Edit Rate Schedule'}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Effective From *">
+                  <Input type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} />
+                </Field>
+                <Field label="Compounding Frequency">
+                  <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={frequency} onChange={e => setFrequency(e.target.value)}>
+                    {COMPOUNDING_FREQUENCIES.map(f => <option key={f}>{f}</option>)}
+                  </select>
+                </Field>
+                <div className="col-span-2">
+                  <Field label="Tiering Method">
+                    <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={tieringMethod} onChange={e => setTieringMethod(e.target.value)}>
+                      {TIERING_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                    <p className="text-xs text-slate-400 mt-1">{TIERING_METHODS.find(m => m.value === tieringMethod)?.hint}</p>
+                  </Field>
+                </div>
+                <div className="col-span-2">
+                  <Field label="Notes">
+                    <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Alpha Έξυπνη Αποταμίευση" />
+                  </Field>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-500">Balance Tiers</label>
+                  <button onClick={addTier} className="text-xs text-blue-600 hover:underline flex items-center gap-1"><Plus size={12} /> Add Tier</button>
+                </div>
+                <div className="space-y-1.5">
+                  {tiers.map((t, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-1.5 items-center">
+                      <Input placeholder="From" type="number" step="0.01" value={t.min_balance} onChange={e => setTier(i, 'min_balance', e.target.value)} />
+                      <Input placeholder="To (blank = no limit)" type="number" step="0.01" value={t.max_balance} onChange={e => setTier(i, 'max_balance', e.target.value)} />
+                      <Input placeholder="Nominal %" type="number" step="0.0001" value={t.nominal_rate_pct} onChange={e => setTier(i, 'nominal_rate_pct', e.target.value)} />
+                      <Input placeholder="Eff. Yield %" type="number" step="0.0001" value={t.eay_pct} onChange={e => setTier(i, 'eay_pct', e.target.value)} />
+                      <button onClick={() => removeTier(i)} disabled={tiers.length <= 1} className="text-red-400 hover:text-red-600 disabled:opacity-30 p-1"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {error && <p className="text-xs text-red-600 bg-red-100 rounded px-3 py-2">{error}</p>}
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={handleSaveSchedule} disabled={saving}><Save size={13} /> {saving ? 'Saving…' : 'Save'}</Button>
+                <Button size="sm" variant="secondary" onClick={() => setEditSchedule(null)}><X size={13} /> Cancel</Button>
+              </div>
+            </div>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={openNewSchedule}><Plus size={13} /> Add Rate Schedule</Button>
+          )}
+        </div>
+      )}
+    </Modal>
   )
 }
 

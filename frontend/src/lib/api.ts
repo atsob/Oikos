@@ -266,6 +266,13 @@ export const createInstrumentTypeOverride = (data: Record<string, unknown>) =>
 export const updateInstrumentTypeOverride = (instrumentType: string, data: Record<string, unknown>) =>
   api.put(`/static-data/instrument-type-overrides/${encodeURIComponent(instrumentType)}`, data).then(r => r.data)
 
+export const getAccountInterestRates = (accountsId: number) =>
+  api.get('/static-data/account-interest-rates', { params: { accounts_id: accountsId } }).then(r => r.data)
+export const upsertAccountInterestRateSchedule = (data: Record<string, unknown>) =>
+  api.post('/static-data/account-interest-rates', data).then(r => r.data)
+export const deleteAccountInterestRateSchedule = (scheduleId: number) =>
+  api.delete(`/static-data/account-interest-rates/${scheduleId}`).then(r => r.data)
+
 // ── Market Data ───────────────────────────────────────────────────────────────
 export const getCurrencies = () =>
   api.get('/market-data/currencies').then(r => r.data)

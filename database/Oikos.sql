@@ -251,10 +251,46 @@ CREATE TABLE Accounts (
     Is_Active         BOOLEAN DEFAULT TRUE,
     Accounts_Id_Linked INTEGER REFERENCES Accounts(Accounts_Id),  -- investment accounts: default linked cash account
     Accounts_Balance  NUMERIC(28, 18) DEFAULT 0,                  -- high precision for crypto/satoshi
+    Notes             TEXT,                                       -- free-form: account type, holders, etc.
     embedding         vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id   ON Accounts(Accounts_Id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_name ON Accounts(Accounts_Name);
+
+-- Per-account, balance-tiered interest rate schedule as published by the bank (e.g.
+-- "above EUR50,000: 0.30%, up to EUR50,000: 0.15%"), dated by Effective_From so a future
+-- rate change can be entered ahead of time while prior schedules are kept as history.
+-- Feeds Reports -> Cash Flow Forecast's interest projection in place of the
+-- derived-from-history APY% for any account that has one. Static Data -> Accounts -> %.
+CREATE TABLE IF NOT EXISTS Account_Interest_Rate_Schedules (
+    Account_Interest_Rate_Schedules_Id SERIAL PRIMARY KEY,
+    Accounts_Id            INTEGER NOT NULL
+                            REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+    Effective_From         DATE NOT NULL,
+    Compounding_Frequency  VARCHAR(20) NOT NULL DEFAULT 'Monthly',
+    -- 'Whole Balance': the entire balance earns whichever single tier it falls into.
+    -- 'Marginal': tax-bracket style — each portion of the balance earns its own
+    -- tier's rate. Banks use both depending on the product (e.g. Alpha Bank marks
+    -- each deposit product with a footnote indicating which applies).
+    Tiering_Method         VARCHAR(20) NOT NULL DEFAULT 'Whole Balance',
+    Notes                  VARCHAR(255),
+    UNIQUE (Accounts_Id, Effective_From)
+);
+CREATE INDEX IF NOT EXISTS idx_air_schedules_account
+    ON Account_Interest_Rate_Schedules(Accounts_Id, Effective_From DESC);
+
+CREATE TABLE IF NOT EXISTS Account_Interest_Rate_Tiers (
+    Account_Interest_Rate_Tiers_Id     SERIAL PRIMARY KEY,
+    Account_Interest_Rate_Schedules_Id INTEGER NOT NULL
+        REFERENCES Account_Interest_Rate_Schedules(Account_Interest_Rate_Schedules_Id)
+        ON DELETE CASCADE,
+    Tier_Min_Balance            NUMERIC(18,2) NOT NULL DEFAULT 0,
+    Tier_Max_Balance            NUMERIC(18,2),                     -- NULL = open-ended
+    Nominal_Rate_Pct            NUMERIC(7,4) NOT NULL,
+    Effective_Annual_Yield_Pct  NUMERIC(7,4) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_air_tiers_schedule
+    ON Account_Interest_Rate_Tiers(Account_Interest_Rate_Schedules_Id);
 
 
 CREATE TABLE Holdings (
@@ -516,6 +552,15 @@ CREATE TABLE IF NOT EXISTS Corporate_Actions (
 
 CREATE INDEX IF NOT EXISTS idx_corporate_actions_sec_date
     ON Corporate_Actions (Securities_Id, Effective_Date);
+
+-- One row per newly-discovered corporate action (currently populated only by the
+-- scheduled Yahoo split download) that the dashboard should surface until acknowledged.
+CREATE TABLE IF NOT EXISTS Corporate_Action_Notifications (
+    Corporate_Actions_Id INTEGER PRIMARY KEY
+                          REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE CASCADE,
+    Acknowledged         BOOLEAN DEFAULT FALSE,
+    Created_At           TIMESTAMP DEFAULT NOW()
+);
 
 
 -- =============================================================================
@@ -992,7 +1037,27 @@ CREATE TABLE IF NOT EXISTS Securities_Quote (
     Avg_Volume        BIGINT,
     Trailing_PE       NUMERIC(10,4),
     Market_Cap        NUMERIC(20,2),
-    Quote_Updated_At  TIMESTAMPTZ
+    Quote_Updated_At  TIMESTAMPTZ,
+    -- Fair Value estimate: this security's own historical median P/E (from
+    -- Securities_Annual_EPS below) times its current normalized EPS — an
+    -- approximation of the "reversion to historical trading multiple" idea behind
+    -- services like GuruFocus's GF Value, not a reproduction of any such service's
+    -- actual, undisclosed formula. Blank for bonds/ETFs/crypto or loss-making
+    -- companies where the inputs don't apply.
+    Fair_Value        NUMERIC,
+    Fair_Value_Pe     NUMERIC,
+    Fair_Value_Eps    NUMERIC,
+    Fair_Value_Years  INTEGER
+);
+
+-- Raw historical Diluted EPS per fiscal year (from Yahoo's income_stmt — free tier
+-- only exposes ~4 years), feeding the Fair_Value* columns above.
+CREATE TABLE IF NOT EXISTS Securities_Annual_EPS (
+    Securities_Id    INTEGER NOT NULL
+                     REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Fiscal_Year_End  DATE NOT NULL,
+    Diluted_EPS      NUMERIC,
+    PRIMARY KEY (Securities_Id, Fiscal_Year_End)
 );
 
 CREATE TABLE IF NOT EXISTS Alerts (
