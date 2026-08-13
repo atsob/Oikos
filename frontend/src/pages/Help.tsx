@@ -538,10 +538,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Savings</b> has the same Actual/Forecast/Recommendations structure as Dividend Tracker. <b>Actual</b>{' '}
           has its own period selector, scoping interest/principal/YOC%/APY% to that window; the "Detail for Last
           Interest Period" table below it always shows each account's most recent real interest period,
-          regardless of the selected period. <b>Forecast</b> (Till EOY / Next 6 Months / Next 12 Months) projects
-          each account's future interest by compounding its current balance forward at that last real period's
-          APY% and payment cadence — that's also what feeds Cash Flow Forecast's Expected Interest Income.{' '}
-          <b>Recommendations</b> ranks your savings accounts by that same APY% and flags idle balances sitting in
+          regardless of the selected period — both are always based on real transaction history, never a manual
+          rate schedule. <b>Forecast</b> (Till EOY / Next 6 Months / Next 12 Months) projects each account's future
+          interest: an account with a manually-defined rate schedule (Static Data → Accounts → %) uses that
+          balance-tiered rate, anchored to the account's own real posting cadence where one is known; otherwise it
+          compounds the current balance forward at the last real period's APY% and payment cadence — the same
+          logic (and the same numbers) also feeds Cash Flow Forecast's Expected Interest Income.{' '}
+          <b>Recommendations</b> ranks your savings accounts the same way — a manually-defined rate schedule's
+          blended rate where one exists, otherwise last real period APY% — and flags idle balances sitting in
           0%-yield Cash/Checking accounts, estimating the annual gain from moving them into your best-performing
           savings account in the same currency — there's no external market of savings accounts to recommend
           opening, only what you already have.
