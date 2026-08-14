@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-14
+
+### Fixed
+- **Dividend History amounts for London Stock Exchange securities (GBp/GBX pence) were stored ~100x too high** — `Download Dividend History` pulled raw per-share amounts straight from Yahoo, which reports its dividend time series in pence for these tickers, but every other price-like field for the same security (close price, Dividend Rate/Yield, Analyst Target Price) is already divided by `Price_Scale` down to pounds. The mismatch was easy to miss until compared side-by-side — e.g. BP showing a `6.4152` per-share dividend next to a `£5.22` share price and a `£0.25` Annual Rate. Downloader now scales dividend amounts the same way as prices before storing; re-ran the download for all 14 affected securities (AstraZeneca, Aviva, BAE Systems, Barclays, BP, HSBC, Legal & General, National Grid, RELX, Rolls-Royce, Shell, Severn Trent, United Utilities, Lloyds) to correct the already-stored history. The Dividends tab's Amount per Share column, and the Corporate Actions dividend/return-of-capital preview grids, now show 8 decimal places, matching the precision already used once a Corporate Action is applied.
+- **The dividend/split/info downloaders could silently fail without storing anything, and without any visible error, when run outside a UTF-8 console** — their progress prints use characters (✔, ⚠️, ❌) that a Windows console's default codepage can't encode, which raised `UnicodeEncodeError` mid-function and aborted the whole download *before* its database commit, discarding an otherwise fully-fetched batch. The API server and the background scheduler now force UTF-8 stdout/stderr at startup so these prints can no longer crash a run.
+
 ## 2026-08-13
 
 ### Added

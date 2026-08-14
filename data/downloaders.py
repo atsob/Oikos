@@ -786,7 +786,7 @@ def download_dividend_history(target_sec_id=None):
 
         return None
 
-    def _fetch(sec_id, sec_name, symbol):
+    def _fetch(sec_id, sec_name, symbol, price_scale):
         try:
             import logging as _logging
             # yfinance logs period errors at ERROR level before raising — suppress them
@@ -807,6 +807,13 @@ def download_dividend_history(target_sec_id=None):
                 ex_date = ts.date() if hasattr(ts, 'date') else None
                 if ex_date is None or amount <= 0:
                     continue
+                # Like Historical_Prices, yfinance's dividends series for a
+                # GBp/GBX (pence) security comes back in the minor unit —
+                # scale it to the major unit so it lines up with the
+                # already-scaled price and with Dividend_Rate (which Yahoo
+                # reports in the major unit directly). Otherwise a per-share
+                # amount looks ~100x too large next to the security's price.
+                scaled_amount = float(amount) / price_scale
                 # Yahoo's per-security dividend series isn't retroactively
                 # adjusted for reverse splits the way price history is —
                 # tickers that underwent a severe consolidation (e.g. Greek
@@ -819,10 +826,10 @@ def download_dividend_history(target_sec_id=None):
                 # anything wildly out of line with the latest known close
                 # rather than storing it and re-corrupting the history on
                 # every future re-download.
-                if price and amount > price * 5:
+                if price and scaled_amount > price * 5:
                     skipped += 1
                     continue
-                rows.append((sec_id, ex_date, float(amount)))
+                rows.append((sec_id, ex_date, scaled_amount))
             if skipped:
                 print(f"  ⚠️ {sec_name}: skipped {skipped} implausible dividend amount(s) "
                       f"(> 5x latest price {price})")
@@ -833,7 +840,7 @@ def download_dividend_history(target_sec_id=None):
 
     try:
         base_query = """
-            SELECT Securities_Id, Securities_Name, Yahoo_Ticker
+            SELECT Securities_Id, Securities_Name, Yahoo_Ticker, COALESCE(Price_Scale, 1)
             FROM   Securities
             WHERE  Yahoo_Ticker IS NOT NULL
               AND  Yahoo_Ticker != ''
@@ -863,8 +870,8 @@ def download_dividend_history(target_sec_id=None):
         futures = {}
         results = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            for sec_id, sec_name, symbol in securities:
-                f = pool.submit(_fetch, sec_id, sec_name, symbol)
+            for sec_id, sec_name, symbol, price_scale in securities:
+                f = pool.submit(_fetch, sec_id, sec_name, symbol, float(price_scale or 1))
                 futures[f] = sec_name
             for f in as_completed(futures):
                 results.append(f.result())

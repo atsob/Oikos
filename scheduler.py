@@ -19,10 +19,20 @@ warnings.filterwarnings("ignore", message="No runtime found", module="streamlit"
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", category=UserWarning)
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
+import sys
 import logging
 import re
 import time
 from datetime import date, datetime, timedelta
+
+# On a non-UTF-8 console (e.g. run directly on Windows rather than in the
+# Docker service's Linux/UTF-8 environment) the ✔/⚠️/❌ progress characters
+# the downloaders print can't be encoded, raising UnicodeEncodeError mid-job
+# and silently discarding whatever it had already fetched. Reconfigure to
+# UTF-8 so those prints can't crash a run — see api/main.py for the same fix.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 from ai.weekly_summary import run as run_weekly_summary
 from ai.monthly_summary import run as run_monthly_summary

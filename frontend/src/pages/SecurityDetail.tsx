@@ -945,7 +945,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     },
     { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
     { field: 'pay_date', headerName: 'Pay Date', width: 130 },
-    { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+    { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
     {
       colId: 'actions', headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -1269,14 +1269,14 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     if (eventGroup === 'return_of_capital') return [
       { field: 'account', headerName: 'Account', flex: 2 },
       { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
-      { field: 'amount_per_share', headerName: 'Amount/Share', width: 130, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'amount_per_share', headerName: 'Amount/Share', width: 130, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'total', headerName: 'Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'currency', headerName: 'Ccy', width: 70 },
     ]
     return [
       { field: 'account', headerName: 'Account', flex: 2 },
       { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
-      { field: 'gross_per_share', headerName: 'Gross/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
+      { field: 'gross_per_share', headerName: 'Gross/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'gross_total', headerName: 'Gross Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'tax', headerName: 'Tax', width: 100, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'net_total', headerName: 'Net Total', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },

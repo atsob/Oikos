@@ -729,7 +729,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           quoted in a minor currency unit, e.g. London Stock Exchange shares priced in pence (GBp/GBX) rather than
           pounds — this is what keeps their Market Value, Analyst Target Price, and other price-like figures
           correctly scaled to pounds everywhere in the app, including daily price downloads from both Yahoo and
-          TradingView.
+          TradingView, and the <b>Dividends</b> tab's downloaded dividend history.
         </Note>
         <Note>
           For Greek government bonds/T-bills, the <b>Downloads</b> tab has a <b>Greek Bonds (Solidus)</b> section

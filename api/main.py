@@ -3,6 +3,15 @@ import sys
 import os
 import warnings
 
+# On Windows, stdout/stderr default to the console's codepage (e.g. cp1252),
+# which can't encode the ✔/⚠️/❌ characters the downloader modules print for
+# progress feedback — that raised UnicodeEncodeError mid-function and aborted
+# the download before it reached its DB commit, silently discarding otherwise
+# fully-fetched data. Reconfigure to UTF-8 so those prints can't crash a run.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 # Suppress pandas "use SQLAlchemy" advisory — we intentionally use psycopg2 connections
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", category=UserWarning)
 
