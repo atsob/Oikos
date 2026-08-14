@@ -3056,7 +3056,7 @@ function PerformanceTab() {
   const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
     <tr className="hover:bg-slate-50">
       {rank != null && <td className="px-3 py-2 text-slate-400">{rank}</td>}
-      <td className="px-3 py-2 font-medium text-blue-700"><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
+      <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap"><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
       {viewPct ? (
         <>
           <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
@@ -3147,15 +3147,15 @@ function PerformanceTab() {
             <div className="overflow-x-auto overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                   {viewPct ? <>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
                   </> : <>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
-                    {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    {pctCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
                   </>}
-                  {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                  {invCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">{top.map((v, i) => <PerfRow key={i} v={v} />)}</tbody>
               </table>
@@ -3168,15 +3168,15 @@ function PerformanceTab() {
             <div className="overflow-x-auto overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                  <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                   {viewPct ? <>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
                   </> : <>
-                    <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
-                    {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                    <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                    {pctCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
                   </>}
-                  {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                  {invCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">{bottom.map((v, i) => <PerfRow key={i} v={v} />)}</tbody>
               </table>
@@ -3217,16 +3217,16 @@ function PerformanceTab() {
               <div className="overflow-x-auto overflow-y-auto max-h-96">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                    <th className="px-3 py-2 text-left w-12"><Tooltip text="Performance rank for the selected period — 1 = best performer.">Rank</Tooltip></th>
-                    <th className="px-3 py-2 text-left"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
+                    <th className="px-3 py-2 text-left w-12 whitespace-nowrap"><Tooltip text="Performance rank for the selected period — 1 = best performer.">Rank</Tooltip></th>
+                    <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
                     {viewPct ? <>
-                      <th className="px-3 py-2 text-right"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
-                      <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change in value over the selected period, relative to invested capital.">Change %</Tooltip></th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
                     </> : <>
-                      <th className="px-3 py-2 text-right"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
-                      {pctCol && <th className="px-3 py-2 text-right"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
+                      <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Absolute profit or loss in euros over the selected period.">P&L (€)</Tooltip></th>
+                      {pctCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Percentage change relative to invested capital.">Change %</Tooltip></th>}
                     </>}
-                    {invCol && <th className="px-3 py-2 text-right"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
+                    {invCol && <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Total capital invested in this security (gross cost basis, excluding fees).">Invested (€)</Tooltip></th>}
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {allRanked.map((v, i) => <PerfRow key={i} v={v} rank={i + 1} />)}
