@@ -508,7 +508,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           allocation from Yahoo, e.g. a physical commodity ETC) is excluded rather than having its whole value
           counted as unrated bond exposure. Credit-quality labels from a fund's look-through ratings (e.g. "bbb")
           are normalized onto the same "BBB"/"AA"/"Below B" labels direct bond holdings use, so the same rating
-          doesn't show up as two separate rows with different casing.
+          doesn't show up as two separate rows with different casing. Rows are ordered highest credit quality
+          first (AAA → Below B), not by value. Yahoo's fund data also reports a "US Government" figure alongside
+          the rating buckets, but it's an issuer-type flag (government vs. corporate), not another rating rung —
+          it doesn't sum to 100% together with AAA/AA/A/etc. and can overlap them (e.g. a bond already counted as
+          "A" can also be government-issued), so it's excluded from the rating table/chart and shown as a
+          separate informational line instead, still click-to-drill like any other row.
         </Note>
         <Note>
           <b>Stock Overlap</b> rows link through to Security Detail when the symbol is already a registered

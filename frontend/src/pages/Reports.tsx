@@ -1219,22 +1219,26 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data, isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds], queryFn: () => getXrayBondQuality(accountIds), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const resp = data as { summary: Row[]; detail: Row[]; us_government: Row | null } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
+  const usGov = resp?.us_government ?? null
   const [selectedQuality, setSelectedQuality] = useState<string | null>(null)
   const detailRows = selectedQuality ? detail.filter(r => String(r.quality) === selectedQuality) : []
+  // Rows arrive highest-quality-first for the table; the horizontal bar chart plots
+  // its first entry at the bottom, so reverse just for the chart to keep AAA on top.
+  const chartRows = [...rows].reverse()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   return (
     <div className="space-y-4">
       <Plot
         data={[{
-          x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.quality)),
-          type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
-          marker: { color: rows.map(r => String(r.quality) === selectedQuality ? '#b45309' : '#f59e0b') },
+          x: chartRows.map(r => Number(r.value_eur)), y: chartRows.map(r => String(r.quality)),
+          type: 'bar', orientation: 'h', text: chartRows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+          marker: { color: chartRows.map(r => String(r.quality) === selectedQuality ? '#b45309' : '#f59e0b') },
         }]}
-        layout={{ height: Math.max(240, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        layout={{ height: Math.max(240, chartRows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
         onClick={(e: { points?: { y?: string }[] }) => {
           const label = e?.points?.[0]?.y
@@ -1270,6 +1274,18 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
         Percentages are of total bond-like exposure (direct bonds + the bond portion of held funds), not the whole portfolio.
         "Direct / Unrated" duration is an approximation (years to maturity), not modified duration like the fund-sourced figures.
       </p>
+
+      {usGov && (
+        <button type="button" onClick={() => setSelectedQuality(c => c === 'Us Government' ? null : 'Us Government')}
+          className={`w-full text-left text-xs rounded-md border px-3 py-2 ${selectedQuality === 'Us Government' ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}>
+          <span className="text-slate-500">Of this, </span>
+          <span className="font-semibold text-slate-700">{fmtEur(Number(usGov.value_eur))} ({fmtPct(Number(usGov.pct))})</span>
+          <span className="text-slate-500"> is also US Government-issued — an issuer-type flag, not a rating rung, so it overlaps the buckets above rather than adding a separate slice.</span>
+          {usGov.avg_duration_years != null && (
+            <span className="text-slate-500"> Avg. duration {fmtNum(Number(usGov.avg_duration_years), 1)}yrs.</span>
+          )}
+        </button>
+      )}
 
       {selectedQuality && (
         <div>

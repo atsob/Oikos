@@ -3764,14 +3764,39 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM uncovered
     )
     """
-    summary_query = holdings_cte + detail_cte + """
-    , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
+    # "Us Government" isn't a rating rung alongside AAA/AA/A/BBB/... — it's Yahoo's
+    # own issuer-type flag (government vs. corporate) living in the same flat
+    # bond_ratings dict as the credit-rating buckets, and it doesn't sum to 100%
+    # against them (e.g. a fund reporting a=59%, bbb=32%, aaa=9%, us_government=100%
+    # all at once). Summing it into the same total as the rating buckets double-
+    # counts exposure, so it's excluded from the rated total/percentages here and
+    # surfaced separately as an informational stat instead.
+    def _quality_rank(col: str) -> str:
+        return f"""
+            CASE {col}
+                WHEN 'AAA' THEN 1 WHEN 'AA' THEN 2 WHEN 'A' THEN 3 WHEN 'BBB' THEN 4
+                WHEN 'BB' THEN 5 WHEN 'B' THEN 6 WHEN 'Below B' THEN 7 WHEN 'Other' THEN 8
+                WHEN 'Direct / Unrated' THEN 9 WHEN 'Uncovered Fund Bond Exposure' THEN 10
+                ELSE 11
+            END
+        """
+    summary_query = holdings_cte + detail_cte + f"""
+    , rated AS (SELECT * FROM detail_combined WHERE quality != 'Us Government')
+    , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT quality, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
            ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
-    FROM detail_combined GROUP BY quality ORDER BY value_eur DESC
+    FROM rated GROUP BY quality ORDER BY {_quality_rank('quality')}
     """
-    detail_query = holdings_cte + detail_cte + """
+    us_gov_query = holdings_cte + detail_cte + """
+    , rated AS (SELECT * FROM detail_combined WHERE quality != 'Us Government')
+    , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
+    SELECT ROUND(SUM(value_eur)::numeric,2) AS value_eur,
+           ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
+           ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
+    FROM detail_combined WHERE quality = 'Us Government'
+    """
+    detail_query = holdings_cte + detail_cte + f"""
     , quality_totals AS (SELECT quality, SUM(value_eur) AS quality_total FROM detail_combined GROUP BY quality)
     SELECT dc.quality, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
@@ -3779,12 +3804,15 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
            ROUND(AVG(dc.duration_years)::numeric,2) AS duration_years
     FROM detail_combined dc JOIN quality_totals qt ON qt.quality = dc.quality
     GROUP BY dc.quality, dc.securities_id, dc.name, dc.ticker, qt.quality_total
-    ORDER BY dc.quality, value_eur DESC
+    ORDER BY dc.quality = 'Us Government', {_quality_rank('dc.quality')}, value_eur DESC
     """
     with get_db() as conn:
         summary_df = pd.read_sql(summary_query, conn)
+        us_gov_df = pd.read_sql(us_gov_query, conn)
         detail_df = pd.read_sql(detail_query, conn)
-    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+    us_gov_row = _df_to_list(us_gov_df)
+    us_gov = us_gov_row[0] if us_gov_row and us_gov_row[0].get("value_eur") is not None else None
+    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df), "us_government": us_gov}
 
 
 @router.get("/xray/stock-overlap")
