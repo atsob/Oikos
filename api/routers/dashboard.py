@@ -284,7 +284,11 @@ def get_upcoming_bills(days: int = Query(14)):
     template is excluded from the statistical pass) applies here too.
     """
     from api.routers.reports import get_cash_flow_forecast_full
-    fc = get_cash_flow_forecast_full(days=days, months_back=3)
+    # account_ids must be passed explicitly (not left to its Query(None) default) —
+    # this is a direct Python call bypassing FastAPI's request cycle, so unlike a
+    # real HTTP request, an unpassed default stays the Query sentinel object itself
+    # rather than resolving to None, which crashes _parse_account_ids's .split(',').
+    fc = get_cash_flow_forecast_full(days=days, months_back=3, account_ids=None)
 
     bills = []
     for r in fc['scheduled']:

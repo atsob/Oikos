@@ -1964,6 +1964,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       qc.invalidateQueries({ queryKey: ['price-history', secId] })
       qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
       qc.invalidateQueries({ queryKey: ['xray'] })
+      qc.invalidateQueries({ queryKey: ['portfolio-signals'] })
     } catch (e) {
       setStatus(s => ({ ...s, [key]: 'error' }))
       setMessages(m => ({ ...m, [key]: extractError(e) }))

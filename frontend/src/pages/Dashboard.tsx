@@ -569,6 +569,7 @@ function UpcomingBillsPanel() {
     staleTime: 5 * 60 * 1000,
   })
   const list = bills as Record<string, unknown>[]
+  const totalEur = list.reduce((sum, b) => sum + Number(b.amount_eur ?? 0), 0)
 
   return (
     <Card>
@@ -577,6 +578,11 @@ function UpcomingBillsPanel() {
           <CalendarClock size={14} className="text-blue-500" />
           Upcoming Bills
           {list.length > 0 && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{list.length}</span>}
+          {list.length > 0 && (
+            <span className={`text-xs font-semibold tabular-nums ${totalEur < 0 ? 'text-red-600' : 'text-green-600'}`}>
+              {fmtEur(totalEur)}
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-2">
           <select
