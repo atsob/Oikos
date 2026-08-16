@@ -432,16 +432,28 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🔄 Cash Flow Forecast</H3>
         <P>
-          Projects future cash flow from five sources, shown separately: <b>explicitly scheduled</b> future
+          Projects future cash flow from six sources, shown separately: <b>explicitly scheduled</b> future
           transactions already entered, <b>active Recurring Templates</b> (see Recurring) projected forward from
           each template's own due date and frequency, <b>statistically-detected patterns</b> — payee/category
           combinations seen in every one of the last few complete months, for recurring bills you haven't set up
           a template for — <b>projected dividend income</b> for currently-held securities, using the same
-          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view, and{' '}
+          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view,{' '}
           <b>projected interest income</b>: for a Savings or Checking account with a manually-defined rate schedule
           (Static Data → Accounts → the % icon), that balance-tiered schedule; otherwise, for Savings accounts only,
-          the same last-real-interest-period APY%/cadence compounding as the Savings tab's own Forecast view.
+          the same last-real-interest-period APY%/cadence compounding as the Savings tab's own Forecast view — and{' '}
+          <b>bond coupon payments &amp; maturity redemptions</b> for currently-held bonds, projected from each
+          bond's own Maturity Date, Coupon Rate, and Coupon Frequency. Coupon dates are anchored to the Maturity
+          Date and stepped back by the Coupon Frequency (there's no separate issue date to anchor forward from).
+          Zero-coupon instruments (Coupon Frequency = "At Maturity", e.g. T-Bills) only contribute their face
+          value at maturity, matching Inv. Performance → Bond Schedule — the return is embedded in the discount
+          purchase price rather than paid as a separate coupon.
         </P>
+        <Note>
+          The <b>Include Bonds</b> checkbox next to YTD controls whether bonds are folded into the chart, KPI
+          tiles, and Total Net — off by default, since a single maturing bond's face value can be a large lump
+          sum that dominates the picture. The Bond Coupons &amp; Maturities table still shows what would be
+          projected either way, so you can check before switching it on.
+        </Note>
         <Note>
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
           by a scheduled transaction or an active Recurring Template, so setting up a template for something
@@ -449,9 +461,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           Each <b>KPI tile</b> at the top (Scheduled/Template/Recurring In-Out, Dividend Income, Interest Income,
-          Total Net) jumps to and briefly highlights the table that number is built from — handy on a long
-          horizon where the relevant table might be several scrolls down. Total Net jumps to the chart instead,
-          since that's the one place all five sources are combined.
+          Bond Cash Flow, Total Net) jumps to and briefly highlights the table that number is built from — handy
+          on a long horizon where the relevant table might be several scrolls down. Total Net jumps to the chart
+          instead, since that's the one place all six sources are combined.
+        </Note>
+        <Note>
+          The <b>⚙️ Account Preset</b> picker here scopes every source down to a saved set of accounts — leave it
+          on <b>Full Portfolio</b> to include everything. It shares Net Worth's own saved presets directly (rather
+          than keeping a separate set the way Inv. Portfolio/Inv. Performance's presets are separate from each
+          other) — a preset saved or edited in either report is immediately available in both.
         </Note>
         <Note>
           The Dashboard's <b>Upcoming Bills</b> panel uses this exact same identification logic (Scheduled +

@@ -5744,6 +5744,7 @@ const CF_COLOR_MAP: Record<string, string> = {
   'Expense · Recurring (est.)':   '#F1948A',
   'Income · Dividends (est.)':    '#9B59B6',
   'Income · Interest (est.)':     '#1ABC9C',
+  'Income · Bonds (est.)':        '#B7950B',
 }
 
 function CashFlowSection() {
@@ -5751,13 +5752,15 @@ function CashFlowSection() {
   const [days, setDays] = usePersist<number>('cf_days', 60)
   const [monthsBack, setMonthsBack] = usePersist<number>('cf_months_back', 2)
   const [ytdRecurring, setYtdRecurring] = usePersist<boolean>('cf_recurring_ytd', false)
+  const [includeBonds, setIncludeBonds] = usePersist<boolean>('cf_include_bonds', false)
   const [highlighted, setHighlighted] = useState<string | null>(null)
+  const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
   const eoyDays = daysUntilEndOfYear()
   const effectiveMonthsBack = ytdRecurring ? ytdMonthsBack() : monthsBack
 
   const { data, isLoading } = useQuery({
-    queryKey: ['cash-flow-forecast-full', days, effectiveMonthsBack],
-    queryFn: () => getCashFlowForecastFull(days, effectiveMonthsBack),
+    queryKey: ['cash-flow-forecast-full', days, effectiveMonthsBack, presetAccountIds],
+    queryFn: () => getCashFlowForecastFull(days, effectiveMonthsBack, presetAccountIds),
   })
 
   const result = data as {
@@ -5766,7 +5769,8 @@ function CashFlowSection() {
     recurring: Row[]
     dividends: Row[]
     interest: Row[]
-    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; div_in: number; int_in: number; net_total: number }
+    bonds: Row[]
+    metrics: { sched_in: number; sched_out: number; tmpl_in: number; tmpl_out: number; recur_in: number; recur_out: number; div_in: number; int_in: number; bond_in: number; net_total: number }
   } | undefined
 
   // Build chart data: aggregate scheduled + templates + recurring + dividends by calendar month
@@ -5785,6 +5789,7 @@ function CashFlowSection() {
     for (const r of result.recurring) addRow(String(r.date), Number(r.amount_eur), 'Recurring (est.)')
     for (const r of result.dividends ?? []) addRow(String(r.date), Number(r.amount_eur), 'Dividends (est.)')
     for (const r of result.interest ?? []) addRow(String(r.date), Number(r.amount_eur), 'Interest (est.)')
+    if (includeBonds) for (const r of result.bonds ?? []) addRow(String(r.date), Number(r.amount_eur), 'Bonds (est.)')
 
     const allMonths = [...new Set([
       ...Object.values(bySeriesMonth).flatMap(m => Object.keys(m))
@@ -5797,7 +5802,7 @@ function CashFlowSection() {
       type: 'bar' as const,
       marker: { color: CF_COLOR_MAP[series] ?? '#94a3b8' },
     }))
-  }, [result])
+  }, [result, includeBonds])
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -5807,6 +5812,9 @@ function CashFlowSection() {
   const recurring = result?.recurring ?? []
   const dividends = result?.dividends ?? []
   const interest = result?.interest ?? []
+  const bonds = includeBonds ? (result?.bonds ?? []) : []
+  const effectiveBondIn = includeBonds ? (m?.bond_in ?? 0) : 0
+  const effectiveNetTotal = m ? (includeBonds ? m.net_total : m.net_total - m.bond_in) : 0
 
   const KPI_METRICS = m ? [
     { label: 'Scheduled In',  value: fmtEur(m.sched_in),  color: 'text-green-700', tip: 'Total income from explicitly scheduled future transactions within the horizon.', target: 'cf-scheduled' },
@@ -5817,7 +5825,8 @@ function CashFlowSection() {
     { label: 'Recurring Out', value: fmtEur(m.recur_out), color: 'text-red-500',   tip: 'Estimated expenses from statistically-detected recurring patterns not already covered by a template, projected forward.', target: 'cf-recurring' },
     { label: 'Dividend Income', value: fmtEur(m.div_in),  color: 'text-purple-700', tip: 'Projected dividend income from currently-held securities within the horizon (Dividend Rate > Fwd Yield > Trailing 12m actual income).', target: 'cf-dividends' },
     { label: 'Interest Income', value: fmtEur(m.int_in),  color: 'text-teal-700', tip: "Projected interest within the horizon. Uses each account's manually-defined rate schedule (Static Data → Accounts → Interest Rates) where one exists, otherwise falls back to compounding the current balance forward at its last real interest period's APY% and payment cadence — same basis as the Savings tab's own Forecast view.", target: 'cf-interest' },
-    { label: 'Total Net',     value: fmtEur(m.net_total), color: m.net_total >= 0 ? 'text-green-700' : 'text-red-600', tip: 'Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon.', target: 'cf-chart' },
+    { label: 'Bond Cash Flow', value: fmtEur(effectiveBondIn), color: 'text-amber-700', tip: includeBonds ? "Coupon payments and face-value maturity redemptions for currently-held bonds falling within the horizon. Zero-coupon instruments (e.g. T-Bills, Coupon Frequency = 'At Maturity') only contribute their face value at maturity — their return is embedded in the discount purchase price, not paid as a separate coupon." : "Excluded — enable 'Include Bonds' above to project bond coupon payments and maturity redemptions within the horizon.", target: 'cf-bonds' },
+    { label: 'Total Net',     value: fmtEur(effectiveNetTotal), color: effectiveNetTotal >= 0 ? 'text-green-700' : 'text-red-600', tip: `Net cash flow: sum of all scheduled, template, recurring, dividend, and interest in/out amounts within the horizon${includeBonds ? ', plus bonds' : ' (bonds excluded — enable \'Include Bonds\' above)'}.`, target: 'cf-chart' },
   ] : []
 
   const scrollToSection = (id: string) => {
@@ -5865,12 +5874,22 @@ function CashFlowSection() {
               YTD
             </label>
           </Tooltip>
+          <Tooltip text="Project coupon payments and face-value maturity redemptions for currently-held bonds within the horizon. Off by default since a maturing bond's face value can be a large lump sum that dominates the chart.">
+            <label className="flex items-center gap-1.5 text-sm text-slate-500 cursor-pointer">
+              <input type="checkbox" checked={includeBonds} onChange={e => setIncludeBonds(e.target.checked)}
+                className="accent-blue-600" />
+              Include Bonds
+            </label>
+          </Tooltip>
         </div>
       </div>
 
+      {/* Account Selection — shares Net Worth's saved presets rather than keeping a separate set */}
+      <PortfolioPresetBar reportScope="net_worth" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
+
       {/* KPI metrics */}
       {KPI_METRICS.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-10 gap-3">
           {KPI_METRICS.map(k => (
             <button
               key={k.label} type="button" onClick={() => scrollToSection(k.target)}
@@ -6107,6 +6126,57 @@ function CashFlowSection() {
                       {fmtEur(Number(r.amount_eur))}
                     </td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.frequency || '—')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </WithCopy>
+        )}
+      </div>
+
+      {/* Bond Coupons & Maturities */}
+      <div id="cf-bonds" className={highlighted === 'cf-bonds' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 transition-shadow' : 'p-2 -m-2 transition-shadow'}>
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">🏛️ Bond Coupons &amp; Maturities</h3>
+        <p className="text-xs text-slate-400 mb-2">
+          Coupon payments and face-value redemptions for currently-held bonds within this horizon, projected from
+          each bond's own Maturity Date, Coupon Rate, and Coupon Frequency (Static Data → Securities). Zero-coupon
+          instruments (Coupon Frequency = "At Maturity", e.g. T-Bills) only contribute their face value at
+          maturity — their return is embedded in the discount purchase price rather than paid separately.
+        </p>
+        {bonds.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            {includeBonds ? 'No bond coupons or maturities projected within this horizon.' : "Excluded — enable 'Include Bonds' above to project bond coupon payments and maturity redemptions within this horizon."}
+          </p>
+        ) : (
+          <WithCopy>
+          <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Security</th>
+                  <th className="px-3 py-2 text-left">Account</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Amount (€)</th>
+                  <th className="px-3 py-2 text-left">Currency</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {bonds.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 tabular-nums text-slate-600 whitespace-nowrap">{String(r.date)}</td>
+                    <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.payees_name || '—')}</SecLink></td>
+                    <td className="px-3 py-2 text-slate-500 text-xs"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name || '—')} type={String(r.accounts_type ?? '')} /></td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className={`px-1.5 py-0.5 rounded-full font-medium ${r.kind === 'Maturity' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
+                        {String(r.kind)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-700">
+                      {fmtEur(Number(r.amount_eur))}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
                   </tr>
                 ))}
               </tbody>

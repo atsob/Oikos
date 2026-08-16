@@ -2436,6 +2436,7 @@ def get_cash_flow_forecast(months_ahead: int = Query(6)):
 def get_cash_flow_forecast_full(
     days: int = Query(60),
     months_back: int = Query(2),
+    account_ids: Optional[str] = Query(None),
 ):
     """
     Full cash-flow forecast replicating the Streamlit view, plus recurring templates:
@@ -2444,6 +2445,8 @@ def get_cash_flow_forecast_full(
     - Recurring patterns detected from last N complete months, projected forward
       (payees already covered by a scheduled transaction OR an active template are excluded,
       to avoid the same bill being counted twice)
+    account_ids (comma-separated), when given, scopes every source to just those accounts —
+    same Account Preset mechanism as Net Worth/Inv. Portfolio/Inv. Performance.
     Returns: { scheduled, templates, recurring, metrics }
     """
     import datetime as _dt
@@ -2461,9 +2464,11 @@ def get_cash_flow_forecast_full(
     # Upper bound raised from 6 to 12 to accommodate the frontend's YTD option (complete
     # calendar months elapsed this year), which can be as high as 11 in December.
     mb = max(2, min(12, int(months_back)))
+    acct_ids = _parse_account_ids(account_ids)
+    acct_clause_a = _acct_clause(acct_ids, 'a.Accounts_Id')
 
     with get_db() as conn:
-        df_future = pd.read_sql("""
+        df_future = pd.read_sql(f"""
             WITH RECURSIVE CategoryHierarchy AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
                 FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -2494,10 +2499,11 @@ def get_cash_flow_forecast_full(
             LEFT JOIN LatestFX fx ON fx.Currencies_Id_1 = c.Currencies_Id
             WHERE t.Date > CURRENT_DATE
               AND t.Transfers_Id IS NULL
+              {acct_clause_a}
             ORDER BY t.Date ASC
         """, conn)
 
-        df_templates = pd.read_sql("""
+        df_templates = pd.read_sql(f"""
             WITH RECURSIVE CategoryHierarchy AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
                 FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -2537,6 +2543,7 @@ def get_cash_flow_forecast_full(
             WHERE rt.active = TRUE
               AND rt.accounts_id_target IS NULL
               AND (rt.end_date IS NULL OR rt.end_date >= CURRENT_DATE)
+              {acct_clause_a}
         """, conn)
 
         df_recurring = pd.read_sql(f"""
@@ -2564,6 +2571,7 @@ def get_cash_flow_forecast_full(
                   AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
                   AND t.Payees_Id IS NOT NULL
                   AND t.Transfers_Id IS NULL
+                  {acct_clause_a}
                 GROUP BY t.Payees_Id, p.Payees_Name, s.Categories_Id, cat.Categories_Name,
                          t.Date, DATE_TRUNC('month', t.Date)::date, a.Currencies_Id
             ),
@@ -2658,7 +2666,7 @@ def get_cash_flow_forecast_full(
             ORDER  BY next_expected_date ASC
         """, conn)
 
-        df_div = pd.read_sql("""
+        df_div = pd.read_sql(f"""
             WITH fx_latest AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -2668,9 +2676,12 @@ def get_cash_flow_forecast_full(
                 FROM Historical_Prices ORDER BY Securities_Id, Date DESC
             ),
             holdings_agg AS (
-                SELECT Securities_Id, SUM(Quantity) AS total_qty
-                FROM Holdings WHERE Quantity > 0
-                GROUP BY Securities_Id
+                SELECT h.Securities_Id, SUM(h.Quantity) AS total_qty
+                FROM Holdings h
+                JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
+                WHERE h.Quantity > 0
+                  {acct_clause_a}
+                GROUP BY h.Securities_Id
             ),
             last_div AS (
                 SELECT DISTINCT ON (Securities_Id) Securities_Id, Ex_Date AS last_ex_date
@@ -2684,6 +2695,7 @@ def get_cash_flow_forecast_full(
                 LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
                 WHERE i.Action IN ('Dividend','IntInc','Reinvest')
                   AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+                  {acct_clause_a}
                 GROUP BY i.Securities_Id
             )
             SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
@@ -2705,9 +2717,33 @@ def get_cash_flow_forecast_full(
         """, conn)
 
         df_savings = _savings_last_period_df(conn)
+        if acct_ids and not df_savings.empty:
+            df_savings = df_savings[df_savings['accounts_id'].astype(int).isin(acct_ids)].copy()
 
         _ensure_account_interest_rate_schema()
         df_rate_schedules = _load_manual_rate_schedules(conn, ['Savings', 'Checking'])
+        if acct_ids and not df_rate_schedules.empty:
+            df_rate_schedules = df_rate_schedules[df_rate_schedules['accounts_id'].astype(int).isin(acct_ids)].copy()
+
+        df_bonds = pd.read_sql(f"""
+            WITH fx AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            )
+            SELECT h.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+                   h.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name,
+                   a.Accounts_Type AS accounts_type, h.Quantity AS quantity,
+                   s.Maturity_Date AS maturity_date, s.Coupon_Rate AS coupon_rate,
+                   s.Face_Value AS face_value, s.Coupon_Frequency AS coupon_frequency,
+                   c.Currencies_ShortName AS currency, COALESCE(fx.FX_Rate, 1) AS fx_rate
+            FROM Holdings h
+            JOIN Securities s ON h.Securities_Id = s.Securities_Id
+            JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
+            JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL
+              {acct_clause_a}
+        """, conn)
 
     # Filter scheduled to horizon
     if not df_future.empty:
@@ -2923,6 +2959,75 @@ def get_cash_flow_forecast_full(
 
     interest_rows.sort(key=lambda x: x['date'])
 
+    # Project bond coupon payments and maturity (face value) redemptions for
+    # currently-held bonds, same fields/conventions as the Bond Schedule tab
+    # (/xray-style — see get_bond_schedule): 'At Maturity' frequency means the
+    # whole return is embedded in the discount purchase price rather than paid
+    # as a separate coupon (e.g. Hellenic T-Bills), so only the face-value
+    # redemption is projected for those, not a periodic coupon on top of it.
+    # Coupon dates are anchored to the bond's own Maturity_Date, stepping back
+    # by one coupon period at a time — there's no stored issue/settlement date
+    # to anchor forward from instead.
+    _COUPON_STEP = {
+        'Monthly':     (relativedelta(months=1), 12),
+        'Quarterly':   (relativedelta(months=3), 4),
+        'Semi-Annual': (relativedelta(months=6), 2),
+    }
+    _DEFAULT_COUPON_STEP = (relativedelta(years=1), 1)  # Annual, or any other non-"At Maturity" value
+
+    bond_rows = []
+    for _, r in df_bonds.iterrows():
+        qty = _fnum(r.get('quantity'))
+        face = _fnum(r.get('face_value'))
+        raw_maturity = r.get('maturity_date')
+        if qty <= 0 or face <= 0 or pd.isna(raw_maturity):
+            continue
+        maturity_d = pd.Timestamp(raw_maturity).date()
+        if maturity_d <= today or maturity_d > cutoff:
+            continue
+
+        coupon_rate = _fnum(r.get('coupon_rate'))
+        freq = str(r.get('coupon_frequency') or 'Annual')
+        fx = _fnum(r.get('fx_rate'), default=1.0)
+        total_face_native = qty * face
+        currency = str(r.get('currency') or 'EUR')
+        name = str(r.get('securities_name') or '')
+        sec_id = int(r['securities_id'])
+        acct_id = int(r['accounts_id'])
+        acct_name = str(r.get('accounts_name') or '')
+        acct_type = str(r.get('accounts_type') or '')
+
+        if freq != 'At Maturity' and coupon_rate > 0:
+            step, periods_per_year = _COUPON_STEP.get(freq, _DEFAULT_COUPON_STEP)
+            coupon_native = total_face_native * coupon_rate / 100 / periods_per_year
+            d = maturity_d
+            while d > today:
+                d -= step
+            d += step
+            while d <= cutoff:
+                if d > today and d < maturity_d:  # the maturity-date coupon is folded into the redemption row below
+                    bond_rows.append({
+                        'date': d.isoformat(), 'kind': 'Coupon',
+                        'payees_name': name, 'securities_id': sec_id,
+                        'accounts_id': acct_id, 'accounts_name': acct_name, 'accounts_type': acct_type,
+                        'amount_eur': round(coupon_native * fx, 2),
+                        'currency': currency, 'frequency': freq,
+                    })
+                d += step
+            final_coupon_native = coupon_native
+        else:
+            final_coupon_native = 0.0
+
+        bond_rows.append({
+            'date': maturity_d.isoformat(), 'kind': 'Maturity',
+            'payees_name': name, 'securities_id': sec_id,
+            'accounts_id': acct_id, 'accounts_name': acct_name, 'accounts_type': acct_type,
+            'amount_eur': round((total_face_native + final_coupon_native) * fx, 2),
+            'currency': currency, 'frequency': freq,
+        })
+
+    bond_rows.sort(key=lambda x: x['date'])
+
     # Build scheduled list
     scheduled = []
     if not df_f.empty:
@@ -2946,6 +3051,7 @@ def get_cash_flow_forecast_full(
     recur_out = sum(r['amount_eur'] for r in recur_rows if r['amount_eur'] < 0)
     div_in    = sum(r['amount_eur'] for r in dividend_rows)
     int_in    = sum(r['amount_eur'] for r in interest_rows)
+    bond_in   = sum(r['amount_eur'] for r in bond_rows)
 
     return {
         'scheduled': scheduled,
@@ -2953,6 +3059,7 @@ def get_cash_flow_forecast_full(
         'recurring': recur_rows,
         'dividends': dividend_rows,
         'interest': interest_rows,
+        'bonds': bond_rows,
         'metrics': {
             'sched_in':  round(sched_in,  2),
             'sched_out': round(sched_out, 2),
@@ -2962,7 +3069,8 @@ def get_cash_flow_forecast_full(
             'recur_out': round(recur_out, 2),
             'div_in':    round(div_in,    2),
             'int_in':    round(int_in,    2),
-            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out + div_in + int_in, 2),
+            'bond_in':   round(bond_in,   2),
+            'net_total': round(sched_in + sched_out + tmpl_in + tmpl_out + recur_in + recur_out + div_in + int_in + bond_in, 2),
         },
     }
 

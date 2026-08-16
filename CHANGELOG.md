@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-16
+
+### Added
+- **Cash Flow Forecast now projects bond coupon payments and maturity (face value) redemptions** for currently-held bonds within the horizon — a new "Bond Cash Flow" KPI tile and "Bond Coupons & Maturities" table, alongside the existing scheduled/template/recurring/dividend/interest sources. Coupon dates are anchored to each bond's own Maturity Date and stepped back by its Coupon Frequency (there's no stored issue date to anchor forward from instead). Zero-coupon instruments (Coupon Frequency = "At Maturity", e.g. Hellenic T-Bills) only contribute their face value at maturity, matching how Inv. Performance → Bond Schedule already treats them — their return is embedded in the discount purchase price rather than paid as a separate coupon, so it isn't double-counted as both a coupon and a redemption. An **Include Bonds** checkbox next to YTD controls whether this is folded into the chart/KPIs/Total Net — off by default, since a single maturing bond's face value can be a large lump sum that dominates the picture.
+- **Cash Flow Forecast gains the same Account Preset picker as Net Worth** — scope every source (scheduled transactions, templates, statistically-detected recurring patterns, dividends, interest, and bond coupons/maturities) down to a saved set of accounts, or leave it on Full Portfolio for everything. It reuses Net Worth's own saved presets directly rather than keeping a separate set — a preset created or edited in either report is immediately available in the other.
+
 ## 2026-08-14
 
 ### Fixed
