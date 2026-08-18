@@ -778,13 +778,18 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
 
 const SECTOR_NO_INDUSTRY_BUCKET = 'Fund Look-Through (No Industry Data)'
 
-function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
+function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['xray', 'sector-weighting', accountIds], queryFn: () => getXraySectorWeighting(accountIds), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'sector-weighting', accountIds, compareDate], queryFn: () => getXraySectorWeighting(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row[]; detail: Row[]; compare?: { summary: Row[] }; compare_date?: string } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
+  const compareMap = useMemo(() => {
+    const m: Record<string, Row> = {}
+    for (const r of resp?.compare?.summary ?? []) m[String(r.sector)] = r
+    return m
+  }, [resp])
   const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
   const [selectedSector, setSelectedSector] = useState<string | null>(null)
   const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null)
@@ -837,17 +842,35 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
               <ColHeader label="Sector" sortKey="sector" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              {compareDate && <>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ pp</th>
+              </>}
             </tr>
           </thead>
           <tbody>
             {sorted.map((r, i) => {
               const sec = String(r.sector)
+              const cmp = compareMap[sec]
+              const cmpValue = cmp ? Number(cmp.value_eur) : null
+              const cmpDeltaValue = cmpValue != null ? Number(r.value_eur) - cmpValue : null
+              const cmpDeltaPct = cmp ? Number(r.pct) - Number(cmp.pct) : null
               return (
                 <tr key={i} onClick={() => selectSector(sec)}
                   className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedSector === sec ? 'bg-blue-50' : ''}`}>
                   <td className="px-2 py-1.5">{sec}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                  {compareDate && <>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaValue != null && cmpDeltaValue > 0 ? 'text-green-600' : cmpDeltaValue != null && cmpDeltaValue < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaValue != null ? `${cmpDeltaValue > 0 ? '+' : ''}${fmtEur(cmpDeltaValue)}` : '—'}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaPct != null && cmpDeltaPct > 0 ? 'text-green-600' : cmpDeltaPct != null && cmpDeltaPct < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaPct != null ? `${cmpDeltaPct > 0 ? '+' : ''}${cmpDeltaPct.toFixed(2)}%` : '—'}
+                    </td>
+                  </>}
                 </tr>
               )
             })}
@@ -922,13 +945,18 @@ function XraySectorWeightingTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
-function XrayStyleBoxTab({ accountIds }: { accountIds?: number[] }) {
+function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['xray', 'style-box', accountIds], queryFn: () => getXrayStyleBox(accountIds), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'style-box', accountIds, compareDate], queryFn: () => getXrayStyleBox(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row[]; detail: Row[]; compare?: { summary: Row[] }; compare_date?: string } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
+  const compareMap = useMemo(() => {
+    const m: Record<string, Row> = {}
+    for (const r of resp?.compare?.summary ?? []) m[String(r.style)] = r
+    return m
+  }, [resp])
   const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null)
   const detailRows = selectedStyle ? detail.filter(r => String(r.style) === selectedStyle) : []
@@ -956,17 +984,35 @@ function XrayStyleBoxTab({ accountIds }: { accountIds?: number[] }) {
               <ColHeader label="Category" sortKey="style" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              {compareDate && <>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ pp</th>
+              </>}
             </tr>
           </thead>
           <tbody>
             {sorted.map((r, i) => {
               const style = String(r.style)
+              const cmp = compareMap[style]
+              const cmpValue = cmp ? Number(cmp.value_eur) : null
+              const cmpDeltaValue = cmpValue != null ? Number(r.value_eur) - cmpValue : null
+              const cmpDeltaPct = cmp ? Number(r.pct) - Number(cmp.pct) : null
               return (
                 <tr key={i} onClick={() => setSelectedStyle(c => c === style ? null : style)}
                   className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedStyle === style ? 'bg-emerald-50' : ''}`}>
                   <td className="px-2 py-1.5">{style}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                  {compareDate && <>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaValue != null && cmpDeltaValue > 0 ? 'text-green-600' : cmpDeltaValue != null && cmpDeltaValue < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaValue != null ? `${cmpDeltaValue > 0 ? '+' : ''}${fmtEur(cmpDeltaValue)}` : '—'}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaPct != null && cmpDeltaPct > 0 ? 'text-green-600' : cmpDeltaPct != null && cmpDeltaPct < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaPct != null ? `${cmpDeltaPct > 0 ? '+' : ''}${cmpDeltaPct.toFixed(2)}%` : '—'}
+                    </td>
+                  </>}
                 </tr>
               )
             })}
@@ -1009,15 +1055,20 @@ function XrayStyleBoxTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
-function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
+function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['xray', 'asset-allocation', accountIds], queryFn: () => getXrayAssetAllocation(accountIds), refetchInterval: liveRefetchMs })
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'asset-allocation', accountIds, compareDate], queryFn: () => getXrayAssetAllocation(accountIds, compareDate), refetchInterval: liveRefetchMs })
   const { data: targets = [], isLoading: targetsLoading } = useQuery({ queryKey: ['xray-allocation-targets'], queryFn: getXrayAssetAllocationTargets })
-  const resp = data as { summary: Row[]; detail: Row[] } | undefined
+  const resp = data as { summary: Row[]; detail: Row[]; compare?: { summary: Row[] }; compare_date?: string } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
+  const compareMap = useMemo(() => {
+    const m: Record<string, Row> = {}
+    for (const r of resp?.compare?.summary ?? []) m[String(r.asset_class)] = r
+    return m
+  }, [resp])
   const [selectedClass, setSelectedClass] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const detailRows = selectedClass ? detail.filter(r => String(r.asset_class) === selectedClass) : []
@@ -1150,12 +1201,21 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Target %</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Delta %</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Rebalance €</th>
+            {compareDate && <>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ %</th>
+            </>}
           </tr></thead>
           <tbody>
             {rows.map((r, i) => {
               const cls = String(r.asset_class)
               const deltaPct = Number(r.delta_pct ?? 0)
               const reb = Number(r.rebalance_eur ?? 0)
+              const cmp = compareMap[cls]
+              const cmpValue = cmp ? Number(cmp.value_eur) : null
+              const cmpDeltaValue = cmpValue != null ? Number(r.value_eur) - cmpValue : null
+              const cmpDeltaPct = cmp ? Number(r.pct) - Number(cmp.pct) : null
               return (
                 <tr key={i} onClick={() => setSelectedClass(c => c === cls ? null : cls)}
                   className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedClass === cls ? 'bg-blue-50' : ''}`}>
@@ -1165,6 +1225,15 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.target_pct))}</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${deltaPct > 0 ? 'text-red-500' : deltaPct < 0 ? 'text-green-600' : ''}`}>{deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(2)}%</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${reb > 0 ? 'text-green-600' : reb < 0 ? 'text-red-500' : ''}`}>{reb > 0 ? '+' : ''}{fmtEur(reb)}</td>
+                  {compareDate && <>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaValue != null && cmpDeltaValue > 0 ? 'text-green-600' : cmpDeltaValue != null && cmpDeltaValue < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaValue != null ? `${cmpDeltaValue > 0 ? '+' : ''}${fmtEur(cmpDeltaValue)}` : '—'}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaPct != null && cmpDeltaPct > 0 ? 'text-green-600' : cmpDeltaPct != null && cmpDeltaPct < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaPct != null ? `${cmpDeltaPct > 0 ? '+' : ''}${cmpDeltaPct.toFixed(2)}%` : '—'}
+                    </td>
+                  </>}
                 </tr>
               )
             })}
@@ -1174,7 +1243,7 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
               <td className="px-2 py-1.5 border-t border-slate-200">Total</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">{fmtEur(total)}</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">100.0%</td>
-              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={3}></td>
+              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={compareDate ? 6 : 3}></td>
             </tr>
           </tfoot>
         </table>
@@ -1215,14 +1284,19 @@ function XrayAssetAllocationTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
-function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
+function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds], queryFn: () => getXrayBondQuality(accountIds), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row[]; detail: Row[]; us_government: Row | null } | undefined
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'bond-quality', accountIds, compareDate], queryFn: () => getXrayBondQuality(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row[]; detail: Row[]; us_government: Row | null; compare?: { summary: Row[] }; compare_date?: string } | undefined
   const rows = resp?.summary ?? []
   const detail = resp?.detail ?? []
   const usGov = resp?.us_government ?? null
+  const compareMap = useMemo(() => {
+    const m: Record<string, Row> = {}
+    for (const r of resp?.compare?.summary ?? []) m[String(r.quality)] = r
+    return m
+  }, [resp])
   const [selectedQuality, setSelectedQuality] = useState<string | null>(null)
   const detailRows = selectedQuality ? detail.filter(r => String(r.quality) === selectedQuality) : []
   // Rows arrive highest-quality-first for the table; the horizontal bar chart plots
@@ -1252,10 +1326,19 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight %</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200">Avg. Duration (yrs)</th>
+            {compareDate && <>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ pp</th>
+            </>}
           </tr></thead>
           <tbody>
             {rows.map((r, i) => {
               const quality = String(r.quality)
+              const cmp = compareMap[quality]
+              const cmpValue = cmp ? Number(cmp.value_eur) : null
+              const cmpDeltaValue = cmpValue != null ? Number(r.value_eur) - cmpValue : null
+              const cmpDeltaPct = cmp ? Number(r.pct) - Number(cmp.pct) : null
               return (
                 <tr key={i} onClick={() => setSelectedQuality(c => c === quality ? null : quality)}
                   className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedQuality === quality ? 'bg-amber-50' : ''}`}>
@@ -1263,6 +1346,15 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
                   <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.avg_duration_years != null ? fmtNum(Number(r.avg_duration_years), 1) : '—'}</td>
+                  {compareDate && <>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaValue != null && cmpDeltaValue > 0 ? 'text-green-600' : cmpDeltaValue != null && cmpDeltaValue < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaValue != null ? `${cmpDeltaValue > 0 ? '+' : ''}${fmtEur(cmpDeltaValue)}` : '—'}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaPct != null && cmpDeltaPct > 0 ? 'text-green-600' : cmpDeltaPct != null && cmpDeltaPct < 0 ? 'text-red-500' : ''}`}>
+                      {cmpDeltaPct != null ? `${cmpDeltaPct > 0 ? '+' : ''}${cmpDeltaPct.toFixed(2)}%` : '—'}
+                    </td>
+                  </>}
                 </tr>
               )
             })}
@@ -1323,11 +1415,12 @@ function XrayBondQualityTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
-function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
+function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds], queryFn: () => getXrayStockOverlap(accountIds), refetchInterval: liveRefetchMs })
-  const rows = data as Row[]
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds, compareDate], queryFn: () => getXrayStockOverlap(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const resp = data as { rows: Row[]; compare_rows?: Row[]; compare_date?: string } | undefined
+  const rows = resp?.rows ?? []
   const totalPortfolio = rows.length > 0 ? Number(rows[0].total_portfolio_eur ?? 0) : 0
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [importingSymbol, setImportingSymbol] = useState<string | null>(null)
@@ -1345,6 +1438,15 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
     }
     return Object.entries(m).sort((a, b) => b[1].total - a[1].total)
   }, [rows])
+
+  const compareBySymbol = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const r of resp?.compare_rows ?? []) {
+      const sym = String(r.symbol ?? '—')
+      m[sym] = (m[sym] ?? 0) + Number(r.value_eur ?? 0)
+    }
+    return m
+  }, [resp])
 
   const detailRows = selectedSymbol ? bySymbol.find(([sym]) => sym === selectedSymbol)?.[1].sources ?? [] : []
 
@@ -1382,10 +1484,17 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
               <th className="text-right px-2 py-1.5 border-b border-slate-200">% of Portfolio</th>
               <th className="text-left px-2 py-1.5 border-b border-slate-200">Sources</th>
               <th className="text-left px-2 py-1.5 border-b border-slate-200"></th>
+              {compareDate && <>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+              </>}
             </tr>
           </thead>
           <tbody>
-            {bySymbol.map(([sym, v], i) => (
+            {bySymbol.map(([sym, v], i) => {
+              const cmpValue = compareDate ? (compareBySymbol[sym] ?? 0) : null
+              const cmpDelta = cmpValue != null ? v.total - cmpValue : null
+              return (
               <tr key={i} onClick={() => setSelectedSymbol(c => c === sym ? null : sym)}
                 className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedSymbol === sym ? 'bg-slate-100' : ''}`}>
                 <td className="px-2 py-1.5 font-mono font-medium">{sym}</td>
@@ -1407,8 +1516,15 @@ function XrayStockOverlapTab({ accountIds }: { accountIds?: number[] }) {
                   )}
                   {importErrors[sym] && <span className="text-red-600 block mt-0.5">{importErrors[sym]}</span>}
                 </td>
+                {compareDate && <>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDelta != null && cmpDelta > 0 ? 'text-green-600' : cmpDelta != null && cmpDelta < 0 ? 'text-red-500' : ''}`}>
+                    {cmpDelta != null ? `${cmpDelta > 0 ? '+' : ''}${fmtEur(cmpDelta)}` : '—'}
+                  </td>
+                </>}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -1462,12 +1578,18 @@ function XrayExpenseRatioNotes() {
   )
 }
 
-function XrayExpenseRatioTab({ accountIds }: { accountIds?: number[] }) {
+function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data, isLoading } = useQuery({ queryKey: ['xray', 'expense-ratio', accountIds], queryFn: () => getXrayExpenseRatio(accountIds), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row | null; funds: Row[] } | undefined
+  const { data, isLoading } = useQuery({ queryKey: ['xray', 'expense-ratio', accountIds, compareDate], queryFn: () => getXrayExpenseRatio(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const resp = data as { summary: Row | null; funds: Row[]; compare?: { summary: Row | null; funds: Row[] }; compare_date?: string } | undefined
   const summary = resp?.summary
   const funds = resp?.funds ?? []
+  const compareSummary = resp?.compare?.summary
+  const compareFundsMap = useMemo(() => {
+    const m: Record<number, Row> = {}
+    for (const r of resp?.compare?.funds ?? []) if (r.securities_id != null) m[Number(r.securities_id)] = r
+    return m
+  }, [resp])
   const { sorted: fundsSorted, sortKey, sortDir, toggleSort } = useSortTable(funds, 'value_eur', 'desc')
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1487,6 +1609,15 @@ function XrayExpenseRatioTab({ accountIds }: { accountIds?: number[] }) {
             <p className="text-xs text-slate-400 mt-2">
               Covers {fmtPct(Number(summary.coverage_pct))} of fund holdings by value ({fmtEur(Number(summary.total_fund_value_eur))} total in ETFs/Mutual Funds).
             </p>
+            {compareDate && compareSummary && compareSummary.weighted_expense_ratio_pct != null && (
+              <p className="text-xs text-amber-700 mt-2 bg-amber-50 rounded px-2 py-1.5">
+                As of {compareDate}: {fmtPct(Number(compareSummary.weighted_expense_ratio_pct), 3)}
+                {' '}(Δ {(() => {
+                  const d = Number(summary.weighted_expense_ratio_pct) - Number(compareSummary.weighted_expense_ratio_pct)
+                  return `${d > 0 ? '+' : ''}${d.toFixed(3)}pp`
+                })()})
+              </p>
+            )}
           </CardBody>
         </Card>
         <XrayExpenseRatioNotes />
@@ -1500,17 +1631,32 @@ function XrayExpenseRatioTab({ accountIds }: { accountIds?: number[] }) {
               <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
               <ColHeader label="Expense Ratio" sortKey="expense_ratio_pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+              {compareDate && <>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+              </>}
             </tr>
           </thead>
           <tbody>
-            {fundsSorted.map((r, i) => (
+            {fundsSorted.map((r, i) => {
+              const cmp = r.securities_id != null ? compareFundsMap[Number(r.securities_id)] : undefined
+              const cmpValue = cmp ? Number(cmp.value_eur) : null
+              const cmpDelta = cmpValue != null ? Number(r.value_eur) - cmpValue : null
+              return (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.expense_ratio_pct != null ? fmtPct(Number(r.expense_ratio_pct), 3) : '—'}</td>
+                {compareDate && <>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDelta != null && cmpDelta > 0 ? 'text-green-600' : cmpDelta != null && cmpDelta < 0 ? 'text-red-500' : ''}`}>
+                    {cmpDelta != null ? `${cmpDelta > 0 ? '+' : ''}${fmtEur(cmpDelta)}` : '—'}
+                  </td>
+                </>}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -1519,17 +1665,36 @@ function XrayExpenseRatioTab({ accountIds }: { accountIds?: number[] }) {
   )
 }
 
+// End of the previous calendar month, e.g. run on any day in August -> 31 July.
+function lastMonthEnd(): string {
+  const d = new Date()
+  d.setDate(0)
+  return d.toISOString().slice(0, 10)
+}
+
 function XRayTab({ accountIds }: { accountIds?: number[] }) {
   const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
+  const [compareDate, setCompareDate] = usePersist('xray_compare_date', '')
+  const today = new Date().toISOString().slice(0, 10)
   return (
     <div className="space-y-3">
       <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
-      {tab === 'Asset Allocation' && <XrayAssetAllocationTab accountIds={accountIds} />}
-      {tab === 'Sector Weighting' && <XraySectorWeightingTab accountIds={accountIds} />}
-      {tab === 'Style Box' && <XrayStyleBoxTab accountIds={accountIds} />}
-      {tab === 'Bond Quality' && <XrayBondQualityTab accountIds={accountIds} />}
-      {tab === 'Stock Overlap' && <XrayStockOverlapTab accountIds={accountIds} />}
-      {tab === 'Expense Ratio' && <XrayExpenseRatioTab accountIds={accountIds} />}
+      <div className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        <Tooltip text="Show current values alongside a past date's, reconstructed from your transaction history and historical prices/FX. Sector weights, asset mix, credit ratings, category, and expense ratio always reflect today's fund data — Oikos has no historical version of a fund's own internal makeup.">
+          <span className="text-slate-500 cursor-help underline decoration-dotted">Compare vs</span>
+        </Tooltip>
+        <input type="date" max={today} value={compareDate}
+          onChange={e => setCompareDate(e.target.value)}
+          className="rounded border border-slate-300 px-2 py-1 text-xs" />
+        <button onClick={() => setCompareDate(lastMonthEnd())} className="text-xs text-blue-600 hover:underline">End of last month</button>
+        {compareDate && <button onClick={() => setCompareDate('')} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>}
+      </div>
+      {tab === 'Asset Allocation' && <XrayAssetAllocationTab accountIds={accountIds} compareDate={compareDate || undefined} />}
+      {tab === 'Sector Weighting' && <XraySectorWeightingTab accountIds={accountIds} compareDate={compareDate || undefined} />}
+      {tab === 'Style Box' && <XrayStyleBoxTab accountIds={accountIds} compareDate={compareDate || undefined} />}
+      {tab === 'Bond Quality' && <XrayBondQualityTab accountIds={accountIds} compareDate={compareDate || undefined} />}
+      {tab === 'Stock Overlap' && <XrayStockOverlapTab accountIds={accountIds} compareDate={compareDate || undefined} />}
+      {tab === 'Expense Ratio' && <XrayExpenseRatioTab accountIds={accountIds} compareDate={compareDate || undefined} />}
     </div>
   )
 }

@@ -130,8 +130,19 @@ function SecuritiesAlertsPanel() {
       .filter(a => a.type === 'signal_change' && a.securities_id != null)
       .map(a => Number(a.securities_id)),
   )], [alerts])
+  // Split alerts are one-off historical notifications (not standing, re-triggering
+  // conditions like Signal Changes) — still worth clearing in bulk since a newly
+  // added security can arrive with dozens of them (its full split history at once).
+  const splitCaIds = React.useMemo(() => [...new Set(
+    (alerts as Record<string, unknown>[])
+      .filter(a => a.type === 'stock_split' && a.corporate_actions_id != null)
+      .map(a => Number(a.corporate_actions_id)),
+  )], [alerts])
   const dismissAllMut = useMutation({
-    mutationFn: () => Promise.all(signalSecIds.map(sid => acknowledgeSignal(sid))),
+    mutationFn: () => Promise.all([
+      ...signalSecIds.map(sid => acknowledgeSignal(sid)),
+      ...splitCaIds.map(caId => acknowledgeSplit(caId)),
+    ]),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
@@ -157,13 +168,13 @@ function SecuritiesAlertsPanel() {
           </span>
           {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
         </button>
-        {signalSecIds.length > 1 && (
+        {signalSecIds.length + splitCaIds.length > 1 && (
           <button
             className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline ml-3"
             disabled={dismissAllMut.isPending}
             onClick={() => dismissAllMut.mutate()}
-            title="Dismiss all Signal Change alerts">
-            {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss all Signal Changes'}
+            title="Dismiss all Signal Change and Stock Split alerts">
+            {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss All'}
           </button>
         )}
       </div>

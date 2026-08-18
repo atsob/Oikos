@@ -172,9 +172,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Maturity/Coupon</b>, <b>Dividend Payment</b> — is clickable through to that security's Security Detail
           page. <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal
           Change's <b>Dismiss</b> button still works on its own without triggering navigation. When there's more
-          than one Signal Change alert, a <b>Dismiss all Signal Changes</b> button next to the panel header
-          acknowledges all of them in one click — Price Alerts don't have a dismiss (individually or in bulk)
-          since they clear on their own once the price crosses back.
+          than one Signal Change or Stock Split alert (combined), a <b>Dismiss All</b> button next to the panel
+          header acknowledges all of them in one click — handy since a newly-added security can arrive with
+          dozens of Stock Split notifications (its full split history) at once. Price Alerts don't have a dismiss
+          (individually or in bulk) since they clear on their own once the price crosses back.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
@@ -489,8 +490,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
           The <b>As of date</b> control only applies to <b>Graph</b>, <b>Summary</b>, and <b>Detail Analysis</b> —
-          it's hidden on <b>Current Holdings</b>, <b>FX Exposure</b>, and <b>Portfolio Analysis</b>, which always
-          show live data regardless of the date.
+          it's hidden on <b>Current Holdings</b> and <b>FX Exposure</b>, which always show live data. <b>Portfolio
+          Analysis</b> has its own separate <b>Compare vs</b> control instead (see below) rather than this one.
+        </Note>
+        <Note>
+          <b>Portfolio Analysis</b>'s <b>Compare vs</b> control (with an "End of last month" shortcut) adds an
+          "As of [date]" and Δ column to each of its six tabs, showing what's changed since that date — reconstructed
+          from your transaction history and historical prices/FX, the same technique Detail Analysis's own As of
+          date and Net Worth's history already use. Sector weights, asset mix %, credit ratings, category, and
+          expense ratio always reflect today's fund data regardless of the comparison date — Oikos only ever
+          stores a fund's current internal composition, not a historical version of it — so the Δ you see reflects
+          what you bought/sold and price/FX moves since then, not the fund's own rebalancing.
         </Note>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current

@@ -273,6 +273,12 @@ def update_holdings():
     disappear entirely (Quantity computed as 0). Simulating the lot queue
     transaction-by-transaction (as already done for realized P&L in
     database.queries and api.routers.reports) sidesteps both problems.
+
+    Only transactions dated today or earlier feed the simulation — a
+    future-dated Buy/Sell/ShrIn/ShrOut/Reinvest (e.g. captured ahead of its
+    actual trade date) shouldn't change what you're shown as currently
+    holding until that date arrives, the same principle applied to P&L's
+    own cash-flow windows (see get_pnl/get_pnl_period in api/routers/reports.py).
     """
     from collections import deque
     BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn'}
@@ -301,6 +307,7 @@ def update_holdings():
             FROM Investments i
             WHERE i.Securities_Id IS NOT NULL
               AND i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
+              AND i.Date <= CURRENT_DATE
             ORDER BY i.Accounts_Id, i.Securities_Id, i.Date, i.Investments_Id
         """, conn)
 

@@ -772,6 +772,12 @@ def get_pnl(
             ) hist_price ON i.Action = 'Reinvest'
                         AND (i.Price_Per_Share = 0 OR i.Price_Per_Share IS NULL)
                         AND (i.Total_Amount_SecCur = 0 OR i.Total_Amount_SecCur IS NULL)
+            -- Every cf_* window above only has a lower bound (i.Date > period_start) —
+            -- without this upper bound, a future-dated transaction (e.g. a dividend
+            -- pre-recorded ahead of its actual pay date) leaks into every window
+            -- including All-Time, inflating "today's" P&L by an event that hasn't
+            -- happened yet. Matches qty_today's own "WHERE Date <= p.today" bound above.
+            WHERE i.Date <= (SELECT today FROM periods)
             GROUP BY i.Accounts_Id, i.Securities_Id
         ),
         dividend_yoc AS (
@@ -794,6 +800,7 @@ def get_pnl(
             FROM Investments i
             WHERE i.Action IN ('Dividend', 'Reinvest', 'ShrIn')
               AND i.Date >= CURRENT_DATE - INTERVAL '1 year'
+              AND i.Date <= (SELECT today FROM periods)
             GROUP BY i.Securities_Id, i.Accounts_Id
         ),
         account_direct_flows AS (
@@ -807,6 +814,7 @@ def get_pnl(
                    ON hfx.Currencies_Id_1 = a.Currencies_Id
                   AND hfx.Date = i.Date
             WHERE i.Securities_Id IS NULL
+              AND i.Date <= (SELECT today FROM periods)
             GROUP BY i.Accounts_Id
         ),
         account_linked_flows AS (
@@ -819,6 +827,7 @@ def get_pnl(
                     ON t.Accounts_Id       = al.Accounts_Id
                    AND t.Accounts_Id_Target = a.Accounts_Id
                    AND t.Total_Amount < 0
+                   AND t.Date <= (SELECT today FROM periods)
             LEFT JOIN Historical_FX fxl
                    ON fxl.Currencies_Id_1 = al.Currencies_Id
                   AND fxl.Date = t.Date
@@ -1032,6 +1041,9 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
         ) hist_price ON i.Action = 'Reinvest'
                      AND (i.Price_Per_Share = 0 OR i.Price_Per_Share IS NULL)
                      AND (i.Total_Amount_SecCur = 0 OR i.Total_Amount_SecCur IS NULL)
+        -- See the matching comment in get_pnl's cash_flows CTE — without this upper
+        -- bound, a future-dated transaction leaks into "today's" P&L.
+        WHERE i.Date <= (SELECT today FROM periods)
         GROUP BY i.Accounts_Id, i.Securities_Id
     )
     SELECT
@@ -1889,7 +1901,13 @@ def get_dividend_recommendations():
 
 
 def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
-    """All buy/sell investment transactions with EUR amounts for FIFO/LIFO lot matching."""
+    """All buy/sell investment transactions with EUR amounts for FIFO/LIFO lot matching.
+
+    Excludes future-dated rows (i.Date <= CURRENT_DATE) — a Sell captured ahead of
+    its actual trade date shouldn't show up as an already-realized gain, and letting
+    it into the lot walk would also skew the cost basis carried into later, genuinely-
+    realized sales. Same principle as update_holdings() in database/crud.py and P&L's
+    own cash-flow windows (get_pnl/get_pnl_period)."""
     query = """
         WITH txn_with_eur AS (
             SELECT
@@ -1924,6 +1942,7 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
             JOIN Currencies c   ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN Transactions t_cash ON t_cash.Transactions_Id = i.Transactions_Id
             WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut','Expire','CashIn','CashOut')
+              AND i.Date <= CURRENT_DATE
         )
         SELECT
             te.*,
@@ -3421,16 +3440,25 @@ def get_fx_exposure(account_ids: Optional[str] = Query(None)):
 # Fund_Composition row, so totals still reconcile to ~100% of portfolio value.
 
 @router.get("/xray/sector-weighting")
-def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
+def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Sector summary, plus a per-security detail breakdown (which security
     contributed how much/what % to each sector, and which industry within that
     sector for direct holdings — Yahoo's fund sector weightings have no
     industry-level breakdown, so fund-attributed rows carry a NULL industry)
-    for the UI's click-to-drill-down: sector -> industry -> securities."""
+    for the UI's click-to-drill-down: sector -> industry -> securities.
+    compare_date, when given, additionally computes the same breakdown as of that
+    past date (point-in-time holdings/prices — see _pit_ctes) under "compare"/
+    "compare_date". Sector weightings themselves always reflect today's fund
+    data — Oikos has no historical version of a fund's own internal makeup."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    holdings_cte = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        pit_params = {"as_of": as_of} if as_of else None
+        holdings_cte = f"""
+    WITH {fx_cte},
+    {prices_cte},
+    {h_src_cte},
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
                COALESCE(
@@ -3439,14 +3467,14 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
                    'Other / Unknown'
                ) AS sector,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
+        FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
         GROUP BY h.Securities_Id, s.Securities_Type, sector
     )
     """
-    detail_cte = """
+        detail_cte = """
     , direct_detail AS (
         SELECT hv.sector,
                COALESCE(NULLIF(TRIM(s.Industry),''), 'Other / Unknown') AS industry,
@@ -3518,13 +3546,13 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM uncovered_detail
     )
     """
-    summary_query = holdings_cte + detail_cte + """
+        summary_query = holdings_cte + detail_cte + """
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
     SELECT sector, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
     FROM detail_combined GROUP BY sector ORDER BY value_eur DESC
     """
-    detail_query = holdings_cte + detail_cte + """
+        detail_query = holdings_cte + detail_cte + """
     , sector_totals AS (SELECT sector, SUM(value_eur) AS sector_total FROM detail_combined GROUP BY sector)
     SELECT dc.sector, dc.industry, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
@@ -3533,44 +3561,61 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None)):
     GROUP BY dc.sector, dc.industry, dc.securities_id, dc.name, dc.ticker, st.sector_total
     ORDER BY dc.sector, value_eur DESC
     """
-    with get_db() as conn:
-        summary_df = pd.read_sql(summary_query, conn)
-        detail_df = pd.read_sql(detail_query, conn)
-    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+        with get_db() as conn:
+            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
+            detail_df = pd.read_sql(detail_query, conn, params=pit_params)
+        return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+
+    result = _run(None)
+    if compare_date:
+        result["compare"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 @router.get("/xray/asset-allocation")
-def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
+def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Asset-class summary, plus a per-security detail breakdown (which security
     contributed how much/what % to each class) for the UI's click-to-drill-down.
     Cash/Bank accounts (Cash, Checking, Savings, Credit Card) in the preset also
     contribute their balance to the 'Cash' bucket — Holdings alone would
-    otherwise never surface real cash, only a fund's own cash sleeve."""
+    otherwise never surface real cash, only a fund's own cash sleeve.
+    compare_date, when given, additionally computes the same breakdown as of that
+    past date (point-in-time holdings/prices/cash balances — see _pit_ctes/
+    _pit_cash_balance_expr) and returns it under "compare"/"compare_date". Fund
+    composition (the split within fund_detail_split below) always reflects today's
+    data, since Oikos has no historical version of a fund's own internal makeup."""
     parsed_acct_ids = _parse_account_ids(account_ids)
     acct_clause = _acct_clause(parsed_acct_ids, "h.Accounts_Id")
     cash_clause = _acct_clause(parsed_acct_ids, "a.Accounts_Id")
-    holdings_cte = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
-    holdings_value AS (
-        SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
-               SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
-        LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
-        LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-        WHERE h.Quantity > 0{acct_clause}
-        GROUP BY h.Securities_Id, s.Securities_Type
-    )
-    """
-    detail_cte = f"""
-    , direct_cash AS (
-        SELECT 'Cash' AS asset_class, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
-               a.Accounts_Balance * COALESCE(fx.FX_Rate,1) AS value_eur
-        FROM Accounts a
-        LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
-        WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
-          AND a.Is_Active = TRUE AND a.Accounts_Balance != 0{cash_clause}
-    ),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        cash_balance_expr = _pit_cash_balance_expr(as_of)
+        pit_params = {"as_of": as_of} if as_of else None
+        holdings_cte = f"""
+        WITH {fx_cte},
+        {prices_cte},
+        {h_src_cte},
+        holdings_value AS (
+            SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
+                   SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
+            FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
+            LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+            WHERE h.Quantity > 0{acct_clause}
+            GROUP BY h.Securities_Id, s.Securities_Type
+        )
+        """
+        detail_cte = f"""
+        , direct_cash AS (
+            SELECT 'Cash' AS asset_class, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
+                   {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur
+            FROM Accounts a
+            LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND a.Is_Active = TRUE AND a.Accounts_Balance != 0{cash_clause}
+        ),
     direct_detail AS (
         SELECT CASE
                  WHEN hv.sec_type = 'Stock' THEN 'Stocks'
@@ -3637,7 +3682,7 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM uncovered_detail
     )
     """
-    summary_query = holdings_cte + detail_cte + """
+        summary_query = holdings_cte + detail_cte + """
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
     , by_class AS (SELECT asset_class, SUM(value_eur) AS value_eur FROM detail_combined GROUP BY asset_class)
     SELECT bc.asset_class, ROUND(bc.value_eur::numeric,2) AS value_eur,
@@ -3650,7 +3695,7 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
     LEFT JOIN XRay_Allocation_Targets xat ON xat.Asset_Class = bc.asset_class
     ORDER BY bc.value_eur DESC
     """
-    detail_query = holdings_cte + detail_cte + """
+        detail_query = holdings_cte + detail_cte + """
     , class_totals AS (SELECT asset_class, SUM(value_eur) AS class_total FROM detail_combined GROUP BY asset_class)
     SELECT dc.asset_class, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
@@ -3659,10 +3704,16 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None)):
     GROUP BY dc.asset_class, dc.securities_id, dc.name, dc.ticker, ct.class_total
     ORDER BY dc.asset_class, value_eur DESC
     """
-    with get_db() as conn:
-        summary_df = pd.read_sql(summary_query, conn)
-        detail_df = pd.read_sql(detail_query, conn)
-    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+        with get_db() as conn:
+            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
+            detail_df = pd.read_sql(detail_query, conn, params=pit_params)
+        return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+
+    result = _run(None)
+    if compare_date:
+        result["compare"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 @router.get("/xray/asset-allocation-targets")
@@ -3693,7 +3744,7 @@ def save_xray_asset_allocation_targets(payload: dict):
 
 
 @router.get("/xray/style-box")
-def get_xray_style_box(account_ids: Optional[str] = Query(None)):
+def get_xray_style_box(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Style-box summary, plus a per-security detail breakdown for the UI's
     click-to-drill-down. A fund with no Morningstar category (and no manual
     override) is bucketed by its own dominant asset mix (e.g. 'Equity Fund
@@ -3701,27 +3752,37 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None)):
     Fund_Composition asset-class data the Asset Allocation X-Ray already has;
     only funds with no asset-mix data at all fall to 'N/A (no data)'. Cash &
     Savings accounts in the preset also contribute to a 'Cash' bucket, same
-    account-type exclusion list the Asset Allocation X-Ray's cash bucket uses."""
+    account-type exclusion list the Asset Allocation X-Ray's cash bucket uses.
+    compare_date, when given, additionally computes the same breakdown as of that
+    past date (point-in-time holdings/prices/cash balances — see _pit_ctes/
+    _pit_cash_balance_expr) under "compare"/"compare_date". Category/asset-mix
+    data itself always reflects today's fund data (no historical version exists)."""
     parsed_acct_ids = _parse_account_ids(account_ids)
     acct_clause = _acct_clause(parsed_acct_ids, "h.Accounts_Id")
     cash_clause = _acct_clause(parsed_acct_ids, "a.Accounts_Id")
-    holdings_cte = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        cash_balance_expr = _pit_cash_balance_expr(as_of)
+        pit_params = {"as_of": as_of} if as_of else None
+        holdings_cte = f"""
+    WITH {fx_cte},
+    {prices_cte},
+    {h_src_cte},
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
+        FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
         GROUP BY h.Securities_Id, s.Securities_Type
     )
     """
-    detail_cte = f"""
+        detail_cte = f"""
     , direct_cash AS (
         SELECT 'Cash' AS style, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
-               a.Accounts_Balance * COALESCE(fx.FX_Rate,1) AS value_eur
+               {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur
         FROM Accounts a
         LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
         WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
@@ -3764,13 +3825,13 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM fund_detail
     )
     """
-    summary_query = holdings_cte + detail_cte + """
+        summary_query = holdings_cte + detail_cte + """
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
     SELECT style, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
     FROM detail_combined GROUP BY style ORDER BY value_eur DESC
     """
-    detail_query = holdings_cte + detail_cte + """
+        detail_query = holdings_cte + detail_cte + """
     , style_totals AS (SELECT style, SUM(value_eur) AS style_total FROM detail_combined GROUP BY style)
     SELECT dc.style, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
@@ -3779,33 +3840,49 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None)):
     GROUP BY dc.style, dc.securities_id, dc.name, dc.ticker, st.style_total
     ORDER BY dc.style, value_eur DESC
     """
-    with get_db() as conn:
-        summary_df = pd.read_sql(summary_query, conn)
-        detail_df = pd.read_sql(detail_query, conn)
-    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+        with get_db() as conn:
+            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
+            detail_df = pd.read_sql(detail_query, conn, params=pit_params)
+        return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+
+    result = _run(None)
+    if compare_date:
+        result["compare"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 @router.get("/xray/bond-quality")
-def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
+def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Credit-quality + duration blend, plus a per-security detail breakdown for the
     UI's click-to-drill-down. Direct-bond duration is a years-to-maturity
-    approximation (Maturity_Date - today), not modified duration like the fund side."""
+    approximation (Maturity_Date - the as-of date, or today), not modified
+    duration like the fund side. compare_date, when given, additionally computes
+    the same breakdown as of that past date (point-in-time holdings/prices — see
+    _pit_ctes) under "compare"/"compare_date". Credit-rating/duration data itself
+    always reflects today's fund data — Oikos has no historical version of it."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    holdings_cte = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        as_of_expr = "%(as_of)s::date" if as_of else "CURRENT_DATE"
+        pit_params = {"as_of": as_of} if as_of else None
+        holdings_cte = f"""
+    WITH {fx_cte},
+    {prices_cte},
+    {h_src_cte},
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type, s.Maturity_Date, s.Issuer_Id,
                s.Securities_Name AS name, s.Ticker AS ticker,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
+        FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause}
         GROUP BY h.Securities_Id, s.Securities_Type, s.Maturity_Date, s.Issuer_Id, s.Securities_Name, s.Ticker
     )
     """
-    detail_cte = """
+        detail_cte = f"""
     , fund_bond AS (
         -- Normalizes Yahoo's lowercase snake_case rating keys (aaa, bbb, us_government, ...)
         -- onto the same labels direct_bond hardcodes below, so e.g. a fund's 'bbb' bucket
@@ -3846,7 +3923,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
                END AS quality,
                hv.Securities_Id AS securities_id, hv.name, hv.ticker, hv.value_eur,
                CASE WHEN hv.Maturity_Date IS NOT NULL
-                    THEN EXTRACT(EPOCH FROM (hv.Maturity_Date::timestamp - CURRENT_DATE::timestamp)) / (365.25*86400)
+                    THEN EXTRACT(EPOCH FROM (hv.Maturity_Date::timestamp - {as_of_expr}::timestamp)) / (365.25*86400)
                END AS duration_years
         FROM holdings_value hv
         LEFT JOIN Issuers iss ON iss.Issuers_Id = hv.Issuer_Id
@@ -3872,15 +3949,15 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT * FROM uncovered
     )
     """
-    # "Us Government" isn't a rating rung alongside AAA/AA/A/BBB/... — it's Yahoo's
-    # own issuer-type flag (government vs. corporate) living in the same flat
-    # bond_ratings dict as the credit-rating buckets, and it doesn't sum to 100%
-    # against them (e.g. a fund reporting a=59%, bbb=32%, aaa=9%, us_government=100%
-    # all at once). Summing it into the same total as the rating buckets double-
-    # counts exposure, so it's excluded from the rated total/percentages here and
-    # surfaced separately as an informational stat instead.
-    def _quality_rank(col: str) -> str:
-        return f"""
+        # "Us Government" isn't a rating rung alongside AAA/AA/A/BBB/... — it's Yahoo's
+        # own issuer-type flag (government vs. corporate) living in the same flat
+        # bond_ratings dict as the credit-rating buckets, and it doesn't sum to 100%
+        # against them (e.g. a fund reporting a=59%, bbb=32%, aaa=9%, us_government=100%
+        # all at once). Summing it into the same total as the rating buckets double-
+        # counts exposure, so it's excluded from the rated total/percentages here and
+        # surfaced separately as an informational stat instead.
+        def _quality_rank(col: str) -> str:
+            return f"""
             CASE {col}
                 WHEN 'AAA' THEN 1 WHEN 'AA' THEN 2 WHEN 'A' THEN 3 WHEN 'BBB' THEN 4
                 WHEN 'BB' THEN 5 WHEN 'B' THEN 6 WHEN 'Below B' THEN 7 WHEN 'Other' THEN 8
@@ -3888,7 +3965,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
                 ELSE 11
             END
         """
-    summary_query = holdings_cte + detail_cte + f"""
+        summary_query = holdings_cte + detail_cte + f"""
     , rated AS (SELECT * FROM detail_combined WHERE quality != 'Us Government')
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT quality, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
@@ -3896,7 +3973,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
            ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
     FROM rated GROUP BY quality ORDER BY {_quality_rank('quality')}
     """
-    us_gov_query = holdings_cte + detail_cte + """
+        us_gov_query = holdings_cte + detail_cte + """
     , rated AS (SELECT * FROM detail_combined WHERE quality != 'Us Government')
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT ROUND(SUM(value_eur)::numeric,2) AS value_eur,
@@ -3904,7 +3981,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
            ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
     FROM detail_combined WHERE quality = 'Us Government'
     """
-    detail_query = holdings_cte + detail_cte + f"""
+        detail_query = holdings_cte + detail_cte + f"""
     , quality_totals AS (SELECT quality, SUM(value_eur) AS quality_total FROM detail_combined GROUP BY quality)
     SELECT dc.quality, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
@@ -3914,27 +3991,42 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None)):
     GROUP BY dc.quality, dc.securities_id, dc.name, dc.ticker, qt.quality_total
     ORDER BY dc.quality = 'Us Government', {_quality_rank('dc.quality')}, value_eur DESC
     """
-    with get_db() as conn:
-        summary_df = pd.read_sql(summary_query, conn)
-        us_gov_df = pd.read_sql(us_gov_query, conn)
-        detail_df = pd.read_sql(detail_query, conn)
-    us_gov_row = _df_to_list(us_gov_df)
-    us_gov = us_gov_row[0] if us_gov_row and us_gov_row[0].get("value_eur") is not None else None
-    return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df), "us_government": us_gov}
+        with get_db() as conn:
+            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
+            us_gov_df = pd.read_sql(us_gov_query, conn, params=pit_params)
+            detail_df = pd.read_sql(detail_query, conn, params=pit_params)
+        us_gov_row = _df_to_list(us_gov_df)
+        us_gov = us_gov_row[0] if us_gov_row and us_gov_row[0].get("value_eur") is not None else None
+        return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df), "us_government": us_gov}
+
+    result = _run(None)
+    if compare_date:
+        result["compare"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 @router.get("/xray/stock-overlap")
-def get_xray_stock_overlap(account_ids: Optional[str] = Query(None)):
+def get_xray_stock_overlap(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Ungrouped rows — one per direct-stock holding, one per fund constituent (top-10
-    only). Frontend groups by symbol to compute true cross-portfolio concentration."""
+    only). Frontend groups by symbol to compute true cross-portfolio concentration.
+    compare_date, when given, additionally computes the same rows as of that past
+    date (point-in-time holdings/prices — see _pit_ctes) under "compare"/
+    "compare_date". Fund top-holdings/weights themselves always reflect today's
+    fund data — Oikos has no historical version of a fund's own constituents."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    query = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        pit_params = {"as_of": as_of} if as_of else None
+        query = f"""
+    WITH {fx_cte},
+    {prices_cte},
+    {h_src_cte},
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type, s.Securities_Name, s.Yahoo_Ticker,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON s.Securities_Id=h.Securities_Id
+        FROM h_src h JOIN Securities s ON s.Securities_Id=h.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity>0{acct_clause}
@@ -3970,32 +4062,47 @@ def get_xray_stock_overlap(account_ids: Optional[str] = Query(None)):
     FROM fund_constituents
     ORDER BY value_eur DESC
     """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
+        with get_db() as conn:
+            df = pd.read_sql(query, conn, params=pit_params)
+        return _df_to_list(df)
+
+    result = {"rows": _run(None)}
+    if compare_date:
+        result["compare_rows"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 @router.get("/xray/expense-ratio")
-def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
+def get_xray_expense_ratio(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
     """Weighted-average expense ratio across held funds, plus coverage_pct (fund
     €-value with a known expense ratio ÷ total fund €-value) so the UI can show
     e.g. '0.12% (covers 94% of fund holdings by value)' rather than implying completeness.
-    Also returns a per-fund breakdown (value, % of fund holdings, own expense ratio)."""
+    Also returns a per-fund breakdown (value, % of fund holdings, own expense ratio).
+    compare_date, when given, additionally computes the same breakdown as of that
+    past date (point-in-time holdings/prices — see _pit_ctes) under "compare"/
+    "compare_date". Each fund's own expense ratio always reflects today's data —
+    Oikos has no historical version of a fund's own expense ratio."""
     acct_clause = _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id")
-    holdings_cte = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+
+    def _run(as_of: Optional[str]):
+        fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of)
+        pit_params = {"as_of": as_of} if as_of else None
+        holdings_cte = f"""
+    WITH {fx_cte},
+    {prices_cte},
+    {h_src_cte},
     holdings_value AS (
         SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
                SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
+        FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
         LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
         LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
         WHERE h.Quantity > 0{acct_clause} AND s.Securities_Type IN ('ETF','Mutual Fund')
         GROUP BY h.Securities_Id, s.Securities_Type
     )
     """
-    summary_query = holdings_cte + """
+        summary_query = holdings_cte + """
     SELECT
         ROUND((SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur * fc.Expense_Ratio_Pct ELSE 0 END)
                / NULLIF(SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur ELSE 0 END),0) * 100)::numeric,4) AS weighted_expense_ratio_pct,
@@ -4005,7 +4112,7 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
     FROM holdings_value hv
     LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
     """
-    funds_query = holdings_cte + """
+        funds_query = holdings_cte + """
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM holdings_value)
     SELECT s.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
            ROUND(hv.value_eur::numeric,2) AS value_eur,
@@ -4016,11 +4123,17 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None)):
     LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
     ORDER BY hv.value_eur DESC
     """
-    with get_db() as conn:
-        summary_df = pd.read_sql(summary_query, conn)
-        funds_df = pd.read_sql(funds_query, conn)
-    summary = _df_to_list(summary_df)
-    return {"summary": summary[0] if summary else None, "funds": _df_to_list(funds_df)}
+        with get_db() as conn:
+            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
+            funds_df = pd.read_sql(funds_query, conn, params=pit_params)
+        summary = _df_to_list(summary_df)
+        return {"summary": summary[0] if summary else None, "funds": _df_to_list(funds_df)}
+
+    result = _run(None)
+    if compare_date:
+        result["compare"] = _run(compare_date)
+        result["compare_date"] = compare_date
+    return result
 
 
 # ── Spending by Payee ─────────────────────────────────────────────────────────
@@ -5473,6 +5586,56 @@ def _acct_clause(account_ids: Optional[list], col: str = "h.Accounts_Id") -> str
         return ""
     ids_sql = ",".join(str(i) for i in account_ids)
     return f" AND {col} IN ({ids_sql})"
+
+
+# ── Point-in-time holdings/prices/cash — shared by the X-Ray (Portfolio Analysis)
+# endpoints' "compare vs a past date" support ────────────────────────────────────
+# There's no historical snapshot table for Holdings (it's a live-only cache, one
+# row per position, overwritten as trades happen) or for Fund_Composition (sector
+# weights/asset mix/bond ratings/category/expense ratio — one row per security,
+# always "as of today"). So a past date can only ever make the *holdings quantity
+# and price/FX* side of these breakdowns point-in-time; fund composition stays
+# current, the same approximation the "live" view already makes for today. This
+# mirrors the replay-from-Investments-ledger technique /holdings-snapshot already
+# uses for Detail Analysis's own "As of date", and the "current balance minus
+# transactions after the date" technique /net-worth-report already uses for
+# Cash/Checking/Savings/Credit Card accounts.
+def _pit_ctes(as_of: Optional[str]) -> tuple[str, str, str]:
+    """(fx_cte, prices_cte, h_src_cte) text for the WITH clause — h_src exposes
+    (Securities_Id, Accounts_Id, Quantity) either from the live Holdings table
+    (as_of=None) or replayed from Investments up to as_of. Bind %(as_of)s via
+    params={'as_of': as_of} when as_of is given."""
+    if not as_of:
+        return (
+            "fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC)",
+            "prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)",
+            "h_src AS (SELECT Securities_Id, Accounts_Id, Quantity FROM Holdings)",
+        )
+    return (
+        "fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX WHERE Date <= %(as_of)s ORDER BY Currencies_Id_1, Date DESC)",
+        "prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices WHERE Date <= %(as_of)s ORDER BY Securities_Id, Date DESC)",
+        """h_src AS (
+            SELECT Securities_Id, Accounts_Id,
+                   SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                            WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END) AS Quantity
+            FROM Investments
+            WHERE Date <= %(as_of)s
+            GROUP BY Securities_Id, Accounts_Id
+            HAVING SUM(CASE WHEN Action IN ('Buy','Reinvest','ShrIn') THEN Quantity
+                             WHEN Action IN ('Sell','ShrOut') THEN -Quantity ELSE 0 END) > 0.00000001
+        )""",
+    )
+
+
+def _pit_cash_balance_expr(as_of: Optional[str]) -> str:
+    """SQL expression (referencing alias `a` for Accounts) for a cash-like account's
+    balance as of a date — its current balance minus every transaction posted after
+    that date — or the live balance when as_of is None."""
+    if not as_of:
+        return "a.Accounts_Balance"
+    return """(a.Accounts_Balance - COALESCE((
+        SELECT SUM(Total_Amount) FROM Transactions WHERE Accounts_Id = a.Accounts_Id AND Date > %(as_of)s
+    ), 0))"""
 
 
 # ── Portfolio Presets ───────────────────────────────────────────────────────────
