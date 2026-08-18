@@ -1974,9 +1974,11 @@ function PnlReport() {
   const [showFxSplit, setShowFxSplit] = usePersist('pnl_showFxSplit', false)
   const [showPct, setShowPct] = usePersist('pnl_showPct', true)
   const [showClosedPositions, setShowClosedPositions] = usePersist('pnl_showClosedPositions', false)
+  const [showBenchmark, setShowBenchmark] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedAccount = searchParams.get('pnl_account')
   const setSelectedAccount = (acc: string | null) => {
+    setShowBenchmark(false)
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
       acc ? next.set('pnl_account', acc) : next.delete('pnl_account')
@@ -2043,6 +2045,10 @@ function PnlReport() {
   const totalPnlPct    = totalValue !== 0 ? (totalPnl / totalValue) * 100 : null
   const totalCostBasis = totalValue - totalUnreal
   const totalUnrealPct = totalCostBasis !== 0 ? (totalUnreal / totalCostBasis) * 100 : null
+
+  const selectedAccountId: number | null = selectedAccount
+    ? Number(accountMap.get(selectedAccount)?.[0]?.accounts_id ?? NaN) || null
+    : null
 
   const drillRows = selectedAccount
     ? (accountMap.get(selectedAccount) ?? [])
@@ -2121,7 +2127,18 @@ function PnlReport() {
             <button onClick={() => setSelectedAccount(null)} className="text-blue-600 hover:underline text-sm">← All Accounts</button>
             <span className="text-slate-400 text-sm">/</span>
             <span className="text-sm font-semibold text-slate-700">{selectedAccount}</span>
+            {selectedAccountId != null && (
+              <button onClick={() => setShowBenchmark(v => !v)}
+                className={`ml-auto px-2.5 py-1 rounded text-xs font-medium ${showBenchmark ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                📊 Benchmark
+              </button>
+            )}
           </div>
+          {showBenchmark && selectedAccountId != null && (
+            <div className="p-3 bg-white border border-slate-200 rounded-lg">
+              <BenchmarkTab accountIds={[selectedAccountId]} keyPrefix={`pnl_bench_${selectedAccountId}`} defaultYtd />
+            </div>
+          )}
           <div className="flex flex-wrap gap-x-6 gap-y-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
             <span className="text-slate-500 font-medium">Totals:</span>
             <span className="tabular-nums">Value: <strong>{fmtEur(drillValue)}</strong></span>
@@ -3868,24 +3885,44 @@ function BondScheduleTab() {
   )
 }
 
-function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
+function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: { accountIds?: number[]; keyPrefix?: string; defaultYtd?: boolean }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
-  const [benchmarkId, setBenchmarkId] = usePersist<number | null>('bench_id', null)
-  const [lookback, setLookback] = usePersist('bench_lookback', 365)
-  const [resample, setResample] = usePersist('bench_resample', 'Daily')
+  const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
+  const [compareMode, setCompareMode] = usePersist<'index' | 'account'>(`${keyPrefix}_compare_mode`, 'index')
+  const [benchmarkId, setBenchmarkId] = usePersist<number | null>(`${keyPrefix}_id`, null)
+  const [compareAccountId, setCompareAccountId] = usePersist<number | null>(`${keyPrefix}_cmp_account`, null)
+  const [lookback, setLookback] = usePersist(`${keyPrefix}_lookback`, 365)
+  const [ytd, setYtd] = usePersist(`${keyPrefix}_ytd`, defaultYtd)
+  const [resample, setResample] = usePersist(`${keyPrefix}_resample`, 'Daily')
   const cands = candidates as Row[]
+  const otherAccounts = (allAccounts as Row[])
+    .filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)))
+    .filter(a => a.is_active !== false && a.is_active !== 0 && a.is_active !== 'false')
+    .map(a => ({ id: Number(a.id), name: String(a.name ?? '') }))
+    .filter(a => !accountIds || !accountIds.includes(a.id))
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   const effId = benchmarkId ?? (cands[0] ? Number(cands[0].id) : null)
+  const effCompareAccountId = compareAccountId ?? (otherAccounts[0]?.id ?? null)
+  const isAccountMode = compareMode === 'account'
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ['benchmark', effId, lookback, accountIds, resample],
-    queryFn: () => getBenchmark(effId!, lookback, accountIds, resample),
-    enabled: effId != null,
+    queryKey: ['benchmark', isAccountMode ? null : effId, isAccountMode ? effCompareAccountId : null, lookback, ytd, accountIds, resample],
+    queryFn: () => getBenchmark(
+      isAccountMode ? null : effId!, lookback, accountIds, resample,
+      isAccountMode && effCompareAccountId != null ? [effCompareAccountId] : undefined,
+      ytd,
+    ),
+    enabled: isAccountMode ? effCompareAccountId != null : effId != null,
     refetchInterval: liveRefetchMs,
   })
   const rows = data as { date: string; portfolio: number; benchmark: number | null }[]
+
+  const compareLabel = isAccountMode
+    ? (otherAccounts.find(a => a.id === effCompareAccountId)?.name ?? 'Account')
+    : (cands.find(c => Number(c.id) === effId)?.name as string ?? 'Benchmark')
 
   const portReturn  = rows.length ? ((rows[rows.length - 1].portfolio / 100 - 1) * 100).toFixed(2) : null
   const benchReturn = rows.length && rows[rows.length - 1].benchmark != null
@@ -3895,17 +3932,36 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="Market index or security to compare your portfolio against. Both series are indexed to 100 at the start date.">Benchmark</Tooltip></label>
-          <select className="rounded border border-slate-300 px-2 py-1 text-sm"
-            value={effId ?? ''} onChange={e => setBenchmarkId(Number(e.target.value))}>
-            {cands.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
-          </select>
+          <label className="text-xs text-slate-500"><Tooltip text="Compare against a market index/security, or against another account's own holdings-weighted performance.">Compare vs</Tooltip></label>
+          <div className="flex rounded border border-slate-300 overflow-hidden text-xs">
+            <button onClick={() => setCompareMode('index')} className={`px-2 py-1 ${!isAccountMode ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Market Index</button>
+            <button onClick={() => setCompareMode('account')} className={`px-2 py-1 ${isAccountMode ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Account</button>
+          </div>
         </div>
+        {isAccountMode ? (
+          <div className="flex items-center gap-2">
+            <select className="rounded border border-slate-300 px-2 py-1 text-sm"
+              value={effCompareAccountId ?? ''} onChange={e => setCompareAccountId(Number(e.target.value))}>
+              {otherAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <select className="rounded border border-slate-300 px-2 py-1 text-sm"
+              value={effId ?? ''} onChange={e => setBenchmarkId(Number(e.target.value))}>
+              {cands.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="Lookback window in calendar days: 3M = 91, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095. Both portfolio and benchmark are indexed to 100 at the start date.">Lookback</Tooltip></label>
+          <label className="text-xs text-slate-500"><Tooltip text="Lookback window: YTD = since Jan 1 this year, 3M = 91 days, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095. Both series are indexed to 100 at the start date.">Lookback</Tooltip></label>
+          <button onClick={() => setYtd(true)}
+            className={`px-2 py-1 text-xs rounded border ${ytd ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            YTD
+          </button>
           {([91, 182, 365, 730, 1095] as const).map(d => (
-            <button key={d} onClick={() => setLookback(d)}
-              className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            <button key={d} onClick={() => { setYtd(false); setLookback(d) }}
+              className={`px-2 py-1 text-xs rounded border ${!ytd && lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
               {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : '3Y'}
             </button>
           ))}
@@ -3921,15 +3977,15 @@ function BenchmarkTab({ accountIds }: { accountIds?: number[] }) {
       </div>
       {portReturn != null && benchReturn != null && (
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Your portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings.">Portfolio Return</Tooltip></p><p className={`text-xl font-bold ${Number(portReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(portReturn) >= 0 ? '+' : ''}{portReturn}%</p></div>
-          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Selected benchmark's total return over the same period, indexed to the same start date as your portfolio.">Benchmark Return</Tooltip></p><p className={`text-xl font-bold ${Number(benchReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(benchReturn) >= 0 ? '+' : ''}{benchReturn}%</p></div>
+          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings.">Portfolio Return</Tooltip></p><p className={`text-xl font-bold ${Number(portReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(portReturn) >= 0 ? '+' : ''}{portReturn}%</p></div>
+          <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text={isAccountMode ? "The comparison account's own total return over the same period, indexed to the same start date." : "Selected benchmark's total return over the same period, indexed to the same start date as your portfolio."}>{compareLabel} Return</Tooltip></p><p className={`text-xl font-bold ${Number(benchReturn) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(benchReturn) >= 0 ? '+' : ''}{benchReturn}%</p></div>
         </div>
       )}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : rows.length > 0 && (
         <Plot
           data={[
             { x: rows.map(r => r.date), y: rows.map(r => r.portfolio), name: 'Portfolio', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2 } },
-            { x: rows.map(r => r.date), y: rows.map(r => r.benchmark), name: cands.find(c => Number(c.id) === effId)?.name as string ?? 'Benchmark', type: 'scatter', mode: 'lines', line: { color: '#f59e0b', width: 2, dash: 'dot' } },
+            { x: rows.map(r => r.date), y: rows.map(r => r.benchmark), name: compareLabel, type: 'scatter', mode: 'lines', line: { color: '#f59e0b', width: 2, dash: 'dot' } },
           ]}
           layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}

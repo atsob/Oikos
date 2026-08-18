@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-19
+
+### Added
+- **Inv. Performance → P&L's per-account drill-down gains a Benchmark button**, opening the same performance-over-time chart used by the standalone Benchmark tab, scoped to just that one account and defaulting to YTD. A "Compare vs" toggle switches the comparison side between a Market Index (unchanged from before) and another Account of your own — picking an account computes its own holdings-weighted return series the same way the "portfolio" side already was, rather than reading a security's price history. The standalone Benchmark tab (Inv. Performance → Benchmark) gains the same Market Index/Account toggle and a YTD lookback option alongside the existing 3M/6M/1Y/2Y/3Y buttons.
+
 ## 2026-08-18
 
 ### Added

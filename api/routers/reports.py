@@ -5734,63 +5734,48 @@ def get_benchmark_candidates(min_days: int = Query(30)):
 
 
 # ── Benchmark comparison ───────────────────────────────────────────────────────
-@router.get("/benchmark")
-def get_benchmark(
-    benchmark_id: int = Query(...),
-    lookback_days: int = Query(252),
-    account_ids: Optional[str] = Query(None),
-    resample: str = Query("Daily"),
-):
-    """Portfolio (weighted avg of holdings) vs benchmark, both indexed to 100."""
-    acct_ids = _parse_account_ids(account_ids)
-    held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
-    weights_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+def _account_weighted_index(conn, acct_clause: str, lookback_days: int) -> Optional["pd.Series"]:
+    """A (Holdings-weighted, today's-weights-held-constant) daily return index for the
+    given account scope, indexed to 100 at the start of the window — the same NAV-style
+    approximation used for the primary "portfolio" side of /benchmark, factored out so
+    it can also stand in as the comparison side (another account instead of a market
+    index/security)."""
+    prices_df = pd.read_sql(f"""
+        WITH held AS (
+            SELECT DISTINCT h.Securities_Id FROM Holdings h WHERE h.Quantity > 0{acct_clause}
+        ),
+        price_counts AS (
+            SELECT hp.Securities_Id FROM Historical_Prices hp
+            JOIN held ON held.Securities_Id = hp.Securities_Id
+            GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
+        )
+        SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
+        FROM Historical_Prices hp
+        JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
+        JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+        WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+        ORDER BY hp.Date
+    """, conn, params={"lb": lookback_days})
 
-    with get_db() as conn:
-        prices_df = pd.read_sql(f"""
-            WITH held AS (
-                SELECT DISTINCT h.Securities_Id FROM Holdings h WHERE h.Quantity > 0{held_clause}
-            ),
-            price_counts AS (
-                SELECT hp.Securities_Id FROM Historical_Prices hp
-                JOIN held ON held.Securities_Id = hp.Securities_Id
-                GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
-            )
-            SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
-            FROM Historical_Prices hp
-            JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
-            JOIN Securities s ON s.Securities_Id = hp.Securities_Id
-            WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
-            ORDER BY hp.Date
-        """, conn, params={"lb": lookback_days})
+    weights_df = pd.read_sql(f"""
+        WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+             lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+        SELECT s.Securities_Name AS ticker,
+               SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
+        FROM Holdings h
+        JOIN Securities s ON s.Securities_Id=h.Securities_Id
+        JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
+        JOIN lp ON lp.Securities_Id=h.Securities_Id
+        LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+        WHERE h.Quantity > 0{acct_clause}
+        GROUP BY s.Securities_Name
+        HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
+    """, conn)
 
-        weights_df = pd.read_sql(f"""
-            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-                 lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
-            SELECT s.Securities_Name AS ticker,
-                   SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
-            FROM Holdings h
-            JOIN Securities s ON s.Securities_Id=h.Securities_Id
-            JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
-            JOIN lp ON lp.Securities_Id=h.Securities_Id
-            LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-            WHERE h.Quantity > 0{weights_clause}
-            GROUP BY s.Securities_Name
-            HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
-        """, conn)
-
-        bench_df = pd.read_sql("""
-            SELECT Date AS date, Close AS close FROM Historical_Prices
-            WHERE Securities_Id = %(bid)s AND Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
-            ORDER BY Date
-        """, conn, params={"bid": benchmark_id, "lb": lookback_days})
-
-    if prices_df.empty or weights_df.empty or bench_df.empty:
-        return []
+    if prices_df.empty or weights_df.empty:
+        return None
 
     prices_df["date"] = pd.to_datetime(prices_df["date"])
-    bench_df["date"]  = pd.to_datetime(bench_df["date"])
-
     wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean")
     total = weights_df["value_eur"].sum()
     weights_df["weight"] = weights_df["value_eur"] / total
@@ -5798,6 +5783,8 @@ def get_benchmark(
     common = wide.columns.intersection(w.index)
     wide = wide[common]
     w = w[common]
+    if w.sum() == 0:
+        return None
     w = w / w.sum()
 
     wide_ffill = wide.ffill()
@@ -5805,12 +5792,61 @@ def get_benchmark(
     port_ret = ret.dot(w)
     port_idx = (1 + port_ret).cumprod() * 100
     port_idx.iloc[0] = 100
+    return port_idx
 
-    bench_s = bench_df.set_index("date")["close"].reindex(port_idx.index).ffill().bfill()
+
+@router.get("/benchmark")
+def get_benchmark(
+    benchmark_id: Optional[int] = Query(None),
+    lookback_days: int = Query(252),
+    account_ids: Optional[str] = Query(None),
+    compare_account_ids: Optional[str] = Query(None),
+    resample: str = Query("Daily"),
+    ytd: bool = Query(False),
+):
+    """Portfolio (weighted avg of holdings) vs either a benchmark security/index or
+    another account's own weighted portfolio, both indexed to 100. Pass exactly one of
+    benchmark_id (a Securities_Id, e.g. a market index) or compare_account_ids
+    (comma-separated account ids) as the comparison side — compare_account_ids wins if
+    both are somehow given. ytd=true overrides lookback_days to "since Jan 1 this year"."""
+    if ytd:
+        from datetime import date as _date
+        _today = _date.today()
+        lookback_days = (_today - _date(_today.year, 1, 1)).days + 1
+
+    acct_ids = _parse_account_ids(account_ids)
+    held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+
+    with get_db() as conn:
+        port_idx = _account_weighted_index(conn, held_clause, lookback_days)
+
+        cmp_acct_ids = _parse_account_ids(compare_account_ids)
+        if cmp_acct_ids:
+            cmp_clause = _acct_clause(cmp_acct_ids, "h.Accounts_Id")
+            bench_idx_raw = _account_weighted_index(conn, cmp_clause, lookback_days)
+            bench_idx = bench_idx_raw if bench_idx_raw is not None else None
+        elif benchmark_id:
+            bench_df = pd.read_sql("""
+                SELECT Date AS date, Close AS close FROM Historical_Prices
+                WHERE Securities_Id = %(bid)s AND Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+                ORDER BY Date
+            """, conn, params={"bid": benchmark_id, "lb": lookback_days})
+            if bench_df.empty:
+                bench_idx = None
+            else:
+                bench_df["date"] = pd.to_datetime(bench_df["date"])
+                bench_idx = bench_df.set_index("date")["close"]
+        else:
+            bench_idx = None
+
+    if port_idx is None or bench_idx is None:
+        return []
+
+    bench_s = bench_idx.reindex(port_idx.index).ffill().bfill()
     first_bench = bench_s.iloc[0] if not pd.isna(bench_s.iloc[0]) else bench_s.dropna().iloc[0] if not bench_s.dropna().empty else None
-    bench_idx = bench_s / first_bench * 100 if first_bench else pd.Series(index=port_idx.index, dtype=float)
+    bench_norm = bench_s / first_bench * 100 if first_bench else pd.Series(index=port_idx.index, dtype=float)
 
-    combined = pd.DataFrame({"portfolio": port_idx, "benchmark": bench_idx})
+    combined = pd.DataFrame({"portfolio": port_idx, "benchmark": bench_norm})
 
     resample_map = {"Daily": None, "Weekly": "W", "Monthly": "ME"}
     freq = resample_map.get(resample)

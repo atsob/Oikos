@@ -864,8 +864,15 @@ export const getDividendRecommendations = () =>
 export const getBondSchedule = () =>
   api.get('/reports/bond-schedule').then(r => r.data)
 
-export const getBenchmark = (benchmarkId: number, lookbackDays = 252, accountIds?: number[], resample = 'Daily') =>
-  api.get('/reports/benchmark', { params: { benchmark_id: benchmarkId, lookback_days: lookbackDays, account_ids: accountIds?.join(',') || undefined, resample } }).then(r => r.data)
+export const getBenchmark = (
+  benchmarkId?: number | null, lookbackDays = 252, accountIds?: number[], resample = 'Daily',
+  compareAccountIds?: number[], ytd = false,
+) =>
+  api.get('/reports/benchmark', { params: {
+    benchmark_id: benchmarkId ?? undefined, lookback_days: lookbackDays,
+    account_ids: accountIds?.join(',') || undefined, resample,
+    compare_account_ids: compareAccountIds?.join(',') || undefined, ytd: ytd || undefined,
+  } }).then(r => r.data)
 
 export const getCorrelation = (lookbackDays = 252, maxHoldings = 20, accountIds?: number[]) =>
   api.get('/reports/correlation', { params: { lookback_days: lookbackDays, max_holdings: maxHoldings, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)

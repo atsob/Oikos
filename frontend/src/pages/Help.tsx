@@ -576,10 +576,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           Ten sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
           <b>Performance</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
-          <b>Bond Schedule</b>, <b>Benchmark</b> (compare against an index), <b>Risk Metrics</b>,{' '}
-          <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and money-weighted
-          return).
+          <b>Bond Schedule</b>, <b>Benchmark</b> (compare against a market index or another account),{' '}
+          <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and
+          money-weighted return).
         </P>
+        <Note>
+          <b>P&amp;L</b>'s per-account drill-down has its own <b>📊 Benchmark</b> button, opening a YTD-by-default
+          performance chart for just that account — same "Compare vs" toggle as the standalone Benchmark tab, so
+          you can measure a single account against a market index or against another one of your own accounts
+          without leaving the drill-down.
+        </Note>
         <Note>
           <b>Dividend Tracker → Forecast</b> has a period selector — <b>Till EOY</b>, <b>Next 6 Months</b>, or{' '}
           <b>Next 12 Months</b> — that bounds the projected total, monthly chart, and per-security table to real
