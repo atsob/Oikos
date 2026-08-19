@@ -4,13 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
-  getDraftTransactions, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
+  getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
 import { TxModal, useTxModal } from '@/components/TxModal'
+import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
@@ -827,10 +828,17 @@ export default function Dashboard() {
     queryFn: () => getWeeklySummaries(12),
   })
 
+  // Same rows/queryKey as Recurring → Pending Drafts (Transactions.Is_Draft=TRUE) —
+  // sharing the queryKey keeps both pages' caches in sync, and the richer fields this
+  // endpoint returns (accounts_id, payees_id, accounts_id_target, template_name) are
+  // what DraftReviewModal needs to prefill its edit form.
   const { data: drafts = [] } = useQuery({
-    queryKey: ['draft-transactions'],
-    queryFn: getDraftTransactions,
+    queryKey: ['recurring-drafts'],
+    queryFn: getRecurringDrafts,
   })
+  const [reviewDraft, setReviewDraft] = React.useState<Record<string, unknown> | null>(null)
+  const { data: draftPayees = [] } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: draftCategories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
 
   const { data: insights = [] } = useQuery({
     queryKey: ['insights'],
@@ -841,7 +849,7 @@ export default function Dashboard() {
   const confirmOne = useMutation({
     mutationFn: confirmDraft,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['draft-transactions'] })
+      qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
     },
   })
@@ -849,14 +857,14 @@ export default function Dashboard() {
   const confirmAll = useMutation({
     mutationFn: confirmAllDrafts,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['draft-transactions'] })
+      qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
     },
   })
 
   const deleteOne = useMutation({
     mutationFn: deleteDraft,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['draft-transactions'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring-drafts'] }),
   })
 
   // Balance sync
@@ -1059,6 +1067,10 @@ export default function Dashboard() {
                       <span className={`text-sm font-semibold tabular-nums ${Number(d.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {fmtEur(Number(d.amount))}
                       </span>
+                      <button className="text-slate-400 hover:text-blue-600 p-0.5" title="Review"
+                        onClick={() => setReviewDraft(d)}>
+                        <Pencil size={14} />
+                      </button>
                       <button className="text-green-600 hover:text-green-700 p-0.5" title="Confirm"
                         onClick={() => confirmOne.mutate(Number(d.id))}>
                         <Check size={15} />
@@ -1074,6 +1086,23 @@ export default function Dashboard() {
             </CardBody>
           </Card>
         </div>
+
+        {reviewDraft && (
+          <DraftReviewModal
+            draft={reviewDraft}
+            accounts={accounts as Record<string, unknown>[]}
+            payees={draftPayees as Record<string, unknown>[]}
+            categories={draftCategories as Record<string, unknown>[]}
+            onClose={() => setReviewDraft(null)}
+            onSaved={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+            onConfirmed={() => {
+              qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
+              qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+              setReviewDraft(null)
+            }}
+            onDeleted={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+          />
+        )}
 
         {/* Net Worth Breakdown */}
         <Card>

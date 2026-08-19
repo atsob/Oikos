@@ -259,7 +259,7 @@ interface DraftForm {
   accounts_id: string; payees_id: string; accounts_id_target: string
 }
 
-function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSaved, onConfirmed, onDeleted }: {
+export function DraftReviewModal({ draft, accounts, payees, categories, onClose, onSaved, onConfirmed, onDeleted }: {
   draft: Row
   accounts: Row[]; payees: Row[]; categories: Row[]
   onClose: () => void
