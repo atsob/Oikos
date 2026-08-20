@@ -10,7 +10,7 @@ import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
 } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
@@ -46,7 +46,7 @@ function periodToFromDate(p: ChartPeriod): string {
   const months: Record<string, number> = { '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 }
   const d = new Date(now)
   d.setMonth(d.getMonth() - months[p])
-  return d.toISOString().slice(0, 10)
+  return toLocalISODate(d)
 }
 
 function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p: ChartPeriod) => void }) {
@@ -91,7 +91,7 @@ function PricesTab({ secId }: { secId: number }) {
   const [priceSearch, setPriceSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
+  const [entryDate, setEntryDate] = useState(todayLocal())
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -893,7 +893,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
 
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [msg, setMsg] = useState<string | null>(null)
-  const [newExDate, setNewExDate] = useState(new Date().toISOString().slice(0, 10))
+  const [newExDate, setNewExDate] = useState(todayLocal())
   const [newPayDate, setNewPayDate] = useState('')
   const [newAmount, setNewAmount] = useState('')
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
@@ -1093,7 +1093,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
 // ── Corporate Actions Tab ─────────────────────────────────────────────────────
 type EventGroup = 'split' | 'default_delisting' | 'dividend' | 'return_of_capital'
 
-const TODAY = new Date().toISOString().slice(0, 10)
+const TODAY = todayLocal()
 
 function CorporateActionsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
   const qc = useQueryClient()

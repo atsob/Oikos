@@ -30,7 +30,7 @@ import {
   api,
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink } from '@/components/ui'
-import { fmtEur, fmtPct, fmtNum, plotLayout } from '@/lib/utils'
+import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
@@ -521,7 +521,7 @@ function NwDetailAnalysis({ rows, allPeriods, grouping }: { rows: Row[]; allPeri
 function NetWorthSection() {
   const [tab, setTab] = usePersist('nw_tab', 'Overview')
   const [startDate, setStartDate] = usePersist('nw_startDate', '2000-01-01')
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   const [endDate, setEndDate] = usePersist('nw_endDate', today)
   const [grouping, setGrouping] = usePersist<'year'|'quarter'|'month'>('nw_grouping', 'year')
   const [showZeroBalance, setShowZeroBalance] = usePersist('nw_showZeroBalance', false)
@@ -1710,13 +1710,13 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
 function lastMonthEnd(): string {
   const d = new Date()
   d.setDate(0)
-  return d.toISOString().slice(0, 10)
+  return toLocalISODate(d)
 }
 
 function XRayTab({ accountIds }: { accountIds?: number[] }) {
   const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
   const [compareDate, setCompareDate] = usePersist('xray_compare_date', '')
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   return (
     <div className="space-y-3">
       <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
@@ -1972,7 +1972,7 @@ function EditablePriceCell({ securitiesId, price, currency, onSaved }: {
     if (!securitiesId || !value.trim() || isNaN(num) || num === price) return
     setSaving(true)
     try {
-      await addPrice({ security_id: Number(securitiesId), date: new Date().toISOString().slice(0, 10), close: num })
+      await addPrice({ security_id: Number(securitiesId), date: todayLocal(), close: num })
       onSaved()
     } finally {
       setSaving(false)
@@ -2598,8 +2598,8 @@ function DividendTrackerTab() {
 
   // ── Actual state ─────────────────────────────────────────────────────────────
   const [period, setPeriod] = usePersist('div_period', 'YTD')
-  const [customFrom, setCustomFrom] = usePersist('div_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
-  const [customTo, setCustomTo] = usePersist('div_to', new Date().toISOString().slice(0, 10))
+  const [customFrom, setCustomFrom] = usePersist('div_from', toLocalISODate(new Date(Date.now() - 365 * 86400000)))
+  const [customTo, setCustomTo] = usePersist('div_to', todayLocal())
   const [detailOpen, setDetailOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
@@ -3471,8 +3471,8 @@ function SavingsAccountsTab() {
 
   // ── Actual state ─────────────────────────────────────────────────────────────
   const [period, setPeriod] = usePersist('sav_period', 'All Time')
-  const [customFrom, setCustomFrom] = usePersist('sav_from', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10))
-  const [customTo, setCustomTo] = usePersist('sav_to', new Date().toISOString().slice(0, 10))
+  const [customFrom, setCustomFrom] = usePersist('sav_from', toLocalISODate(new Date(Date.now() - 365 * 86400000)))
+  const [customTo, setCustomTo] = usePersist('sav_to', todayLocal())
 
   const { data, isLoading } = useQuery({
     queryKey: ['savings-accounts', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
@@ -5128,7 +5128,7 @@ function categoryMatches(fullPath: string, selected: string): boolean {
 function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { startDate: string; endDate: string }) {
   const { isDark } = useTheme()
   const qc = useQueryClient()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   const ytdStart = `${new Date().getFullYear()}-01-01`
   // YTD mode (default on, like Net Worth's) recomputes start/end fresh on every render
   // instead of trusting the persisted dates below, which would otherwise go stale — "today"
@@ -7891,7 +7891,7 @@ const DR_OPTIONS = ['Year to Date', 'Last Year', 'Last 12 Months', 'Last 24 Mont
 
 function drDates(type: string): { dateFrom: string; dateTo: string } {
   const now = new Date()
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  const fmt = (d: Date) => toLocalISODate(d)
   const y = now.getFullYear()
   if (type === 'Year to Date') return { dateFrom: `${y}-01-01`, dateTo: fmt(now) }
   if (type === 'Last Year')    return { dateFrom: `${y - 1}-01-01`, dateTo: `${y - 1}-12-31` }
@@ -7993,7 +7993,7 @@ function MultiSelect({ label, options, selected, onChange, placeholder }: {
 }
 
 function CustomReportsSection() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
 
   // Filter data
   const { data: filterData } = useQuery<CRFilterData>({
@@ -8621,7 +8621,7 @@ export default function Reports() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeTab, setActiveTab] = usePersist('reports_active_tab', searchParams.get('tab') ?? 'net-worth')
   const [startDate, setStartDate] = useState('2020-01-01')
-  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(todayLocal())
   const current = REPORT_TABS.find(t => t.key === activeTab)
 
   const switchTab = (key: string) => { setActiveTab(key); setSearchParams({ tab: key }, { replace: true }) }

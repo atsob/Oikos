@@ -26,7 +26,7 @@ import {
   getPayees,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
-import { cn } from '@/lib/utils'
+import { cn, todayLocal } from '@/lib/utils'
 
 // ── Tiny UI helpers ────────────────────────────────────────────────────────────
 function Alert({ type, children }: { type: 'success' | 'error' | 'warning' | 'info'; children: React.ReactNode }) {
@@ -311,7 +311,7 @@ function DataExport() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `oikos_export_${new Date().toISOString().slice(0, 10)}.xlsx`
+      a.download = `oikos_export_${todayLocal()}.xlsx`
       a.click()
       setStatus('Export downloaded.')
     } catch {

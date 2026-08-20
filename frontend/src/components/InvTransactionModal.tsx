@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getFxRates, getLinkedAccount, getHoldings } from '@/lib/api'
 import { api } from '@/lib/api'
 import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
+import { todayLocal } from '@/lib/utils'
 import { X, Save } from 'lucide-react'
 
 export const ACTIONS = [
@@ -44,7 +45,7 @@ export interface InvFormData {
 export const emptyInvForm = (): InvFormData => ({
   accounts_id: '',
   securities_id: '',
-  date: new Date().toISOString().slice(0, 10),
+  date: todayLocal(),
   action: 'Buy',
   quantity: '',
   price_per_share: '',

@@ -12,7 +12,7 @@ import {
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
-import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis } from '@/lib/utils'
+import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
 import { setPref } from '@/lib/preferences'
@@ -728,7 +728,7 @@ function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChang
     onChange(phases.map((p, idx) => idx === i ? { ...p, ...patch } : p))
   const remove = (i: number) => onChange(phases.filter((_, idx) => idx !== i))
   const add = () => onChange([...phases, {
-    label: 'New phase', season: 'Spring', start: new Date().toISOString().slice(0, 10), end: null, description: '',
+    label: 'New phase', season: 'Spring', start: todayLocal(), end: null, description: '',
   }])
   const resetToDefaults = () => onChange(DEFAULT_KWAVE_PHASES)
 
@@ -789,9 +789,9 @@ export default function Dashboard() {
   const [kwPhases, setKwPhases] = usePersist<KWavePhase[]>('kwave_phases', DEFAULT_KWAVE_PHASES)
 
   const NW_PERIODS: Record<string, string> = {
-    '1Y': new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10),
-    '3Y': new Date(Date.now() - 3 * 365 * 86400000).toISOString().slice(0, 10),
-    '5Y': new Date(Date.now() - 5 * 365 * 86400000).toISOString().slice(0, 10),
+    '1Y': toLocalISODate(new Date(Date.now() - 365 * 86400000)),
+    '3Y': toLocalISODate(new Date(Date.now() - 3 * 365 * 86400000)),
+    '5Y': toLocalISODate(new Date(Date.now() - 5 * 365 * 86400000)),
     'All': '2000-01-01',
   }
 
@@ -904,8 +904,8 @@ export default function Dashboard() {
   // For trend chart — use backend data (all accounts)
   const nwData = netWorth as Record<string, unknown>[]
 
-  const today      = new Date().toISOString().slice(0, 10)
-  const yesterday  = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  const today      = todayLocal()
+  const yesterday  = toLocalISODate(new Date(Date.now() - 86400000))
   const thisMonth  = today.slice(0, 7)
   const thisYear   = today.slice(0, 4)
 
@@ -954,7 +954,7 @@ export default function Dashboard() {
     const d = new Date()
     const dow = d.getDay() || 7
     d.setDate(d.getDate() - dow + 1 - i * 7)  // Monday of week i weeks ago
-    weekPeriods.push(d.toISOString().slice(0, 10))
+    weekPeriods.push(toLocalISODate(d))
   }
   ;(weeklySummaries as Record<string, unknown>[]).forEach(s => {
     const ws = String(s.week_start).slice(0, 10)

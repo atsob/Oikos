@@ -10,7 +10,7 @@ import {
   syncBalances, batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
-import { fmtCur, fmtDate } from '@/lib/utils'
+import { fmtCur, fmtDate, toLocalISODate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -22,7 +22,7 @@ const DEFAULT_TO_DATE = '2099-12-31'   // "no upper bound" — includes future-d
 function monthsAgo(n: number) {
   const d = new Date()
   d.setMonth(d.getMonth() - n)
-  return d.toISOString().slice(0, 10)
+  return toLocalISODate(d)
 }
 function ytdStart() { return `${new Date().getFullYear()}-01-01` }
 

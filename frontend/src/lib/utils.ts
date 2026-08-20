@@ -60,6 +60,20 @@ export function fmtPct(value: number | null | undefined, decimals = 1): string {
   return (n < 0 ? '-' : '') + _formatNumber(Math.abs(n), decimals) + '%'
 }
 
+// Local date parts, not toISOString() (which converts to UTC first) — in a
+// timezone ahead of UTC (e.g. Europe/Athens), formatting "now" or a
+// locally-constructed calendar date via toISOString() would silently roll
+// the date back a day whenever the local wall-clock time, converted to UTC,
+// crosses back into the previous UTC calendar day (routinely true for the
+// first few hours after local midnight).
+export function toLocalISODate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function todayLocal(): string {
+  return toLocalISODate(new Date())
+}
+
 export function fmtDate(date: string | null | undefined): string {
   if (!date) return '—'
   const iso = date.slice(0, 10) // YYYY-MM-DD

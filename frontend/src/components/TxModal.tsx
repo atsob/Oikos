@@ -6,7 +6,7 @@ import {
   createTransfer, createRecurringTemplate,
 } from '@/lib/api'
 import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
-import { fmtEur, cn } from '@/lib/utils'
+import { fmtEur, cn, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
@@ -21,11 +21,12 @@ export const PERIODICITIES = ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly', 'Bi-Mon
 
 export const CATEGORY_TYPES = ['Income', 'Expense', 'Transfer', 'Trading', 'Investment', 'Dividend', 'Interest', 'Tax', 'Fee']
 
-export function today() { return new Date().toISOString().slice(0, 10) }
+export function today() { return todayLocal() }
 
 /** Offsets dateStr by n periods of freq — shared by installment-series creation. */
 export function addPeriod(dateStr: string, freq: string, n: number): string {
-  const d = new Date(dateStr)
+  const [y, m, day] = dateStr.split('-').map(Number)
+  const d = new Date(y, m - 1, day)  // local components, not new Date(dateStr) (parses as UTC midnight)
   switch (freq) {
     case 'Daily':        d.setDate(d.getDate() + n); break
     case 'Weekly':       d.setDate(d.getDate() + 7 * n); break
@@ -36,7 +37,7 @@ export function addPeriod(dateStr: string, freq: string, n: number): string {
     case 'Semi-Annual':  d.setMonth(d.getMonth() + 6 * n); break
     case 'Annual':       d.setFullYear(d.getFullYear() + n); break
   }
-  return d.toISOString().slice(0, 10)
+  return toLocalISODate(d)
 }
 
 export type TxForm = {

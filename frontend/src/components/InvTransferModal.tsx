@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getHoldings, getSecurities, previewInvestmentTransfer, executeInvestmentTransfer } from '@/lib/api'
 import { Button, Select, Input, SearchableSelect, Spinner, useEscapeKey, AccountOptions } from '@/components/ui'
-import { fmtCur, fmtQty } from '@/lib/utils'
+import { fmtCur, fmtQty, todayLocal } from '@/lib/utils'
 import { X, ArrowRight, AlertTriangle } from 'lucide-react'
 import { INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 
@@ -21,7 +21,7 @@ type PreviewResult = {
   is_conversion: boolean
 }
 
-function today() { return new Date().toISOString().slice(0, 10) }
+function today() { return todayLocal() }
 
 /**
  * Moves a holding from one account to another — same security (a pure custody

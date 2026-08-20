@@ -12,7 +12,7 @@ import {
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
-import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty } from '@/lib/utils'
+import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty, todayLocal, toLocalISODate } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, ArrowLeft, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
@@ -22,9 +22,9 @@ import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, CASH_ACCOUNT_TYPES } 
 
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
-function today() { return new Date().toISOString().slice(0, 10) }
+function today() { return todayLocal() }
 function monthsAgo(n: number) {
-  const d = new Date(); d.setMonth(d.getMonth() - n); return d.toISOString().slice(0, 10)
+  const d = new Date(); d.setMonth(d.getMonth() - n); return toLocalISODate(d)
 }
 function ytdStart() { return `${new Date().getFullYear()}-01-01` }
 

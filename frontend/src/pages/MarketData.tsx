@@ -9,7 +9,7 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
@@ -440,7 +440,7 @@ function periodToFromDate(p: ChartPeriod): string {
   const months: Record<string, number> = { '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 }
   const d = new Date(now)
   d.setMonth(d.getMonth() - months[p])
-  return d.toISOString().slice(0, 10)
+  return toLocalISODate(d)
 }
 
 function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p: ChartPeriod) => void }) {
@@ -475,7 +475,7 @@ function FxPricesTab() {
   const [fxSearch, setFxSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
+  const [entryDate, setEntryDate] = useState(todayLocal())
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -709,7 +709,7 @@ function SecuritiesPricesTab() {
   const [priceSearch, setPriceSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [action, setAction] = useState<'save' | 'delete'>('save')
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10))
+  const [entryDate, setEntryDate] = useState(todayLocal())
   const [entryValue, setEntryValue] = useState('')
   const [msg, setMsg] = useState<string | null>(null)
   const [importFile, setImportFile] = useState<File | null>(null)

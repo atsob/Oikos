@@ -16,7 +16,7 @@ import {
   getAccountInterestRates, upsertAccountInterestRateSchedule, deleteAccountInterestRateSchedule,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
-import { fmtNum } from '@/lib/utils'
+import { fmtNum, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent } from 'lucide-react'
 
@@ -781,7 +781,7 @@ function InterestRatesModal({ account, onClose }: { account: Record<string, unkn
 
   const openNewSchedule = () => {
     setEditSchedule('new')
-    setEffectiveFrom(new Date().toISOString().slice(0, 10))
+    setEffectiveFrom(todayLocal())
     setFrequency('Monthly')
     setTieringMethod('Whole Balance')
     setNotes('')
