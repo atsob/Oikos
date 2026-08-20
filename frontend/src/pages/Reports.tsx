@@ -823,12 +823,24 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
   return (
     <div className="space-y-4">
       <Plot
-        data={[{
-          x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.sector)),
-          type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
-          marker: { color: rows.map(r => String(r.sector) === selectedSector ? '#1d4ed8' : '#3b82f6') },
-        }]}
-        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        data={[
+          {
+            x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.sector)),
+            type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+            name: 'Current',
+            marker: { color: rows.map(r => String(r.sector) === selectedSector ? '#1d4ed8' : '#3b82f6') },
+          },
+          ...(compareDate ? [{
+            x: rows.map(r => { const c = compareMap[String(r.sector)]; return c ? Number(c.value_eur) : null }),
+            y: rows.map(r => String(r.sector)),
+            type: 'bar' as const, orientation: 'h' as const,
+            text: rows.map(r => { const c = compareMap[String(r.sector)]; return c ? fmtEur(Number(c.value_eur)) : '' }),
+            textposition: 'outside' as const,
+            name: `As of ${compareDate}`,
+            marker: { color: '#a3a3a3' },
+          }] : []),
+        ]}
+        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, barmode: 'group', showlegend: !!compareDate, legend: { orientation: 'h', y: -0.1 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
         onClick={(e: { points?: { y?: string }[] }) => {
           const label = e?.points?.[0]?.y
@@ -965,12 +977,24 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
   return (
     <div className="space-y-4">
       <Plot
-        data={[{
-          x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.style)),
-          type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
-          marker: { color: rows.map(r => String(r.style) === selectedStyle ? '#047857' : '#10b981') },
-        }]}
-        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        data={[
+          {
+            x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.style)),
+            type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+            name: 'Current',
+            marker: { color: rows.map(r => String(r.style) === selectedStyle ? '#047857' : '#10b981') },
+          },
+          ...(compareDate ? [{
+            x: rows.map(r => { const c = compareMap[String(r.style)]; return c ? Number(c.value_eur) : null }),
+            y: rows.map(r => String(r.style)),
+            type: 'bar' as const, orientation: 'h' as const,
+            text: rows.map(r => { const c = compareMap[String(r.style)]; return c ? fmtEur(Number(c.value_eur)) : '' }),
+            textposition: 'outside' as const,
+            name: `As of ${compareDate}`,
+            marker: { color: '#a3a3a3' },
+          }] : []),
+        ]}
+        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, barmode: 'group', showlegend: !!compareDate, legend: { orientation: 'h', y: -0.1 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
         onClick={(e: { points?: { y?: string }[] }) => {
           const label = e?.points?.[0]?.y
@@ -1312,12 +1336,24 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
   return (
     <div className="space-y-4">
       <Plot
-        data={[{
-          x: chartRows.map(r => Number(r.value_eur)), y: chartRows.map(r => String(r.quality)),
-          type: 'bar', orientation: 'h', text: chartRows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
-          marker: { color: chartRows.map(r => String(r.quality) === selectedQuality ? '#b45309' : '#f59e0b') },
-        }]}
-        layout={{ height: Math.max(240, chartRows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
+        data={[
+          {
+            x: chartRows.map(r => Number(r.value_eur)), y: chartRows.map(r => String(r.quality)),
+            type: 'bar', orientation: 'h', text: chartRows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
+            name: 'Current',
+            marker: { color: chartRows.map(r => String(r.quality) === selectedQuality ? '#b45309' : '#f59e0b') },
+          },
+          ...(compareDate ? [{
+            x: chartRows.map(r => { const c = compareMap[String(r.quality)]; return c ? Number(c.value_eur) : null }),
+            y: chartRows.map(r => String(r.quality)),
+            type: 'bar' as const, orientation: 'h' as const,
+            text: chartRows.map(r => { const c = compareMap[String(r.quality)]; return c ? fmtEur(Number(c.value_eur)) : '' }),
+            textposition: 'outside' as const,
+            name: `As of ${compareDate}`,
+            marker: { color: '#a3a3a3' },
+          }] : []),
+        ]}
+        layout={{ height: Math.max(240, chartRows.length * 32), margin: { t: 10, r: 100, b: 40, l: 180 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, barmode: 'group', showlegend: !!compareDate, legend: { orientation: 'h', y: -0.1 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
         onClick={(e: { points?: { y?: string }[] }) => {
           const label = e?.points?.[0]?.y
