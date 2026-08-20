@@ -87,6 +87,21 @@ _CASH_INV_MAP: dict[str, str] = {
 _DIVIDEND_CASH_TYPES: set[str] = {"dividends", "payment in lieu of dividends"}
 _WITHHOLDING_TAX_TYPE = "withholding tax"
 
+# IB also books ADR pass-through / custody fees tied to a specific dividend
+# as a "Other Fees" (sometimes "Fees Paid") CashTransaction whose description
+# echoes the dividend's own text, e.g. dividend "BTI(ISIN) CASH DIVIDEND USD
+# 0.829981 PER SHARE (Ordinary Dividend)" paired with fee "BTI(ISIN) CASH
+# DIVIDEND USD 0.829981 PER SHARE - FEE" — same symbol/isin/dateTime as the
+# dividend. These are eligible for the same same-event merge as Withholding
+# Tax (see _parse_cash_transactions); the "cash dividend" text is the only
+# reliable signal distinguishing them from an unrelated fee that happens to
+# land on the same day/symbol as a dividend.
+_DIVIDEND_FEE_TYPE_KEYS: set[str] = {"other fees", "fees paid"}
+
+
+def _is_dividend_linked_fee(p: dict) -> bool:
+    return p["tx_type_key"] in _DIVIDEND_FEE_TYPE_KEYS and "cash dividend" in (p["name"] or "").lower()
+
 # Cash-transaction types that are account-level cash flow, not tied to any real,
 # individually-held security — e.g. interest on idle cash, or Stock Yield
 # Enhancement Program (SYEP) fee income for lending out shares. IB's own
@@ -409,15 +424,19 @@ def _parse_trades(statement: ET.Element) -> tuple[list, int]:
 def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
     """Return (inv_records, tx_records, raw_element_count).
 
-    A Withholding Tax entry is merged into its matching Dividend / Payment in
-    Lieu of Dividends entry (same symbol, isin, and dateTime — IB always posts
-    a dividend and its withholding tax under that identical triple) into a
-    single Investments row with Tax_Amount populated, rather than two
-    disconnected rows with no link between them. Matching happens in a
-    dedicated pass before any record is emitted, so it doesn't matter whether
-    IB lists the tax line before or after the dividend line in the XML. A
-    Withholding Tax entry with no matching dividend in this statement (e.g.
-    tax on something else) still imports on its own as a MiscExp row.
+    A Withholding Tax entry, or an "Other Fees"/"Fees Paid" entry that is
+    itself dividend-linked (see _is_dividend_linked_fee — e.g. an ADR
+    pass-through fee), is merged into its matching Dividend / Payment in
+    Lieu of Dividends entry (same symbol, isin, and dateTime — IB always
+    posts a dividend and its tax/fee under that identical triple) into a
+    single Investments row with Tax_Amount populated, rather than a
+    disconnected row with no link to the dividend it actually belongs to.
+    Matching happens in a dedicated pass before any record is emitted, so it
+    doesn't matter whether IB lists the tax/fee line before or after the
+    dividend line in the XML. A Withholding Tax entry with no matching
+    dividend in this statement (e.g. tax on something else) still imports on
+    its own as a MiscExp row; a non-dividend-linked fee still imports as its
+    own plain Cash Transaction.
     """
     inv_records: list[dict] = []
     tx_records:  list[dict] = []
@@ -451,7 +470,7 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
     # can't be interleaved with emission below).
     tax_by_key: dict[tuple, list[int]] = {}
     for i, p in enumerate(parsed):
-        if p["tx_type_key"] == _WITHHOLDING_TAX_TYPE:
+        if p["tx_type_key"] == _WITHHOLDING_TAX_TYPE or _is_dividend_linked_fee(p):
             tax_by_key.setdefault((p["symbol"], p["isin"], p["date"]), []).append(i)
 
     tax_amount_for_dividend: dict[int, float] = {}   # dividend index -> merged tax (EUR/acc-cur)
@@ -472,7 +491,7 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
         currency, fx_rate, amount = p["currency"], p["fx_rate"], p["amount"]
         symbol, name, isin, tx_date = p["symbol"], p["name"], p["isin"], p["date"]
 
-        if tx_type_key == _WITHHOLDING_TAX_TYPE and i in consumed_tax_idx:
+        if i in consumed_tax_idx:
             continue   # merged into its dividend above — don't emit separately
 
         amount_eur = amount * fx_rate

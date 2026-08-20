@@ -8,6 +8,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Inv. Performance → P&L's per-account drill-down gains a Benchmark button**, opening the same performance-over-time chart used by the standalone Benchmark tab, scoped to just that one account and defaulting to YTD. A "Compare vs" toggle switches the comparison side between a Market Index (unchanged from before) and another Account of your own — picking an account computes its own holdings-weighted return series the same way the "portfolio" side already was, rather than reading a security's price history. The standalone Benchmark tab (Inv. Performance → Benchmark) gains the same Market Index/Account toggle and a YTD lookback option alongside the existing 3M/6M/1Y/2Y/3Y buttons.
 - **Dashboard's Pending Drafts panel gains a Review button**, matching the one already on Recurring → Pending Drafts — opens the same edit form (date, amount, account/payee or transfer-to account, splits) with Save, Save & Confirm, and Discard actions, so a draft can be corrected before confirming without leaving the Dashboard.
 
+### Fixed
+- **IBKR import created a disconnected Cash Transaction for a dividend's ADR pass-through/custody fee instead of linking it to the dividend itself** — IB books this as a separate "Other Fees" (or "Fees Paid") entry whose description echoes the dividend's own text (e.g. `BTI(ISIN) CASH DIVIDEND USD 0.829981 PER SHARE - FEE` alongside the dividend's `... (Ordinary Dividend)`), sharing the same symbol/ISIN/timestamp — previously only a genuine "Withholding Tax" entry was recognized for this same-event merge, so this fee fell through to a plain, unlinked Cash Transaction instead of the dividend's Tax column. Now merged the same way Withholding Tax already was.
+
 ## 2026-08-18
 
 ### Added
