@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Added
 - **Investments → Holdings gains a Gain/Loss % column**, and both Gain/Loss and Gain/Loss % are now sortable (previously Gain/Loss was a plain, unsortable column). Gain/Loss % is the unrealized gain against cost basis (Value (EUR) minus the gain itself), matching how unrealized % is computed elsewhere in the app (e.g. Inv. Performance → P&L).
+- **Inv. Portfolio → Portfolio Analysis → Asset Allocation's "Actual vs. Target (%)" chart gains a third bar** showing the "Compare vs" as-of-date allocation (when a compare date is set), alongside the existing Actual % and Target % bars — the same as-of data already shown in the table below, now visible in the chart too.
 
 ## 2026-08-19
 

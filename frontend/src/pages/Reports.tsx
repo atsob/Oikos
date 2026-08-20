@@ -1183,6 +1183,11 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
             data={[
               { x: rows.map(r => String(r.asset_class)), y: rows.map(r => Number(r.pct)), name: 'Actual %', type: 'bar', marker: { color: '#3b82f6' } },
               { x: rows.map(r => String(r.asset_class)), y: rows.map(r => Number(r.target_pct)), name: 'Target %', type: 'bar', marker: { color: '#f59e0b' } },
+              ...(compareDate ? [{
+                x: rows.map(r => String(r.asset_class)),
+                y: rows.map(r => { const c = compareMap[String(r.asset_class)]; return c?.pct != null ? Number(c.pct) : null }),
+                name: `As of ${compareDate} %`, type: 'bar' as const, marker: { color: '#a3a3a3' },
+              }] : []),
             ]}
             layout={{ height: 360, margin: { t: 10, r: 10, b: 60, l: 40 }, barmode: 'group', yaxis: { title: '%' }, legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
             config={{ displayModeBar: false, responsive: true }}
