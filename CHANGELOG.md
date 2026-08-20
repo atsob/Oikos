@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-20
+
+### Added
+- **Investments → Holdings gains a Gain/Loss % column**, and both Gain/Loss and Gain/Loss % are now sortable (previously Gain/Loss was a plain, unsortable column). Gain/Loss % is the unrealized gain against cost basis (Value (EUR) minus the gain itself), matching how unrealized % is computed elsewhere in the app (e.g. Inv. Performance → P&L).
+
 ## 2026-08-19
 
 ### Added

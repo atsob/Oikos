@@ -114,7 +114,17 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
-  const { sorted: sortedHoldings, sortKey: hSK, sortDir: hSD, toggleSort: hSort } = useSortTablePersisted(holdings, 'investments-holdings-sort', 'value_eur', 'desc')
+
+  // Gain/Loss and Gain/Loss % are derived, not backend fields — precomputed onto
+  // each row (rather than inline during render) so useSortTablePersisted's plain
+  // row[sortKey] lookup can sort by them like any other column.
+  const holdingsWithGain = useMemo<Record<string, unknown>[]>(() => holdings.map(row => {
+    const gainEur = Number(row.quantity) * (Number(row.last_price ?? 0) - Number(row.fifo_avg_price ?? row.simple_avg_price ?? 0)) * Number(row.fx_rate ?? 1)
+    const costBasis = Number(row.value_eur ?? 0) - gainEur
+    return { ...row, gain_eur: gainEur, gain_pct: costBasis !== 0 ? (gainEur / costBasis) * 100 : null }
+  }), [holdings])
+
+  const { sorted: sortedHoldings, sortKey: hSK, sortDir: hSD, toggleSort: hSort } = useSortTablePersisted(holdingsWithGain, 'investments-holdings-sort', 'value_eur', 'desc')
 
   const getEdit = (row: Record<string, unknown>): HoldingEdit =>
     edits[Number(row.id)] ?? { quantity: String(row.quantity ?? ''), staking: Boolean(row.staking) }
@@ -157,8 +167,6 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
   // Simple/FIFO avg cost and last price are all in the security's own native
   // currency (row.currency), not EUR — only "Value (EUR)"/"Gain-Loss" below are.
   const fmtP = (v: unknown, currency?: unknown) => v != null ? fmtCur(Number(v), String(currency ?? 'EUR')) : '—'
-  const gain = (row: Record<string, unknown>) =>
-    Number(row.quantity) * (Number(row.last_price ?? 0) - Number(row.fifo_avg_price ?? row.simple_avg_price ?? 0)) * Number(row.fx_rate ?? 1)
 
   return (
     <div className="space-y-3 p-4">
@@ -184,7 +192,8 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
               <ColHeader label="Last Price" sortKey="last_price" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
               <ColHeader label="Curr" sortKey="currency" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2 pr-3" />
               <ColHeader label="Value (EUR)" sortKey="value_eur" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
-              <th className="py-2 pr-3 font-medium text-right">Gain/Loss</th>
+              <ColHeader label="Gain/Loss" sortKey="gain_eur" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
+              <ColHeader label="Gain/Loss %" sortKey="gain_pct" currentKey={hSK} currentDir={hSD} onSort={hSort} align="right" className="py-2 pr-3" />
               <ColHeader label="Price Date" sortKey="price_date" currentKey={hSK} currentDir={hSD} onSort={hSort} className="py-2" />
             </tr>
           </thead>
@@ -193,7 +202,8 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
               const id = Number(row.id)
               const edit = getEdit(row)
               const changed = Boolean(edits[id])
-              const gl = gain(row)
+              const gl = Number(row.gain_eur ?? 0)
+              const glPct = row.gain_pct != null ? Number(row.gain_pct) : null
               return (
                 <tr key={id} className={`border-b border-slate-100 ${changed ? 'bg-yellow-50' : 'hover:bg-slate-50'}`}>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.account)}</td>
@@ -227,6 +237,9 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.currency)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums font-semibold">{fmtEur(Number(row.value_eur ?? 0))}</td>
                   <td className={`py-1.5 pr-3 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(gl)}</td>
+                  <td className={`py-1.5 pr-3 text-right tabular-nums ${glPct == null ? 'text-slate-400' : glPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                    {glPct != null ? `${glPct >= 0 ? '+' : ''}${glPct.toFixed(2)}%` : '—'}
+                  </td>
                   <td className="py-1.5 text-slate-400 text-xs">{row.price_date ? String(row.price_date).slice(0, 10) : '—'}</td>
                 </tr>
               )
