@@ -20,4 +20,7 @@ __pycache__/
 # .env itself (real secrets) stays blocked by the .* rule above, unexempted.
 !.dockerignore
 !.env.example
+# .github/ needs to be tracked too -- FUNDING.yml (Sponsor button) lives there.
+!.github/
+!.github/**
 ssl/

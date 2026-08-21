@@ -1,5 +1,7 @@
 # Oikos
 
+*A development of [ALL ABOUT 360 CONSULTING](https://github.com/atsob).*
+
 A personal finance app — bank & cash accounts, transactions, and multicurrency
 investments (stocks, ETFs, bonds, crypto) with cash flow forecasting, tax
 reporting, and portfolio analysis. FastAPI + React/TypeScript, backed by
@@ -10,6 +12,18 @@ Self-hosted, single-tenant by design — everything below sets up one instance
 for one household. For the full walkthrough (PostgreSQL setup, the TLS
 certificate step, every `.env` variable, backups, troubleshooting), see
 [INSTALL.md](./INSTALL.md) — this page is just the fast path.
+
+## Screenshots
+
+*(All figures below are from a seeded demo instance — fabricated data, not a
+real household's finances.)*
+
+| | |
+|---|---|
+| ![Dashboard](./docs/screenshots/dashboard.png) | ![Investment holdings](./docs/screenshots/holdings.png) |
+| Dashboard — net worth breakdown and trend | Investments — holdings with live gain/loss |
+| ![Cash Flow Forecast](./docs/screenshots/cash-flow-forecast.png) | ![Portfolio X-Ray asset allocation](./docs/screenshots/portfolio-xray.png) |
+| Cash Flow Forecast — projected balance over a chosen horizon | Portfolio X-Ray — look-through asset allocation vs. target |
 
 ## Prerequisites
 
@@ -76,6 +90,23 @@ and are idempotent — safe to run on every restart.
 
 See [CHANGELOG.md](./CHANGELOG.md), also browsable in-app under **Release Notes**.
 
+## Support
+
+Oikos is free and open source. If it's useful to you, consider
+[sponsoring its development on GitHub](https://github.com/sponsors/atsob) —
+every bit helps keep it maintained.
+
 ## License
 
-BSD 2-Clause — see [LICENSE](./LICENSE).
+Copyright © 2026 All About 360 Consulting.
+
+GNU AGPLv3 — see [LICENSE](./LICENSE). In short: you're free to self-host,
+modify, and share Oikos under those terms, but if you run a modified version
+as a network service for others, the AGPL requires you to make that
+modified source available to those users too.
+
+Want to use Oikos somewhere the AGPL's terms don't fit — embedding it in a
+closed-source product, or offering it as a hosted service without the
+source-disclosure obligation — a separate commercial license is available;
+[open an issue](https://github.com/atsob/Oikos/issues) or contact the
+maintainer directly.
