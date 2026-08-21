@@ -22,9 +22,12 @@ and troubleshooting.
                                          │
                          ┌───────────────▼───────────────┐      ┌───────────────────┐
                          │  PostgreSQL + pgvector          │◀────▶│ oikos_scheduler    │
-                         │  (on the host, not a container) │      │ daily backups, FX/  │
-                         └─────────────────────────────────┘      │ price refresh, etc. │
-                                                                   └───────────────────┘
+                         │  (host-native, or containerized │      │ daily backups, FX/  │
+                         │  via --profile full)            │      │ price refresh, etc. │
+                         └─────────────────────────────────┘      └───────────────────┘
+
+            (Ollama, if used, sits alongside the same way — host-native
+             or containerized via that same --profile full.)
 ```
 
 Three containers (`oikos`, `oikos_https`, `oikos_scheduler`) all run with
@@ -34,13 +37,26 @@ deliberate, Linux-only choice matching "everything on one server"; see the
 comment at the top of `docker-compose.yml` if you're on Docker Desktop
 (Mac/Windows) and need the bridge-network alternative instead.
 
+You've got two ways to get Postgres (required) and Ollama (optional) in
+place: install them on the host yourself ([step 1](#1-postgresql-setup) /
+[step 1b](#1b-ollama-setup-optional)), or let Compose run both as containers
+instead ([step 1 alt](#1-alt-run-postgres--ollama-in-docker-instead)). Pick
+one — don't do both, or you'll have two Postgres instances fighting over
+port 5432.
+
 ## Prerequisites
 
 - A **Linux host** (see the `network_mode: host` note above).
 - **Docker** + **Docker Compose plugin** (`docker compose version` should work).
 - **PostgreSQL 14+** with the [pgvector](https://github.com/pgvector/pgvector)
-  extension installed, reachable at `localhost` (or wherever `DB_HOST` points).
-  Oikos doesn't containerize its own database — point it at one you already run.
+  extension installed, reachable at `localhost` (or wherever `DB_HOST` points)
+  — either installed on the host yourself, or containerized via the
+  `--profile full` alternative below. Oikos doesn't bundle its database into
+  its own image; one or the other has to provide it.
+- **Ollama**, only if you want the AI-backed features (Dashboard's weekly/monthly
+  summaries, the RAG chat). Same two options as Postgres — host-native or
+  containerized. Skip it entirely and those features just won't be available;
+  nothing else in the app depends on it.
 
 ## 1. PostgreSQL setup
 
@@ -60,8 +76,89 @@ sudo -u postgres psql -d Oikos -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
 Nothing else to do here — the app creates every table itself on first startup
-(see "Schema & starter data" below). Match `DB_USER`/`DB_PASSWORD`/`DB_NAME`
+(see [step 4](#4-start-the-app) below). Match `DB_USER`/`DB_PASSWORD`/`DB_NAME`
 above to what you put in `.env` in the next step.
+
+## 1b. Ollama setup (optional)
+
+Skip this if you don't want the AI-backed features (Dashboard's AI summaries,
+RAG chat) — everything else in the app works without it. Install Ollama
+directly on the host:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2:3b   # or whatever OLLAMA_MODEL you set in .env
+```
+
+The install script also sets Ollama up as a systemd service listening on
+`localhost:11434` (matching `OLLAMA_IP`/`OLLAMA_PORT`'s defaults), so nothing
+further to configure. Verify it's up:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+Ollama itself runs fine on CPU (slower AI summaries) or with an NVIDIA GPU if
+one's available — the install script auto-detects and uses one if present.
+
+## 1-alt. Run Postgres & Ollama in Docker instead
+
+If you'd rather not install either on the host, `docker-compose.yml` has both
+as opt-in services behind the `full` profile — skip steps 1 and 1b above and
+use this instead:
+
+```bash
+docker compose --profile full up -d --build
+```
+
+This starts `postgres` (image `pgvector/pgvector:pg16`, pgvector already
+enabled via `docker/postgres-init/`) and `ollama` (image `ollama/ollama`)
+alongside the app, each with its own named volume (`postgres_data`,
+`ollama_data`) so data survives container recreation. Because every service
+here is `network_mode: host`, they bind straight to `localhost:5432` and
+`localhost:11434` — the same defaults `DB_HOST`/`OLLAMA_IP` already use, so
+no other `.env` changes are needed versus the host-native path.
+
+Two things the containerized path still needs done manually:
+
+- **Pull a model** — the `ollama/ollama` image doesn't ship one:
+  ```bash
+  docker exec oikos_ollama ollama pull llama3.2:3b   # or your OLLAMA_MODEL
+  ```
+- **GPU passthrough** (optional, NVIDIA only) — add this to the `ollama`
+  service in `docker-compose.yml` if you want the container to use a GPU
+  instead of CPU (requires the [NVIDIA Container
+  Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  installed on the host first):
+  ```yaml
+      deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                count: all
+                capabilities: [gpu]
+  ```
+
+Every `docker compose` command from here on (`up`, `down`, `logs`, etc.) needs
+`--profile full` too, or Compose won't know to include these two services.
+
+**Managing this through a GUI tool instead of the CLI** (OpenMediaVault,
+Portainer, etc.)? Those generally have no way to pass `--profile` on whatever
+`docker compose up` they run under the hood — so by default they'll deploy
+`oikos`/`oikos_https`/`oikos_scheduler` only, exactly as if the `full` profile
+didn't exist, leaving `postgres`/`ollama` off. That's the right outcome if
+you already run Postgres/Ollama as their own separate containers elsewhere
+(as e.g. OMV's Compose plugin encourages) — just update `docker-compose.yml`
+and redeploy as usual, nothing changes. If you *do* want the bundled
+`postgres`/`ollama` from a GUI tool with no `--profile` option, add this line
+to `.env` instead — Compose reads it automatically, no flag needed:
+```
+COMPOSE_PROFILES=full
+```
+Don't set that if you already have separate Postgres/Ollama containers
+running — both would try to bind `localhost:5432`/`localhost:11434` and
+one will fail to start.
 
 ## 2. Get the code & configure `.env`
 
@@ -114,6 +211,8 @@ instead of running the commands above.
 
 ```bash
 docker compose up -d --build
+# or, if you're using the containerized Postgres/Ollama from step 1-alt:
+docker compose --profile full up -d --build
 ```
 
 This builds the image locally (or set `IMAGE_NAME` in `.env` to pull a
@@ -220,15 +319,37 @@ a container for routine backup management.
   (e.g. testing against a DB from a previous install), those variables are
   ignored; log in with whatever account already exists there instead, or
   point at a genuinely empty database.
+- **AI summaries/chat error out or time out** — Ollama isn't reachable, or
+  the model in `OLLAMA_MODEL` hasn't been pulled yet. `curl http://localhost:11434/api/tags`
+  should list it; if it's empty, run the `ollama pull`/`docker exec ... ollama pull`
+  command from step 1b/1-alt. Everything else in the app works fine without
+  Ollama running at all.
+- **Ran `docker compose up` without `--profile full`, but meant to use the
+  containerized Postgres/Ollama** — the `postgres`/`ollama` services simply
+  won't start (no error), and `oikos` will fail to connect to a Postgres
+  that isn't there. Re-run with `--profile full`; every subsequent command
+  against this install (`down`, `logs`, `pull`, ...) needs that flag too.
+- **Two Postgres instances arguing over port 5432** — you have one installed
+  on the host *and* ran `--profile full`, which also tries to bind the
+  containerized one to `localhost:5432`. Pick one path (step 1 or step
+  1-alt), not both.
 
 ## Uninstalling / data locations
 
 ```bash
 docker compose down
+# or, if you used the containerized Postgres/Ollama:
+docker compose --profile full down          # keeps postgres_data/ollama_data
+docker compose --profile full down -v       # also deletes them (irreversible)
 ```
 
-This stops and removes the containers but never touches Postgres (it isn't
-containerized) or `./ssl/`/`./database_backups` (bind-mounted from the host).
-To fully remove an install: drop the Postgres database yourself, and delete
+This stops and removes the containers. If Postgres/Ollama are host-native,
+neither is touched — only `./ssl/`/`./database_backups` (bind-mounted from
+the host) survive alongside them. If you used the `full` profile instead,
+your data lives in the `postgres_data`/`ollama_data` named volumes, which
+`docker compose down` (without `-v`) leaves in place across restarts.
+
+To fully remove an install: drop the Postgres database yourself (or
+`docker compose --profile full down -v` if it was containerized), and delete
 the repo checkout (which takes `ssl/` and `database_backups/` with it, unless
 you pointed `BACKUP_DIR` outside the checkout).

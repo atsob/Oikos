@@ -15,15 +15,18 @@ certificate step, every `.env` variable, backups, troubleshooting), see
 
 - **PostgreSQL** (with the [pgvector](https://github.com/pgvector/pgvector)
   extension installed and available) — reachable from wherever the app
-  containers run. Not bundled in `docker-compose.yml`; point it at an existing
-  server (a Postgres instance you already run, e.g. on the same host).
+  containers run. Install it on the host yourself (see
+  [INSTALL.md § PostgreSQL setup](./INSTALL.md#1-postgresql-setup)), or skip
+  that and run `docker compose --profile full up -d --build` instead to let
+  Compose containerize it for you.
 - **Docker** + **Docker Compose**.
 - A Linux host — `docker-compose.yml` uses `network_mode: host` throughout, so
   Postgres (and optionally [Ollama](https://ollama.com), if you use the
-  Ollama-backed AI features) are assumed reachable at `localhost`. Docker
-  Desktop on Mac/Windows doesn't support host networking the same way; see the
-  comment at the top of `docker-compose.yml` for the bridge-network
-  alternative if that's your setup.
+  Ollama-backed AI features — see [INSTALL.md §
+  1b](./INSTALL.md#1b-ollama-setup-optional)) are assumed reachable at
+  `localhost`. Docker Desktop on Mac/Windows doesn't support host networking
+  the same way; see the comment at the top of `docker-compose.yml` for the
+  bridge-network alternative if that's your setup.
 
 ## Quick start
 

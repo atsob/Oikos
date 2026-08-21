@@ -4,6 +4,13 @@
 # Desktop on Mac/Windows doesn't support host networking the same way); if
 # you're on one of those, switch to a bridge network with explicit `ports:`
 # mappings and point DB_HOST/OLLAMA_IP at host.docker.internal instead.
+#
+# Don't want to install Postgres/Ollama on the host yourself? The `postgres`
+# and `ollama` services below (profile "full") containerize both instead —
+# run `docker compose --profile full up -d --build`. Because everything here
+# is network_mode: host, they bind directly to the host's localhost:5432 /
+# localhost:11434, so DB_HOST/OLLAMA_IP need no changes either way. See
+# INSTALL.md for the one-time model pull Ollama needs after its first start.
 services:
 
   oikos:
@@ -85,4 +92,49 @@ services:
       - ${BACKUP_DIR:-./database_backups}:/app/database_backups
     command: python scheduler.py
     restart: unless-stopped
+
+  # Optional, profile "full": containerized Postgres + pgvector, instead of
+  # installing it on the host. `docker compose --profile full up -d --build`.
+  # network_mode: host means this binds directly to localhost:5432 — same
+  # place DB_HOST already points by default, so no other config changes needed.
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: oikos_postgres
+    profiles: ["full"]
+    network_mode: host
+    environment:
+      - POSTGRES_USER=${DB_USER:-admin}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env — see .env.example}
+      - POSTGRES_DB=${DB_NAME:-Oikos}
+      - PGPORT=${DB_PORT:-5432}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs once, only against a brand-new (empty) data volume — enables the
+      # pgvector extension the app's schema requires. Oikos.sql itself only
+      # ever does `CREATE EXTENSION IF NOT EXISTS vector`, so this is harmless
+      # to leave in place on every subsequent start.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-Oikos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Optional, profile "full": containerized Ollama, instead of installing it
+  # on the host. Same network_mode: host reasoning as postgres above — binds
+  # to localhost:11434, matching OLLAMA_IP's default. CPU-only by default; see
+  # INSTALL.md for the GPU passthrough snippet if you have an NVIDIA GPU.
+  ollama:
+    image: ollama/ollama
+    container_name: oikos_ollama
+    profiles: ["full"]
+    network_mode: host
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
 
