@@ -1,9 +1,12 @@
 import { Component, useEffect, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { useSettings } from '@/lib/hooks'
 import { setReportingFx } from '@/lib/settings'
 import { getCurrenciesMaster } from '@/lib/api'
+import { queryClient } from '@/lib/queryClient'
+import RequireAuth from '@/components/RequireAuth'
+import Login from '@/pages/Login'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null }
@@ -38,10 +41,6 @@ import SecurityDetail from '@/pages/SecurityDetail'
 import Help from '@/pages/Help'
 import Releases from '@/pages/Releases'
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
-})
-
 // Keeps the reporting FX rate in sync with the selected reporting currency
 function ReportingFxSync() {
   const [{ reportingCurrency }] = useSettings()
@@ -67,21 +66,24 @@ export default function App() {
       <ReportingFxSync />
       <BrowserRouter>
         <Routes>
-          <Route element={<Layout />}>
-            <Route index element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
-            <Route path="register" element={<ErrorBoundary><Register /></ErrorBoundary>} />
-            <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
-            <Route path="investments" element={<ErrorBoundary><Investments /></ErrorBoundary>} />
-            <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
-            <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
-            <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
-            <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
-            <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
-            <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
-            <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
-            <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
-            <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
-            <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
+          <Route path="login" element={<Login />} />
+          <Route element={<RequireAuth />}>
+            <Route element={<Layout />}>
+              <Route index element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+              <Route path="register" element={<ErrorBoundary><Register /></ErrorBoundary>} />
+              <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
+              <Route path="investments" element={<ErrorBoundary><Investments /></ErrorBoundary>} />
+              <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
+              <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
+              <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
+              <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
+              <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
+              <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
+              <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
+              <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
+              <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
+              <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
+            </Route>
           </Route>
         </Routes>
       </BrowserRouter>

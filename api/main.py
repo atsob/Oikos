@@ -17,15 +17,34 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy", cat
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+import bcrypt
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
+from api.deps import require_auth
+from api.routers import auth as auth_router
 from api.routers import dashboard, register, reports, static_data, market_data
 from api.routers import investments, recurring, ai_router, tools_router, importers_router
 from api.routers import securities, bank_router, preferences, news
+from config.settings import ENV_CONFIG
+from database.queries import bootstrap_admin_user
 
-app = FastAPI(title="Oikos API", version="2.0.0", docs_url="/api/docs", redoc_url="/api/redoc")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Creates the first login account if the Users table is empty and both env
+    # vars are set (see .env.example) — idempotent, safe to leave set forever.
+    username, password = ENV_CONFIG.get("admin_username"), ENV_CONFIG.get("admin_password")
+    if username and password:
+        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        bootstrap_admin_user(username, password_hash)
+    yield
+
+
+app = FastAPI(title="Oikos API", version="2.0.0", docs_url="/api/docs", redoc_url="/api/redoc", lifespan=lifespan)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -35,20 +54,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(dashboard.router,           prefix="/api/dashboard",    tags=["dashboard"])
-app.include_router(register.router,            prefix="/api/register",     tags=["register"])
-app.include_router(reports.router,             prefix="/api/reports",      tags=["reports"])
-app.include_router(static_data.router,         prefix="/api/static-data",  tags=["static-data"])
-app.include_router(market_data.router,         prefix="/api/market-data",  tags=["market-data"])
-app.include_router(investments.router,         prefix="/api/investments",  tags=["investments"])
-app.include_router(recurring.router,           prefix="/api/recurring",    tags=["recurring"])
-app.include_router(ai_router.router,           prefix="/api/ai",           tags=["ai"])
-app.include_router(tools_router.router,        prefix="/api/tools",        tags=["tools"])
-app.include_router(importers_router.router,    prefix="/api/importers",    tags=["importers"])
-app.include_router(securities.router,          prefix="/api/securities",   tags=["securities"])
-app.include_router(bank_router.router,         prefix="/api/bank",         tags=["bank"])
-app.include_router(preferences.router,         prefix="/api/preferences",  tags=["preferences"])
-app.include_router(news.router,                prefix="/api/news",         tags=["news"])
+# Not gated — you can't require a session to create one.
+app.include_router(auth_router.router,         prefix="/api/auth",         tags=["auth"])
+
+_auth = [Depends(require_auth)]
+app.include_router(dashboard.router,           prefix="/api/dashboard",    tags=["dashboard"],    dependencies=_auth)
+app.include_router(register.router,            prefix="/api/register",     tags=["register"],     dependencies=_auth)
+app.include_router(reports.router,             prefix="/api/reports",      tags=["reports"],      dependencies=_auth)
+app.include_router(static_data.router,         prefix="/api/static-data",  tags=["static-data"],  dependencies=_auth)
+app.include_router(market_data.router,         prefix="/api/market-data",  tags=["market-data"],  dependencies=_auth)
+app.include_router(investments.router,         prefix="/api/investments",  tags=["investments"],  dependencies=_auth)
+app.include_router(recurring.router,           prefix="/api/recurring",    tags=["recurring"],    dependencies=_auth)
+app.include_router(ai_router.router,           prefix="/api/ai",           tags=["ai"],            dependencies=_auth)
+app.include_router(tools_router.router,        prefix="/api/tools",        tags=["tools"],        dependencies=_auth)
+app.include_router(importers_router.router,    prefix="/api/importers",    tags=["importers"],    dependencies=_auth)
+app.include_router(securities.router,          prefix="/api/securities",   tags=["securities"],   dependencies=_auth)
+app.include_router(bank_router.router,         prefix="/api/bank",         tags=["bank"],          dependencies=_auth)
+app.include_router(preferences.router,         prefix="/api/preferences",  tags=["preferences"],  dependencies=_auth)
+app.include_router(news.router,                prefix="/api/news",        tags=["news"],          dependencies=_auth)
 
 
 @app.middleware("http")
@@ -64,7 +87,7 @@ def health():
     return {"status": "ok", "version": "2.0.0"}
 
 
-@app.get("/api/changelog")
+@app.get("/api/changelog", dependencies=_auth)
 def changelog():
     """Raw CHANGELOG.md content, rendered by the in-app Release Notes page.
 

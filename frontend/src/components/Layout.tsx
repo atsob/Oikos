@@ -1,12 +1,14 @@
 import React, { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
+import { logout } from '@/lib/api'
+import { queryClient } from '@/lib/queryClient'
 import {
   LayoutDashboard, BookOpen, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
-  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X,
+  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut,
 } from 'lucide-react'
 
 const THEME_OPTIONS: { value: Theme; icon: React.ReactNode; label: string }[] = [
@@ -36,9 +38,16 @@ export default function Layout() {
   const [collapsed, setCollapsed] = usePersist('sidebar_collapsed', false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
 
   // Close the mobile drawer whenever the route changes (e.g. after tapping a nav link).
   React.useEffect(() => { setMobileOpen(false) }, [location.pathname])
+
+  const handleLogout = async () => {
+    try { await logout() } catch { /* revoke server-side if reachable; proceed regardless */ }
+    queryClient.clear()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -118,6 +127,9 @@ export default function Layout() {
           ))}
         </nav>
         <div className={cn('px-4 py-3 border-t border-slate-700 space-y-2', collapsed && 'md:hidden')}>
+          <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white">
+            <LogOut size={13} /> Log out
+          </button>
           <div className="flex rounded-md overflow-hidden border border-slate-600">
             {THEME_OPTIONS.map(opt => (
               <button

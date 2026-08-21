@@ -1,5 +1,5 @@
 import pandas as pd
-from database.connection import get_connection
+from database.connection import get_connection, get_db
 
 from collections import deque
 from datetime import datetime, timedelta
@@ -803,6 +803,72 @@ def get_all_securities_for_filter():
     )
     conn.close()
     return df
+
+
+# ---------------------------------------------------------------------------
+# Login auth — see api/routers/auth.py, api/deps.py
+# ---------------------------------------------------------------------------
+
+def get_user_by_username(username: str) -> dict | None:
+    """Look up a user for login — returns None if no such username."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Users_Id, Username, Password_Hash FROM Users WHERE Username = %s",
+            (username,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"users_id": row[0], "username": row[1], "password_hash": row[2]}
+
+
+def create_session(users_id: int, token_hash: str, expires_at) -> None:
+    """Insert a new session row. token_hash is the SHA-256 hash of the cookie value, not the raw token."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO Sessions (Token_Hash, Users_Id, Expires_At) VALUES (%s, %s, %s)",
+            (token_hash, users_id, expires_at),
+        )
+
+
+def get_session(token_hash: str) -> dict | None:
+    """Look up a live (non-expired) session by its token hash, joined to the owning user."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.Users_Id, u.Username
+            FROM Sessions s
+            JOIN Users u ON u.Users_Id = s.Users_Id
+            WHERE s.Token_Hash = %s AND s.Expires_At > now()
+        """, (token_hash,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"users_id": row[0], "username": row[1]}
+
+
+def delete_session(token_hash: str) -> None:
+    """Revoke a session server-side (logout) — a cleared cookie alone wouldn't do this."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM Sessions WHERE Token_Hash = %s", (token_hash,))
+
+
+def bootstrap_admin_user(username: str, password_hash: str) -> None:
+    """Create the first login account if the Users table is empty. Idempotent and
+    safe to call from multiple concurrent worker processes on startup — the WHERE
+    NOT EXISTS guard plus the UNIQUE constraint's ON CONFLICT DO NOTHING make this
+    a single atomic statement rather than a check-then-insert race.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Users (Username, Password_Hash)
+            SELECT %s, %s WHERE NOT EXISTS (SELECT 1 FROM Users)
+            ON CONFLICT (Username) DO NOTHING
+        """, (username, password_hash))
 
 
 def get_app_setting(key: str) -> str | None:

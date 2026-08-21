@@ -1,6 +1,31 @@
 import axios from 'axios'
+import { queryClient } from './queryClient'
 
-export const api = axios.create({ baseURL: '/api' })
+export const api = axios.create({ baseURL: '/api', withCredentials: true })
+
+// On session expiry/invalidation, redirect to /login — except for the /auth/me
+// probe's own 401 (that's the expected "not logged in yet" response RequireAuth
+// checks for, not a session that just expired), which would otherwise loop.
+api.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401 && !String(err.config?.url ?? '').endsWith('/auth/me')) {
+      queryClient.clear()
+      if (window.location.pathname !== '/login') window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  },
+)
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+export const login = (username: string, password: string): Promise<{ username: string }> =>
+  api.post('/auth/login', { username, password }).then(r => r.data)
+
+export const logout = (): Promise<{ ok: boolean }> =>
+  api.post('/auth/logout').then(r => r.data)
+
+export const getMe = (): Promise<{ username: string }> =>
+  api.get('/auth/me').then(r => r.data)
 
 export const getChangelog = (): Promise<{ content: string }> =>
   api.get('/changelog').then(r => r.data)
