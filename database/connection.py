@@ -1,3 +1,4 @@
+import os
 import time
 import logging
 import psycopg2
@@ -138,6 +139,32 @@ def get_db():
                 p.putconn(conn, close=True)
             except Exception:
                 pass
+
+
+def _bootstrap_schema_if_empty(conn) -> None:
+    """Apply the full schema (Oikos.sql) on a brand-new, empty database.
+
+    Self-hosting shouldn't require anyone to know to hand-run a .sql file
+    before the app will start — a fresh `docker-compose up` against an empty
+    Postgres database should just work. Everything below (_run_startup_migrations)
+    only ever ALTERs/adds to tables that are assumed to already exist, so
+    without this, that whole function silently no-ops (every ALTER TABLE fails
+    "relation does not exist" and is swallowed) and the app is left with zero
+    tables. Detected via one representative table (Accounts) rather than
+    tracking a separate "schema version" row — cheap, and Oikos.sql's own
+    statements are already idempotent, so even a partially-applied prior
+    attempt is safe to retry.
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.accounts')")
+    if cur.fetchone()[0] is not None:
+        return  # already initialized
+    schema_path = os.path.join(os.path.dirname(__file__), "Oikos.sql")
+    with open(schema_path, encoding="utf-8") as f:
+        schema_sql = f.read()
+    cur.execute(schema_sql)
+    conn.commit()
+    log.info("Empty database detected — applied Oikos.sql to bootstrap the schema.")
 
 
 def _run_startup_migrations():
@@ -372,7 +399,12 @@ def _run_startup_migrations():
            )""",
     ]
     try:
-        conn     = psycopg2.connect(**DB_CONFIG)
+        conn = psycopg2.connect(**DB_CONFIG)
+        try:
+            _bootstrap_schema_if_empty(conn)
+        except Exception as bootstrap_exc:
+            conn.rollback()
+            log.warning("Schema bootstrap failed: %s", bootstrap_exc)
         mig_cur  = conn.cursor()
         for stmt in _STMTS:
             try:
