@@ -6012,17 +6012,27 @@ const CF_COLOR_MAP: Record<string, string> = {
 function CashFlowSection() {
   const { isDark } = useTheme()
   const [days, setDays] = usePersist<number>('cf_days', 60)
+  // EOY is a mode, not a fixed day-count — persisting only a snapshotted "days
+  // until Dec 31" (taken at click-time) would go stale the moment the day
+  // rolls over: neither the fixed-horizon buttons nor EOY itself would still
+  // match it (nothing highlighted, exactly what happened here), and the
+  // actual query would keep using that stale count, silently drifting the
+  // "through Dec 31" horizon past Dec 31 the longer it's left unclicked.
+  // Persisting the mode instead and recomputing eoyDays fresh every render
+  // keeps both the highlight and the underlying data correct indefinitely.
+  const [isEoy, setIsEoy] = usePersist<boolean>('cf_days_eoy', false)
   const [monthsBack, setMonthsBack] = usePersist<number>('cf_months_back', 2)
   const [ytdRecurring, setYtdRecurring] = usePersist<boolean>('cf_recurring_ytd', false)
   const [includeBonds, setIncludeBonds] = usePersist<boolean>('cf_include_bonds', false)
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
   const eoyDays = daysUntilEndOfYear()
+  const effectiveDays = isEoy ? eoyDays : days
   const effectiveMonthsBack = ytdRecurring ? ytdMonthsBack() : monthsBack
 
   const { data, isLoading } = useQuery({
-    queryKey: ['cash-flow-forecast-full', days, effectiveMonthsBack, presetAccountIds],
-    queryFn: () => getCashFlowForecastFull(days, effectiveMonthsBack, presetAccountIds),
+    queryKey: ['cash-flow-forecast-full', effectiveDays, effectiveMonthsBack, presetAccountIds],
+    queryFn: () => getCashFlowForecastFull(effectiveDays, effectiveMonthsBack, presetAccountIds),
   })
 
   const result = data as {
@@ -6109,14 +6119,14 @@ function CashFlowSection() {
           </Tooltip>
           <div className="flex gap-1">
             {CF_HORIZONS.map(h => (
-              <button key={h.days} onClick={() => setDays(h.days)}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${days === h.days ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              <button key={h.days} onClick={() => { setDays(h.days); setIsEoy(false) }}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${!isEoy && days === h.days ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 {h.label}
               </button>
             ))}
             <Tooltip text="Project through Dec 31 of the current year.">
-              <button onClick={() => setDays(eoyDays)}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${days === eoyDays ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              <button onClick={() => setIsEoy(true)}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${isEoy ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 EOY
               </button>
             </Tooltip>

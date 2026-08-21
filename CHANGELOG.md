@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-21
+
+### Fixed
+- **Cash Flow Forecast's EOY horizon lost its selected-button highlight overnight, and silently drifted past Dec 31 the longer it went unclicked** — EOY was implemented by snapshotting "days until Dec 31" into a plain number at click-time and persisting that number, same as the fixed 30d/60d/3m/6m/12m presets. The next day, that stored count no longer matched any preset (including a freshly-recomputed EOY), so nothing highlighted — and the underlying query kept using the stale, now-too-large day count, so the horizon quietly extended past year-end instead of stopping at it. Now persists the EOY *mode* itself instead of a snapshot, and recomputes the actual day count fresh on every render, so both the highlight and the "through Dec 31" cutoff stay correct no matter how long it's left unclicked.
+
 ## 2026-08-20
 
 ### Added
