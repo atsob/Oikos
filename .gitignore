@@ -16,5 +16,8 @@ __pycache__/
 .*
 # .* above blocks every dotfile including .dockerignore, which needs to be
 # version-controlled since Docker builds (incl. on the deploy host) depend on it.
+# Same for .env.example — the template a self-hoster copies to their own .env;
+# .env itself (real secrets) stays blocked by the .* rule above, unexempted.
 !.dockerignore
+!.env.example
 ssl/

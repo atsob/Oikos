@@ -10,21 +10,22 @@ services:
     container_name: oikos
     network_mode: host
     environment:
-      - DB_NAME=Oikos
-      - DB_USER=admin
-      - DB_PASSWORD=31.12.1969
-      - DB_HOST=127.0.0.1
-      - DB_PORT=5432
-      - DB_TIMEZONE=Europe/Athens
+      - DB_NAME=${DB_NAME:-Oikos}
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env — see .env.example}
+      - DB_HOST=${DB_HOST:-127.0.0.1}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_TIMEZONE=${DB_TIMEZONE:-Europe/Athens}
       - APP_DATA_DIR=/app
-      - OLLAMA_IP=127.0.0.1
-      - OLLAMA_PORT=11434
-      - OLLAMA_MODEL=llama3.2:3b
+      - OLLAMA_IP=${OLLAMA_IP:-127.0.0.1}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - PERSIST_DIR=/app/storage_rag
+      - EODHD_API_KEY=${EODHD_API_KEY:-}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups      
+      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups
     command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 3
     restart: unless-stopped
     healthcheck:
@@ -56,21 +57,22 @@ services:
     container_name: oikos_scheduler
     network_mode: host
     environment:
-      - DB_NAME=Oikos
-      - DB_USER=admin
-      - DB_PASSWORD=31.12.1969
-      - DB_HOST=127.0.0.1
-      - DB_PORT=5432
-      - DB_TIMEZONE=Europe/Athens
+      - DB_NAME=${DB_NAME:-Oikos}
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env — see .env.example}
+      - DB_HOST=${DB_HOST:-127.0.0.1}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_TIMEZONE=${DB_TIMEZONE:-Europe/Athens}
       - APP_DATA_DIR=/app
-      - OLLAMA_IP=127.0.0.1
-      - OLLAMA_PORT=11434
-      - OLLAMA_MODEL=llama3.2:3b
+      - OLLAMA_IP=${OLLAMA_IP:-127.0.0.1}
+      - OLLAMA_PORT=${OLLAMA_PORT:-11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - PERSIST_DIR=/app/storage_rag
+      - EODHD_API_KEY=${EODHD_API_KEY:-}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups      
+      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups
     command: python scheduler.py
     restart: unless-stopped
 
