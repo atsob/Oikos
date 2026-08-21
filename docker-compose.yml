@@ -1,3 +1,9 @@
+# network_mode: host is used throughout — Postgres and (optionally) Ollama are
+# assumed to be reachable at localhost, i.e. running directly on this same
+# server rather than in their own containers. This is Linux-only (Docker
+# Desktop on Mac/Windows doesn't support host networking the same way); if
+# you're on one of those, switch to a bridge network with explicit `ports:`
+# mappings and point DB_HOST/OLLAMA_IP at host.docker.internal instead.
 services:
 
   oikos:
@@ -6,7 +12,7 @@ services:
       args:
         GIT_HASH: ${GIT_HASH:-unknown}
         GIT_DATE: ${GIT_DATE:-}
-    image: atsob/oikos:latest
+    image: oikos:latest
     container_name: oikos
     network_mode: host
     environment:
@@ -22,10 +28,13 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
+      # First-login account, created once if the Users table is empty — see .env.example.
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups
+      - ${BACKUP_DIR:-./database_backups}:/app/database_backups
     command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 3
     restart: unless-stopped
     healthcheck:
@@ -47,13 +56,14 @@ services:
       - oikos
     restart: unless-stopped
 
+  # Doesn't run the FastAPI app (no HTTP, no auth/lifespan), so no ADMIN_* vars here.
   oikos_scheduler:
     build:
       context: .
       args:
         GIT_HASH: ${GIT_HASH:-unknown}
         GIT_DATE: ${GIT_DATE:-}
-    image: atsob/oikos:latest
+    image: oikos:latest
     container_name: oikos_scheduler
     network_mode: host
     environment:
@@ -72,7 +82,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - /mnt/dockerapps/docker/docker_data/oikos/data/database_backups:/app/database_backups
+      - ${BACKUP_DIR:-./database_backups}:/app/database_backups
     command: python scheduler.py
     restart: unless-stopped
 
