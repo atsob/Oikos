@@ -27,6 +27,18 @@ export const logout = (): Promise<{ ok: boolean }> =>
 export const getMe = (): Promise<{ username: string }> =>
   api.get('/auth/me').then(r => r.data)
 
+export const changePassword = (currentPassword: string, newPassword: string): Promise<{ ok: boolean }> =>
+  api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }).then(r => r.data)
+
+export const getUsers = (): Promise<{ users_id: number; username: string; created_at: string }[]> =>
+  api.get('/auth/users').then(r => r.data)
+
+export const addUser = (username: string, password: string): Promise<{ users_id: number; username: string }> =>
+  api.post('/auth/users', { username, password }).then(r => r.data)
+
+export const deleteUser = (usersId: number): Promise<{ ok: boolean }> =>
+  api.delete(`/auth/users/${usersId}`).then(r => r.data)
+
 export const getChangelog = (): Promise<{ content: string }> =>
   api.get('/changelog').then(r => r.data)
 

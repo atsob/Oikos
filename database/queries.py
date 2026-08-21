@@ -871,6 +871,47 @@ def bootstrap_admin_user(username: str, password_hash: str) -> None:
         """, (username, password_hash))
 
 
+def list_users() -> list[dict]:
+    """All accounts (no password hashes), oldest first."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT Users_Id, Username, Created_At FROM Users ORDER BY Users_Id")
+        return [{"users_id": r[0], "username": r[1], "created_at": r[2]} for r in cur.fetchall()]
+
+
+def create_user(username: str, password_hash: str) -> int:
+    """Add a new login account. Raises ValueError if the username is already taken."""
+    if get_user_by_username(username):
+        raise ValueError(f"Username '{username}' is already taken")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO Users (Username, Password_Hash) VALUES (%s, %s) RETURNING Users_Id",
+            (username, password_hash),
+        )
+        return cur.fetchone()[0]
+
+
+def update_password(users_id: int, password_hash: str) -> None:
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE Users SET Password_Hash = %s WHERE Users_Id = %s", (password_hash, users_id))
+
+
+def delete_user(users_id: int) -> bool:
+    """Remove a login account. Refuses to delete the last remaining account (would
+    lock everyone out) — returns False in that case instead of deleting, checked
+    atomically in one statement rather than count-then-delete to avoid a race.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM Users
+            WHERE Users_Id = %s AND (SELECT COUNT(*) FROM Users) > 1
+        """, (users_id,))
+        return cur.rowcount > 0
+
+
 def get_app_setting(key: str) -> str | None:
     """Read a single text value from app_settings. Returns None if not found."""
     conn = get_connection()

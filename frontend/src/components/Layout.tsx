@@ -5,10 +5,11 @@ import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
+import AccountModal from '@/components/AccountModal'
 import {
   LayoutDashboard, BookOpen, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
-  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut,
+  Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut, UserCircle,
 } from 'lucide-react'
 
 const THEME_OPTIONS: { value: Theme; icon: React.ReactNode; label: string }[] = [
@@ -37,6 +38,7 @@ export default function Layout() {
   const { theme, setTheme } = useTheme()
   const [collapsed, setCollapsed] = usePersist('sidebar_collapsed', false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -127,9 +129,14 @@ export default function Layout() {
           ))}
         </nav>
         <div className={cn('px-4 py-3 border-t border-slate-700 space-y-2', collapsed && 'md:hidden')}>
-          <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white">
-            <LogOut size={13} /> Log out
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setAccountOpen(true)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white">
+              <UserCircle size={13} /> Account
+            </button>
+            <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white">
+              <LogOut size={13} /> Log out
+            </button>
+          </div>
           <div className="flex rounded-md overflow-hidden border border-slate-600">
             {THEME_OPTIONS.map(opt => (
               <button
@@ -173,6 +180,8 @@ export default function Layout() {
       <main className="flex-1 overflow-y-auto bg-slate-50 pt-14 md:pt-0">
         <Outlet />
       </main>
+
+      {accountOpen && <AccountModal onClose={() => setAccountOpen(false)} />}
     </div>
   )
 }
