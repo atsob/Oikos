@@ -7,7 +7,9 @@ PostgreSQL. (An earlier Streamlit version has since been fully rebuilt on this
 stack.)
 
 Self-hosted, single-tenant by design — everything below sets up one instance
-for one household.
+for one household. For the full walkthrough (PostgreSQL setup, the TLS
+certificate step, every `.env` variable, backups, troubleshooting), see
+[INSTALL.md](./INSTALL.md) — this page is just the fast path.
 
 ## Prerequisites
 
@@ -34,8 +36,16 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+`docker-compose.yml` also expects a TLS certificate at `./ssl/{cert,key,rootCA}.pem`
+that isn't generated automatically — see [INSTALL.md § Generate a TLS
+certificate](./INSTALL.md#3-generate-a-tls-certificate) for the one-time
+`openssl` commands before your first `up`.
+
 The schema is created automatically on first startup — no manual `psql` step.
-Point `docker compose up` at any empty Postgres database and it self-initializes.
+Point `docker compose up` at any empty Postgres database and it self-initializes,
+seeded with generic starter data (currencies, well-known US stocks/ETFs, major
+international institutions, a standard expense/income category list, common
+payees, and Greek-resident tax rules) so Static Data isn't empty on day one.
 
 Open `https://<host>:8443` and log in with the `ADMIN_USERNAME`/`ADMIN_PASSWORD`
 from `.env` (only used once, to create that first account — safe to leave set

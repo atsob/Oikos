@@ -141,8 +141,9 @@ def get_db():
                 pass
 
 
-def _bootstrap_schema_if_empty(conn) -> None:
+def _bootstrap_schema_if_empty(conn) -> bool:
     """Apply the full schema (Oikos.sql) on a brand-new, empty database.
+    Returns True if this call just created the schema, False if it already existed.
 
     Self-hosting shouldn't require anyone to know to hand-run a .sql file
     before the app will start — a fresh `docker-compose up` against an empty
@@ -158,13 +159,128 @@ def _bootstrap_schema_if_empty(conn) -> None:
     cur = conn.cursor()
     cur.execute("SELECT to_regclass('public.accounts')")
     if cur.fetchone()[0] is not None:
-        return  # already initialized
+        return False  # already initialized
     schema_path = os.path.join(os.path.dirname(__file__), "Oikos.sql")
     with open(schema_path, encoding="utf-8") as f:
         schema_sql = f.read()
     cur.execute(schema_sql)
     conn.commit()
     log.info("Empty database detected — applied Oikos.sql to bootstrap the schema.")
+    return True
+
+
+def _seed_reference_data(conn) -> None:
+    """Populate a freshly-bootstrapped database with starter reference data.
+
+    Only ever called right after _bootstrap_schema_if_empty() creates the schema
+    on a brand-new database — never on an existing install — so there's no
+    risk of duplicating or overwriting a real user's data. The data itself
+    (database/seed_data.py) is a hand-curated, de-identified export: no family
+    names, personal accounts, or named individuals, per the exclusions worked
+    out when this was added (see CHANGELOG).
+    """
+    from database import seed_data as sd
+
+    cur = conn.cursor()
+
+    cur.executemany(
+        """INSERT INTO Credit_Ratings_LT
+               (Credit_Ratings_LT_Id, Quality, Description, Moodys, S_P, Fitch)
+           VALUES (%s, %s, %s, %s, %s, %s)
+           ON CONFLICT (Credit_Ratings_LT_Id) DO NOTHING""",
+        sd.CREDIT_RATINGS_LT,
+    )
+
+    cur.executemany(
+        "INSERT INTO Currencies (Currencies_Shortname, Currencies_Name) VALUES (%s, %s) "
+        "ON CONFLICT (Currencies_Shortname) DO NOTHING",
+        sd.CURRENCIES,
+    )
+
+    cur.executemany(
+        """INSERT INTO Institutions
+               (Institutions_Name, Institutions_Type, Bic_Code, Website, Notes, Moodys, S_P, Fitch)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (Institutions_Name) DO NOTHING""",
+        sd.INSTITUTIONS,
+    )
+
+    # Oikos.sql already inserts a base set of Tax_Category_Rules / Instrument_Type_Tax_Override
+    # rows (ON CONFLICT DO NOTHING there). This seed's set is a superset with a few refined
+    # values, so upsert on top of those rather than plain INSERT.
+    cur.executemany(
+        """INSERT INTO Tax_Category_Rules
+               (Tax_Category, Display_Name, Gains_Taxable, Gains_Rate, Gains_Tax_Code,
+                Dividend_Local_Tax_Rate, Dividend_Wht_Creditable, Reinvest_Taxable,
+                Income_Tax_Rate, Notes, Show_In_Capital_Gains)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (Tax_Category) DO UPDATE SET
+               Display_Name = EXCLUDED.Display_Name,
+               Gains_Taxable = EXCLUDED.Gains_Taxable,
+               Gains_Rate = EXCLUDED.Gains_Rate,
+               Gains_Tax_Code = EXCLUDED.Gains_Tax_Code,
+               Dividend_Local_Tax_Rate = EXCLUDED.Dividend_Local_Tax_Rate,
+               Dividend_Wht_Creditable = EXCLUDED.Dividend_Wht_Creditable,
+               Reinvest_Taxable = EXCLUDED.Reinvest_Taxable,
+               Income_Tax_Rate = EXCLUDED.Income_Tax_Rate,
+               Notes = EXCLUDED.Notes,
+               Show_In_Capital_Gains = EXCLUDED.Show_In_Capital_Gains""",
+        sd.TAX_CATEGORY_RULES,
+    )
+
+    cur.executemany(
+        """INSERT INTO Instrument_Type_Tax_Override (Instrument_Type, Tax_Category_Override, Notes)
+           VALUES (%s, %s, %s)
+           ON CONFLICT (Instrument_Type) DO UPDATE SET
+               Tax_Category_Override = EXCLUDED.Tax_Category_Override,
+               Notes = EXCLUDED.Notes""",
+        sd.INSTRUMENT_TYPE_TAX_OVERRIDE,
+    )
+
+    cur.executemany(
+        """INSERT INTO Securities
+               (Ticker, Securities_Name, Securities_Type, Currencies_Id, Sector, Industry,
+                Yahoo_Ticker, Tv_Symbol, Tv_Exchange, Isin, Tax_Category, Is_Active, Is_Tax_Exempt)
+           SELECT %s, %s, %s, Currencies_Id, %s, %s, %s, %s, %s, %s, %s, %s, %s
+           FROM Currencies WHERE Currencies_Shortname = %s
+           ON CONFLICT (Ticker) DO NOTHING""",
+        [(t, name, typ, sector, industry, yt, tvs, tve, isin, taxcat, active, taxexempt, ccy)
+         for (t, name, typ, ccy, sector, industry, yt, tvs, tve, isin, taxcat, active, taxexempt)
+         in sd.SECURITIES],
+    )
+
+    # Categories form a tree (up to 3 levels deep); insert parent-before-child,
+    # remapping each source install's old id to the new one via RETURNING so
+    # child rows can point at the right freshly-generated parent id.
+    old_to_new: dict[int, int] = {}
+    remaining = list(sd.CATEGORIES)
+    while remaining:
+        ready = [r for r in remaining if r[2] is None or r[2] in old_to_new]
+        if not ready:
+            log.warning("Seed categories: %d rows have unresolved parents — skipping them.", len(remaining))
+            break
+        for old_id, name, old_parent, ctype in ready:
+            new_parent = old_to_new[old_parent] if old_parent is not None else None
+            cur.execute(
+                "INSERT INTO Categories (Categories_Name, Categories_Id_Parent, Categories_Type) "
+                "VALUES (%s, %s, %s) RETURNING Categories_Id",
+                (name, new_parent, ctype),
+            )
+            old_to_new[old_id] = cur.fetchone()[0]
+        remaining = [r for r in remaining if r[0] not in old_to_new]
+
+    cur.executemany(
+        "INSERT INTO Payees (Payees_Name) VALUES (%s) ON CONFLICT (Payees_Name) DO NOTHING",
+        [(p,) for p in sd.PAYEES],
+    )
+
+    conn.commit()
+    log.info(
+        "Seeded reference data: %d currencies, %d institutions, %d tax rules, "
+        "%d instrument tax overrides, %d securities, %d categories, %d payees.",
+        len(sd.CURRENCIES), len(sd.INSTITUTIONS), len(sd.TAX_CATEGORY_RULES),
+        len(sd.INSTRUMENT_TYPE_TAX_OVERRIDE), len(sd.SECURITIES), len(old_to_new), len(sd.PAYEES),
+    )
 
 
 def _run_startup_migrations():
@@ -401,10 +517,17 @@ def _run_startup_migrations():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         try:
-            _bootstrap_schema_if_empty(conn)
+            just_bootstrapped = _bootstrap_schema_if_empty(conn)
         except Exception as bootstrap_exc:
+            just_bootstrapped = False
             conn.rollback()
             log.warning("Schema bootstrap failed: %s", bootstrap_exc)
+        if just_bootstrapped:
+            try:
+                _seed_reference_data(conn)
+            except Exception as seed_exc:
+                conn.rollback()
+                log.warning("Reference data seeding failed: %s", seed_exc)
         mig_cur  = conn.cursor()
         for stmt in _STMTS:
             try:
