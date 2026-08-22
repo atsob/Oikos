@@ -4852,13 +4852,19 @@ def get_bank_interest_tax(year: int = Query(None)):
 def get_price_changes():
     query = """
     WITH latest AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close AS price_today FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
+    holdings_agg AS (SELECT Securities_Id, SUM(Quantity) AS qty FROM Holdings GROUP BY Securities_Id),
     periods AS (
         SELECT
            (CURRENT_DATE - INTERVAL '1 day')::date AS dtd,
            (date_trunc('week', CURRENT_DATE) - INTERVAL '1 day')::date AS wtd,
            (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date AS mtd,
            (date_trunc('quarter', CURRENT_DATE) - INTERVAL '1 day')::date AS qtd,
-           (date_trunc('year', CURRENT_DATE) - INTERVAL '1 day')::date AS ytd
+           (date_trunc('year', CURRENT_DATE) - INTERVAL '1 day')::date AS ytd,
+           (CURRENT_DATE - INTERVAL '6 months')::date AS semi,
+           (CURRENT_DATE - INTERVAL '1 year')::date AS y1,
+           (CURRENT_DATE - INTERVAL '2 years')::date AS y2,
+           (CURRENT_DATE - INTERVAL '3 years')::date AS y3,
+           (CURRENT_DATE - INTERVAL '5 years')::date AS y5
     )
     SELECT s.Securities_Id AS securities_id, s.Securities_Name, s.Ticker, s.Securities_Type::text,
            l.price_today,
@@ -4867,18 +4873,29 @@ def get_price_changes():
            ROUND(((l.price_today - p_mtd.Close)/NULLIF(p_mtd.Close,0)*100)::numeric,2) AS mtd_pct,
            ROUND(((l.price_today - p_qtd.Close)/NULLIF(p_qtd.Close,0)*100)::numeric,2) AS qtd_pct,
            ROUND(((l.price_today - p_ytd.Close)/NULLIF(p_ytd.Close,0)*100)::numeric,2) AS ytd_pct,
-           ROUND((h.Quantity * l.price_today * COALESCE(fx.FX_Rate,1))::numeric,2) AS value_eur
-    FROM Holdings h
-    JOIN Securities s ON s.Securities_Id=h.Securities_Id
-    JOIN latest l ON l.Securities_Id=h.Securities_Id
+           ROUND(((l.price_today - p_semi.Close)/NULLIF(p_semi.Close,0)*100)::numeric,2) AS semi_pct,
+           ROUND(((l.price_today - p_y1.Close)/NULLIF(p_y1.Close,0)*100)::numeric,2) AS y1_pct,
+           ROUND(((l.price_today - p_y2.Close)/NULLIF(p_y2.Close,0)*100)::numeric,2) AS y2_pct,
+           ROUND(((l.price_today - p_y3.Close)/NULLIF(p_y3.Close,0)*100)::numeric,2) AS y3_pct,
+           ROUND(((l.price_today - p_y5.Close)/NULLIF(p_y5.Close,0)*100)::numeric,2) AS y5_pct,
+           ROUND((COALESCE(ha.qty,0) * l.price_today * COALESCE(fx.FX_Rate,1))::numeric,2) AS value_eur,
+           (COALESCE(ha.qty,0) > 0) AS is_held
+    FROM Securities s
+    JOIN latest l ON l.Securities_Id=s.Securities_Id
+    LEFT JOIN holdings_agg ha ON ha.Securities_Id=s.Securities_Id
     CROSS JOIN periods per
-    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=h.Securities_Id AND Date<=per.dtd ORDER BY Date DESC LIMIT 1) p_dtd ON true
-    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=h.Securities_Id AND Date<=per.wtd ORDER BY Date DESC LIMIT 1) p_wtd ON true
-    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=h.Securities_Id AND Date<=per.mtd ORDER BY Date DESC LIMIT 1) p_mtd ON true
-    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=h.Securities_Id AND Date<=per.qtd ORDER BY Date DESC LIMIT 1) p_qtd ON true
-    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=h.Securities_Id AND Date<=per.ytd ORDER BY Date DESC LIMIT 1) p_ytd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.dtd ORDER BY Date DESC LIMIT 1) p_dtd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.wtd ORDER BY Date DESC LIMIT 1) p_wtd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.mtd ORDER BY Date DESC LIMIT 1) p_mtd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.qtd ORDER BY Date DESC LIMIT 1) p_qtd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.ytd ORDER BY Date DESC LIMIT 1) p_ytd ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.semi ORDER BY Date DESC LIMIT 1) p_semi ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.y1 ORDER BY Date DESC LIMIT 1) p_y1 ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.y2 ORDER BY Date DESC LIMIT 1) p_y2 ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.y3 ORDER BY Date DESC LIMIT 1) p_y3 ON true
+    LEFT JOIN LATERAL (SELECT Close FROM Historical_Prices WHERE Securities_Id=s.Securities_Id AND Date<=per.y5 ORDER BY Date DESC LIMIT 1) p_y5 ON true
     LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1=s.Currencies_Id ORDER BY Date DESC LIMIT 1) fx ON true
-    WHERE h.Quantity > 0
+    WHERE s.Is_Active
     ORDER BY value_eur DESC NULLS LAST
     """
     with get_db() as conn:

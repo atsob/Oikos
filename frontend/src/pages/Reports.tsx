@@ -92,12 +92,6 @@ function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip, co
   )
 }
 
-function PctCell({ val }: { val: number | null | undefined }) {
-  if (val == null) return <td className="px-2 py-1.5 text-right text-slate-400">—</td>
-  const color = val > 0 ? 'text-green-700' : val < 0 ? 'text-red-600' : 'text-slate-500'
-  return <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${color}`}>{val > 0 ? '+' : ''}{val.toFixed(2)}%</td>
-}
-
 // ── Copy-to-Excel wrapper ─────────────────────────────────────────────────────
 function WithCopy({ children }: { children: React.ReactNode }) {
   const ref = React.useRef<HTMLDivElement>(null)
@@ -4407,46 +4401,103 @@ function InvPerformanceSection() {
 // 4. SECURITIES ANALYSIS
 // ════════════════════════════════════════════════════════════════════════════
 function PriceChangesTab() {
+  const navigate = useNavigate()
   const { data = [], isLoading } = useQuery({ queryKey: ['price-changes'], queryFn: getPriceChanges })
-  const { sorted: rows, sortKey: pcSK, sortDir: pcSD, toggleSort: pcSort } = useSortTablePersisted(data as Row[], 'price-changes-sort', 'value_eur', 'desc')
+  const [view, setView] = usePersist<'all' | 'held'>('price-changes-view', 'all')
+  const [search, setSearch] = usePersist('price-changes-search', '')
+
+  const filtered = useMemo(() => {
+    if (view !== 'held') return data as Row[]
+    return (data as Row[]).filter(r => r.is_held)
+  }, [data, view])
+
+  const pctFmt = (v: unknown) => v != null ? `${Number(v) >= 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '—'
+  const pctCellClass = (p: { value: unknown }) => p.value != null ? (Number(p.value) >= 0 ? 'text-green-700' : 'text-red-600') : ''
+  const pctCol = (field: string, headerName: string, headerTooltip?: string): ColDef => ({
+    field, headerName, type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
+    headerTooltip, valueFormatter: p => pctFmt(p.value), cellClass: pctCellClass,
+  })
+
+  // Stable reference — see PortfolioActionSignalsTab's identical comment: onColumnResized/
+  // onColumnMoved persist column state and re-render this component, and a fresh array
+  // literal every render would make ag-Grid treat columnDefs as "changed" and reset it.
+  const colDefs = useMemo(() => {
+    const cols: ColDef[] = [
+      { field: 'securities_name', headerName: 'Security', pinned: 'left', minWidth: 200, flex: 2,
+        cellRenderer: (p: { value: string; data: Row }) => (
+          <button onClick={() => navigate(`/securities/${p.data.securities_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+        ) },
+      { field: 'ticker', headerName: 'Ticker', width: 100, cellStyle: { fontFamily: 'monospace' } },
+      { field: 'value_eur', headerName: 'Value (€)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120,
+        valueFormatter: p => p.data?.is_held ? fmtEur(Number(p.value ?? 0)) : '—' },
+      pctCol('dtd_pct', 'D%'),
+      pctCol('wtd_pct', 'W%'),
+      pctCol('mtd_pct', 'M%'),
+      pctCol('qtd_pct', 'Q%'),
+      pctCol('ytd_pct', 'YTD%'),
+      pctCol('semi_pct', '6M%'),
+      pctCol('y1_pct', '1Y%'),
+      pctCol('y2_pct', '2Y%'),
+      pctCol('y3_pct', '3Y%'),
+      pctCol('y5_pct', '5Y%'),
+    ]
+    return cols
+  }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+  const gridCols = useGridColumnState('price-changes', colDefs)
+  const gridFilter = useGridFilterState('price-changes')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  const col = (key: string, label: string, align: 'left' | 'right' = 'right') => (
-    <ColHeader label={label} sortKey={key} currentKey={pcSK} currentDir={pcSD} onSort={pcSort} align={align}
-      className="px-2 py-1.5 border-b border-slate-200 hover:bg-slate-100" />
-  )
+
   return (
-    <WithCopy>
-    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-      <table className="w-full border-collapse">
-        <thead className="sticky top-0 z-10 bg-slate-50">
-          <tr className="bg-slate-50">
-            {col('securities_name', 'Security', 'left')}
-            {col('ticker', 'Ticker', 'left')}
-            {col('value_eur', 'Value (€)')}
-            {col('dtd_pct', 'D%')}
-            {col('wtd_pct', 'W%')}
-            {col('mtd_pct', 'M%')}
-            {col('qtd_pct', 'Q%')}
-            {col('ytd_pct', 'YTD%')}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-              <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-              <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-              <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur ?? 0))}</td>
-              <PctCell val={r.dtd_pct != null ? Number(r.dtd_pct) : null} />
-              <PctCell val={r.wtd_pct != null ? Number(r.wtd_pct) : null} />
-              <PctCell val={r.mtd_pct != null ? Number(r.mtd_pct) : null} />
-              <PctCell val={r.qtd_pct != null ? Number(r.qtd_pct) : null} />
-              <PctCell val={r.ytd_pct != null ? Number(r.ytd_pct) : null} />
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-4">
+      {/* Filter + Search */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {([
+          ['all',  'Show All'],
+          ['held', 'Active Positions Only'],
+        ] as const).map(([v, label]) => (
+          <button key={v} onClick={() => setView(v)}
+            className={`px-3 py-1.5 text-xs rounded border font-medium ${view === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            {label}
+          </button>
+        ))}
+        <input
+          type="text"
+          placeholder="Search…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="px-2.5 py-1.5 text-xs border border-slate-300 rounded w-44 focus:outline-none focus:border-blue-400"
+        />
+        {gridFilter.hasFilters && (
+          <button onClick={() => gridFilter.clearFilters(gridApi)}
+            className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+            ✕ Clear Filters
+          </button>
+        )}
+        <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
+        <CopyToExcelButton gridApi={gridApi} />
+      </div>
+
+      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 300px)', width: '100%' }}>
+        <AgGridReact
+          theme="legacy"
+          onGridReady={onGridReady}
+          rowData={filtered}
+          columnDefs={gridCols.colDefs}
+          defaultColDef={PORTFOLIO_SIGNALS_DEFAULT_COL_DEF}
+          columnTypes={AG_GRID_COLUMN_TYPES}
+          quickFilterText={search}
+          onColumnMoved={gridCols.onColumnMoved}
+          onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
+          onFilterChanged={gridFilter.onFilterChanged}
+          getRowClass={(p: { data?: Row }) => p.data?.is_held ? '' : 'opacity-60'}
+        />
+      </div>
     </div>
-    </WithCopy>
   )
 }
 
