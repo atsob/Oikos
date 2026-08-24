@@ -134,6 +134,13 @@ def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
     return any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words[:3])
 
 
+def _clean_company_name(name: str) -> str:
+    """Strip a trailing currency-code parenthetical (e.g. "Thomson Reuters Corp
+    (USD)" -> "Thomson Reuters Corp") so it makes a clean DDG search query
+    instead of a literal currency-code suffix."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
+
+
 def _normalize_ddg_news_item(raw: dict) -> dict | None:
     title = raw.get("title")
     url = raw.get("url")
@@ -223,6 +230,51 @@ def fetch_security_news(max_per_security: int = 8) -> int:
     return total
 
 
+def fetch_security_news_press(max_per_security: int = 5) -> int:
+    """Tier 1b: supplements Tier 1 with a DuckDuckGo news search per held/
+    watchlisted stock, same as the Institution/Payee tiers below.
+
+    yfinance's per-ticker news endpoint (Tier 1) draws from a narrow,
+    slow-to-refresh pool and can go quiet on a given ticker for weeks even
+    while Yahoo's own finance.yahoo.com news tab (which pulls in press
+    releases, e.g. PR Newswire/CNW Group wire content) keeps updating — this
+    tier catches what that endpoint misses. Scoped to Securities_Type='Stock'
+    only (not ETFs/bonds/crypto/FX pairs/T-bills), where a plain-text search
+    on the company name reliably finds relevant results; the existing
+    relevance filter still applies, since a name-based search risks pulling
+    in unrelated wire-service coverage same as Institution/Payee search does.
+    """
+    conn = get_connection()
+    total = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT s.Securities_Id, s.Ticker, s.Securities_Name
+                FROM Securities s
+                WHERE s.Securities_Type = 'Stock'
+                  AND (
+                    s.Securities_Id IN (SELECT Securities_Id FROM Holdings WHERE Quantity > 0)
+                    OR s.Securities_Id IN (SELECT Securities_Id FROM Watchlist)
+                  )
+            """)
+            targets = cur.fetchall()
+
+        for sec_id, ticker, name in targets:
+            clean_name = _clean_company_name(name)
+            try:
+                raw_items = _ddg_news_search(clean_name, max_per_security)
+                items = [x for x in (_normalize_ddg_news_item(r) for r in raw_items) if x]
+                items = [x for x in items if _is_relevant_to_security(x, ticker or "", clean_name)]
+                total += _upsert_news_items(conn, "Security", sec_id, items)
+            except Exception as exc:
+                logging.warning(f"Security press-news fetch failed for '{clean_name}': {exc}")
+            time.sleep(_DDG_PAUSE_SECONDS)
+    finally:
+        conn.close()
+    logging.info(f"Security press news: {total} new item(s).")
+    return total
+
+
 def fetch_institution_news(max_per_institution: int = 5) -> int:
     """Tier 2a: news for every institution with at least one account."""
     conn = get_connection()
@@ -280,7 +332,7 @@ def fetch_payee_news(max_per_payee: int = 5) -> int:
 def run() -> dict:
     logging.info("Starting news fetch...")
     counts = {
-        "security": fetch_security_news(),
+        "security": fetch_security_news() + fetch_security_news_press(),
         "institution": fetch_institution_news(),
         "payee": fetch_payee_news(),
     }
