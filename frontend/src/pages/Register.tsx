@@ -604,7 +604,14 @@ export default function Register() {
           onSave={tx.handleSave}
           onDelete={tx.form.id ? tx.handleDelete : undefined}
           onClose={tx.close}
-          onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
+          onPayeeCreated={p => {
+            // Register.tsx's own payee list (fed to PayeeSelect below) is queried under
+            // ['payees', 'lite'] (stats=false) -- distinct from the ['payees'] (stats=true)
+            // cache every other page reads. Both need the new payee, or whichever cache
+            // this page *doesn't* update stays stale until its next real refetch.
+            qc.setQueryData(['payees', 'lite'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])
+            qc.setQueryData(['payees'], (old: Record<string,unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])
+          }}
           onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string,unknown>[]) => [...(old ?? []), c])}
           saving={tx.saving}
           error={tx.saveError}
