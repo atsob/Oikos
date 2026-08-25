@@ -5,7 +5,7 @@ import {
   createTransaction, updateTransaction, deleteTransaction,
   createTransfer, createRecurringTemplate,
 } from '@/lib/api'
-import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
+import { Input, Button, useEscapeKey, AccountOptions, AmountCalculator } from '@/components/ui'
 import { fmtEur, cn, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -440,7 +440,10 @@ export function TxModal({
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Amount *</label>
-              <Input type="number" step="0.01" placeholder="0.00" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} />
+              <div className="flex gap-1.5">
+                <Input className="flex-1 min-w-0" type="number" step="0.01" placeholder="0.00" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} />
+                <AmountCalculator value={form.total_amount} onApply={v => set('total_amount', v)} />
+              </div>
             </div>
           </div>
 

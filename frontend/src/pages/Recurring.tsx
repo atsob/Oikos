@@ -9,7 +9,7 @@ import {
   getAccounts, getPayees, getCategories, getSplits, getPayeeTopCategories,
   getRecentTransactionsForTemplate, createTemplateFromTransaction,
 } from '@/lib/api'
-import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions } from '@/components/ui'
+import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions, AmountCalculator } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
 import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
 import { PayeeSelect, CategorySelect } from '@/components/TxModal'
@@ -20,6 +20,10 @@ type Row = Record<string, unknown>
 // generator and the manual confirm-draft endpoint) has always supported it —
 // a Daily template could be created but never edited back to Daily afterward.
 const PERIODICITIES = ['Daily', 'Weekly', 'Bi-Weekly', 'Monthly', 'Bi-Monthly', 'Quarterly', 'Semi-Annual', 'Annual', 'Once']
+// 'Once' only makes sense for Periodicity (when the template itself fires); as spacing
+// between installments within a series it's nonsensical, and periodicity_advance_fn has no
+// 'Once' key — matches TxModal.tsx's own installment-series Frequency field.
+const INSTALLMENT_FREQUENCIES = PERIODICITIES.filter(p => p !== 'Once')
 
 // ── Template form ─────────────────────────────────────────────────────────────
 interface TplForm {
@@ -34,6 +38,8 @@ interface TplForm {
   auto_confirm: boolean
   active: boolean
   accounts_id_target: string
+  total_occurrences: string
+  installment_frequency: string
 }
 
 interface SplitRow { categories_id: string; amount: string; memo: string }
@@ -50,6 +56,8 @@ const emptyForm = (): TplForm => ({
   auto_confirm: false,
   active: true,
   accounts_id_target: '',
+  total_occurrences: '',
+  installment_frequency: 'Monthly',
 })
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -159,7 +167,10 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Amount</label>
-              <Input type="number" step="0.01" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} placeholder="0.00" />
+              <div className="flex gap-1.5">
+                <Input className="flex-1 min-w-0" type="number" step="0.01" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} placeholder="0.00" />
+                <AmountCalculator value={form.total_amount} onApply={v => set('total_amount', v)} />
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Periodicity</label>
@@ -202,10 +213,42 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
               <input type="checkbox" checked={form.active} onChange={e => set('active', e.target.checked)} className="rounded" />
               Active
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={form.auto_confirm} onChange={e => set('auto_confirm', e.target.checked)} className="rounded" />
+            <label className={`flex items-center gap-2 text-sm ${form.total_occurrences ? 'opacity-40 cursor-not-allowed' : ''}`}>
+              <input type="checkbox" checked={form.auto_confirm} disabled={!!form.total_occurrences}
+                onChange={e => set('auto_confirm', e.target.checked)} className="rounded" />
               Auto-confirm drafts
             </label>
+          </div>
+
+          {/* Installment series — mutually exclusive with Auto-confirm: each cycle's draft is
+              expanded into a series by confirming it, so an auto-confirmed one (never
+              manually confirmed) would never generate the rest. Independent of Periodicity:
+              Periodicity/Next Due Date/End Date still govern only when the template itself
+              fires its next draft; Installment Frequency only spaces the installments
+              generated within one series. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Number of installments (optional)</label>
+              <Input type="number" min="2" step="1" value={form.total_occurrences}
+                disabled={form.auto_confirm}
+                onChange={e => onChange({ ...form, total_occurrences: e.target.value, auto_confirm: e.target.value ? false : form.auto_confirm })}
+                placeholder="Leave blank for a plain recurring template" />
+            </div>
+            <div className={!form.total_occurrences ? 'opacity-40' : ''}>
+              <label className="text-xs font-medium text-slate-500 block mb-1">Installment Frequency</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.installment_frequency}
+                disabled={!form.total_occurrences}
+                onChange={e => set('installment_frequency', e.target.value)}>
+                {INSTALLMENT_FREQUENCIES.map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+            <p className="text-xs text-slate-400 col-span-2">
+              {form.total_occurrences
+                ? `Each due draft from this template is generated and reviewed normally. Confirming it generates the remaining ${Math.max(0, (parseInt(form.total_occurrences) || 0) - 1)} as new drafts, spaced by ${form.installment_frequency}. The template itself keeps recurring on its own Periodicity/Next Due Date — the next time it comes due, it starts a fresh series.`
+                : form.auto_confirm
+                  ? "Can't set an installment count while Auto-confirm is on — turn it off first."
+                  : 'Set this to turn each generated draft into a fixed-length installment series instead of a single transaction.'}
+            </p>
           </div>
 
           {/* Splits */}
@@ -230,7 +273,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
                     <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>
                   </div>
                 ))}
-                {tplTotal > 0 && (
+                {tplTotal !== 0 && (
                   <div className={`flex justify-between text-xs pt-1 border-t border-slate-100 mt-1 ${splitsMatch ? 'text-green-600' : 'text-red-500'}`}>
                     <span>{fmtEur(splitsTotal)} allocated ({Math.round((splitsTotal / tplTotal) * 100)}%)</span>
                     <span>{splitsMatch ? '✓ 100% covered' : `Unallocated: ${fmtEur(remaining)}`}</span>
@@ -314,6 +357,11 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
     })
   }, [draft.id])
 
+  const splitsTotal = splits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
+  const draftTotal = parseFloat(form.amount) || 0
+  const remaining = draftTotal - splitsTotal
+  const splitsMatch = Math.round(remaining * 100) === 0
+
   const addSplit = () => setSplits(s => [...s, { categories_id: '', amount: '', memo: '' }])
   const removeSplit = (i: number) => setSplits(s => s.filter((_, j) => j !== i))
   const setSplit = (i: number, k: keyof DraftSplit, v: string) =>
@@ -333,9 +381,20 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
     })),
   })
 
+  const validateSplits = () => {
+    const validSplits = splits.filter(s => s.amount)
+    if (!form.accounts_id_target && validSplits.length > 0 && draftTotal !== 0) {
+      const total = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+      if (Math.round(total * 100) !== Math.round(draftTotal * 100)) {
+        throw new Error(`Split amounts (${fmtEur(total)}) must equal total amount (${fmtEur(draftTotal)})`)
+      }
+    }
+  }
+
   const handleSave = async () => {
     setSaving(true); setError(null)
     try {
+      validateSplits()
       await updateRecurringDraft(Number(draft.id), buildPayload())
       onSaved()
     } catch (e) { setError(e instanceof Error ? e.message : 'Save failed') }
@@ -345,6 +404,7 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
   const handleSaveConfirm = async () => {
     setSaving(true); setError(null)
     try {
+      validateSplits()
       await updateRecurringDraft(Number(draft.id), buildPayload())
       await confirmRecurringDraft(Number(draft.id))
       onConfirmed()
@@ -380,6 +440,8 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
             {form.amount && <><span className="text-slate-400">|</span>
               <span className={`font-semibold ${amtNum < 0 ? 'text-red-600' : 'text-green-600'}`}>{fmtEur(amtNum)}</span></>}
             {Boolean(draft.template_name) && <span className="text-slate-400 italic text-xs font-normal">(from: {String(draft.template_name)}{draft.template_periodicity ? ` · ${draft.template_periodicity}` : ''})</span>}
+            {draft.template_total_occurrences != null &&
+              <Badge label={`Installment ${String(draft.occurrence_number)}/${String(draft.template_total_occurrences)}`} variant="purple" />}
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 ml-3 shrink-0"><X size={18} /></button>
         </div>
@@ -393,7 +455,10 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Amount</label>
-              <Input type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} />
+              <div className="flex gap-1.5">
+                <Input className="flex-1 min-w-0" type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} />
+                <AmountCalculator value={form.amount} onApply={v => set('amount', v)} />
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Description</label>
@@ -479,6 +544,12 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
                     ))}
                   </tbody>
                 </table>
+                {splits.length > 0 && draftTotal !== 0 && !form.accounts_id_target && (
+                  <div className={`flex justify-between text-xs px-3 py-1.5 border-t border-slate-100 ${splitsMatch ? 'text-green-600' : 'text-red-500'}`}>
+                    <span>{fmtEur(splitsTotal)} allocated ({Math.round((splitsTotal / draftTotal) * 100)}%)</span>
+                    <span>{splitsMatch ? '✓ 100% covered' : `Unallocated: ${fmtEur(remaining)}`}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -564,6 +635,8 @@ function DraftsTab() {
                   <div className="flex items-center gap-2 flex-wrap text-sm">
                     <span className="font-medium text-slate-800">{String(d.description || d.payee || '—')}</span>
                     {Boolean(d.template_name) && <Badge label={String(d.template_name)} variant="blue" />}
+                    {d.template_total_occurrences != null &&
+                      <Badge label={`Installment ${String(d.occurrence_number)}/${String(d.template_total_occurrences)}`} variant="purple" />}
                   </div>
                   <div className="flex gap-4 text-xs text-slate-500">
                     <span>{fmtDate(String(d.date))}</span>
@@ -760,6 +833,8 @@ export default function Recurring() {
       auto_confirm: Boolean(t.auto_confirm),
       active: Boolean(t.is_active),
       accounts_id_target: t.accounts_id_target != null ? String(t.accounts_id_target) : '',
+      total_occurrences: t.total_occurrences != null ? String(t.total_occurrences) : '',
+      installment_frequency: String(t.installment_frequency ?? 'Monthly'),
     })
     setSplits(spls.map(s => ({ categories_id: String(s.categories_id ?? ''), amount: String(s.amount ?? ''), memo: String(s.memo ?? '') })))
     setSaveError(null)
@@ -767,7 +842,12 @@ export default function Recurring() {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Delete this template?')) return
+    const tpl = (templates as Row[]).find(t => Number(t.id) === id)
+    const linkedDrafts = (drafts as Row[]).filter(d => Number(d.template_id) === id)
+    const msg = tpl?.total_occurrences != null && linkedDrafts.length > 0
+      ? `This template still has ${linkedDrafts.length} pending installment draft(s). Deleting it will not delete those drafts, but they'll lose their "Installment" badge and grouping. Delete anyway?`
+      : 'Delete this template?'
+    if (!confirm(msg)) return
     await deleteRecurringTemplate(id)
     qc.invalidateQueries({ queryKey: ['recurring-templates'] })
   }
@@ -778,11 +858,17 @@ export default function Recurring() {
     try {
       const validSplits = splits.filter(s => s.amount)
       const tplTotal = form.total_amount ? parseFloat(form.total_amount) : 0
-      if (validSplits.length > 0 && tplTotal > 0) {
+      if (validSplits.length > 0 && tplTotal !== 0) {
         const splitsTotal = validSplits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
         if (Math.round(splitsTotal * 100) !== Math.round(tplTotal * 100)) {
           throw new Error(`Split amounts (${fmtEur(splitsTotal)}) must equal total amount (${fmtEur(tplTotal)})`)
         }
+      }
+      const totalOccurrences = form.total_occurrences ? parseInt(form.total_occurrences) : null
+      if (totalOccurrences != null) {
+        if (totalOccurrences < 2) throw new Error('Number of installments must be at least 2')
+        if (form.auto_confirm) throw new Error("An installment series can't also be Auto-confirm")
+        if (!form.installment_frequency) throw new Error('Installment Frequency is required when Number of installments is set')
       }
 
       const payload: Record<string, unknown> = {
@@ -797,6 +883,8 @@ export default function Recurring() {
         auto_confirm: form.auto_confirm,
         active: form.active,
         accounts_id_target: form.accounts_id_target ? Number(form.accounts_id_target) : null,
+        total_occurrences: totalOccurrences,
+        installment_frequency: totalOccurrences != null ? form.installment_frequency : null,
         splits: validSplits.map(s => ({
           categories_id: s.categories_id ? Number(s.categories_id) : null,
           amount: parseFloat(s.amount),
@@ -870,6 +958,8 @@ export default function Recurring() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-slate-800">{String(t.name ?? '—')}</span>
                         {Boolean(t.frequency) && <Badge label={String(t.frequency)} variant="blue" />}
+                        {t.total_occurrences != null &&
+                          <Badge label={`Installment: ${String(t.total_occurrences)}× ${String(t.installment_frequency)}`} variant="purple" />}
                         <Badge label={t.is_active ? 'Active' : 'Inactive'} variant={t.is_active ? 'green' : 'gray'} />
                         {Boolean(t.auto_confirm) && <Badge label="Auto-confirm" variant="blue" />}
                       </div>

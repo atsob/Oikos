@@ -2296,15 +2296,23 @@ def get_income_expense_data(start_date, end_date, category_id=None, cash_account
 # here means there's only one place to get this right.
 
 def _confirm_draft_row(cur, tx_id: int) -> None:
-    """Confirm one draft transaction, creating its transfer mirror leg if needed."""
+    """Confirm one draft transaction, creating its transfer mirror leg if needed.
+
+    If this row belongs to an installment-series template (Recurring_Templates.
+    Total_Occurrences set) and hasn't already been expanded, confirming it generates the
+    remaining N-1 occurrences of its series as new drafts — see
+    _maybe_expand_installment_series below. The template itself is untouched by this; it
+    keeps recurring on its own Periodicity/Next_Due_Date/End_Date and will spawn a fresh
+    series the next time it comes due.
+    """
     cur.execute("""
-        SELECT Accounts_Id, Date, Description, Total_Amount, Payees_Id, Accounts_Id_Target, Transfers_Id
+        SELECT Accounts_Id, Date, Description, Total_Amount, Payees_Id, Accounts_Id_Target, Transfers_Id, Templates_Id
         FROM Transactions WHERE Transactions_Id = %s AND Is_Draft = TRUE
     """, (tx_id,))
     row = cur.fetchone()
     if row is None:
         return
-    src_account, date, description, amount, payees_id, target_account, existing_transfers_id = row
+    src_account, date, description, amount, payees_id, target_account, existing_transfers_id, templates_id = row
 
     cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
 
@@ -2339,6 +2347,71 @@ def _confirm_draft_row(cur, tx_id: int) -> None:
         # either way. If the mirror leg is itself still a draft, this correctly
         # excludes it until it's confirmed too.
         _refresh(target_account)
+
+    if templates_id is not None:
+        _maybe_expand_installment_series(cur, templates_id, tx_id, date)
+
+
+def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirmed_date) -> None:
+    """If `templates_id` is an installment-series template (Total_Occurrences set) and the
+    row just confirmed (`tx_id`) hasn't already been expanded, generate the remaining N-1
+    occurrences as new drafts (dates stepped from `confirmed_date` by the template's
+    Installment_Frequency — independent of Periodicity, which only governs when the template
+    itself fires its next draft — splits copied from Recurring_Template_Splits) and mark this
+    row and the new ones with a shared Installment_Group_Id (mirrors the Transfers_Id pattern)
+    plus their Installment_Seq position.
+
+    The template itself is never touched here — it keeps recurring on its own schedule and
+    will produce another draft, with its own fresh series, whenever it next comes due.
+
+    No-ops for a normal (Total_Occurrences NULL) template, or if `tx_id` already has an
+    Installment_Group_Id (this series was already expanded by an earlier confirm — only a
+    fresh, never-expanded draft is a trigger). Checking the row itself rather than counting
+    every Transactions row ever linked to the template is what lets a template recur past its
+    first cycle: a naive "only one row linked so far" check would misfire once a later cycle's
+    draft shares the template with an earlier cycle's already-expanded installments.
+    """
+    cur.execute("""
+        SELECT Total_Occurrences, Installment_Frequency, Accounts_Id, Payees_Id, Description,
+               Total_Amount, Accounts_Id_Target
+        FROM Recurring_Templates WHERE Templates_Id = %s
+    """, (templates_id,))
+    tmpl = cur.fetchone()
+    if tmpl is None or tmpl[0] is None:
+        return
+    total_occurrences, installment_frequency, accounts_id, payees_id, description, total_amount, target_acc = tmpl
+
+    cur.execute("SELECT Installment_Group_Id FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+    row = cur.fetchone()
+    if row is None or row[0] is not None:
+        return  # already expanded (or the row vanished) -- not a trigger
+
+    cur.execute("""
+        UPDATE Transactions SET Installment_Group_Id = Transactions_Id, Installment_Seq = 1
+        WHERE Transactions_Id = %s
+    """, (tx_id,))
+
+    from database.crud import periodicity_advance_fn
+    adv = periodicity_advance_fn(installment_frequency)
+
+    next_date = confirmed_date
+    for seq in range(2, total_occurrences + 1):
+        next_date = adv(next_date)
+        cur.execute("""
+            INSERT INTO Transactions
+                (Accounts_Id, Date, Payees_Id, Description, Total_Amount,
+                 Is_Draft, Templates_Id, Cleared, Accounts_Id_Target,
+                 Installment_Group_Id, Installment_Seq)
+            VALUES (%s, %s, %s, %s, %s, TRUE, %s, FALSE, %s, %s, %s)
+            RETURNING Transactions_Id
+        """, (accounts_id, next_date, payees_id, description, total_amount, templates_id,
+              target_acc, tx_id, seq))
+        new_tx_id = cur.fetchone()[0]
+        cur.execute("""
+            INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+            SELECT %s, Categories_Id, Amount, Memo
+            FROM Recurring_Template_Splits WHERE Templates_Id = %s
+        """, (new_tx_id, templates_id))
 
 
 def confirm_draft_transaction(tx_id: int) -> bool:

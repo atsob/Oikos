@@ -513,6 +513,26 @@ def _run_startup_migrations():
                Created_At  TIMESTAMPTZ DEFAULT now(),
                Expires_At  TIMESTAMPTZ NOT NULL
            )""",
+        # Installment series (migration 015) — a Recurring_Templates row with
+        # Total_Occurrences set generates its first occurrence like any normal
+        # template, then confirming it generates the rest. See
+        # database/queries.py::_confirm_draft_row.
+        "ALTER TABLE Recurring_Templates ADD COLUMN IF NOT EXISTS Total_Occurrences INTEGER",
+        """DO $$ BEGIN
+               ALTER TABLE Recurring_Templates ADD CONSTRAINT recurring_templates_total_occurrences_check
+                   CHECK (Total_Occurrences IS NULL OR Total_Occurrences >= 2);
+           EXCEPTION WHEN duplicate_object THEN NULL;
+           END $$""",
+        # Installment series v2 (migration 016) — Total_Occurrences no longer deactivates the
+        # template after one series; each cycle's draft, once confirmed, expands into a fresh
+        # N-installment series spaced by Installment_Frequency, while the template itself keeps
+        # recurring independently on Periodicity/Next_Due_Date/End_Date. See
+        # database\queries.py::_maybe_expand_installment_series.
+        "ALTER TABLE Recurring_Templates ADD COLUMN IF NOT EXISTS Installment_Frequency VARCHAR(20)",
+        "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Group_Id INTEGER",
+        "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Seq INTEGER",
+        """CREATE INDEX IF NOT EXISTS idx_transactions_installment_group
+               ON Transactions(Installment_Group_Id) WHERE Installment_Group_Id IS NOT NULL""",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

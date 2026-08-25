@@ -231,6 +231,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           page manages.
         </P>
         <Note>
+          The <b>calculator button</b> next to any Amount field (here, on a recurring template, and when
+          reviewing a pending draft) opens a small pocket calculator pre-filled with that field's current
+          value — handy for e.g. dividing a purchase into 6 monthly installments. Pressing <b>=</b> fills the
+          result straight back into the field and closes the popover.
+        </Note>
+        <Note>
           Amounts and balances are always shown in <b>that account's own currency</b> — a USD account shows
           "$", a EUR account shows "€", regardless of your reporting-currency setting elsewhere in the app.
         </Note>
@@ -376,7 +382,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           When reviewing a Pending Draft, the category dropdown in Splits leads with that payee's most-used
           categories (a "Recent for this payee" group), the same suggestion behavior as the regular New
-          Transaction form — handy for filling in a template's splits for the first time.
+          Transaction form — handy for filling in a template's splits for the first time. Splits must add up
+          to the draft's Amount before you can Save or Save &amp; Confirm — a live "allocated / unallocated"
+          line under the splits table tracks it as you go, same as creating a transaction or a template.
         </Note>
         <Note>
           The New/Edit Template form's Account and Transfer to Account dropdowns hide inactive accounts by
@@ -384,6 +392,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           thing — you're very unlikely to want to point it at a closed account) — tick <b>Show inactive</b> next
           to the Account field to bring them back. A template already pointing at an inactive account keeps
           showing it either way, so opening an existing template never blanks out its current selection.
+        </Note>
+        <Note>
+          Set a template's <b>Number of installments</b> plus a separate <b>Installment Frequency</b> to turn
+          each draft it generates into a fixed-length series — a loan repayment, a 12-month installment
+          purchase — instead of a single transaction (mutually exclusive with Auto-confirm, since installments
+          are generated on confirm, not up front). This doesn't change what Periodicity/Next Due Date/End Date
+          mean: they still govern only when the template fires its next draft, exactly like a plain template.
+          Nothing is created when you save the template: the next due draft is generated and reviewed exactly
+          like any other. Confirming it is what generates the remaining N-1 installments, spaced by Installment
+          Frequency — the template itself is untouched and keeps recurring on its own schedule, starting a
+          fresh series the next time it comes due. Installments appear in Pending Drafts and the Dashboard
+          badged "Installment i/N"; the Templates tab additionally badges the template "Installment: N×
+          Frequency" alongside its normal frequency badge. Deleting a template mid-series doesn't delete its
+          remaining drafts, just their installment grouping — you'll be warned first if any are still pending.
         </Note>
       </>
     ),

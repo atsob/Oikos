@@ -1167,29 +1167,25 @@ def create_template_from_transaction(transaction_id: int) -> int:
         conn.close()
 
 
-def generate_draft_transactions() -> int:
-    """Generate draft transactions for every active template whose Next_Due_Date <= today.
+def periodicity_advance_fn(periodicity: str):
+    """Returns a callable(date) -> date advancing by one period of `periodicity`, falling
+    back to Monthly for an unrecognized value.
 
-    Auto-confirm templates (installments etc.) are inserted as confirmed directly.
-    Returns the count of transactions created.
+    Keys must match the Periodicity vocabulary used everywhere else — Recurring.tsx's own
+    dropdown and the CASE statements in api/routers/recurring.py (the manual confirm-draft
+    path). This used to be a dict inlined in generate_draft_transactions() with a different,
+    non-hyphenated spelling ('Biweekly', 'Semiannually', 'Annually') that no
+    template-creation UI actually produced anymore, so any template with a hyphenated
+    periodicity silently fell through to the Monthly fallback and got advanced monthly
+    regardless of its real frequency — e.g. an Annual bonus template would regenerate a new
+    draft every month instead of once a year. Factored out to a module-level function (used
+    by generate_draft_transactions and database/queries.py::_confirm_draft_row's installment
+    expansion) so there's exactly one place that owns this vocabulary instead of it drifting
+    out of sync again.
     """
     try:
         from dateutil.relativedelta import relativedelta
-    except ImportError:
-        relativedelta = None
-
-    from datetime import timedelta as _td
-
-    # Keys must match the Periodicity vocabulary used everywhere else — Recurring.tsx's
-    # own dropdown and the CASE statements in api/routers/recurring.py (the manual
-    # confirm-draft path). This dict used to use a different, non-hyphenated spelling
-    # ('Biweekly', 'Semiannually', 'Annually') that no template-creation UI actually
-    # produced anymore, so any template with a hyphenated periodicity silently fell
-    # through to the `_DELTAS['Monthly']` fallback below and got advanced monthly
-    # regardless of its real frequency — e.g. an Annual bonus template would
-    # regenerate a new draft every month instead of once a year.
-    if relativedelta is not None:
-        _DELTAS = {
+        deltas = {
             'Daily':        lambda d: d + relativedelta(days=1),
             'Weekly':       lambda d: d + relativedelta(weeks=1),
             'Bi-Weekly':    lambda d: d + relativedelta(weeks=2),
@@ -1199,8 +1195,9 @@ def generate_draft_transactions() -> int:
             'Semi-Annual':  lambda d: d + relativedelta(months=6),
             'Annual':       lambda d: d + relativedelta(years=1),
         }
-    else:
-        _DELTAS = {
+    except ImportError:
+        from datetime import timedelta as _td
+        deltas = {
             'Daily':        lambda d: d + _td(days=1),
             'Weekly':       lambda d: d + _td(weeks=1),
             'Bi-Weekly':    lambda d: d + _td(weeks=2),
@@ -1210,7 +1207,17 @@ def generate_draft_transactions() -> int:
             'Semi-Annual':  lambda d: d + _td(days=183),
             'Annual':       lambda d: d + _td(days=365),
         }
+    return deltas.get(periodicity, deltas['Monthly'])
 
+
+def generate_draft_transactions() -> int:
+    """Generate draft transactions for every active template whose Next_Due_Date <= today.
+
+    Auto-confirm templates are inserted as confirmed directly. Installment-series templates
+    (Total_Occurrences set) are not special-cased here — occurrence 1 generates exactly like
+    any other template's draft; confirming it triggers the rest (see
+    database/queries.py::_confirm_draft_row). Returns the count of transactions created.
+    """
     conn = get_connection()
     cur = conn.cursor()
     created = 0
@@ -1233,7 +1240,7 @@ def generate_draft_transactions() -> int:
                 WHERE Templates_Id = %s AND Date = %s AND Is_Draft = TRUE
             """, (tid, next_due))
             if cur.fetchone():
-                adv = _DELTAS.get(periodicity, _DELTAS['Monthly'])
+                adv = periodicity_advance_fn(periodicity)
                 cur.execute(
                     "UPDATE Recurring_Templates SET Next_Due_Date = %s WHERE Templates_Id = %s",
                     (adv(next_due), tid)
@@ -1287,7 +1294,7 @@ def generate_draft_transactions() -> int:
                          WHERE Accounts_Id = %s
                     """, (_acc, _acc))
 
-            adv = _DELTAS.get(periodicity, _DELTAS['Monthly'])
+            adv = periodicity_advance_fn(periodicity)
             cur.execute(
                 "UPDATE Recurring_Templates SET Next_Due_Date = %s WHERE Templates_Id = %s",
                 (adv(next_due), tid)

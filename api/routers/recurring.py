@@ -31,6 +31,8 @@ def get_templates():
                 rt.total_amount AS total_amount,
                 rt.description AS description,
                 rt.auto_confirm AS auto_confirm,
+                rt.total_occurrences AS total_occurrences,
+                rt.installment_frequency AS installment_frequency,
                 rt.accounts_id AS account_id,
                 rt.payees_id AS payee_id,
                 rt.accounts_id_target AS accounts_id_target,
@@ -60,21 +62,33 @@ def get_template_splits(template_id: int):
 
 @router.post("/templates")
 def create_template(data: dict):
+    total_occurrences = data.get("total_occurrences")
+    installment_frequency = data.get("installment_frequency")
+    if total_occurrences is not None and data.get("auto_confirm", False):
+        # Total_Occurrences and Auto_Confirm are mutually exclusive: an installment series
+        # is expanded by confirming its first occurrence (see
+        # database/queries.py::_maybe_expand_installment_series) -- an auto-confirmed
+        # occurrence never passes through that confirm step, so the rest of the series
+        # would never generate.
+        raise HTTPException(400, "An installment series (Number of installments set) can't also be Auto-confirm")
+    if total_occurrences is not None and not installment_frequency:
+        raise HTTPException(400, "An installment series (Number of installments set) requires an Installment Frequency")
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO Recurring_Templates
                 (name, accounts_id, payees_id, description, total_amount, periodicity,
-                 next_due_date, end_date, auto_confirm, active, accounts_id_target)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 next_due_date, end_date, auto_confirm, active, accounts_id_target,
+                 total_occurrences, installment_frequency)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING templates_id
         """, (
             data.get("name"), data.get("accounts_id"), data.get("payees_id"),
             data.get("description"), data.get("total_amount"), data.get("periodicity"),
             data.get("next_due_date") or None, data.get("end_date") or None,
             data.get("auto_confirm", False), data.get("active", True),
-            data.get("accounts_id_target"),
+            data.get("accounts_id_target"), total_occurrences, installment_frequency,
         ))
         tid = cur.fetchone()[0]
         splits = data.get("splits", [])
@@ -128,6 +142,12 @@ def create_template_from_transaction(tx_id: int):
 
 @router.put("/templates/{template_id}")
 def update_template(template_id: int, data: dict):
+    total_occurrences = data.get("total_occurrences")
+    installment_frequency = data.get("installment_frequency")
+    if total_occurrences is not None and data.get("auto_confirm", False):
+        raise HTTPException(400, "An installment series (Number of installments set) can't also be Auto-confirm")
+    if total_occurrences is not None and not installment_frequency:
+        raise HTTPException(400, "An installment series (Number of installments set) requires an Installment Frequency")
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -135,14 +155,15 @@ def update_template(template_id: int, data: dict):
             UPDATE Recurring_Templates SET
                 name=%s, accounts_id=%s, payees_id=%s, description=%s,
                 total_amount=%s, periodicity=%s, next_due_date=%s,
-                end_date=%s, auto_confirm=%s, active=%s, accounts_id_target=%s
+                end_date=%s, auto_confirm=%s, active=%s, accounts_id_target=%s,
+                total_occurrences=%s, installment_frequency=%s
             WHERE templates_id=%s
         """, (
             data.get("name"), data.get("accounts_id"), data.get("payees_id"),
             data.get("description"), data.get("total_amount"), data.get("periodicity"),
             data.get("next_due_date") or None, data.get("end_date") or None,
             data.get("auto_confirm", False), data.get("active", True),
-            data.get("accounts_id_target"), template_id,
+            data.get("accounts_id_target"), total_occurrences, installment_frequency, template_id,
         ))
         splits = data.get("splits")
         if splits is not None:
@@ -269,7 +290,13 @@ def get_drafts():
                    rt.name AS template_name,
                    rt.periodicity AS template_periodicity,
                    t.templates_id AS template_id,
-                   t.Accounts_Id_Target AS accounts_id_target
+                   t.Accounts_Id_Target AS accounts_id_target,
+                   rt.total_occurrences AS template_total_occurrences,
+                   -- Installment_Seq is set once this row's series is actually expanded (see
+                   -- database/queries.py::_maybe_expand_installment_series); an unconfirmed
+                   -- starter draft hasn't been expanded yet, so it's still NULL -- COALESCE to
+                   -- 1, since that's exactly what it'll become once confirmed.
+                   COALESCE(t.Installment_Seq, 1) AS occurrence_number
             FROM Transactions t
             LEFT JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
             LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id

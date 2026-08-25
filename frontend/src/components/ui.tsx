@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check } from 'lucide-react'
+import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check, Calculator as CalculatorIcon, Delete } from 'lucide-react'
 import { usePersist } from '@/lib/hooks'
 import { CASH_ACCOUNT_TYPES, INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import type { GridApi } from 'ag-grid-community'
@@ -139,7 +139,7 @@ export function SyncBalancesButton({ options, onSync }: {
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
-interface BadgeProps { label: string; variant?: 'green' | 'red' | 'blue' | 'gray' | 'yellow' }
+interface BadgeProps { label: string; variant?: 'green' | 'red' | 'blue' | 'gray' | 'yellow' | 'purple' }
 export function Badge({ label, variant = 'gray' }: BadgeProps) {
   return (
     <span className={cn(
@@ -148,6 +148,7 @@ export function Badge({ label, variant = 'gray' }: BadgeProps) {
       variant === 'red' && 'bg-red-100 text-red-700',
       variant === 'blue' && 'bg-blue-100 text-blue-700',
       variant === 'yellow' && 'bg-yellow-100 text-yellow-700',
+      variant === 'purple' && 'bg-purple-100 text-purple-700',
       variant === 'gray' && 'bg-slate-100 text-slate-600',
     )}>
       {label}
@@ -169,6 +170,126 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   )
 )
 Input.displayName = 'Input'
+
+// ── Amount calculator ────────────────────────────────────────────────────────
+// A button + popover pocket calculator for Amount fields — e.g. dividing a purchase into
+// N monthly installments. Sequential (not algebraic-precedence) evaluation, matching how a
+// real pocket calculator works: each operator immediately applies to the running total.
+type CalcOp = '+' | '-' | '×' | '÷'
+const calcApply = (a: number, op: CalcOp, b: number): number => {
+  switch (op) {
+    case '+': return a + b
+    case '-': return a - b
+    case '×': return a * b
+    case '÷': return b !== 0 ? a / b : NaN
+  }
+}
+// Rounds away binary floating-point noise (0.1 + 0.2 -> 0.30000000000000004) without
+// truncating amounts that genuinely need more than 2 decimals (e.g. share prices).
+const calcFormat = (n: number): string => {
+  if (!isFinite(n)) return 'Error'
+  return String(parseFloat(n.toFixed(6)))
+}
+
+export function AmountCalculator({ value, onApply }: { value: string; onApply: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [display, setDisplay] = useState('0')
+  const [acc, setAcc] = useState<number | null>(null)
+  const [op, setOp] = useState<CalcOp | null>(null)
+  const [resetOnNextDigit, setResetOnNextDigit] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const handleOpen = () => {
+    const seed = parseFloat(value)
+    setDisplay(!isNaN(seed) ? String(seed) : '0')
+    setAcc(null)
+    setOp(null)
+    setResetOnNextDigit(false)
+    setOpen(true)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => { if (!containerRef.current?.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+  // Local (not the shared document-level useEscapeKey) so Escape closes just this popover —
+  // stopPropagation keeps it from also bubbling up to the host modal's own Escape-to-close.
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.stopPropagation(); setOpen(false) }
+  }
+
+  const pressDigit = (d: string) => {
+    setDisplay(cur => {
+      if (resetOnNextDigit || cur === 'Error') return d === '.' ? '0.' : d
+      if (d === '.') return cur.includes('.') ? cur : cur + '.'
+      if (cur === '0') return d
+      return cur + d
+    })
+    setResetOnNextDigit(false)
+  }
+  const pressOp = (nextOp: CalcOp) => {
+    const cur = parseFloat(display)
+    if (op !== null && acc !== null && !resetOnNextDigit) {
+      const result = calcApply(acc, op, cur)
+      setAcc(result)
+      setDisplay(calcFormat(result))
+    } else {
+      setAcc(cur)
+    }
+    setOp(nextOp)
+    setResetOnNextDigit(true)
+  }
+  const pressEquals = () => {
+    const cur = parseFloat(display)
+    const result = op !== null && acc !== null ? calcApply(acc, op, cur) : cur
+    setDisplay(calcFormat(result))
+    setAcc(null)
+    setOp(null)
+    setResetOnNextDigit(true)
+    if (isFinite(result)) { onApply(calcFormat(result)); setOpen(false) }
+  }
+  const pressClear = () => { setDisplay('0'); setAcc(null); setOp(null); setResetOnNextDigit(false) }
+  const pressBackspace = () => setDisplay(cur => (cur.length > 1 && cur !== 'Error' ? cur.slice(0, -1) : '0'))
+  const pressSign = () => setDisplay(cur => cur === '0' ? cur : cur.startsWith('-') ? cur.slice(1) : '-' + cur)
+
+  const btn = 'rounded-md py-2 text-sm font-medium hover:bg-slate-100 active:bg-slate-200'
+  return (
+    <div ref={containerRef} className="relative shrink-0" onKeyDown={handleKeyDown}>
+      <button type="button" onClick={() => (open ? setOpen(false) : handleOpen())} title="Calculator"
+        className="flex items-center justify-center w-9 h-9 rounded-md border border-slate-300 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700">
+        <CalculatorIcon size={16} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 right-0 w-52 bg-white border border-slate-200 rounded-lg shadow-lg p-2">
+          <div className="text-right text-lg font-mono px-2 py-1.5 mb-1.5 bg-slate-50 rounded border border-slate-100 truncate">{display}</div>
+          <div className="grid grid-cols-4 gap-1">
+            <button type="button" onClick={pressClear} className={cn(btn, 'text-red-500')}>C</button>
+            <button type="button" onClick={pressBackspace} className={cn(btn, 'flex items-center justify-center')}><Delete size={14} /></button>
+            <button type="button" onClick={pressSign} className={btn}>±</button>
+            <button type="button" onClick={() => pressOp('÷')} className={cn(btn, 'text-blue-600')}>÷</button>
+            <button type="button" onClick={() => pressDigit('7')} className={btn}>7</button>
+            <button type="button" onClick={() => pressDigit('8')} className={btn}>8</button>
+            <button type="button" onClick={() => pressDigit('9')} className={btn}>9</button>
+            <button type="button" onClick={() => pressOp('×')} className={cn(btn, 'text-blue-600')}>×</button>
+            <button type="button" onClick={() => pressDigit('4')} className={btn}>4</button>
+            <button type="button" onClick={() => pressDigit('5')} className={btn}>5</button>
+            <button type="button" onClick={() => pressDigit('6')} className={btn}>6</button>
+            <button type="button" onClick={() => pressOp('-')} className={cn(btn, 'text-blue-600')}>−</button>
+            <button type="button" onClick={() => pressDigit('1')} className={btn}>1</button>
+            <button type="button" onClick={() => pressDigit('2')} className={btn}>2</button>
+            <button type="button" onClick={() => pressDigit('3')} className={btn}>3</button>
+            <button type="button" onClick={() => pressOp('+')} className={cn(btn, 'text-blue-600')}>+</button>
+            <button type="button" onClick={() => pressDigit('0')} className={cn(btn, 'col-span-2')}>0</button>
+            <button type="button" onClick={() => pressDigit('.')} className={btn}>.</button>
+            <button type="button" onClick={pressEquals} className={cn(btn, 'bg-blue-600 text-white hover:bg-blue-700')}>=</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Select ────────────────────────────────────────────────────────────────────
 export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(
