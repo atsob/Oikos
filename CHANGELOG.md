@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-25
+
+### Fixed
+- **Static Data's tables (Payees, Categories, Accounts, Institutions, Issuers) lost their sort — and appeared to jump to a different scroll position — right after editing or deleting a row**, e.g. sorting Payees by "# Txns" then double-clicking one to edit and save would silently reset the sort and show a completely different set of rows at the same scroll offset. Root cause: each tab's column definitions were a plain array literal recreated on every render instead of memoized, so ag-Grid saw a "new" `columnDefs` after every save/delete-triggered refetch and reset all column state — and the sort itself was never being captured to restore afterward, since none of these five tables had `onSortChanged` wired to the persistence hook that already existed to handle exactly this. Fixed identically across all five tabs; verified sort and scroll position both now survive an edit-and-save.
+- **Cash Register's "New Transaction" modal could create a new payee that then didn't show up selected** — its payee list was read from a different cache key than the one the newly-created payee was written into, so the payee existed (and was usable elsewhere) but the dropdown kept showing "— none —" right after adding it.
+
 ## 2026-08-21
 
 ### Added

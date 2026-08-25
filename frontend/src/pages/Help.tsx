@@ -694,6 +694,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
         </Ul>
         <Note>
+          Every tab here is a full ag-Grid table, same as Reports → Securities Analysis → Portfolio Action
+          Signals — click a column header to sort, drag headers to reorder, resize by dragging a column edge,
+          filter per-column, and double-click a row to edit. Your chosen sort, column order/width, and hidden
+          columns all persist across visits.
+        </Note>
+        <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
           draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
         </Note>

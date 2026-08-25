@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridApi } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -146,7 +146,17 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     finally { setMerging(false) }
   }
 
-  const payeeColDefs = [
+  // Stable reference matters — see Reports.tsx's PortfolioActionSignalsTab for the
+  // identical comment/pattern: onColumnResized/onColumnMoved persist column state and
+  // re-render this component, and a fresh array literal every render (this one wasn't
+  // memoized) makes ag-Grid treat columnDefs as "changed" and reset all column state
+  // back to these defaults on every re-render — including the user's applied sort,
+  // which is what made a sort chosen before editing/deleting a payee disappear right
+  // after the save/delete-triggered refetch re-rendered this component. openEdit/
+  // handleDelete are safe to close over from the first render only: they just forward
+  // to stable setState functions and the id/row AG Grid passes them at click time, so
+  // there's no stale-closure risk from leaving them out of the dependency array.
+  const payeeColDefs = useMemo(() => [
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Payee Name', flex: 2, minWidth: 160 },
     { field: 'default_category', headerName: 'Default Category', flex: 2, minWidth: 180 },
@@ -162,7 +172,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
         </div>
       ),
     },
-  ]
+  ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-payees', payeeColDefs)
   const { gridApi, onGridReady } = useGridApi()
 
@@ -195,9 +205,11 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
+          getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
@@ -367,7 +379,11 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     finally { setMerging(false) }
   }
 
-  const categoryColDefs = [
+  // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
+  // across re-renders (a fresh array/object every render makes ag-Grid reset all column
+  // state, including sort, right after a save/delete-triggered refetch re-renders this
+  // component). openEdit/handleDelete are safe to close over from the first render only.
+  const categoryColDefs = useMemo(() => [
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'full_path', headerName: 'Category', flex: 3, minWidth: 200 },
     { field: 'type', headerName: 'Type', width: 120 },
@@ -382,7 +398,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       ),
     },
-  ]
+  ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-categories', categoryColDefs)
   const { gridApi, onGridReady } = useGridApi()
 
@@ -415,9 +431,11 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
+          getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
@@ -589,7 +607,12 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
 
   const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
 
-  const accountColDefs = [
+  // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
+  // across re-renders (a fresh array/object every render makes ag-Grid reset all column
+  // state, including sort, right after a save/deactivate-triggered refetch re-renders
+  // this component). setRatesAccount/openEdit/handleDeactivate are safe to close over
+  // from the first render only.
+  const accountColDefs = useMemo(() => [
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
@@ -612,7 +635,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         </div>
       ),
     },
-  ]
+  ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
   const { gridApi, onGridReady } = useGridApi()
 
@@ -648,9 +671,11 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
+          getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
@@ -1046,7 +1071,11 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  const institutionColDefs = [
+  // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
+  // across re-renders (a fresh array/object every render makes ag-Grid reset all column
+  // state, including sort, right after a save/delete-triggered refetch re-renders this
+  // component). openEdit/handleDelete are safe to close over from the first render only.
+  const institutionColDefs = useMemo(() => [
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
@@ -1065,7 +1094,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         </div>
       ),
     },
-  ]
+  ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
   const { gridApi, onGridReady } = useGridApi()
 
@@ -1093,9 +1122,11 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
+          getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
@@ -1214,7 +1245,11 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  const issuerColDefs = [
+  // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
+  // across re-renders (a fresh array/object every render makes ag-Grid reset all column
+  // state, including sort, right after a save/delete-triggered refetch re-renders this
+  // component). openEdit/handleDelete are safe to close over from the first render only.
+  const issuerColDefs = useMemo(() => [
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Issuer', flex: 2, minWidth: 200 },
     { field: 'moodys', headerName: "Moody's", width: 90 },
@@ -1230,7 +1265,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         </div>
       ),
     },
-  ]
+  ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-issuers', issuerColDefs)
   const { gridApi, onGridReady } = useGridApi()
 
@@ -1258,9 +1293,11 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
+          getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
+          onSortChanged={gridCols.onSortChanged}
           columnDefs={gridCols.colDefs}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
         />
