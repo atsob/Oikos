@@ -2552,7 +2552,9 @@ def get_cash_flow_forecast_full(
                      ELSE rt.total_amount * COALESCE(fx.FX_Rate, 1) END AS amount_eur,
                 cur.Currencies_ShortName AS currency,
                 COALESCE(rt.next_due_date, CURRENT_DATE) AS next_due_date,
-                rt.periodicity
+                rt.periodicity,
+                rt.total_occurrences,
+                rt.installment_frequency
             FROM Recurring_Templates rt
             JOIN Accounts a ON a.Accounts_Id = rt.accounts_id
             JOIN Currencies cur ON cur.Currencies_Id = a.Currencies_Id
@@ -2783,21 +2785,35 @@ def get_cash_flow_forecast_full(
         cutoff_ts = pd.Timestamp(cutoff)
         for _, row in df_templates.iterrows():
             step = _PERIOD_STEP.get(str(row['periodicity']), relativedelta(months=1))
+            total_occ = row.get('total_occurrences')
+            total_occ = int(total_occ) if pd.notna(total_occ) else None
+            inst_step = _PERIOD_STEP.get(str(row.get('installment_frequency')), relativedelta(months=1))
             occ = row['next_due_date']
             while occ <= today_ts:
                 occ += step
             while occ <= cutoff_ts:
-                template_rows.append({
-                    'date': occ.date().isoformat(),
-                    'payees_name': str(row['payees_name'] or ''),
-                    'accounts_id': int(row['accounts_id']),
-                    'accounts_name': str(row['accounts_name'] or ''),
-                    'accounts_type': str(row['accounts_type'] or ''),
-                    'category': str(row.get('category') or ''),
-                    'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
-                    'currency': str(row['currency'] or 'EUR'),
-                    'periodicity': str(row['periodicity'] or ''),
-                })
+                # An installment-series template's due draft, once confirmed, expands into
+                # total_occurrences payments spaced by Installment_Frequency (see
+                # database/queries.py::_maybe_expand_installment_series) -- project every one
+                # of them here too, not just the single upcoming due date, so the forecast
+                # (and the Template In/Out totals derived from it) reflect the series' true
+                # future cash impact instead of undercounting it as one payment.
+                for seq in range(total_occ or 1):
+                    inst_date = occ if seq == 0 else occ + inst_step * seq
+                    if inst_date.date() > cutoff:
+                        break
+                    template_rows.append({
+                        'date': inst_date.date().isoformat(),
+                        'payees_name': str(row['payees_name'] or ''),
+                        'accounts_id': int(row['accounts_id']),
+                        'accounts_name': str(row['accounts_name'] or ''),
+                        'accounts_type': str(row['accounts_type'] or ''),
+                        'category': str(row.get('category') or ''),
+                        'amount_eur': float(row['amount_eur'] if pd.notna(row['amount_eur']) else 0),
+                        'currency': str(row['currency'] or 'EUR'),
+                        'periodicity': str(row['periodicity'] or '') if not total_occ
+                                       else f"Installment {seq + 1}/{total_occ}",
+                    })
                 occ += step
     template_rows.sort(key=lambda x: x['date'])
 

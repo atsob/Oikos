@@ -414,18 +414,31 @@ function OptionsPanel({
   onChange: (o: DashOpts) => void
 }) {
   const [open, setOpen] = React.useState(false)
-  const visible = opts.showDisabled ? accounts : accounts.filter(a => a.is_active !== false)
-  const all = opts.includedAccounts === 'all'
-  const selected = new Set<number>(all ? visible.map(a => Number(a.id)) : (opts.includedAccounts as number[]))
+  // Edits accumulate here and only flow into `opts` (which drives the actual net-worth query
+  // and everything downstream) on Apply -- previously every single checkbox click applied
+  // immediately, triggering a refetch and re-render mid-click that could shift the list
+  // under the pointer.
+  const [draft, setDraftState] = React.useState<DashOpts>(opts)
+  React.useEffect(() => { setDraftState(opts) }, [opts])
+
+  const visible = draft.showDisabled ? accounts : accounts.filter(a => a.is_active !== false)
+  const all = draft.includedAccounts === 'all'
+  const selected = new Set<number>(all ? visible.map(a => Number(a.id)) : (draft.includedAccounts as number[]))
 
   const toggle = (id: number) => {
     const next = new Set(selected)
     next.has(id) ? next.delete(id) : next.add(id)
     const arr = [...next]
-    onChange({ ...opts, includedAccounts: arr.length === visible.length ? 'all' : arr })
+    setDraftState(d => ({ ...d, includedAccounts: arr.length === visible.length ? 'all' : arr }))
   }
 
-  const toggleAll = () => onChange({ ...opts, includedAccounts: all ? [] : 'all' })
+  const toggleAll = () => setDraftState(d => ({ ...d, includedAccounts: all ? [] : 'all' }))
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(opts)
+
+  // Header badge reflects the currently-applied selection, not in-progress edits.
+  const appliedVisible = opts.showDisabled ? accounts : accounts.filter(a => a.is_active !== false)
+  const appliedAll = opts.includedAccounts === 'all'
 
   const groups = visible.reduce((acc: Record<string, Record<string, unknown>[]>, a) => {
     const t = String(a.type || 'Other')
@@ -440,7 +453,8 @@ function OptionsPanel({
         <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <SlidersHorizontal size={14} />
           Options &amp; Account Selection
-          {!all && <span className="text-xs font-normal text-blue-600">({(opts.includedAccounts as number[]).length} of {visible.length} accounts)</span>}
+          {!appliedAll && <span className="text-xs font-normal text-blue-600">({(opts.includedAccounts as number[]).length} of {appliedVisible.length} accounts)</span>}
+          {dirty && <span className="text-xs font-normal text-amber-600">· unapplied changes</span>}
         </span>
         {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
       </button>
@@ -451,8 +465,8 @@ function OptionsPanel({
             <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
               <input
                 type="checkbox"
-                checked={opts.includeFuture}
-                onChange={e => onChange({ ...opts, includeFuture: e.target.checked })}
+                checked={draft.includeFuture}
+                onChange={e => setDraftState(d => ({ ...d, includeFuture: e.target.checked }))}
                 className="rounded"
               />
               Include future-dated (non-draft) transactions in balances
@@ -460,8 +474,8 @@ function OptionsPanel({
             <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
               <input
                 type="checkbox"
-                checked={opts.showDisabled}
-                onChange={e => onChange({ ...opts, showDisabled: e.target.checked })}
+                checked={draft.showDisabled}
+                onChange={e => setDraftState(d => ({ ...d, showDisabled: e.target.checked }))}
                 className="rounded"
               />
               Show disabled accounts
@@ -494,6 +508,14 @@ function OptionsPanel({
                 </div>
               ))}
             </div>
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button size="sm" variant="secondary" onClick={() => setDraftState(opts)} disabled={!dirty}>
+              Reset
+            </Button>
+            <Button size="sm" onClick={() => onChange(draft)} disabled={!dirty}>
+              Apply
+            </Button>
           </div>
         </CardBody>
       )}

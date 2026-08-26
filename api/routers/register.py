@@ -84,12 +84,17 @@ def get_transactions(
             FROM Categories c JOIN cat_tree ct ON c.categories_id_parent = ct.categories_id
         ),
         all_txns AS (
+            -- Drafts contribute 0 here, not their own amount: Accounts_Balance (the anchor
+            -- this running balance is offset from, below) is itself computed from confirmed
+            -- transactions only (see _refresh_balance), so a draft row must leave the
+            -- running total exactly as it was after the last confirmed transaction, not
+            -- shift it by the draft's own amount.
             SELECT transactions_id,
-                   SUM(total_amount) OVER (
+                   SUM(CASE WHEN is_draft THEN 0 ELSE total_amount END) OVER (
                        ORDER BY date ASC, transactions_id ASC
                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                    ) AS cumulative_total,
-                   SUM(total_amount) OVER () AS grand_total
+                   SUM(CASE WHEN is_draft THEN 0 ELSE total_amount END) OVER () AS grand_total
             FROM Transactions
             WHERE accounts_id = %(account_id)s
         ),

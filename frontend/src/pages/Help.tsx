@@ -151,7 +151,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           The <b>Options &amp; Account Selection</b> panel lets you include/exclude specific accounts and
           toggle "Show Disabled" for closed accounts — both the current totals and the historical baseline used
-          for the deltas respect this same selection, so what you see stays internally consistent.
+          for the deltas respect this same selection, so what you see stays internally consistent. Changes only
+          take effect once you click <b>Apply</b> — check or uncheck as many accounts as you like first, since
+          applying immediately on every click would refetch and reflow the panel mid-selection.
         </Note>
         <Note>
           Any account name shown on the Dashboard — the expanded <b>Accounts</b> panel, <b>Upcoming Bills</b>,
@@ -476,6 +478,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           tiles, and Total Net — off by default, since a single maturing bond's face value can be a large lump
           sum that dominates the picture. The Bond Coupons &amp; Maturities table still shows what would be
           projected either way, so you can check before switching it on.
+        </Note>
+        <Note>
+          A Recurring Template with <b>installments</b> set projects every installment in the series, not just
+          the one upcoming due date — each row is labeled "Installment i/N" in place of the usual frequency, so
+          Template In/Out (and the table) reflect the series' full future cash impact instead of understating
+          it as a single payment.
         </Note>
         <Note>
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
