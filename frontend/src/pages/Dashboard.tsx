@@ -61,7 +61,7 @@ function saveDismissed(s: Set<string>) {
 }
 
 function InsightsPanel({ insights }: { insights: Insight[] }) {
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = usePersist('dashboard_insights_open', false)
   const [dismissed, setDismissed] = React.useState<Set<string>>(loadDismissed)
   const financial = insights.filter(i => !SEC_ICONS.has(i.icon) && !dismissed.has(i.title))
   const dismiss = (title: string) => {
@@ -73,7 +73,7 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
   const hasDanger = financial.some(i => i.type === 'danger')
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className={`text-sm font-semibold ${hasDanger ? 'text-red-700' : 'text-amber-700'}`}>
           {hasDanger ? '🚨' : '💡'} {financial.length} financial insight{financial.length !== 1 ? 's' : ''}
         </span>
@@ -225,7 +225,7 @@ function SecuritiesAlertsPanel() {
 // pre-existing ones (from before that rule, or from imports) get cleaned up.
 function UncategorizedTransactionsPanel() {
   const qc = useQueryClient()
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = usePersist('dashboard_uncategorized_open', false)
 
   const { data: uncategorized = [] } = useQuery({
     queryKey: ['uncategorized-transactions'],
@@ -248,7 +248,7 @@ function UncategorizedTransactionsPanel() {
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="text-sm font-semibold text-amber-700">
           🏷️ {rows.length} uncategorized transaction{rows.length !== 1 ? 's' : ''}
         </span>
@@ -413,7 +413,7 @@ function OptionsPanel({
   opts: DashOpts
   onChange: (o: DashOpts) => void
 }) {
-  const [open, setOpen] = React.useState(false)
+  const [open, setOpen] = usePersist('dashboard_options_open', false)
   // Edits accumulate here and only flow into `opts` (which drives the actual net-worth query
   // and everything downstream) on Apply -- previously every single checkbox click applied
   // immediately, triggering a refetch and re-render mid-click that could shift the list
@@ -449,7 +449,7 @@ function OptionsPanel({
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <SlidersHorizontal size={14} />
           Options &amp; Account Selection
@@ -525,7 +525,9 @@ function OptionsPanel({
 
 // ── Accounts list (collapsible) ───────────────────────────────────────────────
 function AccountsPanel({ accounts, opts }: { accounts: Record<string, unknown>[]; opts: DashOpts }) {
-  const [open, setOpen] = React.useState(false)
+  // Persisted (not local useState) so navigating to an account's Cash Register via the
+  // links below and clicking Back doesn't remount the Dashboard back to collapsed.
+  const [open, setOpen] = usePersist('dashboard_accounts_open', false)
 
   const visible = opts.showDisabled ? accounts : accounts.filter(a => a.is_active !== false)
   const included = opts.includedAccounts === 'all'
@@ -543,7 +545,7 @@ function AccountsPanel({ accounts, opts }: { accounts: Record<string, unknown>[]
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="text-sm font-semibold text-slate-700">Accounts</span>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold text-slate-700 tabular-nums">{fmtEur(total)}</span>
@@ -596,7 +598,7 @@ function AccountsPanel({ accounts, opts }: { accounts: Record<string, unknown>[]
 // ── Upcoming Bills ────────────────────────────────────────────────────────────
 function UpcomingBillsPanel() {
   const [days, setDays] = React.useState(14)
-  const [open, setOpen] = React.useState(true)
+  const [open, setOpen] = usePersist('dashboard_upcoming_bills_open', true)
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ['upcoming-bills', days],
     queryFn: () => getUpcomingBills(days),
@@ -607,7 +609,7 @@ function UpcomingBillsPanel() {
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <CalendarClock size={14} className="text-blue-500" />
           Upcoming Bills
@@ -679,7 +681,7 @@ function UpcomingBillsPanel() {
 // ── Unusual Transactions ──────────────────────────────────────────────────────
 function AnomaliesPanel() {
   const [days, setDays] = React.useState(30)
-  const [open, setOpen] = React.useState(true)
+  const [open, setOpen] = usePersist('dashboard_anomalies_open', true)
   const { data: anomalies = [], isLoading } = useQuery({
     queryKey: ['anomalies', days],
     queryFn: () => getAnomalies(days),
@@ -689,7 +691,7 @@ function AnomaliesPanel() {
 
   return (
     <Card>
-      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setOpen(!open)}>
         <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <Zap size={14} className="text-amber-500" />
           Unusual Transactions
