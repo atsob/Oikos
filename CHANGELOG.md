@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-28
+
+### Added
+- **Reports → Investment Tax has an "Export PDF (All Expanded)" button** — produces one document covering all three reports (Capital Gains, Interest & Dividend Income, Tax-Loss Harvesting) with every collapsible section forced open, regardless of what's expanded on screen. Uses the browser's own print dialog ("Save as PDF") rather than a new library, scoped via CSS so only the export content shows — app chrome, tabs, and "Copy to Excel" buttons are excluded. Colors (gain/loss highlighting, alert boxes, badges) print correctly regardless of the browser's default "background graphics" setting or which theme (light/dark) the app is in on screen. A security or payee with an unusually large number of small transactions (seen: 80+ tiny dividend-reinvestment buys on one crypto position) stays collapsed in the export — showing its real total but not every individual row — with a small red "⚠ N txns — too many to list; view in-app for detail" note, since forcing a block that size open both floods the document with noise and can't fit on one page anyway.
+
+### Fixed
+- **Capital Gains' WAC/FIFO/LIFO cost-basis radio buttons stopped visually showing which one was selected** (clicking still recalculated the numbers correctly) — introduced by the PDF export above, which keeps a second, hidden copy of the Capital Gains report mounted at all times. Both copies' radio inputs shared the same hardcoded `name`, and HTML groups radio buttons by that attribute across the whole page rather than per component instance, so the six inputs (three visible + three hidden) fought over one native selection state. Each mounted copy now gets its own independent group.
+
 ## 2026-08-27
 
 ### Fixed

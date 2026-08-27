@@ -685,6 +685,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           and briefly highlight the section that number is built from — <b>Exempt Net G/L</b> also expands the
           (collapsed by default) Tax-Exempt Sales section on the way there.
         </Note>
+        <Note>
+          <b>Export PDF (All Expanded)</b>, top-right, produces one document covering all three sub-tabs (Capital
+          Gains, Interest &amp; Dividend Income, Tax-Loss Harvesting) with every row and section forced open —
+          regardless of what's currently expanded or collapsed on screen. It opens your browser's own print
+          dialog; choose <b>Save as PDF</b> there to get the file. A security or payee with an unusually large
+          number of small transactions (e.g. many tiny dividend-reinvestment buys) stays collapsed in the
+          export — its total still shows, flagged with a red <b>"too many to list"</b> note — since listing
+          every row would flood the document for little benefit.
+        </Note>
 
         <H3>🔍 Securities Analysis</H3>
         <P>Four sub-tabs: Price Changes, Volatility, Investment Signals (risk/reward, Sharpe ratio), and Portfolio Action Signals.</P>

@@ -215,3 +215,53 @@ html.dark pre.bg-slate-900 { background: #0d1117 !important; }
 html.dark .bg-slate-900 { background-color: #0f172a !important; }
 html.dark .bg-slate-700 { background-color: #1e293b !important; }
 html.dark .hover\:bg-slate-700:hover { background-color: #293548 !important; }
+
+/* ── Print / PDF export ──────────────────────────────────────────────────
+   Isolates a single element for printing: everything on the page is hidden
+   except whatever carries the `printable-area` class (and its descendants),
+   which is unhidden and repositioned to fill the page. Used by Investment
+   Tax's "Export PDF" — see TaxPrintExport in Reports.tsx — so the browser's
+   own "Save as PDF" print target only ever sees that one element, regardless
+   of app chrome (sidebar, tab bars) or which interactive tab is active. */
+.printable-area { display: none; }
+.print-break-before { break-before: auto; }
+@media print {
+  body * { visibility: hidden; }
+  .printable-area, .printable-area * { visibility: visible; }
+  .printable-area {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+  }
+  .no-print { display: none !important; }
+  .print-break-before { break-before: page; }
+  /* Browsers strip background colors (and can flatten other color styling)
+     from print/PDF output by default unless the page explicitly opts back in
+     — otherwise the tax report's colored badges, alert boxes, and gain/loss
+     highlighting (bg-green-50/bg-red-50/bg-amber-50, text-green-700/text-red-600,
+     etc.) print as plain black-on-white regardless of the "Background graphics"
+     setting in the browser's print dialog. */
+  .printable-area, .printable-area * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* Tables inside the export sometimes clamp their height for on-screen
+     scrolling (e.g. max-h-[600px] overflow-y-auto) — irrelevant on paper,
+     where the full table should just flow across as many pages as it needs. */
+  .printable-area [class*="overflow-y-auto"],
+  .printable-area [class*="max-h-"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .printable-area table { break-inside: auto; }
+  /* A group's summary row + its nested detail sub-table live in one <tbody>
+     (see CgTable/IncomeTable in Reports.tsx) — keeping that whole box intact
+     across a page break avoids the browser splitting mid-group, which orphans
+     detail rows on the next page with no security name or column header for
+     context (the outer table's own header repeats, but it belongs to a
+     different set of columns than the orphaned detail rows underneath it).
+     Plain rows still avoid splitting too, for the same reason on a smaller scale. */
+  .printable-area tbody.print-avoid-break { break-inside: avoid; }
+  .printable-area tr { break-inside: avoid; }
+}

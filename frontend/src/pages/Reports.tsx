@@ -33,7 +33,7 @@ import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, Col
 import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
-import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
+import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown, Printer } from 'lucide-react'
 import { TxModal, useNoOpRecurring } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
 import { AgGridReact } from 'ag-grid-react'
@@ -107,7 +107,7 @@ function WithCopy({ children }: { children: React.ReactNode }) {
   return (
     <div className="space-y-2" ref={ref}>
       {children}
-      <button onClick={copy} className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
+      <button onClick={copy} className={`no-print flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
         {copied ? '✓ Copied!' : '📋 Copy to Excel'}
       </button>
     </div>
@@ -6930,7 +6930,18 @@ function BudgetSection() {
 // ════════════════════════════════════════════════════════════════════════════
 // 8. INVESTMENT TAX
 // ════════════════════════════════════════════════════════════════════════════
-function CgTable({ rows, method }: { rows: Row[]; method: string }) {
+// "Export PDF (All Expanded)" force-expands every group's detail rows — but a
+// security with a lot of small automatic transactions (e.g. a crypto position
+// with 80+ tiny dividend-reinvestment buys, each worth cents) turns into a
+// multi-page wall of noise, and since a group of that size can't fit in one
+// print page anyway, forcing it to stay atomic (see .print-avoid-break in
+// index.css) just pushes it onto a fresh page and leaves the previous one
+// mostly blank. Past this many rows, print leaves the group collapsed —
+// its summary row (with the real total) still prints, just not all of its
+// individual transactions — with a note pointing back to the app for detail.
+const PRINT_MAX_GROUP_ROWS = 20
+
+function CgTable({ rows, method, forceExpandAll }: { rows: Row[]; method: string; forceExpandAll?: boolean }) {
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set())
   const costLabel = method === 'WAC' ? 'WAC Cost (€)' : method === 'FIFO' ? 'FIFO Cost (€)' : 'LIFO Cost (€)'
 
@@ -6967,74 +6978,90 @@ function CgTable({ rows, method }: { rows: Row[]; method: string }) {
           <th className="px-2 py-1.5 text-right">Cost Basis (€)</th>
           <th className="px-2 py-1.5 text-right">Gain / Loss (€)</th>
         </tr></thead>
-        <tbody className="divide-y divide-slate-100">
-          {groups.map(g => {
-            const isOpen = expanded.has(g.key)
-            return (
-              <React.Fragment key={g.key}>
-                {/* Summary row */}
-                <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
-                  <td className="px-2 py-1.5 text-slate-400">{isOpen ? '▾' : '▸'}</td>
-                  <td className="px-2 py-1.5 font-medium"><SecLink id={g.secId}>{g.security}</SecLink>{g.ticker !== '—' && <span className="ml-1 text-slate-400 font-mono">{g.ticker}</span>}</td>
-                  <td className="px-2 py-1.5 text-slate-600"><AccountLink id={g.accountId as number} name={g.account} type="Brokerage" /></td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{g.rows.length}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.proceeds)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.cost)}</td>
-                  <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${g.gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{g.gl >= 0 ? '+' : ''}{fmtEur(g.gl)}</td>
+        {groups.map(g => {
+          const tooManyForPrint = forceExpandAll && g.rows.length > PRINT_MAX_GROUP_ROWS
+          const isOpen = (forceExpandAll && !tooManyForPrint) || expanded.has(g.key)
+          return (
+            // One <tbody> per group (summary row + its detail sub-table), rather
+            // than one shared <tbody> for the whole table — gives print pagination
+            // an atomic box to keep together (see .print-avoid-break in index.css),
+            // instead of splitting mid-group and orphaning detail rows on the next
+            // page with no security name/header for context.
+            <tbody key={g.key} className="divide-y divide-slate-100 print-avoid-break">
+              {/* Summary row */}
+              <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
+                <td className="px-2 py-1.5 text-slate-400">{isOpen ? '▾' : '▸'}</td>
+                <td className="px-2 py-1.5 font-medium">
+                  <SecLink id={g.secId}>{g.security}</SecLink>{g.ticker !== '—' && <span className="ml-1 text-slate-400 font-mono">{g.ticker}</span>}
+                  {tooManyForPrint && <><br /><span className="mt-0.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold normal-case bg-red-50 text-red-600">⚠ {g.rows.length} txns — too many to list; view in-app for detail</span></>}
+                </td>
+                <td className="px-2 py-1.5 text-slate-600"><AccountLink id={g.accountId as number} name={g.account} type="Brokerage" /></td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{g.rows.length}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.proceeds)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(g.cost)}</td>
+                <td className={`px-2 py-1.5 text-right tabular-nums font-bold ${g.gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{g.gl >= 0 ? '+' : ''}{fmtEur(g.gl)}</td>
+              </tr>
+              {/* Detail rows */}
+              {isOpen && (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    <table className="w-full text-xs bg-slate-50 border-l-4 border-slate-200">
+                      <thead><tr className="text-slate-400 uppercase tracking-wide">
+                        <th className="px-3 py-1 text-left">Date</th>
+                        <th className="px-3 py-1 text-right">Qty</th>
+                        <th className="px-3 py-1 text-right">Sell Price</th>
+                        <th className="px-3 py-1 text-right">{costLabel}</th>
+                        <th className="px-3 py-1 text-right">Proceeds (€)</th>
+                        <th className="px-3 py-1 text-right">Cost Basis (€)</th>
+                        <th className="px-3 py-1 text-right">Gain / Loss (€)</th>
+                        <th className="px-3 py-1 text-left">Holding</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {g.rows.map((r, i) => {
+                          const gl = Number(r.gain_loss_eur ?? 0)
+                          return (
+                            <tr key={i} className="hover:bg-slate-100">
+                              <td className="px-3 py-1 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
+                              <td className="px-3 py-1 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
+                              <td className="px-3 py-1 text-right tabular-nums">{fmtNum(Number(r.sell_price ?? 0), 4)}</td>
+                              <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.avg_cost ?? 0))}</td>
+                              <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.proceeds_eur ?? 0))}</td>
+                              <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.cost_eur ?? 0))}</td>
+                              <td className={`px-3 py-1 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{gl >= 0 ? '+' : ''}{fmtEur(gl)}</td>
+                              <td className="px-3 py-1">
+                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.holding_type === 'Long-term' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                                  {String(r.holding_type ?? '—')}
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </td>
                 </tr>
-                {/* Detail rows */}
-                {isOpen && (
-                  <tr>
-                    <td colSpan={7} className="p-0">
-                      <table className="w-full text-xs bg-slate-50 border-l-4 border-slate-200">
-                        <thead><tr className="text-slate-400 uppercase tracking-wide">
-                          <th className="px-3 py-1 text-left">Date</th>
-                          <th className="px-3 py-1 text-right">Qty</th>
-                          <th className="px-3 py-1 text-right">Sell Price</th>
-                          <th className="px-3 py-1 text-right">{costLabel}</th>
-                          <th className="px-3 py-1 text-right">Proceeds (€)</th>
-                          <th className="px-3 py-1 text-right">Cost Basis (€)</th>
-                          <th className="px-3 py-1 text-right">Gain / Loss (€)</th>
-                          <th className="px-3 py-1 text-left">Holding</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {g.rows.map((r, i) => {
-                            const gl = Number(r.gain_loss_eur ?? 0)
-                            return (
-                              <tr key={i} className="hover:bg-slate-100">
-                                <td className="px-3 py-1 text-slate-500">{String(r.date ?? '').slice(0, 10)}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{fmtNum(Number(r.sell_price ?? 0), 4)}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.avg_cost ?? 0))}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.proceeds_eur ?? 0))}</td>
-                                <td className="px-3 py-1 text-right tabular-nums">{fmtEur(Number(r.cost_eur ?? 0))}</td>
-                                <td className={`px-3 py-1 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{gl >= 0 ? '+' : ''}{fmtEur(gl)}</td>
-                                <td className="px-3 py-1">
-                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.holding_type === 'Long-term' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
-                                    {String(r.holding_type ?? '—')}
-                                  </span>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            )
-          })}
-        </tbody>
+              )}
+            </tbody>
+          )
+        })}
       </table>
     </div>
     </WithCopy>
   )
 }
 
-function CapitalGainsReport({ year }: { year: number }) {
-  const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
+function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; forceExpandAll?: boolean }) {
+  // HTML radio-button grouping is by `name` across the whole DOM, not scoped to
+  // a component instance — since TaxPrintExport always mounts a second, hidden
+  // copy of this component (sharing the same method/setMethod), a hardcoded
+  // name here made the browser treat both copies' radios as one 6-way native
+  // group. That left the native `checked` dot unreliable (clicking still
+  // updated `method` — and so the numbers — via React state/onChange, but the
+  // visual selection didn't reliably follow). useId keeps each mounted
+  // instance's radio group independent.
+  const radioGroupName = React.useId()
   const [showExempt, setShowExempt] = useState(false)
+  const exemptOpen = forceExpandAll || showExempt
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const scrollToSection = (id: string, expand?: () => void) => {
     expand?.()
@@ -7093,7 +7120,7 @@ function CapitalGainsReport({ year }: { year: number }) {
           <div className="flex gap-3 items-center h-9">
             {([['WAC', 'WAC (Weighted Avg)'], ['FIFO', 'FIFO (First-In First-Out)'], ['LIFO', 'LIFO (Last-In First-Out)']] as const).map(([m, label]) => (
               <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" name="cg-method" value={m} checked={method === m} onChange={() => setMethod(m)} className="accent-blue-600" />
+                <input type="radio" name={radioGroupName} value={m} checked={method === m} onChange={() => setMethod(m)} className="accent-blue-600" />
                 {label}
               </label>
             ))}
@@ -7182,7 +7209,7 @@ function CapitalGainsReport({ year }: { year: number }) {
                     </div>
                   ))}
                 </div>
-                <CgTable rows={catRows} method={method} />
+                <CgTable rows={catRows} method={method} forceExpandAll={forceExpandAll} />
                 <hr className="border-slate-200" />
               </div>
             )
@@ -7200,7 +7227,7 @@ function CapitalGainsReport({ year }: { year: number }) {
                   className="flex items-center gap-2 text-sm font-semibold text-green-700 hover:text-green-800"
                   onClick={() => setShowExempt(v => !v)}
                 >
-                  <span>{showExempt ? '▾' : '▸'}</span>
+                  <span>{exemptOpen ? '▾' : '▸'}</span>
                   Tax-Exempt Sales — {dExempt.length} transaction(s) (excluded from all totals)
                 </button>
                 <div className="flex flex-wrap gap-2">
@@ -7215,12 +7242,12 @@ function CapitalGainsReport({ year }: { year: number }) {
                     </div>
                   ))}
                 </div>
-                {showExempt && (
+                {exemptOpen && (
                   <div className="space-y-2">
                     <p className="text-xs text-slate-500">
                       Categories with <strong>Gains Taxable = No</strong> (e.g. Local Listed, Foreign Listed, UCITS) or securities marked Tax Exempt. Not included in any taxable total above.
                     </p>
-                    <CgTable rows={dExempt} method={method} />
+                    <CgTable rows={dExempt} method={method} forceExpandAll={forceExpandAll} />
                   </div>
                 )}
               </div>
@@ -7370,7 +7397,7 @@ function IncomeDetailRows({ rows, showSecLink, showIncomeTax = false }: { rows: 
   )
 }
 
-function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows: Row[]; showSecLink?: boolean; showIncomeTax?: boolean }) {
+function IncomeTable({ rows, showSecLink = true, showIncomeTax = false, forceExpandAll = false }: { rows: Row[]; showSecLink?: boolean; showIncomeTax?: boolean; forceExpandAll?: boolean }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const toggle = (key: string) => setExpanded(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
 
@@ -7417,34 +7444,40 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows
           {hasLib && <th className="text-right px-3 py-2 border-b border-slate-200 text-amber-600">Div Local Tax (€)</th>}
           {hasIntTax && <th className="text-right px-3 py-2 border-b border-slate-200 text-amber-600">Int. Tax (€)</th>}
         </tr></thead>
-        <tbody>
-          {groups.map(g => {
-            const net = g.taxTotal != null ? g.total + g.taxTotal : null
-            return (
-              <>
-                <tr key={g.key} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
-                  <td className="px-3 py-2 text-slate-400">{expanded.has(g.key) ? '▾' : '▸'}</td>
-                  <td className="px-3 py-2 font-medium">
-                    {showSecLink ? <SecLink id={g.rows[0].securities_id}>{g.label}</SecLink> : g.label}
+        {groups.map(g => {
+          const net = g.taxTotal != null ? g.total + g.taxTotal : null
+          const tooManyForPrint = forceExpandAll && g.rows.length > PRINT_MAX_GROUP_ROWS
+          const isOpen = (forceExpandAll && !tooManyForPrint) || expanded.has(g.key)
+          return (
+            // One <tbody> per group — see the matching comment in CgTable for why
+            // (keeps a group's summary + detail rows atomic across a print page
+            // break instead of orphaning detail rows with no header/context).
+            <tbody key={g.key} className="print-avoid-break">
+              <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => toggle(g.key)}>
+                <td className="px-3 py-2 text-slate-400">{isOpen ? '▾' : '▸'}</td>
+                <td className="px-3 py-2 font-medium">
+                  {showSecLink ? <SecLink id={g.rows[0].securities_id}>{g.label}</SecLink> : g.label}
+                  {tooManyForPrint && <><br /><span className="mt-0.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-600">⚠ {g.rows.length} txns — too many to list; view in-app for detail</span></>}
+                </td>
+                <td className="px-3 py-2 text-slate-500"><AccountLink id={g.rows[0]?.accounts_id as number} name={g.account} type={showSecLink ? 'Brokerage' : String(g.rows[0]?.account_type ?? '')} /></td>
+                <td className="px-3 py-2 text-right text-slate-500">{g.rows.length}</td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${g.total < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(g.total)}</td>
+                {hasTax && <td className="px-3 py-2 text-right tabular-nums text-red-600">{g.taxTotal != null ? fmtEur(g.taxTotal) : '—'}</td>}
+                {hasTax && <td className={`px-3 py-2 text-right tabular-nums font-semibold ${(net ?? g.total) < 0 ? 'text-red-600' : 'text-green-700'}`}>{net != null ? fmtEur(net) : fmtEur(g.total)}</td>}
+                {hasLib && <td className={`px-3 py-2 text-right tabular-nums ${(g.libTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.libTotal ?? 0) > 0 ? fmtEur(g.libTotal!) : '—'}</td>}
+                {hasIntTax && <td className={`px-3 py-2 text-right tabular-nums ${(g.intTaxTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.intTaxTotal ?? 0) > 0 ? fmtEur(g.intTaxTotal!) : '—'}</td>}
+              </tr>
+              {isOpen && (
+                <tr>
+                  <td colSpan={colSpanTotal + 1} className="bg-slate-50 border-b border-slate-200 p-0">
+                    <IncomeDetailRows rows={g.rows} showSecLink={showSecLink} showIncomeTax={showIncomeTax} />
                   </td>
-                  <td className="px-3 py-2 text-slate-500"><AccountLink id={g.rows[0]?.accounts_id as number} name={g.account} type={showSecLink ? 'Brokerage' : String(g.rows[0]?.account_type ?? '')} /></td>
-                  <td className="px-3 py-2 text-right text-slate-500">{g.rows.length}</td>
-                  <td className={`px-3 py-2 text-right tabular-nums font-semibold ${g.total < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(g.total)}</td>
-                  {hasTax && <td className="px-3 py-2 text-right tabular-nums text-red-600">{g.taxTotal != null ? fmtEur(g.taxTotal) : '—'}</td>}
-                  {hasTax && <td className={`px-3 py-2 text-right tabular-nums font-semibold ${(net ?? g.total) < 0 ? 'text-red-600' : 'text-green-700'}`}>{net != null ? fmtEur(net) : fmtEur(g.total)}</td>}
-                  {hasLib && <td className={`px-3 py-2 text-right tabular-nums ${(g.libTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.libTotal ?? 0) > 0 ? fmtEur(g.libTotal!) : '—'}</td>}
-                  {hasIntTax && <td className={`px-3 py-2 text-right tabular-nums ${(g.intTaxTotal ?? 0) > 0 ? 'text-amber-700 font-semibold' : 'text-slate-300'}`}>{(g.intTaxTotal ?? 0) > 0 ? fmtEur(g.intTaxTotal!) : '—'}</td>}
                 </tr>
-                {expanded.has(g.key) && (
-                  <tr key={g.key + '_detail'}>
-                    <td colSpan={colSpanTotal + 1} className="bg-slate-50 border-b border-slate-200 p-0">
-                      <IncomeDetailRows rows={g.rows} showSecLink={showSecLink} showIncomeTax={showIncomeTax} />
-                    </td>
-                  </tr>
-                )}
-              </>
-            )
-          })}
+              )}
+            </tbody>
+          )
+        })}
+        <tbody>
           <tr className="bg-slate-50 font-semibold border-t-2 border-slate-300">
             <td className="px-3 py-2" colSpan={4}>Total</td>
             <td className={`px-3 py-2 text-right tabular-nums ${grandTotal < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmtEur(grandTotal)}</td>
@@ -7459,8 +7492,9 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false }: { rows
   )
 }
 
-function DividendIncomeTaxTab({ year }: { year: number }) {
+function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; forceExpandAll?: boolean }) {
   const [showRoc, setShowRoc] = useState(true)
+  const rocOpen = forceExpandAll || showRoc
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const scrollToSection = (id: string, expand?: () => void) => {
     expand?.()
@@ -7587,18 +7621,18 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
         <h3 className="text-sm font-semibold text-slate-700">Dividend Income (incl. taxable Reinvest)</h3>
         {divRows.length === 0
           ? <p className="text-xs text-slate-400">No taxable dividend income for {year}.</p>
-          : <IncomeTable rows={divRows} />}
+          : <IncomeTable rows={divRows} forceExpandAll={forceExpandAll} />}
       </div>
 
       {/* CD / Bond Interest */}
       {(intInvRows.length > 0 || intExempt.length > 0) && (
         <div id="dit-cdbond" className={highlighted === 'dit-cdbond' ? 'ring-2 ring-blue-400 rounded-lg p-2 -m-2 space-y-2 transition-shadow' : 'space-y-2 p-2 -m-2 transition-shadow'}>
           <h3 className="text-sm font-semibold text-slate-700">CD / Bond Interest Income</h3>
-          {intInvRows.length > 0 && <IncomeTable rows={intInvRows} showIncomeTax />}
+          {intInvRows.length > 0 && <IncomeTable rows={intInvRows} showIncomeTax forceExpandAll={forceExpandAll} />}
           {intExempt.length > 0 && (
             <>
               <p className="text-xs text-green-700 font-medium mt-2">Tax-Exempt Interest (T-Bills, Exempt Bonds)</p>
-              <IncomeTable rows={intExempt} />
+              <IncomeTable rows={intExempt} forceExpandAll={forceExpandAll} />
             </>
           )}
         </div>
@@ -7608,7 +7642,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       {divExempt.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold text-green-700">Tax-Exempt Investment Income (reference only)</h3>
-          <IncomeTable rows={divExempt} />
+          <IncomeTable rows={divExempt} forceExpandAll={forceExpandAll} />
         </div>
       )}
 
@@ -7616,10 +7650,10 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
       {invRoc.length > 0 && (
         <div>
           <button className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800" onClick={() => setShowRoc(v => !v)}>
-            <span>{showRoc ? '▾' : '▸'}</span>
+            <span>{rocOpen ? '▾' : '▸'}</span>
             Return of Capital — {fmt2(totalRoc)} (not taxable income)
           </button>
-          {showRoc && <div className="mt-2"><IncomeTable rows={invRoc} /></div>}
+          {rocOpen && <div className="mt-2"><IncomeTable rows={invRoc} forceExpandAll={forceExpandAll} /></div>}
         </div>
       )}
 
@@ -7628,7 +7662,7 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
         <h3 className="text-sm font-semibold text-slate-700">Bank &amp; Savings Interest</h3>
         {bankRows.length === 0
           ? <p className="text-xs text-slate-400">No bank or savings interest found for {year}.</p>
-          : <IncomeTable rows={bankRows} showSecLink={false} />}
+          : <IncomeTable rows={bankRows} showSecLink={false} forceExpandAll={forceExpandAll} />}
       </div>
 
       {/* Reference note */}
@@ -7658,19 +7692,73 @@ function DividendIncomeTaxTab({ year }: { year: number }) {
   )
 }
 
+// Renders all three Investment Tax reports stacked, fully expanded, inside a
+// container that's invisible on screen and only shown for printing (see the
+// .printable-area rules in index.css) — lets "Export PDF" produce one document
+// with everything expanded regardless of which sub-tab or expand/collapse
+// state the interactive view is currently in. Shares `year`/`method` with the
+// visible tab (lifted to TaxSection) so the two always agree; CapitalGainsReport
+// and DividendIncomeTaxTab's own react-query calls use the same query keys, so
+// this costs no extra network requests beyond whatever the visible tab already
+// fetched.
+function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void }) {
+  return (
+    <div className="printable-area p-8 space-y-10 bg-white text-slate-900">
+      <div className="text-center border-b border-slate-300 pb-4 mb-2">
+        <h1 className="text-2xl font-bold">Investment Tax Report</h1>
+        <p className="text-sm text-slate-500">Tax Year {year} · Generated {new Date().toLocaleDateString()}</p>
+      </div>
+      <section>
+        <h2 className="text-xl font-bold mb-3">Capital Gains</h2>
+        <CapitalGainsReport year={year} method={method} setMethod={setMethod} forceExpandAll />
+      </section>
+      <section className="print-break-before">
+        <h2 className="text-xl font-bold mb-3">Interest &amp; Dividend Income</h2>
+        <DividendIncomeTaxTab year={year} forceExpandAll />
+      </section>
+      <section className="print-break-before">
+        <h2 className="text-xl font-bold mb-3">Tax-Loss Harvesting</h2>
+        <TaxLossHarvestingTab />
+      </section>
+    </div>
+  )
+}
+
 function TaxSection() {
   const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
   const [year, setYear] = usePersist('tax_year', new Date().getFullYear() - 1)
+  const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
+
+  const handleExportPdf = () => {
+    // The dark theme is applied via a `dark` class on <html>, layered on top of
+    // light-mode-first Tailwind classes — temporarily dropping it is simpler
+    // and more robust than fighting CSS specificity to force light colors back
+    // on for print, and the report is meant to be read as a plain document
+    // regardless of which theme the app happens to be in on screen.
+    const wasDark = document.documentElement.classList.contains('dark')
+    if (wasDark) document.documentElement.classList.remove('dark')
+    const restore = () => {
+      if (wasDark) document.documentElement.classList.add('dark')
+      window.removeEventListener('afterprint', restore)
+    }
+    window.addEventListener('afterprint', restore)
+    requestAnimationFrame(() => requestAnimationFrame(() => window.print()))
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <label className="text-xs text-slate-500 font-medium">Tax Year</label>
         <Input type="number" className="w-24" value={year} onChange={e => setYear(Number(e.target.value))} />
+        <Button size="sm" variant="secondary" className="ml-auto" onClick={handleExportPdf}>
+          <Printer size={14} /> Export PDF (All Expanded)
+        </Button>
       </div>
       <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
-      {tab === 'Capital Gains' && <CapitalGainsReport year={year} />}
+      {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} />}
       {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} />}
       {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab />}
+      <TaxPrintExport year={year} method={method} setMethod={setMethod} />
     </div>
   )
 }
