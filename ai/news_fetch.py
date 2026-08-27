@@ -112,6 +112,11 @@ _GENERIC_NAME_WORDS = {
     "corp", "corporation", "inc", "incorporated", "company", "co", "plc", "ltd",
     "limited", "holdings", "holding", "group", "sa", "ag", "nv", "the", "and",
     "international", "industries", "industrial", "class",
+    # Industry-descriptor words that are as non-distinguishing as the corporate
+    # suffixes above for a company whose name happens to include them — e.g.
+    # "bank" alone matched "Bank of Montreal"/"National Bank of Canada" articles
+    # for "Alpha Bank S.A." (its ticker "alpha" already covers genuine matches).
+    "bank",
 }
 
 
@@ -129,7 +134,13 @@ def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
     ticker_base = re.sub(r"\..*$", "", ticker).lower()
     if ticker_base and re.search(rf"\b{re.escape(ticker_base)}\b", text):
         return True
-    name_words = [w.strip(".,()") for w in re.split(r"\s+", name.lower())]
+    # Strip punctuation from *everywhere* in each word (not just the edges) so a
+    # dotted legal-form suffix like "S.A." normalizes to "sa" and gets caught by
+    # _GENERIC_NAME_WORDS below — .strip(".,()") only trims the outer edges, so
+    # "s.a." (trailing dot trimmed, internal dot untouched) survived as the
+    # distinct token "s.a", which then matched any unrelated headline using the
+    # same common corporate suffix (e.g. "Altisource Portfolio Solutions S.A.").
+    name_words = [re.sub(r"[.,()]", "", w) for w in re.split(r"\s+", name.lower())]
     name_words = [w for w in name_words if len(w) > 2 and w not in _GENERIC_NAME_WORDS]
     return any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words[:3])
 

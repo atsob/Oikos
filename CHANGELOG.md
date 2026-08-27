@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-27
+
+### Fixed
+- **A security's News tab could show articles about a completely different company** (reported: Alpha Bank S.A. showing "Bank of Montreal" and "National Bank of Canada" articles) — the relevance filter that keeps a security's Yahoo/press news scoped to that company matched on any word from its name that wasn't in a short generic-word blocklist (corp/inc/holdings/etc.), but that blocklist didn't include industry words like "bank" — so any article merely mentioning "bank" passed for every bank-named security. It also mishandled dotted legal suffixes like "S.A." (only trimmed from the word's edges, leaving the internal dot), so "S.A." survived as its own distinguishing word and matched any other company using the same common suffix — one confirmed case even matched a *Forza Horizon 6* gaming article to Optima Bank purely on the word "bank." Fixed both gaps; deleted the 37 already-mismatched rows found across the affected securities (Alpha Bank, Optima Bank, CrediaBank).
+
 ## 2026-08-26
 
 ### Fixed

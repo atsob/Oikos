@@ -843,7 +843,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Search results with no resolved source aren't linkable.
         </Note>
         <Ul>
-          <li><b>Securities</b> — every security currently held or on your Market Data → Watchlist, sourced from Yahoo Finance.</li>
+          <li><b>Securities</b> — every security currently held or on your Market Data → Watchlist, sourced from Yahoo Finance and filtered to articles that actually mention the security's ticker or name (Yahoo's own per-ticker feed isn't reliably scoped to just that company).</li>
           <li><b>Institutions</b> — every bank/broker/exchange you have an active account with (Static Data → Institutions), sourced from a web news search on the institution's name (DuckDuckGo, Bing, and Yahoo News, combined).</li>
           <li>
             <b>Companies</b> — payees explicitly opted in via a <b>Track for news</b> checkbox on Static Data →{' '}
