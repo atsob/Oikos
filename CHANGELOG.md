@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-29
+
+### Fixed
+- **"Download Fund Composition" could silently wipe a fund's existing composition data** — for a fund Yahoo recognizes but has no fund-specific data for (seen: a niche Greek-listed ETF), `get_funds_data()` returns a valid object with every field empty rather than an error, which the downloader treated as a normal successful fetch: it deleted all of that fund's Top Holdings (nothing to replace them with) and overwrote its Sector Weightings/Total Net Assets/etc. with NULLs, destroying any previously-fetched *or manually-entered* composition data every time the button was clicked. An empty result is now treated the same as a failed fetch — the existing data is left untouched, with a note recording that the last attempt found nothing.
+
 ## 2026-08-28
 
 ### Added

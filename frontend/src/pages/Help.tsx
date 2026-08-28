@@ -548,7 +548,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A fund's underlying data isn't downloaded automatically the first time you hold it — use{' '}
           <b>Download Fund Composition (X-Ray)</b> on Market Data → Downloads (or Security Detail → Downloads for
           one fund) to refresh it; it also refreshes monthly on its own. Funds with no cached data yet show up as
-          "Uncovered Fund Exposure" rather than being silently left out of the totals. Asset Allocation, Sector
+          "Uncovered Fund Exposure" rather than being silently left out of the totals. Re-running the download is
+          safe for a fund Yahoo has no data for (e.g. some niche domestic-listed ETFs) — it leaves any existing
+          composition data (including anything entered for it directly) untouched instead of overwriting it with
+          nothing. Asset Allocation, Sector
           Weighting, and Style Box also include any <b>Cash &amp; Savings accounts</b> selected in the current
           Account Preset as a "Cash" bucket. Every Portfolio Analysis view supports click-to-drill-down: click a bucket/row (in
           the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,

@@ -1199,6 +1199,19 @@ def download_fund_composition(target_sec_id=None):
                 print(f"  ⚠️ {sec_name} ({symbol}): {err}")
                 error_rows.append((sec_id, err))
                 continue
+            # get_funds_data() can return a real (non-None, no-exception) object
+            # for a ticker Yahoo simply has no fund data for — e.g. a niche
+            # domestic ETF — with every field empty rather than raising. Treated
+            # as a normal success, this used to blindly upsert Fund_Composition
+            # with all-NULL values and unconditionally DELETE Fund_Top_Holdings
+            # (nothing to re-insert, since top_rows is also empty) — silently
+            # wiping any previously-fetched *or manually-curated* composition
+            # data instead of leaving it alone. Treat "nothing came back" the
+            # same as a fetch failure: skip the write, keep whatever's there.
+            if all(comp[c] is None for c in _FUND_COMPOSITION_COLUMNS) and not top_rows:
+                print(f"  ⚠️ {sec_name} ({symbol}): Yahoo returned no fund data — leaving existing composition untouched")
+                error_rows.append((sec_id, "Yahoo returned no fund data"))
+                continue
             print(f"  ✔ {sec_name}: composition cached ({len(top_rows)} top holdings)")
             comp_rows.append((sec_id, *[comp[c] for c in _FUND_COMPOSITION_COLUMNS]))
             holdings_by_sec[sec_id] = top_rows
