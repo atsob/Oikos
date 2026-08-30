@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-30
+
+### Added
+- **Categories can now be excluded from Cash Flow Forecast's "Projected Recurring Payments"** — a category like "Reimbursed Expenses : Insurance" only recurs when a matching expense happens to occur, so the pattern-detection algorithm's guess about it is often wrong. A new "Exclude from Cash Flow Forecast" checkbox on each category (Static Data → Categories) opts it out of that statistically-detected section specifically; explicitly Scheduled Transactions and active Recurring Templates are unaffected, since those reflect real, already-known future cash flows rather than an inferred pattern.
+- **Recurring Transactions → Templates has a search box**, filtering by template name, account, payee, or frequency — matching the search already available on the Static Data pages.
+
+### Fixed
+- **Confirming an installment series' first draft left the remaining N-1 installments sitting as individual pending drafts requiring one-by-one confirmation**, instead of posting the whole series at once — and no installment (including the first) showed its position in the series anywhere. Confirming the first occurrence now immediately posts every remaining installment as a real transaction too (balances and any transfer mirror-leg handled the same way a normal confirm already does), and every occurrence's description gets a "(seq/total)" suffix, e.g. "(1/12)", "(2/12)", so the series is identifiable in Cash Register.
+
 ## 2026-08-29
 
 ### Fixed

@@ -308,7 +308,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
 function CategoriesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
-  const [form, setForm] = useState({ name: '', parent_id: '', type: 'Expense' })
+  const [form, setForm] = useState({ name: '', parent_id: '', type: 'Expense', exclude_from_forecast: false })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mergeOpen, setMergeOpen] = useState(false)
@@ -334,13 +334,13 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
     const namePart = String(row.full_path ?? '').split(' : ').pop() ?? ''
-    setForm({ name: namePart, parent_id: row.parent_id != null ? String(row.parent_id) : '', type: String(row.type ?? 'Expense') })
+    setForm({ name: namePart, parent_id: row.parent_id != null ? String(row.parent_id) : '', type: String(row.type ?? 'Expense'), exclude_from_forecast: Boolean(row.exclude_from_forecast) })
     setError(null)
   }
 
   const openNew = () => {
     setEditRow({})
-    setForm({ name: '', parent_id: '', type: 'Expense' })
+    setForm({ name: '', parent_id: '', type: 'Expense', exclude_from_forecast: false })
     setError(null)
   }
 
@@ -352,6 +352,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         name: form.name,
         parent_id: form.parent_id ? Number(form.parent_id) : null,
         type: form.type,
+        exclude_from_forecast: form.exclude_from_forecast,
       })
       qc.invalidateQueries({ queryKey: ['categories'] })
       setEditRow(null)
@@ -389,6 +390,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'type', headerName: 'Type', width: 120 },
     { field: 'level', headerName: 'Level', width: 70, type: 'numericColumn' as const, filter: 'agNumberColumnFilter' },
     { field: 'transactions_count', headerName: '# Txns', width: 90, type: 'numericColumn' as const, filter: 'agNumberColumnFilter' },
+    { field: 'exclude_from_forecast', headerName: 'Excl. Forecast', width: 110, valueFormatter: (p: { value: boolean }) => p.value ? 'Yes' : '—' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -467,6 +469,13 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
               {CATEGORY_TYPES.map(t => <option key={t}>{t}</option>)}
             </select>
           </Field>
+          <label className="flex items-start gap-2 text-sm mt-1">
+            <input type="checkbox" className="mt-0.5" checked={form.exclude_from_forecast} onChange={e => setForm(f => ({ ...f, exclude_from_forecast: e.target.checked }))} />
+            <span>
+              Exclude from Cash Flow Forecast
+              <span className="block text-xs text-slate-400">Skips this category in the projected recurring payments (statistically-detected patterns only — scheduled transactions and active recurring templates are unaffected).</span>
+            </span>
+          </label>
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
       )}

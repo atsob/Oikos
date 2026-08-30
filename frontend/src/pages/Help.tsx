@@ -402,12 +402,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           are generated on confirm, not up front). This doesn't change what Periodicity/Next Due Date/End Date
           mean: they still govern only when the template fires its next draft, exactly like a plain template.
           Nothing is created when you save the template: the next due draft is generated and reviewed exactly
-          like any other. Confirming it is what generates the remaining N-1 installments, spaced by Installment
-          Frequency — the template itself is untouched and keeps recurring on its own schedule, starting a
-          fresh series the next time it comes due. Installments appear in Pending Drafts and the Dashboard
-          badged "Installment i/N"; the Templates tab additionally badges the template "Installment: N×
-          Frequency" alongside its normal frequency badge. Deleting a template mid-series doesn't delete its
-          remaining drafts, just their installment grouping — you'll be warned first if any are still pending.
+          like any other. Confirming it is what posts the remaining N-1 installments — spaced by Installment
+          Frequency, each one goes straight in as a real transaction alongside the one you just confirmed,
+          rather than landing back in Pending Drafts — while the template itself is untouched and keeps
+          recurring on its own schedule, starting a fresh series the next time it comes due. Every installment's
+          description gets a "(i/N)" suffix so the series is identifiable in Cash Register; the Templates tab
+          additionally badges the template "Installment: N× Frequency" alongside its normal frequency badge.
+          Deleting a template mid-series doesn't delete its already-posted or still-pending installments, just
+          their installment grouping — you'll be warned first if any are still pending.
+        </Note>
+        <Note>
+          The Templates tab has a search box, filtering by template name, account, payee, or frequency.
         </Note>
       </>
     ),
@@ -489,6 +494,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A bill only ever counts once: statistically-detected patterns are skipped for any payee already covered
           by a scheduled transaction or an active Recurring Template, so setting up a template for something
           doesn't cause it to double up in the forecast.
+        </Note>
+        <Note>
+          A category can be marked <b>Exclude from Cash Flow Forecast</b> (Static Data → Categories) to opt it
+          out of the statistically-detected patterns specifically — useful for a category that only recurs when
+          an unpredictable event happens (e.g. reimbursed medical expenses), which the pattern detection
+          otherwise mistakes for a regular bill. Scheduled Transactions and Recurring Templates are unaffected.
         </Note>
         <Note>
           Each <b>KPI tile</b> at the top (Scheduled/Template/Recurring In-Out, Dividend Income, Interest Income,
@@ -744,6 +755,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
           draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
+        </Note>
+        <Note>
+          A category's <b>Exclude from Cash Flow Forecast</b> checkbox opts it out of that report's
+          statistically-detected "Projected Recurring Payments" section — useful for a category that only
+          recurs when an unpredictable event happens (e.g. reimbursed medical expenses), which the
+          pattern-detection algorithm otherwise mistakes for a regular bill. It has no effect on explicitly
+          Scheduled Transactions or active Recurring Templates, since those reflect real, already-known future
+          cash flows rather than an inferred pattern.
         </Note>
         <Note>
           A Savings or Checking account's row has a <b>% icon</b> opening its <b>Interest Rates</b> editor — enter

@@ -50,11 +50,11 @@ def get_categories(search: Optional[str] = Query(None)):
             WITH RECURSIVE CategoryHierarchy AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS Full_Path,
                        Categories_Type::TEXT AS Categories_Type,
-                       Categories_Id_Parent, 0 AS Level
+                       Categories_Id_Parent, 0 AS Level, Exclude_From_Forecast
                 FROM Categories WHERE Categories_Id_Parent IS NULL
                 UNION ALL
                 SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name,
-                       c.Categories_Type::TEXT, c.Categories_Id_Parent, ch.Level + 1
+                       c.Categories_Type::TEXT, c.Categories_Id_Parent, ch.Level + 1, c.Exclude_From_Forecast
                 FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
             ),
             SplitCounts AS (
@@ -63,6 +63,7 @@ def get_categories(search: Optional[str] = Query(None)):
             SELECT ch.Categories_Id AS id, ch.Full_Path AS full_path,
                    ch.Categories_Type AS type, ch.Level AS level,
                    ch.Categories_Id_Parent AS parent_id,
+                   COALESCE(ch.Exclude_From_Forecast, FALSE) AS exclude_from_forecast,
                    COALESCE(sc.cnt, 0) AS transactions_count
             FROM CategoryHierarchy ch
             LEFT JOIN SplitCounts sc ON sc.Categories_Id = ch.Categories_Id
@@ -266,14 +267,17 @@ def upsert_category(data: dict):
     try:
         cur = conn.cursor()
         cid = data.get('id')
+        exclude_from_forecast = bool(data.get('exclude_from_forecast', False))
         if cid:
             cur.execute(
-                "UPDATE Categories SET Categories_Name=%s, Categories_Type=%s, Categories_Id_Parent=%s WHERE Categories_Id=%s",
-                (data.get('name'), data.get('type'), data.get('parent_id') or None, cid))
+                "UPDATE Categories SET Categories_Name=%s, Categories_Type=%s, Categories_Id_Parent=%s, "
+                "Exclude_From_Forecast=%s WHERE Categories_Id=%s",
+                (data.get('name'), data.get('type'), data.get('parent_id') or None, exclude_from_forecast, cid))
         else:
             cur.execute(
-                "INSERT INTO Categories (Categories_Name, Categories_Id_Parent, Categories_Type) VALUES (%s, %s, %s) RETURNING Categories_Id",
-                (data.get('name'), data.get('parent_id') or None, data.get('type', 'Expense')))
+                "INSERT INTO Categories (Categories_Name, Categories_Id_Parent, Categories_Type, Exclude_From_Forecast) "
+                "VALUES (%s, %s, %s, %s) RETURNING Categories_Id",
+                (data.get('name'), data.get('parent_id') or None, data.get('type', 'Expense'), exclude_from_forecast))
             cid = cur.fetchone()[0]
         conn.commit()
         return {"id": cid}

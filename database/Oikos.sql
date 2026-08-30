@@ -167,11 +167,12 @@ CREATE TABLE IF NOT EXISTS Issuers (
 
 
 CREATE TABLE Categories (
-    Categories_Id        SERIAL PRIMARY KEY,
-    Categories_Name      VARCHAR(100) NOT NULL,
-    Categories_Id_Parent INTEGER REFERENCES Categories(Categories_Id) ON DELETE CASCADE,
-    Categories_Type      Categories_Type NOT NULL,
-    embedding            vector(768),
+    Categories_Id           SERIAL PRIMARY KEY,
+    Categories_Name         VARCHAR(100) NOT NULL,
+    Categories_Id_Parent    INTEGER REFERENCES Categories(Categories_Id) ON DELETE CASCADE,
+    Categories_Type         Categories_Type NOT NULL,
+    embedding               vector(768),
+    Exclude_From_Forecast   BOOLEAN DEFAULT FALSE,  -- opt-out: skip in Cash Flow Forecast's projected recurring payments
     UNIQUE(Categories_Name, Categories_Id_Parent)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_id   ON Categories(Categories_Id);

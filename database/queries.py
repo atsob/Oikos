@@ -2355,11 +2355,16 @@ def _confirm_draft_row(cur, tx_id: int) -> None:
 def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirmed_date) -> None:
     """If `templates_id` is an installment-series template (Total_Occurrences set) and the
     row just confirmed (`tx_id`) hasn't already been expanded, generate the remaining N-1
-    occurrences as new drafts (dates stepped from `confirmed_date` by the template's
-    Installment_Frequency — independent of Periodicity, which only governs when the template
-    itself fires its next draft — splits copied from Recurring_Template_Splits) and mark this
-    row and the new ones with a shared Installment_Group_Id (mirrors the Transfers_Id pattern)
-    plus their Installment_Seq position.
+    occurrences (dates stepped from `confirmed_date` by the template's Installment_Frequency —
+    independent of Periodicity, which only governs when the template itself fires its next
+    draft — splits copied from Recurring_Template_Splits) and immediately confirm each one as
+    a real transaction too, via the same `_confirm_draft_row` used for a normal draft (so
+    transfer mirror legs and account balances are handled identically) — the whole series
+    posts in one go rather than leaving N-1 pending drafts for the user to confirm one at a
+    time. Every occurrence's Description gets a "(seq/total)" suffix appended (e.g. "(1/12)",
+    "(2/12)", ...) so the series is identifiable in Cash Register. This row and the new ones
+    are marked with a shared Installment_Group_Id (mirrors the Transfers_Id pattern) plus
+    their Installment_Seq position.
 
     The template itself is never touched here — it keeps recurring on its own schedule and
     will produce another draft, with its own fresh series, whenever it next comes due.
@@ -2386,10 +2391,14 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
     if row is None or row[0] is not None:
         return  # already expanded (or the row vanished) -- not a trigger
 
+    def _seq_description(seq: int) -> str:
+        suffix = f"({seq}/{total_occurrences})"
+        return f"{description} {suffix}" if description else suffix
+
     cur.execute("""
-        UPDATE Transactions SET Installment_Group_Id = Transactions_Id, Installment_Seq = 1
+        UPDATE Transactions SET Installment_Group_Id = Transactions_Id, Installment_Seq = 1, Description = %s
         WHERE Transactions_Id = %s
-    """, (tx_id,))
+    """, (_seq_description(1), tx_id))
 
     from database.crud import periodicity_advance_fn
     adv = periodicity_advance_fn(installment_frequency)
@@ -2404,7 +2413,7 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
                  Installment_Group_Id, Installment_Seq)
             VALUES (%s, %s, %s, %s, %s, TRUE, %s, FALSE, %s, %s, %s)
             RETURNING Transactions_Id
-        """, (accounts_id, next_date, payees_id, description, total_amount, templates_id,
+        """, (accounts_id, next_date, payees_id, _seq_description(seq), total_amount, templates_id,
               target_acc, tx_id, seq))
         new_tx_id = cur.fetchone()[0]
         cur.execute("""
@@ -2412,6 +2421,7 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
             SELECT %s, Categories_Id, Amount, Memo
             FROM Recurring_Template_Splits WHERE Templates_Id = %s
         """, (new_tx_id, templates_id))
+        _confirm_draft_row(cur, new_tx_id)
 
 
 def confirm_draft_transaction(tx_id: int) -> bool:

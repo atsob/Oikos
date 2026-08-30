@@ -533,6 +533,13 @@ def _run_startup_migrations():
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Seq INTEGER",
         """CREATE INDEX IF NOT EXISTS idx_transactions_installment_group
                ON Transactions(Installment_Group_Id) WHERE Installment_Group_Id IS NOT NULL""",
+        # Cash Flow Forecast: opt-out flag for the statistically-detected "Projected
+        # Recurring Payments" section — a category like "Reimbursed Expenses :
+        # Insurance" only recurs when a matching medical expense happens to occur,
+        # so the pattern-detection algorithm's guess is often wrong for it. Does not
+        # affect explicitly Scheduled Transactions or active Recurring_Templates,
+        # since those reflect real user intent rather than an inferred pattern.
+        "ALTER TABLE Categories ADD COLUMN IF NOT EXISTS Exclude_From_Forecast BOOLEAN DEFAULT FALSE",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

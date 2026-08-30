@@ -2592,6 +2592,7 @@ def get_cash_flow_forecast_full(
                   AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
                   AND t.Payees_Id IS NOT NULL
                   AND t.Transfers_Id IS NULL
+                  AND NOT COALESCE(cat.Exclude_From_Forecast, FALSE)
                   {acct_clause_a}
                 GROUP BY t.Payees_Id, p.Payees_Name, s.Categories_Id, cat.Categories_Name,
                          t.Date, DATE_TRUNC('month', t.Date)::date, a.Currencies_Id

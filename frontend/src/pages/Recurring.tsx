@@ -11,7 +11,7 @@ import {
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions, AmountCalculator } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
-import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy } from 'lucide-react'
+import { Play, Plus, Pencil, Trash2, X, Save, RefreshCw, Check, List, Calendar, Copy, Search } from 'lucide-react'
 import { PayeeSelect, CategorySelect } from '@/components/TxModal'
 
 type Row = Record<string, unknown>
@@ -798,6 +798,7 @@ export default function Recurring() {
   const [splits, setSplits] = useState<SplitRow[]>([])
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const { data: templates = [], isLoading } = useQuery({ queryKey: ['recurring-templates'], queryFn: getRecurringTemplates })
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
@@ -906,6 +907,17 @@ export default function Recurring() {
     }
   }
 
+  const filteredTemplates = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return templates as Row[]
+    return (templates as Row[]).filter(t =>
+      String(t.name ?? '').toLowerCase().includes(q) ||
+      String(t.account_name ?? '').toLowerCase().includes(q) ||
+      String(t.payee_name ?? '').toLowerCase().includes(q) ||
+      String(t.frequency ?? '').toLowerCase().includes(q)
+    )
+  }, [templates, search])
+
   return (
     <div>
       <PageHeader
@@ -928,16 +940,24 @@ export default function Recurring() {
 
       <div className="px-6 pt-4 pb-6 space-y-4">
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-200">
-          {([
-            { k: 'templates', label: 'Templates' },
-            { k: 'drafts',    label: `Pending Drafts${(drafts as Row[]).length ? ` (${(drafts as Row[]).length})` : ''}` },
-          ] as const).map(t => (
-            <button key={t.k} onClick={() => setTab(t.k)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.k ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-              {t.label}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 flex-wrap">
+          <div className="flex gap-1">
+            {([
+              { k: 'templates', label: 'Templates' },
+              { k: 'drafts',    label: `Pending Drafts${(drafts as Row[]).length ? ` (${(drafts as Row[]).length})` : ''}` },
+            ] as const).map(t => (
+              <button key={t.k} onClick={() => setTab(t.k)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.k ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {tab === 'templates' && (
+            <div className="relative mb-2">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 w-56" placeholder="Search templates…" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+          )}
         </div>
 
         {tab === 'drafts' ? <DraftsTab /> : (
@@ -949,9 +969,14 @@ export default function Recurring() {
               <p className="text-sm">No recurring templates configured</p>
               <Button className="mt-4" size="sm" onClick={openNew}><Plus size={13} /> Create Template</Button>
             </div>
+          ) : filteredTemplates.length === 0 ? (
+            <div className="text-center text-slate-400 py-16">
+              <Search size={40} className="mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No templates match "{search}"</p>
+            </div>
           ) : (
             <div className="grid gap-3 max-w-3xl">
-              {(templates as Row[]).map(t => (
+              {filteredTemplates.map(t => (
                 <Card key={String(t.id)}>
                   <CardBody className="flex items-center justify-between">
                     <div className="space-y-1 min-w-0">
