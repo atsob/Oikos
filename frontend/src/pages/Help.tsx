@@ -324,7 +324,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Cash Register section for the details on how transfers are handled.
         </Note>
         <P>
-          <b>Transfer</b> (also available from a security's own page, under Investment Transactions) moves a
+          <b>Transfer</b> (also available from a security's own page, under Transactions) moves a
           holding from one account to another: the <b>same security</b> — a pure custody transfer, cost basis
           carried over — or a <b>different security</b>, a conversion/swap. An optional fee can be taken in the
           source security, the destination security, or cash from any account. Tick <b>Transfer all</b> to move
@@ -787,10 +787,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Reference and price data, in eight tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, and Alerts.</P>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
-          page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Investment
-          Transactions (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
+          page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Transactions
+          (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
           Anomalies, Dividends, Corporate Actions, News, Alerts, Downloads, and — for ETF/Mutual Fund securities
-          only — <b>Composition &amp; Holdings</b> (that fund's own Portfolio Analysis look-through data), all for that one
+          only — <b>Composition</b> (that fund's own Portfolio Analysis look-through data), all for that one
           security.
         </P>
         <Note>
@@ -820,7 +820,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           regardless of portfolio currency). Switching it changes every Sharpe Ratio shown across the app.
         </Note>
         <Note>
-          Investment Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
+          Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
           ever been sold — the same all-time figure as Reports → Inv. Performance → P&amp;L, summed across every
           account. The % is against total capital ever invested in the position, not the cost basis of the shares
           actually sold (the app doesn't track that separately once a lot is closed).
@@ -829,6 +829,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,
           pre-scoped to that security — adding one here skips picking it from a dropdown. Allocation-drift
           alerts (tied to an asset type, not one security) only show up on the Market Data page.
+        </Note>
+        <Note>
+          The price charts on <b>Overview</b> and <b>Prices</b> both draw a security's active price alerts as
+          horizontal threshold lines (green dashed for Price Above, red dashed for Price Below, labeled with the
+          threshold and note), plus a violet dotted <b>Avg Cost / Share</b> line whenever the security is
+          currently held — so the price's position relative to your alerts and your cost basis is visible at a
+          glance, without switching to the Alerts tab or doing the math yourself.
         </Note>
         <Note>
           The <b>Setup</b> tab shows a read-only <b>Price Scale</b> field (only when non-default) for securities

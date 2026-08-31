@@ -110,6 +110,30 @@ function PricesTab({ secId }: { secId: number }) {
     queryFn: () => getSecurityTransactions(secId),
     refetchInterval: liveRefetchMs,
   })
+  // Shares the ['alert-definitions'] query with AlertsTab.
+  const { data: allAlerts = [] } = useQuery({
+    queryKey: ['alert-definitions'],
+    queryFn: getAlertsDefinitions,
+    refetchInterval: liveRefetchMs,
+  })
+  const priceAlerts = useMemo(() => (allAlerts as Record<string, unknown>[]).filter(a =>
+    Boolean(a.is_active) &&
+    (a.alert_type === 'price_above' || a.alert_type === 'price_below') &&
+    Number(a.securities_id) === secId &&
+    a.threshold != null
+  ), [allAlerts, secId])
+  // Shares the ['sec-holdings', secId] query with OverviewTab/InvestmentTransactionsTab.
+  const { data: holdingsData } = useQuery({
+    queryKey: ['sec-holdings', secId],
+    queryFn: () => getSecurityHoldings(secId),
+    refetchInterval: liveRefetchMs,
+  })
+  const avgCostPerShare = useMemo(() => {
+    const holdings = ((holdingsData as { holdings: Record<string, unknown>[] }) ?? { holdings: [] }).holdings
+    const totalQty = holdings.reduce((s, r) => s + Number(r.qty_held ?? 0), 0)
+    const totalCost = holdings.reduce((s, r) => s + Number(r.cost_basis ?? 0), 0)
+    return totalQty ? totalCost / totalQty : null
+  }, [holdingsData])
 
   const importMut = useMutation({
     mutationFn: () => importPricesFromFile(importFile!, secId, importConflict),
@@ -206,6 +230,40 @@ function PricesTab({ secId }: { secId: number }) {
     }
   }, [history, txHistory, fromDate])
 
+  // Horizontal threshold lines for this security's active price alerts, drawn full-width
+  // via paper-relative x so they don't need a date to anchor to — matches the green/red
+  // "Price Above"/"Price Below" color coding used on the Alerts tab.
+  const alertShapes = useMemo(() => priceAlerts.map(a => {
+    const isAbove = a.alert_type === 'price_above'
+    return {
+      type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+      x0: 0, x1: 1, y0: Number(a.threshold), y1: Number(a.threshold),
+      line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+    }
+  }), [priceAlerts])
+  const alertAnnotations = useMemo(() => priceAlerts.map(a => {
+    const isAbove = a.alert_type === 'price_above'
+    const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    return {
+      xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
+      text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
+      font: { size: 10, color: isAbove ? '#16a34a' : '#dc2626' },
+    }
+  }), [priceAlerts])
+
+  // Same idea as the alert lines above, for the position's average cost per share.
+  const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
+    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+    x0: 0, x1: 1, y0: avgCostPerShare, y1: avgCostPerShare,
+    line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
+  }], [avgCostPerShare])
+  const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
+    xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
+    text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
+    xanchor: 'right' as const, yanchor: 'top' as const,
+    font: { size: 10, color: '#7c3aed' },
+  }], [avgCostPerShare])
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-3">
@@ -292,6 +350,8 @@ function PricesTab({ secId }: { secId: number }) {
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.15, x: 0 },
             bargap: 0.1,
+            shapes: [...alertShapes, ...avgCostShapes],
+            annotations: [...alertAnnotations, ...avgCostAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: true, responsive: true }}
@@ -1750,7 +1810,7 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
       </div>
 
       <div className="md:col-span-2">
-        <OverviewPriceChart secId={secId} />
+        <OverviewPriceChart secId={secId} avgCostPerShare={avgCostPerShare} />
       </div>
     </div>
   )
@@ -1760,7 +1820,7 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
 // transaction-marker data and 'sec_chart_period' persisted period as the
 // Prices tab's full chart, just without the MA line, volume axis, or the
 // editing/import tooling below it (those stay on the Prices tab).
-function OverviewPriceChart({ secId }: { secId: number }) {
+function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCostPerShare: number | null }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const [period, setPeriod] = usePersist<ChartPeriod>('sec_chart_period', 'YTD')
@@ -1776,6 +1836,18 @@ function OverviewPriceChart({ secId }: { secId: number }) {
     queryFn: () => getSecurityTransactions(secId),
     refetchInterval: liveRefetchMs,
   })
+  // Shares the ['alert-definitions'] query with AlertsTab/PricesTab.
+  const { data: allAlerts = [] } = useQuery({
+    queryKey: ['alert-definitions'],
+    queryFn: getAlertsDefinitions,
+    refetchInterval: liveRefetchMs,
+  })
+  const priceAlerts = useMemo(() => (allAlerts as Record<string, unknown>[]).filter(a =>
+    Boolean(a.is_active) &&
+    (a.alert_type === 'price_above' || a.alert_type === 'price_below') &&
+    Number(a.securities_id) === secId &&
+    a.threshold != null
+  ), [allAlerts, secId])
 
   const pctChange = (() => {
     const h = history as Record<string, unknown>[]
@@ -1784,6 +1856,39 @@ function OverviewPriceChart({ secId }: { secId: number }) {
     if (!first) return null
     return ((last - first) / first) * 100
   })()
+
+  // Same alert-threshold lines as the Prices tab chart — see its comment for why
+  // paper-relative x is used.
+  const alertShapes = useMemo(() => priceAlerts.map(a => {
+    const isAbove = a.alert_type === 'price_above'
+    return {
+      type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+      x0: 0, x1: 1, y0: Number(a.threshold), y1: Number(a.threshold),
+      line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+    }
+  }), [priceAlerts])
+  const alertAnnotations = useMemo(() => priceAlerts.map(a => {
+    const isAbove = a.alert_type === 'price_above'
+    const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    return {
+      xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
+      text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
+      font: { size: 10, color: isAbove ? '#16a34a' : '#dc2626' },
+    }
+  }), [priceAlerts])
+
+  // Same idea as the alert lines above, for the position's average cost per share.
+  const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
+    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+    x0: 0, x1: 1, y0: avgCostPerShare, y1: avgCostPerShare,
+    line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
+  }], [avgCostPerShare])
+  const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
+    xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
+    text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
+    xanchor: 'right' as const, yanchor: 'top' as const,
+    font: { size: 10, color: '#7c3aed' },
+  }], [avgCostPerShare])
 
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
@@ -1873,6 +1978,8 @@ function OverviewPriceChart({ secId }: { secId: number }) {
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.2, x: 0 },
             bargap: 0.1,
+            shapes: [...alertShapes, ...avgCostShapes],
+            annotations: [...alertAnnotations, ...avgCostAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: false, responsive: true }}
@@ -2441,7 +2548,7 @@ function AlertsTab({ secId }: { secId: number }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Investment Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition & Holdings'] as const
+const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -2494,7 +2601,7 @@ export default function SecurityDetail() {
             {/* Sub-tabs */}
             <div className="border-b border-slate-200 px-4">
               <div className="flex gap-1">
-                {TABS.filter(t => t !== 'Composition & Holdings' || isFund).map(t => (
+                {TABS.filter(t => t !== 'Composition' || isFund).map(t => (
                   <button key={t} onClick={() => setTab(t)}
                     className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                     {t}
@@ -2508,14 +2615,14 @@ export default function SecurityDetail() {
               {tab === 'Setup' && <SecuritySetupTab security={security} />}
               {tab === 'Analysis' && <AnalysisTab secId={secId} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}
-              {tab === 'Investment Transactions' && <InvestmentTransactionsTab secId={secId} />}
+              {tab === 'Transactions' && <InvestmentTransactionsTab secId={secId} />}
               {tab === 'Price Anomalies' && <PriceAnomaliesTab secId={secId} />}
               {tab === 'Dividends' && <DividendsTab secId={secId} security={security} />}
               {tab === 'Corporate Actions' && <CorporateActionsTab secId={secId} security={security} />}
               {tab === 'News' && <NewsTab secId={secId} />}
               {tab === 'Alerts' && <AlertsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
-              {tab === 'Composition & Holdings' && <CompositionHoldingsTab secId={secId} />}
+              {tab === 'Composition' && <CompositionHoldingsTab secId={secId} />}
             </CardBody>
           </Card>
         )}

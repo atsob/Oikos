@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-08-31
+
+### Added
+- **A security's Prices and Overview price charts now show its active price alerts as horizontal threshold lines** — green dashed for "Price Above", red dashed for "Price Below", labeled with the threshold and any note — so an alert's level is visible right on the chart instead of only in the Alerts tab's table.
+- **Those same charts now also show Avg Cost / Share as a reference line** (violet, dotted) whenever the security is currently held, making it easy to see at a glance whether the price is trading above or below your cost basis.
+
+### Changed
+- **Renamed two Security Detail tabs for brevity**: "Investment Transactions" → "Transactions", and "Composition & Holdings" → "Composition".
+
 ## 2026-08-30
 
 ### Added
