@@ -731,6 +731,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const totalValue = holdings.holdings.reduce((s, r) => s + Number(r.current_value ?? 0), 0)
   const totalCost = holdings.holdings.reduce((s, r) => s + Number(r.cost_basis ?? 0), 0)
   const totalPnl = totalValue - totalCost
+  const totalPnlPct = totalCost ? (totalPnl / totalCost) * 100 : null
 
   if (txLoading || holdingsLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -749,7 +750,10 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
           compact
           label="Current Value"
           value={totalValue ? fmt(totalValue, 2) : '—'}
-          subs={totalPnl !== 0 ? [{ text: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl, 2)} P&L`, color: totalPnl >= 0 ? 'text-green-600' : 'text-red-600' }] : undefined}
+          subs={totalPnl !== 0 ? [{
+            text: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl, 2)} P&L${totalPnlPct != null ? ` (${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toFixed(2)}%)` : ''}`,
+            color: totalPnl >= 0 ? 'text-green-600' : 'text-red-600',
+          }] : undefined}
         />
         {hasRealized && (
           <StatCard
