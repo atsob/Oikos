@@ -475,6 +475,9 @@ export const getSecurityHoldings = (secId: number) =>
 export const getSecurityFundComposition = (secId: number) =>
   api.get(`/securities/${secId}/fund-composition`).then(r => r.data)
 
+export const getSecurityFundMembership = (secId: number) =>
+  api.get(`/securities/${secId}/fund-membership`).then(r => r.data)
+
 export const setSecurityCategoryOverride = (secId: number, categoryOverride: string | null) =>
   api.patch(`/securities/${secId}/fund-composition/category-override`, { category_override: categoryOverride }).then(r => r.data)
 

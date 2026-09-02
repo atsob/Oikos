@@ -15,7 +15,7 @@ import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
-  getSecurityFundComposition, setSecurityCategoryOverride, setSecurityAssetClassOverride,
+  getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
@@ -2379,6 +2379,58 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
   )
 }
 
+// Reverse lookup of Composition & Holdings' own "Top Holdings" table — which funds in
+// the database list *this* security among their top-10 constituents, and at what weight.
+function FundMembershipTab({ secId }: { secId: number }) {
+  const navigate = useNavigate()
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['sec-fund-membership', secId],
+    queryFn: () => getSecurityFundMembership(secId),
+  })
+  const funds = rows as Record<string, unknown>[]
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  return (
+    <div className="p-5 space-y-4 max-w-3xl">
+      <p className="text-xs text-slate-500">
+        ETFs and Mutual Funds in your database that list this security among their own top-10 holdings, and at
+        what weight. Only as complete as each fund's cached top-10 data (from Composition's "Download Fund
+        Composition" on that fund's own page) — a fund holding this security outside its own top 10 won't show
+        up here.
+      </p>
+      {funds.length === 0 ? (
+        <p className="text-sm text-slate-400 py-8 text-center">Not currently in the top-10 holdings of any fund in your database.</p>
+      ) : (
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-sm">
+            <thead><tr className="text-slate-500 border-b border-slate-100 text-xs">
+              <th className="text-left px-3 py-2">Fund</th>
+              <th className="text-left px-3 py-2">Symbol</th>
+              <th className="text-right px-3 py-2">Rank</th>
+              <th className="text-right px-3 py-2">Weight</th>
+            </tr></thead>
+            <tbody>
+              {funds.map(f => (
+                <tr key={String(f.fund_securities_id)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+                  <td className="px-3 py-2">
+                    <button onClick={() => navigate(`/securities/${f.fund_securities_id}`)} className="text-blue-600 hover:underline font-medium text-left">
+                      {String(f.fund_name)}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-slate-500">{String(f.fund_ticker ?? '')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-400">#{String(f.rank)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtPct(Number(f.weight_pct) * 100)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NewsTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
   const { data: items = [], isLoading } = useQuery<NewsItem[]>({
@@ -2552,7 +2604,7 @@ function AlertsTab({ secId }: { secId: number }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition'] as const
+const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition', 'In Funds'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -2569,6 +2621,7 @@ export default function SecurityDetail() {
   const securities = securitiesRaw as Record<string, unknown>[]
   const security = securities.find(s => Number(s.id) === secId) ?? {} as Record<string, unknown>
   const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
+  const isStockOrBond = ['Stock', 'Bond'].includes(String(security.type ?? ''))
 
   return (
     <div>
@@ -2605,7 +2658,7 @@ export default function SecurityDetail() {
             {/* Sub-tabs */}
             <div className="border-b border-slate-200 px-4">
               <div className="flex gap-1">
-                {TABS.filter(t => t !== 'Composition' || isFund).map(t => (
+                {TABS.filter(t => (t !== 'Composition' || isFund) && (t !== 'In Funds' || isStockOrBond)).map(t => (
                   <button key={t} onClick={() => setTab(t)}
                     className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                     {t}
@@ -2627,6 +2680,7 @@ export default function SecurityDetail() {
               {tab === 'Alerts' && <AlertsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
               {tab === 'Composition' && <CompositionHoldingsTab secId={secId} />}
+              {tab === 'In Funds' && <FundMembershipTab secId={secId} />}
             </CardBody>
           </Card>
         )}

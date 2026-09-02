@@ -598,7 +598,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           in Style Box — instead they're bucketed by their own dominant asset mix (e.g. <b>"Equity Fund (Uncategorized)"</b>,
           "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
           <b>"N/A (no data)"</b> only when the fund has no cached composition at all. To assign a real category,
-          open that fund's Security Detail → <b>Composition &amp; Holdings</b> tab and pick one from the dropdown
+          open that fund's Security Detail → <b>Composition</b> tab and pick one from the dropdown
           there; Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
           Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
           physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it
@@ -801,8 +801,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Transactions
           (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
           Anomalies, Dividends, Corporate Actions, News, Alerts, Downloads, and — for ETF/Mutual Fund securities
-          only — <b>Composition</b> (that fund's own Portfolio Analysis look-through data), all for that one
-          security.
+          only — <b>Composition</b> (that fund's own Portfolio Analysis look-through data); Stock and Bond
+          securities instead get an <b>In Funds</b> tab, all for that one security.
         </P>
         <Note>
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;
@@ -836,6 +836,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           account. The % is against total capital ever invested in the position, not the cost basis of the shares
           actually sold (the app doesn't track that separately once a lot is closed). The <b>Current Value</b> card's
           unrealized P&amp;L is likewise shown as both an amount and a percentage, against total cost basis.
+        </Note>
+        <Note>
+          A Stock or Bond's <b>In Funds</b> tab lists every ETF/Mutual Fund in your database that includes it
+          among its own top-10 holdings, with rank and weight, linking through to that fund's own page — the
+          reverse of a fund's own Composition → Top Holdings table. Only as complete as each fund's cached
+          top-10 data: a fund holding this security outside its own top 10 won't show up here.
         </Note>
         <Note>
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,

@@ -124,6 +124,28 @@ def get_security_fund_composition(sec_id: int):
     }
 
 
+@router.get("/{sec_id}/fund-membership")
+def get_security_fund_membership(sec_id: int):
+    """Which ETFs/Mutual Funds in the database list this security among their top-10
+    holdings, and at what weight — the reverse lookup of fund-composition's own top
+    holdings list, matched the same way X-Ray Stock Overlap already matches a fund
+    constituent back to a registered Security (Fund_Top_Holdings.Symbol = this
+    security's own Yahoo_Ticker). Only ever as complete as the top-10 data itself: a
+    fund holding this security outside its own top 10 won't show up here."""
+    with get_db() as conn:
+        df = pd.read_sql("""
+            SELECT fund.Securities_Id AS fund_securities_id, fund.Securities_Name AS fund_name,
+                   fund.Ticker AS fund_ticker, fth.Rank AS rank, fth.Weight_Pct AS weight_pct
+            FROM Securities sec
+            JOIN Fund_Top_Holdings fth ON fth.Symbol = sec.Yahoo_Ticker
+            JOIN Securities fund ON fund.Securities_Id = fth.Securities_Id
+            WHERE sec.Securities_Id = %(sid)s
+              AND sec.Yahoo_Ticker IS NOT NULL AND sec.Yahoo_Ticker <> ''
+            ORDER BY fth.Weight_Pct DESC
+        """, conn, params={"sid": sec_id})
+    return _df(df)
+
+
 @router.patch("/{sec_id}/fund-composition/category-override")
 def set_security_category_override(sec_id: int, data: dict):
     category = (data.get("category_override") or None)
