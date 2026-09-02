@@ -5749,24 +5749,6 @@ def delete_portfolio_preset(preset_id: int):
         conn.close()
 
 
-# ── Benchmark candidates ───────────────────────────────────────────────────────
-@router.get("/benchmark-candidates")
-def get_benchmark_candidates(min_days: int = Query(30)):
-    query = """
-    SELECT s.Securities_Id AS id, s.Securities_Name AS name, s.Ticker AS ticker,
-           COUNT(hp.Date) AS price_days
-    FROM Securities s
-    JOIN Historical_Prices hp ON hp.Securities_Id = s.Securities_Id
-    WHERE s.Securities_Type = 'Market Index'
-    GROUP BY s.Securities_Id, s.Securities_Name, s.Ticker
-    HAVING COUNT(hp.Date) >= %(min_days)s
-    ORDER BY s.Securities_Name
-    """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"min_days": min_days})
-    return _df_to_list(df)
-
-
 # ── Benchmark comparison ───────────────────────────────────────────────────────
 def _account_weighted_index(conn, acct_clause: str, lookback_days: int) -> Optional["pd.Series"]:
     """A (Holdings-weighted, today's-weights-held-constant) daily return index for the
