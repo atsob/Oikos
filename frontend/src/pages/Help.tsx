@@ -620,15 +620,26 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           Ten sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
           <b>Performance</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
-          <b>Bond Schedule</b>, <b>Benchmark</b> (compare against a market index or another account),{' '}
+          <b>Bond Schedule</b>, <b>Benchmark</b> (compare against any number of market indexes and/or other accounts at once),{' '}
           <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and
           money-weighted return).
         </P>
         <Note>
+          <b>P&amp;L</b>'s "P&amp;L (DTD/YTD/etc.)" KPI tile always shows its Market/FX breakdown (e.g. "Mkt: -€160.05
+          FX: €61.93") when one is available for the selected window — the <b>Show Market / FX Split</b> checkbox
+          only controls whether the Market/FX columns appear in the account and drill-down tables below it.
+        </Note>
+        <Note>
+          <b>Benchmark</b>'s "Compare vs" is a set of removable chips, not a single dropdown — add as many market
+          indexes and/or other accounts as you like via <b>+ Add comparison…</b>, freely mixing both kinds. Each
+          comparison gets its own color-coded line on the chart and its own return % card, all indexed to 100 at
+          the same start date as your portfolio.
+        </Note>
+        <Note>
           <b>P&amp;L</b>'s per-account drill-down has its own <b>📊 Benchmark</b> button, opening a YTD-by-default
-          performance chart for just that account — same "Compare vs" toggle as the standalone Benchmark tab, so
-          you can measure a single account against a market index or against another one of your own accounts
-          without leaving the drill-down.
+          performance chart for just that account — same multi-comparison "Compare vs" as the standalone Benchmark
+          tab, so you can measure a single account against a market index or against another one of your own
+          accounts without leaving the drill-down.
         </Note>
         <Note>
           <b>Dividend Tracker → Forecast</b> has a period selector — <b>Till EOY</b>, <b>Next 6 Months</b>, or{' '}
@@ -823,7 +834,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Transactions' stat row includes <b>Realized Gain/Loss</b> (value and %) when the security has
           ever been sold — the same all-time figure as Reports → Inv. Performance → P&amp;L, summed across every
           account. The % is against total capital ever invested in the position, not the cost basis of the shares
-          actually sold (the app doesn't track that separately once a lot is closed).
+          actually sold (the app doesn't track that separately once a lot is closed). The <b>Current Value</b> card's
+          unrealized P&amp;L is likewise shown as both an amount and a percentage, against total cost basis.
         </Note>
         <Note>
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,

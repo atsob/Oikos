@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-02
+
+### Added
+- **Inv. Performance → Benchmark can now compare your portfolio against any number of market indexes and/or other accounts at once**, instead of just one at a time — pick as many as you like from the "Compare vs" chips, mixing indexes and accounts freely. Each comparison gets its own color-coded line on the chart and its own return % card.
+- **A security's Transactions tab shows the Current Value card's unrealized P&L as both an amount and a percentage** (e.g. "+7.51 P&L (+0.40%)"), matching the P&L % already shown in the Holdings by Account grid.
+
+### Changed
+- **Inv. Performance → P&L's "P&L (DTD/YTD)" KPI tile now always shows the Market/FX breakdown** when available, regardless of the "Show Market / FX Split" checkbox — that checkbox now only controls the detailed table columns further down.
+
 ## 2026-08-31
 
 ### Added

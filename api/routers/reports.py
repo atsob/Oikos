@@ -5829,20 +5829,35 @@ def _account_weighted_index(conn, acct_clause: str, lookback_days: int) -> Optio
     return port_idx
 
 
+def _normalize_to_port(idx: "pd.Series", port_index) -> "pd.Series":
+    """Reindex a comparison series onto the portfolio's own date index and rescale it to
+    start at 100 on the same first date, so every comparison line — regardless of its own
+    native price history — is directly overlayable against the portfolio index."""
+    s = idx.reindex(port_index).ffill().bfill()
+    first = s.iloc[0] if not pd.isna(s.iloc[0]) else (s.dropna().iloc[0] if not s.dropna().empty else None)
+    return s / first * 100 if first else pd.Series(index=port_index, dtype=float)
+
+
 @router.get("/benchmark")
 def get_benchmark(
-    benchmark_id: Optional[int] = Query(None),
+    benchmark_ids: Optional[str] = Query(None),
+    compare_account_ids: Optional[str] = Query(None),
     lookback_days: int = Query(252),
     account_ids: Optional[str] = Query(None),
-    compare_account_ids: Optional[str] = Query(None),
     resample: str = Query("Daily"),
     ytd: bool = Query(False),
 ):
-    """Portfolio (weighted avg of holdings) vs either a benchmark security/index or
-    another account's own weighted portfolio, both indexed to 100. Pass exactly one of
-    benchmark_id (a Securities_Id, e.g. a market index) or compare_account_ids
-    (comma-separated account ids) as the comparison side — compare_account_ids wins if
-    both are somehow given. ytd=true overrides lookback_days to "since Jan 1 this year"."""
+    """Portfolio (weighted avg of holdings) vs any number of comparison series — market
+    indexes/securities (benchmark_ids, comma-separated Securities_Id) and/or other
+    accounts' own weighted performance (compare_account_ids, comma-separated Accounts_Id,
+    each its own line rather than blended together) — all indexed to 100 at the same start
+    date. ytd=true overrides lookback_days to "since Jan 1 this year".
+
+    Returns {"series": [{"key","label","type"}, ...], "rows": [{"date","portfolio",
+    <key>: value, ...}, ...]} — one row per date, with a dynamically-named column per
+    comparison series (rather than a single fixed "benchmark" column) since there can now
+    be any number of them.
+    """
     if ytd:
         from datetime import date as _date
         _today = _date.today()
@@ -5850,51 +5865,72 @@ def get_benchmark(
 
     acct_ids = _parse_account_ids(account_ids)
     held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
+    bench_ids = _parse_account_ids(benchmark_ids)
+    cmp_acct_ids = _parse_account_ids(compare_account_ids)
 
     with get_db() as conn:
         port_idx = _account_weighted_index(conn, held_clause, lookback_days)
+        if port_idx is None:
+            return {"series": [], "rows": []}
 
-        cmp_acct_ids = _parse_account_ids(compare_account_ids)
+        acct_names: dict = {}
         if cmp_acct_ids:
-            cmp_clause = _acct_clause(cmp_acct_ids, "h.Accounts_Id")
-            bench_idx_raw = _account_weighted_index(conn, cmp_clause, lookback_days)
-            bench_idx = bench_idx_raw if bench_idx_raw is not None else None
-        elif benchmark_id:
+            df = pd.read_sql(
+                "SELECT Accounts_Id AS accounts_id, Accounts_Name AS accounts_name FROM Accounts WHERE Accounts_Id IN %(ids)s",
+                conn, params={"ids": tuple(cmp_acct_ids)},
+            )
+            acct_names = dict(zip(df["accounts_id"], df["accounts_name"]))
+
+        sec_names: dict = {}
+        if bench_ids:
+            df2 = pd.read_sql(
+                "SELECT Securities_Id AS securities_id, Securities_Name AS securities_name FROM Securities WHERE Securities_Id IN %(ids)s",
+                conn, params={"ids": tuple(bench_ids)},
+            )
+            sec_names = dict(zip(df2["securities_id"], df2["securities_name"]))
+
+        series_meta: list = []
+        combined = pd.DataFrame({"portfolio": port_idx})
+
+        for aid in (cmp_acct_ids or []):
+            idx = _account_weighted_index(conn, _acct_clause([aid], "h.Accounts_Id"), lookback_days)
+            if idx is None:
+                continue
+            key = f"acct_{aid}"
+            combined[key] = _normalize_to_port(idx, port_idx.index)
+            series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account"})
+
+        for bid in (bench_ids or []):
             bench_df = pd.read_sql("""
                 SELECT Date AS date, Close AS close FROM Historical_Prices
                 WHERE Securities_Id = %(bid)s AND Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
                 ORDER BY Date
-            """, conn, params={"bid": benchmark_id, "lb": lookback_days})
+            """, conn, params={"bid": bid, "lb": lookback_days})
             if bench_df.empty:
-                bench_idx = None
-            else:
-                bench_df["date"] = pd.to_datetime(bench_df["date"])
-                bench_idx = bench_df.set_index("date")["close"]
-        else:
-            bench_idx = None
-
-    if port_idx is None or bench_idx is None:
-        return []
-
-    bench_s = bench_idx.reindex(port_idx.index).ffill().bfill()
-    first_bench = bench_s.iloc[0] if not pd.isna(bench_s.iloc[0]) else bench_s.dropna().iloc[0] if not bench_s.dropna().empty else None
-    bench_norm = bench_s / first_bench * 100 if first_bench else pd.Series(index=port_idx.index, dtype=float)
-
-    combined = pd.DataFrame({"portfolio": port_idx, "benchmark": bench_norm})
+                continue
+            bench_df["date"] = pd.to_datetime(bench_df["date"])
+            idx = bench_df.set_index("date")["close"]
+            key = f"idx_{bid}"
+            combined[key] = _normalize_to_port(idx, port_idx.index)
+            series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index"})
 
     resample_map = {"Daily": None, "Weekly": "W", "Monthly": "ME"}
     freq = resample_map.get(resample)
     if freq:
         combined = combined.resample(freq).last().dropna(how="all")
 
-    result = []
+    rows = []
     for d, row in combined.iterrows():
-        result.append({
+        entry = {
             "date": d.strftime("%Y-%m-%d"),
             "portfolio": round(float(row["portfolio"]), 4) if not pd.isna(row["portfolio"]) else None,
-            "benchmark": round(float(row["benchmark"]), 4) if not pd.isna(row["benchmark"]) else None,
-        })
-    return result
+        }
+        for s in series_meta:
+            v = row.get(s["key"])
+            entry[s["key"]] = round(float(v), 4) if v is not None and not pd.isna(v) else None
+        rows.append(entry)
+
+    return {"series": series_meta, "rows": rows}
 
 
 # ── Correlation matrix ─────────────────────────────────────────────────────────
