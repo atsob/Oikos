@@ -290,6 +290,7 @@ function UncategorizedTransactionsPanel() {
           accounts={accounts as Record<string, unknown>[]}
           onSave={tx.handleSave}
           onDelete={tx.form.id ? tx.handleDelete : undefined}
+          onDuplicate={tx.form.id ? tx.duplicate : undefined}
           onClose={tx.close}
           onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
           onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string, unknown>[]) => [...(old ?? []), c])}

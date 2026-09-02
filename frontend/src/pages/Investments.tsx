@@ -883,6 +883,7 @@ export default function Investments() {
           accounts={accounts as Record<string, unknown>[]}
           onSave={cashTx.handleSave}
           onDelete={cashTx.form.id ? cashTx.handleDelete : undefined}
+          onDuplicate={cashTx.form.id ? cashTx.duplicate : undefined}
           onClose={cashTx.close}
           onPayeeCreated={p => qc.setQueryData(['payees'], (old: Record<string, unknown>[]) => [...(old ?? []), { id: p.id, name: p.name }])}
           onCategoryCreated={c => qc.setQueryData(['categories'], (old: Record<string, unknown>[]) => [...(old ?? []), c])}

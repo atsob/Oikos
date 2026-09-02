@@ -270,6 +270,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           to actually be a payment plan after the fact.
         </Note>
         <Note>
+          Editing an existing transaction has a <b>Duplicate</b> button — it copies the account, payee,
+          description, category/split breakdown, and amount into a new, unsaved transaction dated today, with
+          Draft/Cleared/Reconciled all reset, so a similar entry (another purchase from the same payee, say)
+          doesn't need retyping from scratch. The original transaction is untouched; Save creates a new row.
+        </Note>
+        <Note>
           When choosing a payee or category, typing a name with no match shows an inline <b>"+ Add"</b> option.
           Categories can be nested by typing a path like <code>Vacation : Skiing</code> — this reuses whichever
           part of the path already exists and creates only the missing segment(s), rather than requiring you to

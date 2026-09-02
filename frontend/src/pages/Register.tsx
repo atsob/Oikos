@@ -603,6 +603,7 @@ export default function Register() {
           accounts={accounts as Record<string, unknown>[]}
           onSave={tx.handleSave}
           onDelete={tx.form.id ? tx.handleDelete : undefined}
+          onDuplicate={tx.form.id ? tx.duplicate : undefined}
           onClose={tx.close}
           onPayeeCreated={p => {
             // Register.tsx's own payee list (fed to PayeeSelect below) is queried under

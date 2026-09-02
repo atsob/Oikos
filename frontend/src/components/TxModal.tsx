@@ -9,7 +9,7 @@ import { Input, Button, useEscapeKey, AccountOptions, AmountCalculator } from '@
 import { fmtEur, cn, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
-import { Plus, X, Save, ArrowLeftRight } from 'lucide-react'
+import { Plus, X, Save, ArrowLeftRight, Copy } from 'lucide-react'
 import { api } from '@/lib/api'
 
 // Must match Recurring.tsx's own PERIODICITIES (minus 'Once', which only makes sense
@@ -87,6 +87,7 @@ interface ModalProps {
   accounts: Record<string, unknown>[]
   onSave: () => void
   onDelete?: () => void
+  onDuplicate?: () => void
   onClose: () => void
   onPayeeCreated: (p: { id: number; name: string }) => void
   onCategoryCreated?: (c: { id: number; full_path: string; type: string }) => void
@@ -328,7 +329,7 @@ export function TxModal({
   form, splits, useSplits, setUseSplits,
   onFormChange, onSplitsChange,
   payees, categories, accounts,
-  onSave, onDelete, onClose, onPayeeCreated, onCategoryCreated, saving, error,
+  onSave, onDelete, onDuplicate, onClose, onPayeeCreated, onCategoryCreated, saving, error,
   recurringEnabled, setRecurringEnabled,
   recurringName, setRecurringName,
   recurringFreq, setRecurringFreq,
@@ -645,7 +646,10 @@ export function TxModal({
         </div>
 
         <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200">
-          <div>{form.id && onDelete && <Button variant="destructive" size="sm" onClick={onDelete} disabled={saving}>Delete</Button>}</div>
+          <div className="flex gap-2">
+            {form.id && onDelete && <Button variant="destructive" size="sm" onClick={onDelete} disabled={saving}>Delete</Button>}
+            {form.id && onDuplicate && <Button variant="secondary" size="sm" onClick={onDuplicate} disabled={saving}><Copy size={13} /> Duplicate</Button>}
+          </div>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
             <Button onClick={onSave} disabled={saving}>
@@ -943,11 +947,24 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
     }
   }, [form, onDeleted, onSaved])
 
+  // Turns the currently-open edit into a fresh, unsaved copy: same account, payee,
+  // description, category/splits, and amount, but a new date (today) and reset status
+  // (Draft/Cleared/Reconciled all cleared, matching a brand-new transaction) since a
+  // duplicate is a distinct new event, not a re-confirmation of the original one.
+  // Dropping `id` is what flips the modal from "Edit" to "New" (Save now creates a row
+  // instead of updating the one just duplicated), and hides the Delete button.
+  const duplicate = useCallback(() => {
+    if (!form) return
+    setForm({ ...form, id: undefined, date: today(), is_draft: false, cleared: false, reconciled: false })
+    setSaveError(null)
+    resetExtras()
+  }, [form])
+
   return {
     modalOpen, form, setForm, splits, setSplits, useSplits, setUseSplits, saving, saveError,
     recurringEnabled, setRecurringEnabled, recurringName, setRecurringName,
     recurringFreq, setRecurringFreq, recurringNextDue, setRecurringNextDue,
     installmentEnabled, setInstallmentEnabled, installmentCount, setInstallmentCount, installmentFreq, setInstallmentFreq,
-    openNew, openEdit, close, handleSave, handleDelete,
+    openNew, openEdit, close, handleSave, handleDelete, duplicate,
   }
 }
