@@ -2392,12 +2392,13 @@ function FundMembershipTab({ secId }: { secId: number }) {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-5 space-y-4 max-w-3xl">
+    <div className="p-5 space-y-4 max-w-4xl">
       <p className="text-xs text-slate-500">
         ETFs and Mutual Funds in your database that list this security among their own top-10 holdings, and at
         what weight. Only as complete as each fund's cached top-10 data (from Composition's "Download Fund
         Composition" on that fund's own page) — a fund holding this security outside its own top 10 won't show
-        up here.
+        up here. <b>Your Position</b> is your own current holding value in that fund (— if you don't hold it);{' '}
+        <b>Related Amount</b> is the slice of that value attributable to this one security (Your Position × Weight).
       </p>
       {funds.length === 0 ? (
         <p className="text-sm text-slate-400 py-8 text-center">Not currently in the top-10 holdings of any fund in your database.</p>
@@ -2409,6 +2410,8 @@ function FundMembershipTab({ secId }: { secId: number }) {
               <th className="text-left px-3 py-2">Symbol</th>
               <th className="text-right px-3 py-2">Rank</th>
               <th className="text-right px-3 py-2">Weight</th>
+              <th className="text-right px-3 py-2">Your Position</th>
+              <th className="text-right px-3 py-2">Related Amount</th>
             </tr></thead>
             <tbody>
               {funds.map(f => (
@@ -2421,6 +2424,8 @@ function FundMembershipTab({ secId }: { secId: number }) {
                   <td className="px-3 py-2 font-mono text-slate-500">{String(f.fund_ticker ?? '')}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-slate-400">#{String(f.rank)}</td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtPct(Number(f.weight_pct) * 100)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-600">{f.fund_value_eur != null ? fmtEur(Number(f.fund_value_eur)) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold">{f.fund_value_eur != null ? fmtEur(Number(f.related_value_eur)) : '—'}</td>
                 </tr>
               ))}
             </tbody>

@@ -131,14 +131,41 @@ def get_security_fund_membership(sec_id: int):
     holdings list, matched the same way X-Ray Stock Overlap already matches a fund
     constituent back to a registered Security (Fund_Top_Holdings.Symbol = this
     security's own Yahoo_Ticker). Only ever as complete as the top-10 data itself: a
-    fund holding this security outside its own top 10 won't show up here."""
+    fund holding this security outside its own top 10 won't show up here.
+
+    Also returns, for each fund, your own current holding value in it (fund_value_eur —
+    0/NULL if you don't hold that fund at all) and the slice of that value attributable
+    to this one security (related_value_eur = fund_value_eur * Weight_Pct) — the same
+    per-constituent value split X-Ray Stock Overlap already computes, just scoped to one
+    security across all funds rather than one fund across all its constituents."""
     with get_db() as conn:
         df = pd.read_sql("""
+            WITH fx_latest AS (
+                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+            ),
+            price_latest AS (
+                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+            ),
+            fund_value AS (
+                SELECT h.Securities_Id,
+                       SUM(h.Quantity * COALESCE(pl.Close, 0) * COALESCE(fx.FX_Rate, 1)) AS value_eur
+                FROM Holdings h
+                JOIN Securities s ON s.Securities_Id = h.Securities_Id
+                LEFT JOIN price_latest pl ON pl.Securities_Id = h.Securities_Id
+                LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = s.Currencies_Id
+                WHERE h.Quantity > 0
+                GROUP BY h.Securities_Id
+            )
             SELECT fund.Securities_Id AS fund_securities_id, fund.Securities_Name AS fund_name,
-                   fund.Ticker AS fund_ticker, fth.Rank AS rank, fth.Weight_Pct AS weight_pct
+                   fund.Ticker AS fund_ticker, fth.Rank AS rank, fth.Weight_Pct AS weight_pct,
+                   ROUND(fv.value_eur::numeric, 2) AS fund_value_eur,
+                   ROUND((COALESCE(fv.value_eur, 0) * fth.Weight_Pct)::numeric, 2) AS related_value_eur
             FROM Securities sec
             JOIN Fund_Top_Holdings fth ON fth.Symbol = sec.Yahoo_Ticker
             JOIN Securities fund ON fund.Securities_Id = fth.Securities_Id
+            LEFT JOIN fund_value fv ON fv.Securities_Id = fund.Securities_Id
             WHERE sec.Securities_Id = %(sid)s
               AND sec.Yahoo_Ticker IS NOT NULL AND sec.Yahoo_Ticker <> ''
             ORDER BY fth.Weight_Pct DESC

@@ -845,9 +845,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           A Stock or Bond's <b>In Funds</b> tab lists every ETF/Mutual Fund in your database that includes it
-          among its own top-10 holdings, with rank and weight, linking through to that fund's own page — the
-          reverse of a fund's own Composition → Top Holdings table. Only as complete as each fund's cached
-          top-10 data: a fund holding this security outside its own top 10 won't show up here.
+          among its own top-10 holdings, with rank, weight, <b>Your Position</b> (your own current holding value
+          in that fund, "—" if you don't hold it), and <b>Related Amount</b> (the slice of that value attributable
+          to this one security — Your Position × Weight), linking through to that fund's own page — the reverse
+          of a fund's own Composition → Top Holdings table. Only as complete as each fund's cached top-10 data: a
+          fund holding this security outside its own top 10 won't show up here.
         </Note>
         <Note>
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,

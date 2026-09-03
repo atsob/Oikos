@@ -2,7 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
-## 2026-09-02
+## 2026-09-03
+
+### Added
+- **A Stock/Bond's "In Funds" tab shows two more columns**: **Your Position** (your own current holding value in that fund, "—" if you don't hold it) and **Related Amount** (the slice of that value attributable to this one security — Your Position × Weight).
+
+### Fixed
+- **A security's News tab could show articles about a completely different company** (reported: "Profile Systems and Software S.A." showing dozens of unrelated "X Systems" company and generic software-industry articles) — the relevance filter's generic-word blocklist didn't include "systems" or "software", both common industry-sector words shared by many unrelated companies (3D Systems, Bentley Systems, Veeva Systems, York Space Systems, Mercury Systems, and any general software-industry roundup), the same class of gap as the earlier "bank" fix. Fixed the blocklist; deleted the 36 already-mismatched rows found for the affected security, plus one more unrelated article that had separately slipped through on the word "profile."
+
+
 
 ### Added
 - **Inv. Performance → Benchmark can now compare your portfolio against any number of market indexes and/or other accounts at once**, instead of just one at a time — pick as many as you like from the "Compare vs" chips, mixing indexes and accounts freely. Each comparison gets its own color-coded line on the chart and its own return % card.

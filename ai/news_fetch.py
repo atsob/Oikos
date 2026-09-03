@@ -117,6 +117,18 @@ _GENERIC_NAME_WORDS = {
     # "bank" alone matched "Bank of Montreal"/"National Bank of Canada" articles
     # for "Alpha Bank S.A." (its ticker "alpha" already covers genuine matches).
     "bank",
+    # "Profile Systems and Software S.A." matched dozens of unrelated articles
+    # purely on "systems" or "software" appearing somewhere in the text — every
+    # "X Systems" company (3D Systems, Bentley Systems, Veeva Systems, Mercury
+    # Systems, York Space Systems, ...) and any generic software-industry
+    # roundup piece. Both are as common and non-distinguishing, industry-wide,
+    # as "bank". Its remaining word, "profile", stays out of this list even
+    # though it's also a common English noun (one unrelated drone article's
+    # "a different profile from..." slipped through on it) — unlike
+    # "systems"/"software" it's this company's only surviving distinguishing
+    # word for articles that mention it by name without the ticker, and in
+    # practice it correctly matched far more real coverage than false hits.
+    "systems", "software",
 }
 
 
