@@ -18,7 +18,7 @@ import {
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
-import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent } from 'lucide-react'
+import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy } from 'lucide-react'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
 const COMPOUNDING_FREQUENCIES = ['Monthly', 'Quarterly', 'Semi-Annual', 'Annual']
@@ -135,6 +135,16 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
+  // Turns the currently-open edit into a fresh, unsaved copy (same name/category/
+  // news-tracking flag, no id) — dropping `id` is what flips the modal from "Edit" to
+  // "New" (Save now creates a row instead of updating the one just duplicated), and
+  // hides the Delete button, matching TxModal's duplicate behavior.
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setEditRow({ ...editRow, id: null })
+    setError(null)
+  }
+
   const handleMerge = async () => {
     if (!mergeSource || !mergeTarget || mergeSource === mergeTarget) return
     setMerging(true); setMergeError(null)
@@ -219,6 +229,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
         <Modal title={editRow.id ? 'Edit Payee' : 'New Payee'} onClose={() => setEditRow(null)}
           footer={<>
             {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {editRow.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !editName.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
@@ -369,6 +380,14 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
+  // Same "Edit" → "New" flip as PayeesTab's handleDuplicate: dropping the id keeps the
+  // form values (name/parent/type/forecast flag) but Save now creates a fresh row.
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setEditRow({ ...editRow, id: undefined })
+    setError(null)
+  }
+
   const handleMerge = async () => {
     if (!mergeSource || !mergeTarget || mergeSource === mergeTarget) return
     setMerging(true); setMergeError(null)
@@ -447,6 +466,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         <Modal title={editRow.id ? 'Edit Category' : 'New Category'} onClose={() => setEditRow(null)}
           footer={<>
             {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {editRow.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
@@ -614,6 +634,14 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
+  // Same "Edit" → "New" flip as PayeesTab's handleDuplicate: dropping the id keeps every
+  // field (type/currency/institution/etc.) but Save now creates a fresh account.
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setForm(f => ({ ...f, id: undefined }))
+    setError(null)
+  }
+
   const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
 
   // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
@@ -694,6 +722,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         <Modal title={form.id ? 'Edit Account' : 'New Account'} onClose={() => setEditRow(null)}
           footer={<>
             {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDeactivate(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {form.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !String(form.name ?? '').trim() || !form.currencies_id}>
@@ -1078,6 +1107,16 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
     }
   }
 
+  // Same "Edit" → "New" flip as PayeesTab's handleDuplicate. handleSave's spread order
+  // means form.id (not editRow.id) is what actually wins as the save payload's id, so
+  // both must be cleared together to fully detach this from the original row.
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setForm(f => ({ ...f, id: '' }))
+    setEditRow(er => er ? { ...er, id: undefined } : er)
+    setError(null)
+  }
+
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
@@ -1145,6 +1184,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         <Modal title={form.id ? 'Edit Institution' : 'New Institution'} onClose={() => setEditRow(null)}
           footer={<>
             {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {form.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
@@ -1252,6 +1292,15 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
     }
   }
 
+  // Same "Edit" → "New" flip as InstitutionsTab's handleDuplicate (see its comment for
+  // why both form.id and editRow.id must be cleared together).
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setForm(f => ({ ...f, id: '' }))
+    setEditRow(er => er ? { ...er, id: undefined } : er)
+    setError(null)
+  }
+
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   // See PayeesTab's identical comment: memoized so columnDefs keeps a stable reference
@@ -1316,6 +1365,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         <Modal title={form.id ? 'Edit Issuer' : 'New Issuer'} onClose={() => setEditRow(null)}
           footer={<>
             {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {form.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name?.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>

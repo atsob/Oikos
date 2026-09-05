@@ -11,7 +11,7 @@ import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnom
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { Search, Plus, Trash2, Pencil, Save, X } from 'lucide-react'
+import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -171,6 +171,17 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
+  // Turns the currently-open edit into a fresh, unsaved copy — same fields (ticker,
+  // name, type, dividend info, etc.), no id. handleSave's payload id comes from
+  // editRow?.id (not form.id), so both must be cleared together or Save would silently
+  // overwrite the original security instead of creating a new one.
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setForm(f => ({ ...f, id: '' }))
+    setEditRow(er => er ? { ...er, id: undefined } : er)
+    setError(null)
+  }
+
   // A stable reference matters here: onColumnResized/onColumnMoved persist column
   // state, which re-renders this component — a fresh array literal on every render
   // would make ag-Grid treat columnDefs as "changed" and reset it back to these
@@ -258,6 +269,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
         <Modal title={form.id ? `Edit Security — ${form.ticker}` : 'New Security'} wide onClose={() => setEditRow(null)}
           footer={<>
             {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {form.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name?.trim() || !form.ticker?.trim()}>
@@ -360,6 +372,15 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
     } catch (e) { setDeleteError(extractError(e)) }
   }
 
+  // Same "Edit" → "New" flip as SecuritiesTab's handleDuplicate (see its comment for why
+  // both form.id and editRow.id must be cleared together).
+  const handleDuplicate = () => {
+    if (!editRow) return
+    setForm(f => ({ ...f, id: '' }))
+    setEditRow(er => er ? { ...er, id: undefined } : er)
+    setError(null)
+  }
+
   // Stable reference — see the identical note in SecuritiesTab's colDefs above.
   const colDefs = useMemo(() => {
     const cols: ColDef[] = [
@@ -414,6 +435,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
         <Modal title={form.id ? 'Edit Currency' : 'New Currency'} onClose={() => setEditRow(null)}
           footer={<>
             {form.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(form.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {form.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
             <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.code?.trim() || !form.name?.trim()}>
@@ -1180,6 +1202,15 @@ function WatchlistTab() {
     })
   }
 
+  // Turns the currently-open edit into a fresh, unsaved copy (same target/stop/note),
+  // clearing editId so Save adds a new watchlist item instead of updating this one — the
+  // security still needs picking again since a security can only be watched once.
+  const duplicate = () => {
+    setForm(f => ({ ...f, securities_id: '' }))
+    setEditId(null)
+    setErr('')
+  }
+
   const fmtPct = (v: unknown) => {
     if (v == null) return '—'
     const n = Number(v)
@@ -1197,7 +1228,13 @@ function WatchlistTab() {
 
       {showAdd && (
         <Modal title={editId ? 'Edit Watchlist Item' : 'Add to Watchlist'} onClose={() => { setShowAdd(false); setErr('') }}
-          footer={<><Button variant="secondary" onClick={() => { setShowAdd(false); setErr('') }}>Cancel</Button><Button onClick={save} disabled={upsertMut.isPending}>Save</Button></>}>
+          footer={<>
+            {editId && <Button variant="destructive" onClick={() => { deleteMut.mutate(editId); setShowAdd(false); setErr('') }} disabled={upsertMut.isPending}><Trash2 size={14} /> Delete</Button>}
+            {editId && <Button variant="secondary" onClick={duplicate} disabled={upsertMut.isPending}><Copy size={14} /> Duplicate</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => { setShowAdd(false); setErr('') }}>Cancel</Button>
+            <Button onClick={save} disabled={upsertMut.isPending}>Save</Button>
+          </>}>
           {err && <p className="text-xs text-red-600">{err}</p>}
           <Field label="Security *">
             <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
@@ -1232,7 +1269,7 @@ function WatchlistTab() {
           </tr></thead>
           <tbody className="divide-y divide-slate-100">
             {sorted.map(row => (
-              <tr key={String(row.watchlist_id)} className="hover:bg-slate-50">
+              <tr key={String(row.watchlist_id)} className="hover:bg-slate-50 cursor-pointer" onDoubleClick={() => openEdit(row)}>
                 <td className="px-3 py-2 font-medium">
                   {String(row.securities_name)}
                   {Boolean(row.already_held) && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">held</span>}
@@ -1338,6 +1375,14 @@ function AlertsTab() {
     })
   }
 
+  // Turns the currently-open edit into a fresh, unsaved copy — same type/security/
+  // threshold/note — clearing editId so Save creates a new alert instead of updating
+  // this one.
+  const duplicate = () => {
+    setEditId(null)
+    setErr('')
+  }
+
   const alertTypeBadge = (t: unknown) => {
     const s = String(t ?? '')
     const color = s === 'price_above' ? 'bg-green-100 text-green-700' : s === 'price_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
@@ -1364,7 +1409,13 @@ function AlertsTab() {
 
       {showForm && (
         <Modal title={editId ? 'Edit Alert' : 'Add Alert'} onClose={() => { setShowForm(false); setErr('') }}
-          footer={<><Button variant="secondary" onClick={() => { setShowForm(false); setErr('') }}>Cancel</Button><Button onClick={doSave} disabled={saveMut.isPending}>Save</Button></>}>
+          footer={<>
+            {editId && <Button variant="destructive" onClick={() => { deleteMut.mutate(editId); setShowForm(false); setErr('') }} disabled={saveMut.isPending}><Trash2 size={14} /> Delete</Button>}
+            {editId && <Button variant="secondary" onClick={duplicate} disabled={saveMut.isPending}><Copy size={14} /> Duplicate</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => { setShowForm(false); setErr('') }}>Cancel</Button>
+            <Button onClick={doSave} disabled={saveMut.isPending}>Save</Button>
+          </>}>
           {err && <p className="text-xs text-red-600">{err}</p>}
           <Field label="Alert Type *">
             <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
@@ -1418,7 +1469,7 @@ function AlertsTab() {
                 (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
               )
               return (
-                <tr key={String(row.alert_id)} className={`hover:bg-slate-50 ${!isActive ? 'opacity-50' : ''}`}>
+                <tr key={String(row.alert_id)} className={`hover:bg-slate-50 cursor-pointer ${!isActive ? 'opacity-50' : ''}`} onDoubleClick={() => openEdit(row)}>
                   <td className="px-3 py-2">
                     <button onClick={() => toggleMut.mutate({ id: Number(row.alert_id), is_active: !isActive })}
                       className={`w-8 h-4 rounded-full transition-colors ${isActive ? 'bg-blue-500' : 'bg-slate-300'} relative`}>

@@ -614,6 +614,31 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Setup tab (<b>Issuer</b> field).
         </Note>
         <Note>
+          Every field on a fund's Security Detail → <b>Composition</b> tab is directly editable, not just Category
+          and Asset Class Override above — Expense Ratio, Family, Legal Type, Category Avg Expense Ratio, Total Net
+          Assets, Holdings Turnover, Bond Duration/Maturity, and Equity P/E, P/B, P/S, P/CF, Median Market Cap, and
+          3Y Earnings Growth all take a manual value, for a fund Yahoo has nothing for (or got wrong — e.g. a real
+          expense ratio Yahoo reports as 0%). A manual value always overrides Yahoo's own, everywhere the field is
+          used (including the <b>Weighted Expense Ratio</b> figure above and its Coverage %), and — unlike editing
+          the field's own row directly — a future "Download Fund Composition" re-run can never overwrite it, since
+          it's stored separately from the Yahoo-sourced value rather than in place of it. A "Reset to Yahoo" link
+          appears once a field is manually set, in case Yahoo's own data improves later.
+        </Note>
+        <Note>
+          <b>Sector Weightings</b> and <b>Bond Ratings</b> (Composition tab) can likewise be entered by hand —
+          "Enter breakdown manually" opens the full set of buckets (11 GICS-style sectors, or the 9 credit-rating
+          tiers) with a running total, Save/Cancel. Same override protection as the scalar fields above.
+        </Note>
+        <Note>
+          A fund's <b>Top Holdings</b> table (Composition tab) is fully editable — every row's Symbol/Name/Weight
+          is a live field (change it and click away to save, no separate edit step), plus <b>+ Add Holding</b> and
+          a per-row delete. Not capped at 10: Yahoo's own data sometimes already lists more, and you can add
+          further constituents by hand regardless. When a row's Symbol matches a security already in your
+          database, its Name becomes a link to that security's page instead of a second, independently-typed copy
+          of the name that could drift out of sync with it. Editing or adding a row marks it as manual, which
+          (like the fields above) protects it from being wiped or duplicated by a future Yahoo re-download.
+        </Note>
+        <Note>
           <b>Portfolio Analysis → Asset Allocation</b> has its own <b>⚙️ Edit Target Allocations</b>, an Actual vs. Target
           chart, and a Rebalancing Delta table (Value, Actual %, Target %, Delta %, Rebalance €) built on its
           look-through classes (Stocks/Cash/Bonds/Commodities/Crypto/Other/Preferred/Convertible), so a fund's
@@ -639,7 +664,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Benchmark</b>'s "Compare vs" is a set of removable chips, not a single dropdown — add as many market
           indexes and/or other accounts as you like via <b>+ Add comparison…</b>, freely mixing both kinds. Each
           comparison gets its own color-coded line on the chart and its own return % card, all indexed to 100 at
-          the same start date as your portfolio.
+          the same start date as your portfolio. Lookback runs YTD/3M/6M/1Y/2Y/3Y/5Y/All, clamped to whenever the
+          account scope actually started investing — <b>All</b> means "since inception," not further back.
+        </Note>
+        <Note>
+          The <b>portfolio</b> line reflects what you actually held on each day in the window — reconstructed from
+          your transaction history and priced day-by-day (a missing quote falls back to the latest one available)
+          — not today's holdings projected backward. A security you've since sold still counts for the real return
+          it earned while you held it, and one bought recently only starts contributing from the day after you
+          bought it; a long lookback can look very different from a short one as a result, since it's now showing
+          real history — including any past position that did badly and has since been sold — rather than an
+          extrapolation of today's portfolio.
         </Note>
         <Note>
           <b>P&amp;L</b>'s per-account drill-down has its own <b>📊 Benchmark</b> button, opening a YTD-by-default
@@ -770,6 +805,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           columns all persist across visits.
         </Note>
         <Note>
+          Editing an existing Payee, Category, Account, Institution, or Issuer has a <b>Duplicate</b> button next
+          to Delete — same idea as a transaction's Duplicate: it copies every field into a new, unsaved record
+          (dropping the id, which is what flips the modal from "Edit" to "New") so a similar entry doesn't need
+          retyping from scratch.
+        </Note>
+        <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
           draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
         </Note>
@@ -802,6 +843,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Market Data</H2>
         <P>Reference and price data, in eight tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, and Alerts.</P>
+        <Note>
+          Editing an existing Security or Currency has a <b>Duplicate</b> button next to Delete, copying every
+          field into a new, unsaved record. Double-clicking a row on <b>Watchlist</b> or <b>Alerts</b> opens that
+          item's edit modal too (previously only the pencil icon did), and both modals now have a <b>Delete</b>{' '}
+          button alongside Save, so removing one no longer means closing the modal first to find its trash icon
+          in the table.
+        </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
           page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Transactions

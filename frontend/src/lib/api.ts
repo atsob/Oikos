@@ -484,6 +484,34 @@ export const setSecurityCategoryOverride = (secId: number, categoryOverride: str
 export const setSecurityAssetClassOverride = (secId: number, assetClassOverride: string | null) =>
   api.patch(`/securities/${secId}/fund-composition/asset-class-override`, { asset_class_override: assetClassOverride }).then(r => r.data)
 
+// expenseRatioOverride is a percentage (e.g. 0.20 for 0.20%), matching how the Expense
+// Ratio report displays it — the backend stores it as the same fraction Yahoo's own
+// Expense_Ratio_Pct uses.
+export const setSecurityExpenseRatioOverride = (secId: number, expenseRatioOverride: number | null) =>
+  api.patch(`/securities/${secId}/fund-composition/expense-ratio-override`, { expense_ratio_override: expenseRatioOverride }).then(r => r.data)
+
+// Generic manual override for any other Fund_Composition scalar field (family, legal
+// type, total net assets, holdings turnover, bond duration/maturity, equity P/E-P/B-
+// P/S-P/CF, median market cap, 3yr earnings growth). `field` is the snake_case key the
+// backend's _OVERRIDABLE_FIELDS map recognizes (e.g. 'bond_duration'); `value` is a
+// percentage for the "_pct" fields, raw otherwise — pass null to clear the override.
+export const setSecurityFieldOverride = (secId: number, field: string, value: number | string | null) =>
+  api.patch(`/securities/${secId}/fund-composition/field-override`, { field, value }).then(r => r.data)
+
+// Manual override for the Sector Weightings / Bond Ratings breakdown — value is a
+// {bucket: percentage} map (e.g. { technology: 25 } for 25%); pass {} or null to clear.
+export const setSecurityBreakdownOverride = (secId: number, field: 'sector_weightings' | 'bond_ratings', value: Record<string, number | string> | null) =>
+  api.patch(`/securities/${secId}/fund-composition/breakdown-override`, { field, value }).then(r => r.data)
+
+// weight_pct is a percentage (e.g. 5.2 for 5.2%). A manually added/edited row is never
+// touched by a future "Download Fund Composition" re-run.
+export const addSecurityTopHolding = (secId: number, data: { symbol: string; holding_name?: string | null; weight_pct: number }) =>
+  api.post(`/securities/${secId}/fund-top-holdings`, data).then(r => r.data)
+export const updateSecurityTopHolding = (secId: number, holdingId: number, data: { symbol: string; holding_name?: string | null; weight_pct: number }) =>
+  api.patch(`/securities/${secId}/fund-top-holdings/${holdingId}`, data).then(r => r.data)
+export const deleteSecurityTopHolding = (secId: number, holdingId: number) =>
+  api.delete(`/securities/${secId}/fund-top-holdings/${holdingId}`).then(r => r.data)
+
 export const getSecurityDividends = (secId: number) =>
   api.get(`/securities/${secId}/dividends`).then(r => r.data)
 

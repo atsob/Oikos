@@ -3507,6 +3507,11 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_
         -- fund sector weightings have no industry-level breakdown, so these
         -- rows carry a NULL industry — the UI groups them into their own
         -- "Fund Look-Through" bucket rather than dropping them silently.
+        -- COALESCE(Manual_Overrides->'Sector_Weightings', Sector_Weightings) throughout
+        -- this CTE (and its IS NULL/NOT NULL siblings below) lets a manually-entered
+        -- breakdown (Security Detail -> Composition & Holdings, for a fund Yahoo has no
+        -- sector data for at all) stand in for Yahoo's own, same convention as every
+        -- other *_Override field.
         SELECT CASE WHEN je.key = 'realestate' THEN 'Real Estate' ELSE INITCAP(REPLACE(je.key,'_',' ')) END AS sector,
                NULL::text AS industry,
                hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
@@ -3514,8 +3519,8 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
-        CROSS JOIN LATERAL jsonb_each_text(fc.Sector_Weightings) AS je(key, value)
-        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NOT NULL
+        CROSS JOIN LATERAL jsonb_each_text(COALESCE(fc.Manual_Overrides->'Sector_Weightings', fc.Sector_Weightings)) AS je(key, value)
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Sector_Weightings', fc.Sector_Weightings) IS NOT NULL
     ),
     fund_detail_override AS (
         -- Yahoo has no sector weightings for this fund, but the user already
@@ -3526,7 +3531,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
-        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NULL AND fc.Asset_Class_Override IS NOT NULL
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Sector_Weightings', fc.Sector_Weightings) IS NULL AND fc.Asset_Class_Override IS NOT NULL
     ),
     fund_detail_bond_fallback AS (
         -- Yahoo doesn't provide GICS-style sector weightings for bond funds at
@@ -3540,7 +3545,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
-        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Sector_Weightings IS NULL AND fc.Asset_Class_Override IS NULL
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Sector_Weightings', fc.Sector_Weightings) IS NULL AND fc.Asset_Class_Override IS NULL
           AND COALESCE(fc.Asset_Bond_Pct,0) >= 0.7
     ),
     fund_detail AS (
@@ -3554,7 +3559,7 @@ def get_xray_sector_weighting(account_ids: Optional[str] = Query(None), compare_
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
           AND NOT EXISTS (
               SELECT 1 FROM Fund_Composition fc WHERE fc.Securities_Id=hv.Securities_Id
-                AND (fc.Sector_Weightings IS NOT NULL OR fc.Asset_Class_Override IS NOT NULL OR COALESCE(fc.Asset_Bond_Pct,0) >= 0.7)
+                AND (COALESCE(fc.Manual_Overrides->'Sector_Weightings', fc.Sector_Weightings) IS NOT NULL OR fc.Asset_Class_Override IS NOT NULL OR COALESCE(fc.Asset_Bond_Pct,0) >= 0.7)
           )
     ),
     detail_combined AS (
@@ -3904,6 +3909,9 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
         -- Normalizes Yahoo's lowercase snake_case rating keys (aaa, bbb, us_government, ...)
         -- onto the same labels direct_bond hardcodes below, so e.g. a fund's 'bbb' bucket
         -- merges with a direct bond's 'BBB' instead of showing up as a separate 'Bbb' row.
+        -- COALESCE(Manual_Overrides->'Bond_Ratings', Bond_Ratings) (and its IS NULL/NOT
+        -- NULL siblings below, in `uncovered`) lets a manually-entered breakdown stand in
+        -- for Yahoo's own, same convention as every other *_Override field.
         SELECT CASE UPPER(je.key)
                  WHEN 'AAA' THEN 'AAA'
                  WHEN 'AA' THEN 'AA'
@@ -3918,11 +3926,11 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
                END AS quality,
                hv.Securities_Id AS securities_id, hv.name, hv.ticker,
                hv.value_eur * je.value::numeric AS value_eur,
-               fc.Bond_Duration AS duration_years
+               COALESCE((fc.Manual_Overrides->>'Bond_Duration')::numeric, fc.Bond_Duration) AS duration_years
         FROM holdings_value hv
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
-        CROSS JOIN LATERAL jsonb_each_text(fc.Bond_Ratings) AS je(key, value)
-        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Bond_Ratings IS NOT NULL
+        CROSS JOIN LATERAL jsonb_each_text(COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings)) AS je(key, value)
+        WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings) IS NOT NULL
     ),
     direct_bond AS (
         -- Maps a linked Issuer's Moody's notch straight to a quality bucket;
@@ -3956,7 +3964,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
         FROM holdings_value hv
         LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
-          AND fc.Bond_Ratings IS NULL
+          AND COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings) IS NULL
           AND (fc.Asset_Class_Override IS NULL OR fc.Asset_Class_Override = 'Bonds')
           AND COALESCE(fc.Asset_Bond_Pct, 1) > 0
     ),
@@ -4119,11 +4127,16 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None), compare_dat
         GROUP BY h.Securities_Id, s.Securities_Type
     )
     """
+        # COALESCE(Expense_Ratio_Override, Expense_Ratio_Pct): a manually-set override
+        # (Security Detail -> Composition & Holdings, for funds Yahoo doesn't report an
+        # expense ratio for) takes precedence over the Yahoo-sourced value everywhere
+        # this metric is used, same as Category/Asset_Class_Override already do for
+        # Style Box/Asset Allocation.
         summary_query = holdings_cte + """
     SELECT
-        ROUND((SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur * fc.Expense_Ratio_Pct ELSE 0 END)
-               / NULLIF(SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur ELSE 0 END),0) * 100)::numeric,4) AS weighted_expense_ratio_pct,
-        ROUND((SUM(CASE WHEN fc.Expense_Ratio_Pct IS NOT NULL THEN hv.value_eur ELSE 0 END)
+        ROUND((SUM(CASE WHEN COALESCE(fc.Expense_Ratio_Override, fc.Expense_Ratio_Pct) IS NOT NULL THEN hv.value_eur * COALESCE(fc.Expense_Ratio_Override, fc.Expense_Ratio_Pct) ELSE 0 END)
+               / NULLIF(SUM(CASE WHEN COALESCE(fc.Expense_Ratio_Override, fc.Expense_Ratio_Pct) IS NOT NULL THEN hv.value_eur ELSE 0 END),0) * 100)::numeric,4) AS weighted_expense_ratio_pct,
+        ROUND((SUM(CASE WHEN COALESCE(fc.Expense_Ratio_Override, fc.Expense_Ratio_Pct) IS NOT NULL THEN hv.value_eur ELSE 0 END)
                / NULLIF(SUM(hv.value_eur),0) * 100)::numeric,2) AS coverage_pct,
         ROUND(SUM(hv.value_eur)::numeric,2) AS total_fund_value_eur
     FROM holdings_value hv
@@ -4134,7 +4147,8 @@ def get_xray_expense_ratio(account_ids: Optional[str] = Query(None), compare_dat
     SELECT s.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
            ROUND(hv.value_eur::numeric,2) AS value_eur,
            ROUND((hv.value_eur / NULLIF((SELECT grand_total FROM totals),0) * 100)::numeric,2) AS pct,
-           ROUND((fc.Expense_Ratio_Pct * 100)::numeric,4) AS expense_ratio_pct
+           ROUND((COALESCE(fc.Expense_Ratio_Override, fc.Expense_Ratio_Pct) * 100)::numeric,4) AS expense_ratio_pct,
+           fc.Expense_Ratio_Override IS NOT NULL AS expense_ratio_is_override
     FROM holdings_value hv
     JOIN Securities s ON s.Securities_Id = hv.Securities_Id
     LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
@@ -5750,65 +5764,120 @@ def delete_portfolio_preset(preset_id: int):
 
 
 # ── Benchmark comparison ───────────────────────────────────────────────────────
-def _account_weighted_index(conn, acct_clause: str, lookback_days: int) -> Optional["pd.Series"]:
-    """A (Holdings-weighted, today's-weights-held-constant) daily return index for the
-    given account scope, indexed to 100 at the start of the window — the same NAV-style
-    approximation used for the primary "portfolio" side of /benchmark, factored out so
-    it can also stand in as the comparison side (another account instead of a market
-    index/security)."""
+def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) -> Optional["pd.Series"]:
+    """A daily-linked return index for the given account scope, indexed to 100 at the
+    first day it has a holding — reconstructed from the ACTUAL securities held on each
+    day (replayed from Investments transactions, not today's holdings extrapolated
+    backward), each priced with its own daily quote forward-filled across non-trading
+    days or a temporary gap (so a missing quote falls back to the latest one available,
+    same convention _normalize_to_port already uses to line comparison series up).
+
+    Each day's return is computed from the PRIOR day's quantities priced on both days —
+    r(t) = qty(t-1)·price(t) / qty(t-1)·price(t-1) - 1 — which is what keeps that day's
+    own buys/sells out of the return itself: a security bought today only starts
+    contributing to tomorrow's return (today's purchase is capital added, not
+    performance), and one sold today still earns full credit for today's price move
+    before dropping out of tomorrow's basis. This is the standard daily-linked TWR
+    construction, and — because it uses whatever was actually held on each past day
+    rather than today's holdings — also naturally includes a security's real price
+    history for the period you actually held it, even if you've since sold out of it
+    entirely (the old "today's Holdings, weights held constant" approximation dropped a
+    sold position from the whole index, including the years you did hold it)."""
+    tx_clause = _acct_clause(acct_ids, "i.Accounts_Id")
+    tx_df = pd.read_sql(f"""
+        SELECT i.Date::date AS date, s.Securities_Name AS ticker, i.Action AS action, i.Quantity AS quantity
+        FROM Investments i
+        JOIN Securities s ON s.Securities_Id = i.Securities_Id
+        WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut')
+          AND i.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL{tx_clause}
+        ORDER BY i.Date
+    """, conn, params={"lb": lookback_days})
+    if tx_df.empty:
+        return None
+
     prices_df = pd.read_sql(f"""
-        WITH held AS (
-            SELECT DISTINCT h.Securities_Id FROM Holdings h WHERE h.Quantity > 0{acct_clause}
+        WITH txsec AS (
+            SELECT DISTINCT i.Securities_Id, s.Securities_Name AS ticker
+            FROM Investments i
+            JOIN Securities s ON s.Securities_Id = i.Securities_Id
+            WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut')
+              AND i.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL{tx_clause}
         ),
         price_counts AS (
             SELECT hp.Securities_Id FROM Historical_Prices hp
-            JOIN held ON held.Securities_Id = hp.Securities_Id
+            JOIN txsec ON txsec.Securities_Id = hp.Securities_Id
             GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
         )
-        SELECT hp.Date AS date, s.Securities_Name AS ticker, hp.Close AS close
+        SELECT hp.Date AS date, txsec.ticker AS ticker, hp.Close AS close
         FROM Historical_Prices hp
         JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
-        JOIN Securities s ON s.Securities_Id = hp.Securities_Id
+        JOIN txsec ON txsec.Securities_Id = hp.Securities_Id
         WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
         ORDER BY hp.Date
     """, conn, params={"lb": lookback_days})
-
-    weights_df = pd.read_sql(f"""
-        WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-             lp  AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
-        SELECT s.Securities_Name AS ticker,
-               SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) AS value_eur
-        FROM Holdings h
-        JOIN Securities s ON s.Securities_Id=h.Securities_Id
-        JOIN Currencies c ON c.Currencies_Id=s.Currencies_Id
-        JOIN lp ON lp.Securities_Id=h.Securities_Id
-        LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-        WHERE h.Quantity > 0{acct_clause}
-        GROUP BY s.Securities_Name
-        HAVING SUM(h.Quantity * COALESCE(lp.Close,0) * CASE WHEN c.Currencies_ShortName='EUR' THEN 1 ELSE COALESCE(fx.FX_Rate,1) END) > 0
-    """, conn)
-
-    if prices_df.empty or weights_df.empty:
+    if prices_df.empty:
         return None
 
     prices_df["date"] = pd.to_datetime(prices_df["date"])
-    wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean")
-    total = weights_df["value_eur"].sum()
-    weights_df["weight"] = weights_df["value_eur"] / total
-    w = weights_df.set_index("ticker")["weight"]
-    common = wide.columns.intersection(w.index)
-    wide = wide[common]
-    w = w[common]
-    if w.sum() == 0:
-        return None
-    w = w / w.sum()
+    price_wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean").sort_index()
 
-    wide_ffill = wide.ffill()
-    ret = wide_ffill.pct_change().fillna(0)
-    port_ret = ret.dot(w)
-    port_idx = (1 + port_ret).cumprod() * 100
-    port_idx.iloc[0] = 100
-    return port_idx
+    tx_df["date"] = pd.to_datetime(tx_df["date"])
+    tx_df["delta"] = tx_df.apply(
+        lambda r: r["quantity"] if r["action"] in ("Buy", "Reinvest", "ShrIn") else -r["quantity"], axis=1,
+    )
+    qty_changes = tx_df.pivot_table(index="date", columns="ticker", values="delta", aggfunc="sum")
+
+    # Securities below the price_counts >= 30 threshold above (too little price history
+    # to chart day-to-day) can't be priced through the window — excluded the same way
+    # the old approximation excluded thinly-covered securities.
+    common = price_wide.columns.intersection(qty_changes.columns)
+    if len(common) == 0:
+        return None
+    price_wide = price_wide[common]
+    qty_changes = qty_changes[common]
+
+    # Cumulative quantity as of each transaction date, then forward-filled onto the
+    # price calendar — a holding's quantity is unchanged between trades, exactly like
+    # the real portfolio's. Reindexed onto the UNION of both calendars first so a trade
+    # landing on a day with no price quote (e.g. a weekend settlement) still ffills
+    # correctly onto the next priced day, rather than being silently dropped.
+    qty_cum = qty_changes.cumsum()
+    full_idx = price_wide.index.union(qty_cum.index).sort_values()
+    qty_daily = qty_cum.reindex(full_idx).ffill().reindex(price_wide.index).fillna(0)
+
+    price_ffill = price_wide.ffill()
+    prior_qty = qty_daily.shift(1)
+    value_at_prior_qty_today = (prior_qty * price_ffill).sum(axis=1)
+    value_at_prior_qty_yesterday = (prior_qty * price_ffill.shift(1)).sum(axis=1)
+    port_ret = (value_at_prior_qty_today / value_at_prior_qty_yesterday.replace(0, pd.NA) - 1).fillna(0)
+
+    # First valid day is the one right after quantities first become nonzero (i.e. the
+    # day following the account's very first purchase in this window) — everything
+    # before that has no holding at all, not a 0% return.
+    has_basis = prior_qty.sum(axis=1) > 0
+    if not has_basis.any():
+        return None
+    port_ret = port_ret[port_ret.index >= has_basis.idxmax()]
+    port_ret.iloc[0] = 0
+
+    return (1 + port_ret).cumprod() * 100
+
+
+def _clamp_lookback_to_inception(conn, acct_ids: Optional[list], lookback_days: int) -> int:
+    """Caps lookback_days at this account scope's first-ever investment activity —
+    _account_weighted_index already has no quantity basis (and so no return) before an
+    account's first purchase, so this is now purely a performance guard: without it, a
+    long lookback (5Y/All) on a young account still fetches and processes decades of
+    Investments/Historical_Prices data it can never use any of."""
+    from datetime import date as _date
+    clause = _acct_clause(acct_ids, "Accounts_Id")
+    row = pd.read_sql(f"SELECT MIN(Date) AS d FROM Investments WHERE 1=1{clause}", conn)
+    d = row["d"].iloc[0] if not row.empty else None
+    if d is None or pd.isna(d):
+        return lookback_days
+    inception = d.date() if hasattr(d, 'date') else d
+    max_days = (_date.today() - inception).days + 1
+    return min(lookback_days, max_days) if max_days > 0 else lookback_days
 
 
 def _normalize_to_port(idx: "pd.Series", port_index) -> "pd.Series":
@@ -5846,12 +5915,12 @@ def get_benchmark(
         lookback_days = (_today - _date(_today.year, 1, 1)).days + 1
 
     acct_ids = _parse_account_ids(account_ids)
-    held_clause = _acct_clause(acct_ids, "h.Accounts_Id")
     bench_ids = _parse_account_ids(benchmark_ids)
     cmp_acct_ids = _parse_account_ids(compare_account_ids)
 
     with get_db() as conn:
-        port_idx = _account_weighted_index(conn, held_clause, lookback_days)
+        lookback_days = _clamp_lookback_to_inception(conn, acct_ids, lookback_days)
+        port_idx = _account_weighted_index(conn, acct_ids, lookback_days)
         if port_idx is None:
             return {"series": [], "rows": []}
 
@@ -5875,7 +5944,7 @@ def get_benchmark(
         combined = pd.DataFrame({"portfolio": port_idx})
 
         for aid in (cmp_acct_ids or []):
-            idx = _account_weighted_index(conn, _acct_clause([aid], "h.Accounts_Id"), lookback_days)
+            idx = _account_weighted_index(conn, [aid], lookback_days)
             if idx is None:
                 continue
             key = f"acct_{aid}"

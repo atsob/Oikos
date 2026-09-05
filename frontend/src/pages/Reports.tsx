@@ -1682,7 +1682,10 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
                 <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.expense_ratio_pct != null ? fmtPct(Number(r.expense_ratio_pct), 3) : '—'}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                  {r.expense_ratio_pct != null ? fmtPct(Number(r.expense_ratio_pct), 3) : '—'}
+                  {Boolean(r.expense_ratio_is_override) && <Tooltip text="Manually set on the security's own page (Composition & Holdings tab) — Yahoo doesn't report one for this fund.">*</Tooltip>}
+                </td>
                 {compareDate && <>
                   <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDelta != null && cmpDelta > 0 ? 'text-green-600' : cmpDelta != null && cmpDelta < 0 ? 'text-red-500' : ''}`}>
@@ -4017,15 +4020,15 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="Lookback window: YTD = since Jan 1 this year, 3M = 91 days, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095. All series are indexed to 100 at the start date.">Lookback</Tooltip></label>
+          <label className="text-xs text-slate-500"><Tooltip text="Lookback window: YTD = since Jan 1 this year, 3M = 91 days, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095, 5Y = 1825, All = full available history. All series are indexed to 100 at the start date.">Lookback</Tooltip></label>
           <button onClick={() => setYtd(true)}
             className={`px-2 py-1 text-xs rounded border ${ytd ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
             YTD
           </button>
-          {([91, 182, 365, 730, 1095] as const).map(d => (
+          {([91, 182, 365, 730, 1095, 1825, 36500] as const).map(d => (
             <button key={d} onClick={() => { setYtd(false); setLookback(d) }}
               className={`px-2 py-1 text-xs rounded border ${!ytd && lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : '3Y'}
+              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : 'All'}
             </button>
           ))}
         </div>

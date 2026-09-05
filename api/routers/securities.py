@@ -1,6 +1,7 @@
 """Security detail endpoints: transactions, holdings, dividends, corporate actions, price anomalies."""
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
+import json
 import math
 import pandas as pd
 from database.connection import get_db, get_connection
@@ -113,9 +114,20 @@ def get_security_holdings(sec_id: int):
 def get_security_fund_composition(sec_id: int):
     with get_db() as conn:
         comp_df = pd.read_sql("SELECT * FROM Fund_Composition WHERE Securities_Id = %(sid)s", conn, params={"sid": sec_id})
+        # Same match rule Stock Overlap already uses to link a fund's constituent back
+        # to a registered Security (get_security_fund_membership below, and X-Ray Stock
+        # Overlap's fund_constituents CTE): Symbol = that Security's own Yahoo_Ticker.
+        # When matched, the frontend shows the security's own (always-current) name as
+        # a link to its page instead of the free-text Holding_Name column — editing the
+        # name of a security you already track belongs on that security's own page, not
+        # duplicated here where it could drift out of sync with it.
         holdings_df = pd.read_sql("""
-            SELECT Rank AS rank, Symbol AS symbol, Holding_Name AS holding_name, Weight_Pct AS weight_pct
-            FROM Fund_Top_Holdings WHERE Securities_Id = %(sid)s ORDER BY Rank
+            SELECT fth.Fund_Holding_Id AS id, fth.Rank AS rank, fth.Symbol AS symbol, fth.Holding_Name AS holding_name,
+                   fth.Weight_Pct AS weight_pct, fth.Source AS source,
+                   sec2.Securities_Id AS matched_securities_id, sec2.Securities_Name AS matched_name
+            FROM Fund_Top_Holdings fth
+            LEFT JOIN Securities sec2 ON sec2.Yahoo_Ticker = fth.Symbol
+            WHERE fth.Securities_Id = %(sid)s ORDER BY fth.Rank
         """, conn, params={"sid": sec_id})
     comp_records = _df(comp_df)
     return {
@@ -200,6 +212,225 @@ def set_security_asset_class_override(sec_id: int, data: dict):
             ON CONFLICT (Securities_Id) DO UPDATE SET Asset_Class_Override = EXCLUDED.Asset_Class_Override
         """, (sec_id, asset_class))
     return {"id": sec_id}
+
+
+@router.patch("/{sec_id}/fund-composition/expense-ratio-override")
+def set_security_expense_ratio_override(sec_id: int, data: dict):
+    """Manually set a fund's expense ratio — for funds Yahoo doesn't report one for
+    (e.g. some non-US or simulated ETFs), which otherwise show as "—" in the Expense
+    Ratio report and get excluded from its coverage %. Takes a percentage (e.g. 0.20
+    for 0.20%) and stores it as the same fraction (0.0020) Expense_Ratio_Pct itself
+    uses, so a future "Download Fund Composition" re-run's own value stays comparable
+    and this override isn't silently clobbered by it."""
+    raw = data.get("expense_ratio_override")
+    value = float(raw) / 100 if raw not in (None, "") else None
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Fund_Composition (Securities_Id, Expense_Ratio_Override)
+            VALUES (%s, %s)
+            ON CONFLICT (Securities_Id) DO UPDATE SET Expense_Ratio_Override = EXCLUDED.Expense_Ratio_Override
+        """, (sec_id, value))
+    return {"id": sec_id}
+
+
+# field -> (DB column, kind). "pct": UI takes a percentage, stored as the fraction the
+# Yahoo-sourced column of the same name uses (matches Expense_Ratio_Override's own
+# convention). "num": stored as-is. "text": stored as a string.
+# Deliberately excludes Category/Asset_Class/Expense_Ratio (their own dedicated
+# _Override columns above already cover them, with extra semantics beyond a plain
+# field replacement) and the two JSONB breakdowns Sector_Weightings/Bond_Ratings, which
+# take a {bucket: percentage} dict rather than one scalar — see
+# set_security_breakdown_override below instead.
+_OVERRIDABLE_FIELDS = {
+    "fund_family":                   ("Fund_Family", "text"),
+    "legal_type":                    ("Legal_Type", "text"),
+    "category_avg_expense_ratio_pct": ("Category_Avg_Expense_Ratio_Pct", "pct"),
+    "total_net_assets":              ("Total_Net_Assets", "num"),
+    "holdings_turnover_pct":         ("Holdings_Turnover_Pct", "pct"),
+    "bond_duration":                 ("Bond_Duration", "num"),
+    "bond_maturity":                 ("Bond_Maturity", "num"),
+    "equity_pe":                     ("Equity_PE", "num"),
+    "equity_pb":                     ("Equity_PB", "num"),
+    "equity_ps":                     ("Equity_PS", "num"),
+    "equity_pcf":                    ("Equity_PCF", "num"),
+    "equity_median_market_cap":      ("Equity_Median_Market_Cap", "num"),
+    "equity_3yr_earnings_growth_pct": ("Equity_3yr_Earnings_Growth_Pct", "pct"),
+}
+
+
+@router.patch("/{sec_id}/fund-composition/field-override")
+def set_security_field_override(sec_id: int, data: dict):
+    """Generic manual override for one Fund_Composition scalar field — for any fund
+    Yahoo returns nothing (or a wrong value, e.g. an erroneous 0%) for. Stored in
+    Manual_Overrides (a JSONB {DB_column: value} map) rather than the raw column
+    itself, so download_fund_composition's own upsert — which only ever touches the
+    raw Yahoo-sourced columns — can never clobber it on a future re-download."""
+    field = data.get("field")
+    if field not in _OVERRIDABLE_FIELDS:
+        raise HTTPException(400, f"Unknown or non-overridable field: {field}")
+    col, kind = _OVERRIDABLE_FIELDS[field]
+    raw = data.get("value")
+    clear = raw in (None, "")
+    value = None
+    if not clear:
+        value = str(raw) if kind == "text" else (float(raw) / 100 if kind == "pct" else float(raw))
+    with get_db() as conn:
+        cur = conn.cursor()
+        if clear:
+            cur.execute("""
+                INSERT INTO Fund_Composition (Securities_Id, Manual_Overrides)
+                VALUES (%s, '{}'::jsonb)
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{}'::jsonb) - %s
+            """, (sec_id, col))
+        else:
+            cur.execute("""
+                INSERT INTO Fund_Composition (Securities_Id, Manual_Overrides)
+                VALUES (%s, jsonb_build_object(%s, %s::double precision))
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{}'::jsonb)
+                        || jsonb_build_object(%s, %s::double precision)
+            """ if kind != "text" else """
+                INSERT INTO Fund_Composition (Securities_Id, Manual_Overrides)
+                VALUES (%s, jsonb_build_object(%s, %s::text))
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{}'::jsonb)
+                        || jsonb_build_object(%s, %s::text)
+            """, (sec_id, col, value, col, value))
+    return {"id": sec_id}
+
+
+# field -> DB column, for the two JSONB breakdown fields (a {bucket: percentage} dict
+# each, rather than one scalar). Canonical bucket keys match what Yahoo itself uses —
+# so a manual entry merges seamlessly with a fund whose OTHER data still comes from
+# Yahoo, and so a later real download's own key casing lines back up if the override is
+# ever cleared.
+_BREAKDOWN_FIELDS = {
+    "sector_weightings": "Sector_Weightings",
+    "bond_ratings": "Bond_Ratings",
+}
+SECTOR_WEIGHTING_BUCKETS = [
+    "realestate", "technology", "healthcare", "financial_services", "industrials",
+    "communication_services", "consumer_cyclical", "consumer_defensive", "energy",
+    "basic_materials", "utilities",
+]
+BOND_RATING_BUCKETS = ["aaa", "aa", "a", "bbb", "bb", "b", "below_b", "us_government", "other"]
+
+
+@router.patch("/{sec_id}/fund-composition/breakdown-override")
+def set_security_breakdown_override(sec_id: int, data: dict):
+    """Manual override for one of Fund_Composition's two JSONB breakdowns (Sector
+    Weightings or Bond Ratings) — for a fund Yahoo has no breakdown for at all, or one
+    you want to hand-correct. `value` is a {bucket: percentage} dict (percentages, e.g.
+    25 for 25%; entries with a null/blank/zero value are dropped); pass an empty dict
+    or null to clear the whole override. Stored in the same Manual_Overrides JSONB
+    column the scalar fields use, so a future "Download Fund Composition" re-run can
+    never clobber it — reports COALESCE it ahead of the raw Yahoo-sourced column."""
+    field = data.get("field")
+    if field not in _BREAKDOWN_FIELDS:
+        raise HTTPException(400, f"Unknown or non-overridable breakdown field: {field}")
+    col = _BREAKDOWN_FIELDS[field]
+    raw = data.get("value") or {}
+    if not isinstance(raw, dict):
+        raise HTTPException(400, "value must be an object of {bucket: percentage}")
+    cleaned = {k: float(v) / 100 for k, v in raw.items() if v not in (None, "", 0)}
+    with get_db() as conn:
+        cur = conn.cursor()
+        if not cleaned:
+            cur.execute("""
+                INSERT INTO Fund_Composition (Securities_Id, Manual_Overrides)
+                VALUES (%s, '{}'::jsonb)
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{}'::jsonb) - %s
+            """, (sec_id, col))
+        else:
+            cur.execute("""
+                INSERT INTO Fund_Composition (Securities_Id, Manual_Overrides)
+                VALUES (%s, jsonb_build_object(%s, %s::jsonb))
+                ON CONFLICT (Securities_Id) DO UPDATE SET
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{}'::jsonb)
+                        || jsonb_build_object(%s, %s::jsonb)
+            """, (sec_id, col, json.dumps(cleaned), col, json.dumps(cleaned)))
+    return {"id": sec_id}
+
+
+# Manual Top Holdings rows always live at Rank >= 100 — Yahoo's own top_holdings never
+# runs past ~10, so this range can never collide with what download_fund_composition's
+# DELETE-then-reinsert (scoped to Source='yahoo') writes there, and a manual row is
+# never at risk of being wiped by a future re-download or colliding with the row Yahoo
+# reinserts at the same low rank.
+_MANUAL_HOLDING_RANK_FLOOR = 100
+
+
+@router.post("/{sec_id}/fund-top-holdings")
+def add_security_top_holding(sec_id: int, data: dict):
+    """Add a constituent to this fund's Top Holdings — for tracking further down Yahoo's
+    own top-10 (it never returns more), or a holding Yahoo's data just doesn't include."""
+    symbol = (data.get("symbol") or "").strip()
+    if not symbol:
+        raise HTTPException(400, "symbol is required")
+    name = (data.get("holding_name") or "").strip() or None
+    weight_raw = data.get("weight_pct")
+    if weight_raw in (None, ""):
+        raise HTTPException(400, "weight_pct is required")
+    weight = float(weight_raw) / 100
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COALESCE(MAX(Rank), %s) + 1 FROM Fund_Top_Holdings
+            WHERE Securities_Id = %s AND Rank >= %s
+        """, (_MANUAL_HOLDING_RANK_FLOOR - 1, sec_id, _MANUAL_HOLDING_RANK_FLOOR))
+        rank = cur.fetchone()[0]
+        cur.execute("""
+            INSERT INTO Fund_Top_Holdings (Securities_Id, Rank, Symbol, Holding_Name, Weight_Pct, Source)
+            VALUES (%s, %s, %s, %s, %s, 'manual')
+            RETURNING Fund_Holding_Id
+        """, (sec_id, rank, symbol.upper(), name, weight))
+        holding_id = cur.fetchone()[0]
+    return {"id": holding_id}
+
+
+@router.patch("/{sec_id}/fund-top-holdings/{holding_id}")
+def update_security_top_holding(sec_id: int, holding_id: int, data: dict):
+    """Edit a Top Holdings row (Yahoo-sourced or manual) — always flips it to
+    Source='manual' and (if it was still at its original Yahoo rank) reassigns it a
+    manual-range rank, freeing its old low rank for Yahoo's own row to reclaim on the
+    next re-download instead of colliding with this now-hand-edited one."""
+    symbol = (data.get("symbol") or "").strip()
+    if not symbol:
+        raise HTTPException(400, "symbol is required")
+    name = (data.get("holding_name") or "").strip() or None
+    weight_raw = data.get("weight_pct")
+    if weight_raw in (None, ""):
+        raise HTTPException(400, "weight_pct is required")
+    weight = float(weight_raw) / 100
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT Rank FROM Fund_Top_Holdings WHERE Fund_Holding_Id = %s AND Securities_Id = %s", (holding_id, sec_id))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(404, "Holding not found")
+        rank = row[0]
+        if rank < _MANUAL_HOLDING_RANK_FLOOR:
+            cur.execute("""
+                SELECT COALESCE(MAX(Rank), %s) + 1 FROM Fund_Top_Holdings
+                WHERE Securities_Id = %s AND Rank >= %s
+            """, (_MANUAL_HOLDING_RANK_FLOOR - 1, sec_id, _MANUAL_HOLDING_RANK_FLOOR))
+            rank = cur.fetchone()[0]
+        cur.execute("""
+            UPDATE Fund_Top_Holdings SET Symbol=%s, Holding_Name=%s, Weight_Pct=%s, Source='manual', Rank=%s
+            WHERE Fund_Holding_Id = %s AND Securities_Id = %s
+        """, (symbol.upper(), name, weight, rank, holding_id, sec_id))
+    return {"id": holding_id}
+
+
+@router.delete("/{sec_id}/fund-top-holdings/{holding_id}")
+def delete_security_top_holding(sec_id: int, holding_id: int):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM Fund_Top_Holdings WHERE Fund_Holding_Id = %s AND Securities_Id = %s", (holding_id, sec_id))
+    return {"id": holding_id}
 
 
 # ── Dividend History ──────────────────────────────────────────────────────────

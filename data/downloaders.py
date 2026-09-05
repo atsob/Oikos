@@ -1226,11 +1226,14 @@ def download_fund_composition(target_sec_id=None):
             """, comp_rows, page_size=500)
 
         for sec_id, rows in holdings_by_sec.items():
-            cur.execute("DELETE FROM Fund_Top_Holdings WHERE Securities_Id = %s", (sec_id,))
+            # Scoped to Source='yahoo' so a manually added/edited row (always at Rank
+            # >= 100 — see api/routers/securities.py's add/edit endpoints) survives this
+            # refresh instead of being wiped by it.
+            cur.execute("DELETE FROM Fund_Top_Holdings WHERE Securities_Id = %s AND Source = 'yahoo'", (sec_id,))
             if rows:
                 execute_batch(cur, """
-                    INSERT INTO Fund_Top_Holdings (Securities_Id, Rank, Symbol, Holding_Name, Weight_Pct)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO Fund_Top_Holdings (Securities_Id, Rank, Symbol, Holding_Name, Weight_Pct, Source)
+                    VALUES (%s, %s, %s, %s, %s, 'yahoo')
                 """, rows, page_size=500)
 
         if error_rows:

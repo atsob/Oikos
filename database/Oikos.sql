@@ -1060,7 +1060,9 @@ CREATE TABLE IF NOT EXISTS Fund_Composition (
     Last_Updated                   TIMESTAMPTZ DEFAULT NOW(),
     Fetch_Error                    TEXT,
     Category_Override              VARCHAR(50),
-    Asset_Class_Override           VARCHAR(20)
+    Asset_Class_Override           VARCHAR(20),
+    Expense_Ratio_Override         NUMERIC(6,4),
+    Manual_Overrides               JSONB
 );
 CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
     Fund_Holding_Id  SERIAL PRIMARY KEY,
@@ -1069,6 +1071,7 @@ CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
     Symbol           VARCHAR(20) NOT NULL,
     Holding_Name     VARCHAR(200),
     Weight_Pct       NUMERIC(6,4) NOT NULL,
+    Source           VARCHAR(10) NOT NULL DEFAULT 'yahoo',
     UNIQUE(Securities_Id, Rank)
 );
 CREATE INDEX IF NOT EXISTS idx_fund_top_holdings_symbol ON Fund_Top_Holdings(Symbol);

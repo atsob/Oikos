@@ -540,6 +540,29 @@ def _run_startup_migrations():
         # affect explicitly Scheduled Transactions or active Recurring_Templates,
         # since those reflect real user intent rather than an inferred pattern.
         "ALTER TABLE Categories ADD COLUMN IF NOT EXISTS Exclude_From_Forecast BOOLEAN DEFAULT FALSE",
+        # Inv. Portfolio -> Expense Ratio: manual expense-ratio override for funds
+        # Yahoo doesn't report one for (e.g. some non-US/simulated ETFs), stored as
+        # a fraction like the Yahoo-sourced Expense_Ratio_Pct it overrides (0.0020 =
+        # 0.20%) so the two are interchangeable wherever the report reads either.
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Expense_Ratio_Override NUMERIC(6,4)",
+        # Composition & Holdings tab: catch-all manual override store for the rest of
+        # Fund_Composition's Yahoo-sourced scalar fields (family, legal type, total net
+        # assets, holdings turnover, bond duration/maturity, equity P/E-P/B-P/S-P/CF,
+        # median market cap, 3yr earnings growth) — one JSONB column keyed by the DB
+        # column name, e.g. {"Bond_Duration": 4.2}, rather than a dedicated *_Override
+        # column per field like Category/Asset_Class/Expense_Ratio above. Never touched
+        # by download_fund_composition's upsert, so a manually-entered value here always
+        # survives a future re-download even if Yahoo comes back with nothing (or, for
+        # a numeric field, a bogus 0) for that fund.
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Manual_Overrides JSONB",
+        # Composition & Holdings -> Top Holdings: distinguishes a manually added/edited
+        # row from one download_fund_composition wrote. Its refresh does DELETE-then-
+        # reinsert scoped to Source='yahoo' only, so a manual row (added because Yahoo's
+        # own top-10 stops short of what you want tracked, or to correct one Yahoo got
+        # wrong) survives a future re-download instead of being wiped by it. Existing
+        # rows all predate this column and are genuinely Yahoo's, hence the backfilled
+        # default rather than NULL.
+        "ALTER TABLE Fund_Top_Holdings ADD COLUMN IF NOT EXISTS Source VARCHAR(10) NOT NULL DEFAULT 'yahoo'",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

@@ -15,7 +15,8 @@ import { useTheme } from '@/lib/theme'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
-  getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride,
+  getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
+  addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
@@ -2222,6 +2223,376 @@ function CompositionSection({ title, children }: { title: string; children: Reac
   )
 }
 
+// field -> DB column name used as the Manual_Overrides JSONB key (must match
+// api/routers/securities.py's _OVERRIDABLE_FIELDS mapping exactly).
+const OVERRIDABLE_FIELD_COLUMNS: Record<string, string> = {
+  fund_family: 'Fund_Family', legal_type: 'Legal_Type',
+  category_avg_expense_ratio_pct: 'Category_Avg_Expense_Ratio_Pct',
+  total_net_assets: 'Total_Net_Assets', holdings_turnover_pct: 'Holdings_Turnover_Pct',
+  bond_duration: 'Bond_Duration', bond_maturity: 'Bond_Maturity',
+  equity_pe: 'Equity_PE', equity_pb: 'Equity_PB', equity_ps: 'Equity_PS', equity_pcf: 'Equity_PCF',
+  equity_median_market_cap: 'Equity_Median_Market_Cap',
+  equity_3yr_earnings_growth_pct: 'Equity_3yr_Earnings_Growth_Pct',
+}
+
+// One reusable editable row for any Fund_Composition scalar field lacking its own
+// bespoke override (Category/Asset_Class/Expense_Ratio have dedicated UI above/below
+// this, with extra semantics beyond a plain value swap). `field` is the snake_case key
+// both api.ts's setSecurityFieldOverride and OVERRIDABLE_FIELD_COLUMNS above expect.
+// kind 'pct': raw/override values are stored as fractions (like Expense_Ratio_Pct) —
+// the input and display both work in percentage points. 'num': no conversion. 'text':
+// plain string.
+function EditableCompositionField({ secId, field, label, kind, rawValue, composition, decimals = 2, suffix = '', onSaved }: {
+  secId: number; field: string; label: string; kind: 'text' | 'num' | 'pct'
+  rawValue: unknown; composition: Record<string, unknown> | null; decimals?: number; suffix?: string
+  onSaved: () => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const overrides = (composition?.manual_overrides as Record<string, unknown> | null) ?? null
+  const overrideValue = overrides?.[OVERRIDABLE_FIELD_COLUMNS[field]]
+  const isOverridden = overrideValue != null
+
+  const toDisplay = (v: unknown) => v == null ? null : (kind === 'pct' ? Number(v) * 100 : Number(v))
+  const round = (n: number) => Math.round(n * 10 ** decimals) / 10 ** decimals
+  const fmtRawText = (v: unknown) => kind === 'text' ? String(v) : `${fmtNum(round(toDisplay(v) as number), decimals)}${suffix}`
+
+  const inputValue = draft ?? (
+    !isOverridden ? '' : kind === 'text' ? String(overrideValue) : String(round(toDisplay(overrideValue) as number))
+  )
+
+  const save = async (v: string) => {
+    setSaving(true)
+    try {
+      await setSecurityFieldOverride(secId, field, v.trim() === '' ? null : (kind === 'text' ? v.trim() : Number(v)))
+      onSaved()
+      setDraft(null)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <OverviewRow label={label} value={
+        <div className="flex items-center gap-1.5 justify-end">
+          <Input
+            type={kind === 'text' ? 'text' : 'number'} step={kind === 'text' ? undefined : 'any'}
+            placeholder={rawValue != null ? (kind === 'text' ? String(rawValue) : String(round(toDisplay(rawValue) as number))) : '—'}
+            className={kind === 'text' ? 'w-36 text-right' : 'w-24 text-right'}
+            disabled={saving}
+            value={inputValue}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={e => { if (draft != null) save(e.target.value) }}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          />
+          {kind !== 'text' && suffix && <span className="text-slate-400">{suffix}</span>}
+        </div>
+      } />
+      {isOverridden && (
+        <p className="text-xs text-slate-400 pb-1.5 text-right">
+          Manually set{rawValue != null ? ` — overrides Yahoo's ${fmtRawText(rawValue)}` : ' (Yahoo reports none)'}.
+          {' '}<button className="text-blue-600 hover:underline" disabled={saving} onClick={() => save('')}>Reset to Yahoo</button>
+        </p>
+      )}
+    </>
+  )
+}
+
+// Canonical bucket keys match what Yahoo itself reports (see
+// api/routers/securities.py's matching constants) — a manual entry lines up with a
+// fund whose other data still comes from Yahoo, and with what a later real download
+// would use if the override is ever cleared.
+const SECTOR_WEIGHTING_BUCKETS: [string, string][] = [
+  ['realestate', 'Real Estate'], ['technology', 'Technology'], ['healthcare', 'Healthcare'],
+  ['financial_services', 'Financial Services'], ['industrials', 'Industrials'],
+  ['communication_services', 'Communication Services'], ['consumer_cyclical', 'Consumer Cyclical'],
+  ['consumer_defensive', 'Consumer Defensive'], ['energy', 'Energy'], ['basic_materials', 'Basic Materials'],
+  ['utilities', 'Utilities'],
+]
+const BOND_RATING_BUCKETS: [string, string][] = [
+  ['aaa', 'AAA'], ['aa', 'AA'], ['a', 'A'], ['bbb', 'BBB'], ['bb', 'BB'], ['b', 'B'],
+  ['below_b', 'Below B'], ['us_government', 'US Government'], ['other', 'Other'],
+]
+
+// Editor for one of Fund_Composition's two JSONB breakdowns (Sector Weightings or Bond
+// Ratings) — a {bucket: fraction} dict rather than a single scalar, so unlike
+// EditableCompositionField this edits the whole set of buckets at once (a fixed list
+// of rows + one Save), not save-per-field-on-blur. `rawValue` is Yahoo's own breakdown
+// (if any); an override, once set, always takes precedence over it in both this view
+// and every report that reads the field.
+function BreakdownEditor({ secId, field, buckets, rawValue, composition, onSaved }: {
+  secId: number; field: 'sector_weightings' | 'bond_ratings'; buckets: [string, string][]
+  rawValue: Record<string, number> | null; composition: Record<string, unknown> | null
+  onSaved: () => void
+}) {
+  const overrideKey = field === 'sector_weightings' ? 'Sector_Weightings' : 'Bond_Ratings'
+  const overrides = (composition?.manual_overrides as Record<string, unknown> | null) ?? null
+  const overrideValue = overrides?.[overrideKey] as Record<string, number> | undefined
+  const isOverridden = overrideValue != null
+  const effective = overrideValue ?? rawValue ?? {}
+
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+
+  const startEdit = () => {
+    const init: Record<string, string> = {}
+    for (const [key] of buckets) {
+      const v = effective[key]
+      init[key] = v != null ? String(Math.round(Number(v) * 100 * 100) / 100) : ''
+    }
+    setDraft(init)
+    setEditing(true)
+  }
+
+  const total = Object.values(draft).reduce((sum, v) => sum + (Number(v) || 0), 0)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const payload: Record<string, number> = {}
+      for (const [key, v] of Object.entries(draft)) if (v.trim() !== '') payload[key] = Number(v)
+      await setSecurityBreakdownOverride(secId, field, payload)
+      onSaved()
+      setEditing(false)
+    } finally { setSaving(false) }
+  }
+
+  const clearOverride = async () => {
+    setSaving(true)
+    try {
+      await setSecurityBreakdownOverride(secId, field, null)
+      onSaved()
+    } finally { setSaving(false) }
+  }
+
+  if (!editing) {
+    const rows = buckets.filter(([key]) => effective[key] != null)
+    return (
+      <>
+        {rows.length === 0
+          ? <p className="text-xs text-slate-400 py-1.5">No breakdown yet.</p>
+          : rows.sort((a, b) => Number(effective[b[0]]) - Number(effective[a[0]])).map(([key, label]) => (
+              <OverviewRow key={key} label={label} value={fmtPct(Number(effective[key]) * 100)} />
+            ))}
+        <div className="flex items-center justify-between py-1.5">
+          <button className="text-xs text-blue-600 hover:underline" onClick={startEdit}>
+            {rows.length > 0 ? 'Edit breakdown' : 'Enter breakdown manually'}
+          </button>
+          {isOverridden && (
+            <span className="text-xs text-slate-400">
+              Manually set — <button className="text-blue-600 hover:underline" disabled={saving} onClick={clearOverride}>Reset to Yahoo</button>
+            </span>
+          )}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <div className="py-2 space-y-1.5">
+      {buckets.map(([key, label]) => (
+        <div key={key} className="flex items-center justify-between gap-2">
+          <span className="text-xs text-slate-500">{label}</span>
+          <div className="flex items-center gap-1">
+            <Input type="number" step="any" className="w-20 text-right" disabled={saving}
+              value={draft[key] ?? ''}
+              onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} />
+            <span className="text-slate-400 text-xs">%</span>
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-slate-100">
+        <span className={`text-xs ${Math.abs(total - 100) > 1 ? 'text-amber-600' : 'text-slate-400'}`}>Total: {total.toFixed(1)}%</span>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+          <Button size="sm" disabled={saving} onClick={save}>Save</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const extractHoldingError = (e: unknown) =>
+  (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (e instanceof Error ? e.message : 'Save failed')
+
+type HoldingDraft = { symbol: string; holding_name: string; weight_pct: string }
+const emptyHoldingDraft: HoldingDraft = { symbol: '', holding_name: '', weight_pct: '' }
+const holdingWeightDisplay = (h: Record<string, unknown>) => String(Math.round(Number(h.weight_pct) * 100 * 100) / 100)
+
+// Symbol -> registered Security, keyed the same way the backend already links a fund
+// constituent back to a Security (Yahoo_Ticker match — see get_security_fund_composition
+// and X-Ray Stock Overlap's identical fund_constituents CTE). Built client-side from the
+// securities list already cached under ['securities'] elsewhere on this page, so typing
+// a symbol that matches one shows the link instantly, before any save round-trip.
+type SecurityMatch = { id: number; name: string }
+function useSecurityByYahooTicker(): Map<string, SecurityMatch> {
+  const { data = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  return useMemo(() => {
+    const m = new Map<string, SecurityMatch>()
+    for (const s of data as Record<string, unknown>[]) {
+      const t = String(s.yahoo_ticker ?? '').trim().toUpperCase()
+      if (t) m.set(t, { id: Number(s.id), name: String(s.name ?? '') })
+    }
+    return m
+  }, [data])
+}
+
+// One row of the Top Holdings table — Symbol/Weight are plain inputs, always live (no
+// separate "click to edit" step): change a value and tab/click away and it saves, same
+// save-on-blur feel as EditableCompositionField elsewhere on this tab. Local drafts so
+// each cell is independently editable without re-rendering the whole table on every
+// keystroke; a blur only calls the API when something actually changed from what's
+// already saved, so tabbing through untouched cells is free. Name is only free-text
+// when Symbol doesn't match a Security already in the database — when it does, Name is
+// that security's own (always-current) name, shown as a link to its page instead of a
+// second, independently-editable copy that could drift out of sync with it.
+function TopHoldingRow({ secId, index, holding, bySymbol, onSaved, onDelete }: {
+  secId: number; index: number; holding: Record<string, unknown>; bySymbol: Map<string, SecurityMatch>
+  onSaved: () => void; onDelete: (id: number) => void
+}) {
+  const navigate = useNavigate()
+  const id = Number(holding.id)
+  const [symbol, setSymbol] = useState(String(holding.symbol ?? ''))
+  const [name, setName] = useState(String(holding.holding_name ?? ''))
+  const [weight, setWeight] = useState(holdingWeightDisplay(holding))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const match = bySymbol.get(symbol.trim().toUpperCase())
+
+  const original = { symbol: String(holding.symbol ?? ''), name: String(holding.holding_name ?? ''), weight: holdingWeightDisplay(holding) }
+  const dirty = symbol !== original.symbol || name !== original.name || weight !== original.weight
+
+  const save = async () => {
+    if (!dirty) return
+    if (!symbol.trim() || weight.trim() === '') { setError('Symbol and weight are required'); setSymbol(original.symbol); setWeight(original.weight); return }
+    setSaving(true); setError(null)
+    try {
+      const effectiveName = match ? match.name : (name.trim() || null)
+      await updateSecurityTopHolding(secId, id, { symbol: symbol.trim(), holding_name: effectiveName, weight_pct: Number(weight) })
+      if (match) setName(match.name)
+      onSaved()
+    } catch (e) { setError(extractHoldingError(e)) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <>
+      <tr className={error ? '' : 'border-b border-slate-50 last:border-0'}>
+        <td className="py-1 pr-2 text-slate-400">{index + 1}</td>
+        <td className="py-1 pr-2">
+          <Input value={symbol} onChange={e => setSymbol(e.target.value)} onBlur={save} disabled={saving} className="w-20 font-mono" />
+        </td>
+        <td className="py-1 pr-2">
+          {match ? (
+            <button className="text-blue-600 hover:underline text-left" onClick={() => navigate(`/securities/${match.id}`)}>{match.name}</button>
+          ) : (
+            <Input value={name} onChange={e => setName(e.target.value)} onBlur={save} disabled={saving} placeholder="Name (not in your Securities database)" />
+          )}
+        </td>
+        <td className="py-1 pr-2">
+          <div className="flex items-center justify-end gap-1">
+            <Input type="number" step="any" value={weight} onChange={e => setWeight(e.target.value)} onBlur={save}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              disabled={saving} className="w-16 text-right" />
+            <span className="text-slate-400">%</span>
+          </div>
+        </td>
+        <td className="py-1 whitespace-nowrap text-right">
+          {holding.source === 'manual' && <span className="text-[10px] text-slate-400 mr-1.5">manual</span>}
+          <button className="text-red-400 hover:text-red-600 p-0.5" disabled={saving} onClick={() => onDelete(id)}><Trash2 size={12} /></button>
+        </td>
+      </tr>
+      {error && (
+        <tr className="border-b border-slate-50 last:border-0">
+          <td></td>
+          <td colSpan={4} className="pb-1 text-red-600">{error}</td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+// Full CRUD table for Fund_Top_Holdings — Yahoo caps its own top_holdings at ~10, so
+// this is the only way to track further down a fund's constituents (or fix one Yahoo
+// got wrong). Editing or adding a row always marks it Source='manual', which protects
+// it from a future "Download Fund Composition" re-run (see add/update endpoints'
+// docstrings in api/routers/securities.py for the rank-collision-avoidance mechanics).
+function TopHoldingsEditor({ secId, holdings, onSaved }: {
+  secId: number; holdings: Record<string, unknown>[]; onSaved: () => void
+}) {
+  const bySymbol = useSecurityByYahooTicker()
+  const [adding, setAdding] = useState(false)
+  const [addDraft, setAddDraft] = useState<HoldingDraft>(emptyHoldingDraft)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const addMatch = bySymbol.get(addDraft.symbol.trim().toUpperCase())
+
+  const remove = async (id: number) => {
+    if (!confirm('Remove this holding?')) return
+    setSaving(true); setError(null)
+    try {
+      await deleteSecurityTopHolding(secId, id)
+      onSaved()
+    } catch (e) { setError(extractHoldingError(e)) }
+    finally { setSaving(false) }
+  }
+
+  const saveAdd = async () => {
+    if (!addDraft.symbol.trim() || addDraft.weight_pct.trim() === '') { setError('Symbol and weight are required'); return }
+    setSaving(true); setError(null)
+    try {
+      const effectiveName = addMatch ? addMatch.name : (addDraft.holding_name.trim() || null)
+      await addSecurityTopHolding(secId, { symbol: addDraft.symbol.trim(), holding_name: effectiveName, weight_pct: Number(addDraft.weight_pct) })
+      onSaved()
+      setAddDraft(emptyHoldingDraft)
+      setAdding(false)
+    } catch (e) { setError(extractHoldingError(e)) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="-mx-4">
+      <div className="overflow-x-auto px-4">
+        <table className="w-full text-xs">
+          <thead><tr className="text-slate-500 border-b border-slate-100">
+            <th className="text-left py-1.5 pr-2">#</th>
+            <th className="text-left py-1.5 pr-2">Symbol</th>
+            <th className="text-left py-1.5 pr-2">Name</th>
+            <th className="text-right py-1.5 pr-2">Weight</th>
+            <th className="py-1.5"></th>
+          </tr></thead>
+          <tbody>
+            {holdings.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">No holdings yet.</td></tr>}
+            {holdings.map((h, i) => (
+              <TopHoldingRow key={Number(h.id)} secId={secId} index={i} holding={h} bySymbol={bySymbol} onSaved={onSaved} onDelete={remove} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {error && <p className="text-xs text-red-600 px-4 pt-2">{error}</p>}
+      {adding ? (
+        <div className="flex items-center gap-2 px-4 pt-2">
+          <Input value={addDraft.symbol} onChange={e => setAddDraft(d => ({ ...d, symbol: e.target.value }))} placeholder="Symbol" className="w-20 font-mono" disabled={saving} />
+          {addMatch ? (
+            <span className="flex-1 text-blue-600 text-xs truncate" title="Linked to this security — its own name is used, not editable here">{addMatch.name}</span>
+          ) : (
+            <Input value={addDraft.holding_name} onChange={e => setAddDraft(d => ({ ...d, holding_name: e.target.value }))} placeholder="Name (optional)" className="flex-1" disabled={saving} />
+          )}
+          <Input type="number" step="any" value={addDraft.weight_pct} onChange={e => setAddDraft(d => ({ ...d, weight_pct: e.target.value }))} placeholder="Weight %" className="w-20 text-right" disabled={saving} />
+          <Button size="sm" disabled={saving} onClick={saveAdd}>Add</Button>
+          <Button size="sm" variant="secondary" disabled={saving} onClick={() => { setAdding(false); setAddDraft(emptyHoldingDraft); setError(null) }}>Cancel</Button>
+        </div>
+      ) : (
+        <div className="px-4 pt-2">
+          <button className="text-xs text-blue-600 hover:underline" onClick={() => setAdding(true)}>+ Add Holding</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CompositionHoldingsTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -2230,6 +2601,10 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
   })
   const composition = (data as { composition: Record<string, unknown> | null; top_holdings: Record<string, unknown>[] } | undefined)?.composition ?? null
   const topHoldings = (data as { top_holdings: Record<string, unknown>[] } | undefined)?.top_holdings ?? []
+  const refetchComposition = () => {
+    qc.invalidateQueries({ queryKey: ['sec-fund-composition', secId] })
+    qc.invalidateQueries({ queryKey: ['xray'] })
+  }
 
   const [saving, setSaving] = useState(false)
   const handleCategoryChange = async (value: string) => {
@@ -2250,6 +2625,18 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
     } finally { setSavingAssetClass(false) }
   }
 
+  const [savingExpenseRatio, setSavingExpenseRatio] = useState(false)
+  const [expenseRatioDraft, setExpenseRatioDraft] = useState<string | null>(null)
+  const handleExpenseRatioSave = async (value: string) => {
+    setSavingExpenseRatio(true)
+    try {
+      await setSecurityExpenseRatioOverride(secId, value.trim() === '' ? null : Number(value))
+      qc.invalidateQueries({ queryKey: ['sec-fund-composition', secId] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
+      setExpenseRatioDraft(null)
+    } finally { setSavingExpenseRatio(false) }
+  }
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const assetMix: [string, unknown][] = composition ? [
@@ -2258,8 +2645,6 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
   ] : []
   const sectorWeightings = (composition?.sector_weightings as Record<string, number> | null) ?? null
   const bondRatings = (composition?.bond_ratings as Record<string, number> | null) ?? null
-  const hasBondStats = composition && (composition.bond_duration != null || bondRatings)
-  const hasEquityStats = composition && (composition.equity_pe != null || composition.equity_pb != null || composition.equity_median_market_cap != null)
 
   return (
     <div className="p-5 space-y-4 max-w-4xl">
@@ -2297,90 +2682,83 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
         )}
       </CompositionSection>
 
-      {!composition ? (
+      <CompositionSection title="Expense Ratio">
+        <OverviewRow label="Annual Expense Ratio Override" value={
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number" step="0.001" placeholder={composition?.expense_ratio_pct != null ? fmtNum(Number(composition.expense_ratio_pct) * 100, 3) : 'e.g. 0.20'}
+              className="w-24 text-right"
+              disabled={savingExpenseRatio}
+              value={expenseRatioDraft ?? (composition?.expense_ratio_override != null ? String(Math.round(Number(composition.expense_ratio_override) * 100000) / 1000) : '')}
+              onChange={e => setExpenseRatioDraft(e.target.value)}
+              onBlur={e => { if (expenseRatioDraft != null) handleExpenseRatioSave(e.target.value) }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            />
+            <span className="text-slate-400">%</span>
+          </div>
+        } />
+        <p className="text-xs text-slate-400 pb-1.5">
+          {composition?.expense_ratio_override != null
+            ? <>Manually set — overrides {composition.expense_ratio_pct != null ? `Yahoo's ${fmtPct(Number(composition.expense_ratio_pct) * 100, 3)}` : 'Yahoo (which reports none for this fund)'} in the Inv. Portfolio -&gt; Expense Ratio report.{' '}
+                <button className="text-blue-600 hover:underline" disabled={savingExpenseRatio} onClick={() => handleExpenseRatioSave('')}>Reset to Yahoo</button></>
+            : <>Leave blank to use Yahoo's own value{composition?.expense_ratio_pct != null ? ` (currently ${fmtPct(Number(composition.expense_ratio_pct) * 100, 3)})` : ' — Yahoo reports none for this fund, so it\'s excluded from the Expense Ratio report until set here'}.</>}
+        </p>
+      </CompositionSection>
+
+      <CompositionSection title="Fund Details">
+        <EditableCompositionField secId={secId} field="fund_family" label="Family" kind="text" rawValue={composition?.fund_family ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="legal_type" label="Legal Type" kind="text" rawValue={composition?.legal_type ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="category_avg_expense_ratio_pct" label="Category Avg Expense Ratio" kind="pct" decimals={3} suffix="%" rawValue={composition?.category_avg_expense_ratio_pct ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="total_net_assets" label="Total Net Assets" kind="num" decimals={0} rawValue={composition?.total_net_assets ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="holdings_turnover_pct" label="Holdings Turnover" kind="pct" suffix="%" rawValue={composition?.holdings_turnover_pct ?? null} composition={composition} onSaved={refetchComposition} />
+        {composition?.last_updated != null && <OverviewRow label="Last Updated" value={String(composition.last_updated).slice(0, 10)} />}
+        {composition?.fetch_error != null && <OverviewRow label="Last Fetch Error" value={<span className="text-red-600">{String(composition.fetch_error)}</span>} />}
+      </CompositionSection>
+
+      {!composition && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-400 text-center">
-          No fund composition data yet — use <span className="font-mono">Download Fund Composition (X-Ray)</span> on the Downloads tab to fetch sector weights, asset mix, top holdings, expense ratio, and more from Yahoo Finance.
+          No fund composition data yet — use <span className="font-mono">Download Fund Composition (X-Ray)</span> on the Downloads tab to fetch sector weights, asset mix, top holdings, expense ratio, and more from Yahoo Finance, or fill in what you know by hand above and below.
         </div>
-      ) : (
-        <>
-          <CompositionSection title="Asset Mix">
-            {assetMix.filter(([, v]) => v != null).map(([label, v]) => (
-              <OverviewRow key={label} label={label} value={fmtPct(Number(v) * 100)} />
-            ))}
-          </CompositionSection>
-
-          {sectorWeightings && (
-            <CompositionSection title="Sector Weightings">
-              {Object.entries(sectorWeightings).sort((a, b) => b[1] - a[1]).map(([sector, w]) => (
-                <OverviewRow key={sector} label={sector.split('_').map(s => s[0].toUpperCase() + s.slice(1)).join(' ')} value={fmtPct(Number(w) * 100)} />
-              ))}
-            </CompositionSection>
-          )}
-
-          <CompositionSection title="Fund Details">
-            <OverviewRow label="Family" value={String(composition.fund_family ?? '—')} />
-            <OverviewRow label="Legal Type" value={String(composition.legal_type ?? '—')} />
-            <OverviewRow label="Expense Ratio" value={composition.expense_ratio_pct != null ? fmtPct(Number(composition.expense_ratio_pct) * 100, 3) : '—'} />
-            <OverviewRow label="Category Avg Expense Ratio" value={composition.category_avg_expense_ratio_pct != null ? fmtPct(Number(composition.category_avg_expense_ratio_pct) * 100, 3) : '—'} />
-            <OverviewRow label="Total Net Assets" value={composition.total_net_assets != null ? fmtNum(Number(composition.total_net_assets), 0) : '—'} />
-            <OverviewRow label="Holdings Turnover" value={composition.holdings_turnover_pct != null ? fmtPct(Number(composition.holdings_turnover_pct) * 100) : '—'} />
-            <OverviewRow label="Last Updated" value={composition.last_updated ? String(composition.last_updated).slice(0, 10) : '—'} />
-            {composition.fetch_error != null && <OverviewRow label="Last Fetch Error" value={<span className="text-red-600">{String(composition.fetch_error)}</span>} />}
-          </CompositionSection>
-
-          {hasBondStats && (
-            <CompositionSection title="Bond Stats">
-              {bondRatings && Object.entries(bondRatings).sort((a, b) => b[1] - a[1]).map(([q, w]) => (
-                <OverviewRow key={q} label={q.split('_').map(s => s[0].toUpperCase() + s.slice(1)).join(' ')} value={fmtPct(Number(w) * 100)} />
-              ))}
-              {composition.bond_duration != null && <OverviewRow label="Duration (yrs)" value={fmtNum(Number(composition.bond_duration), 2)} />}
-              {composition.bond_maturity != null && <OverviewRow label="Maturity (yrs)" value={fmtNum(Number(composition.bond_maturity), 2)} />}
-            </CompositionSection>
-          )}
-
-          {hasEquityStats && (
-            <CompositionSection title="Equity Stats">
-              {composition.equity_pe != null && <OverviewRow label="P/E" value={fmtNum(Number(composition.equity_pe), 2)} />}
-              {composition.equity_pb != null && <OverviewRow label="P/B" value={fmtNum(Number(composition.equity_pb), 2)} />}
-              {composition.equity_ps != null && <OverviewRow label="P/S" value={fmtNum(Number(composition.equity_ps), 2)} />}
-              {composition.equity_pcf != null && <OverviewRow label="P/CF" value={fmtNum(Number(composition.equity_pcf), 2)} />}
-              {composition.equity_median_market_cap != null && <OverviewRow label="Median Market Cap" value={fmtNum(Number(composition.equity_median_market_cap), 0)} />}
-              {composition.equity_3yr_earnings_growth_pct != null && <OverviewRow label="3Y Earnings Growth" value={fmtPct(Number(composition.equity_3yr_earnings_growth_pct) * 100)} />}
-            </CompositionSection>
-          )}
-
-          {topHoldings.length > 0 && (
-            <CompositionSection title="Top Holdings">
-              <div className="overflow-x-auto -mx-4">
-                <table className="w-full text-xs">
-                  <thead><tr className="text-slate-500 border-b border-slate-100">
-                    <th className="text-left px-4 py-1.5">#</th>
-                    <th className="text-left px-4 py-1.5">Symbol</th>
-                    <th className="text-left px-4 py-1.5">Name</th>
-                    <th className="text-right px-4 py-1.5">Weight</th>
-                  </tr></thead>
-                  <tbody>
-                    {topHoldings.map(h => (
-                      <tr key={String(h.rank)} className="border-b border-slate-50 last:border-0">
-                        <td className="px-4 py-1 text-slate-400">{String(h.rank)}</td>
-                        <td className="px-4 py-1 font-mono font-medium">{String(h.symbol)}</td>
-                        <td className="px-4 py-1 text-slate-600">{String(h.holding_name ?? '')}</td>
-                        <td className="px-4 py-1 text-right tabular-nums">{fmtPct(Number(h.weight_pct) * 100)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CompositionSection>
-          )}
-        </>
       )}
+
+      {composition && assetMix.some(([, v]) => v != null) && (
+        <CompositionSection title="Asset Mix">
+          {assetMix.filter(([, v]) => v != null).map(([label, v]) => (
+            <OverviewRow key={label} label={label} value={fmtPct(Number(v) * 100)} />
+          ))}
+        </CompositionSection>
+      )}
+
+      <CompositionSection title="Sector Weightings">
+        <BreakdownEditor secId={secId} field="sector_weightings" buckets={SECTOR_WEIGHTING_BUCKETS}
+          rawValue={sectorWeightings} composition={composition} onSaved={refetchComposition} />
+      </CompositionSection>
+
+      <CompositionSection title="Bond Stats">
+        <BreakdownEditor secId={secId} field="bond_ratings" buckets={BOND_RATING_BUCKETS}
+          rawValue={bondRatings} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="bond_duration" label="Duration (yrs)" kind="num" rawValue={composition?.bond_duration ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="bond_maturity" label="Maturity (yrs)" kind="num" rawValue={composition?.bond_maturity ?? null} composition={composition} onSaved={refetchComposition} />
+      </CompositionSection>
+
+      <CompositionSection title="Equity Stats">
+        <EditableCompositionField secId={secId} field="equity_pe" label="P/E" kind="num" rawValue={composition?.equity_pe ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="equity_pb" label="P/B" kind="num" rawValue={composition?.equity_pb ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="equity_ps" label="P/S" kind="num" rawValue={composition?.equity_ps ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="equity_pcf" label="P/CF" kind="num" rawValue={composition?.equity_pcf ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="equity_median_market_cap" label="Median Market Cap" kind="num" decimals={0} rawValue={composition?.equity_median_market_cap ?? null} composition={composition} onSaved={refetchComposition} />
+        <EditableCompositionField secId={secId} field="equity_3yr_earnings_growth_pct" label="3Y Earnings Growth" kind="pct" suffix="%" rawValue={composition?.equity_3yr_earnings_growth_pct ?? null} composition={composition} onSaved={refetchComposition} />
+      </CompositionSection>
+
+      <CompositionSection title="Top Holdings">
+        <TopHoldingsEditor secId={secId} holdings={topHoldings} onSaved={refetchComposition} />
+      </CompositionSection>
     </div>
   )
 }
 
 // Reverse lookup of Composition & Holdings' own "Top Holdings" table — which funds in
-// the database list *this* security among their top-10 constituents, and at what weight.
+// the database list *this* security among their tracked constituents, and at what weight.
 function FundMembershipTab({ secId }: { secId: number }) {
   const navigate = useNavigate()
   const { data: rows = [], isLoading } = useQuery({
@@ -2394,14 +2772,15 @@ function FundMembershipTab({ secId }: { secId: number }) {
   return (
     <div className="p-5 space-y-4 max-w-4xl">
       <p className="text-xs text-slate-500">
-        ETFs and Mutual Funds in your database that list this security among their own top-10 holdings, and at
-        what weight. Only as complete as each fund's cached top-10 data (from Composition's "Download Fund
-        Composition" on that fund's own page) — a fund holding this security outside its own top 10 won't show
-        up here. <b>Your Position</b> is your own current holding value in that fund (— if you don't hold it);{' '}
+        ETFs and Mutual Funds in your database that list this security among their own tracked holdings, and at
+        what weight. Only as complete as each fund's own Top Holdings list (Composition -&gt; Top Holdings on that
+        fund's own page — Yahoo's own data tops out around 10 constituents, but that list can be extended by hand)
+        — a fund holding this security outside that list won't show up here. <b>Your Position</b> is your own
+        current holding value in that fund (— if you don't hold it);{' '}
         <b>Related Amount</b> is the slice of that value attributable to this one security (Your Position × Weight).
       </p>
       {funds.length === 0 ? (
-        <p className="text-sm text-slate-400 py-8 text-center">Not currently in the top-10 holdings of any fund in your database.</p>
+        <p className="text-sm text-slate-400 py-8 text-center">Not currently in the tracked holdings of any fund in your database.</p>
       ) : (
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-sm">
