@@ -5791,6 +5791,7 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     show up in the window at all), understating quantity or driving it negative for the
     days it's still actually held — which, multiplied against that day's price, is what
     produced a spurious four-digit-percent one-day swing on real data before this fix."""
+    from datetime import date as _date, timedelta
     tx_clause = _acct_clause(acct_ids, "i.Accounts_Id")
     tx_df = pd.read_sql(f"""
         SELECT i.Date::date AS date, s.Securities_Name AS ticker, i.Action AS action, i.Quantity AS quantity
@@ -5813,19 +5814,48 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
             SELECT hp.Securities_Id FROM Historical_Prices hp
             JOIN txsec ON txsec.Securities_Id = hp.Securities_Id
             GROUP BY hp.Securities_Id HAVING COUNT(*) >= 30
+        ),
+        window_start AS (SELECT (CURRENT_DATE - (%(lb)s || ' days')::INTERVAL)::date AS d),
+        window_prices AS (
+            SELECT hp.Securities_Id, hp.Date, hp.Close
+            FROM Historical_Prices hp
+            JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
+            WHERE hp.Date >= (SELECT d FROM window_start)
+        ),
+        -- Last known price strictly before the window, one per security — seeds the
+        -- ffill below for anything quoted too infrequently to have a point right at the
+        -- window's start (e.g. a bond priced every few months). Without this, such a
+        -- security has no price at all until its next quote happens to land inside the
+        -- window, at which point it silently contributes $0 (not "unknown") to the
+        -- prior day's basis — a real position materializing "from nowhere" produces a
+        -- spurious multi-hundred-percent one-day return, same failure mode as the
+        -- negative-quantity bug above, different root cause.
+        carry_in AS (
+            SELECT DISTINCT ON (hp.Securities_Id) hp.Securities_Id, hp.Date, hp.Close
+            FROM Historical_Prices hp
+            JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
+            WHERE hp.Date < (SELECT d FROM window_start)
+            ORDER BY hp.Securities_Id, hp.Date DESC
         )
-        SELECT hp.Date AS date, txsec.ticker AS ticker, hp.Close AS close
-        FROM Historical_Prices hp
-        JOIN price_counts pc ON pc.Securities_Id = hp.Securities_Id
-        JOIN txsec ON txsec.Securities_Id = hp.Securities_Id
-        WHERE hp.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
-        ORDER BY hp.Date
+        SELECT p.Date AS date, txsec.ticker AS ticker, p.Close AS close
+        FROM (SELECT * FROM window_prices UNION ALL SELECT * FROM carry_in) p
+        JOIN txsec ON txsec.Securities_Id = p.Securities_Id
+        ORDER BY p.Date
     """, conn, params={"lb": lookback_days})
     if prices_df.empty:
         return None
 
     prices_df["date"] = pd.to_datetime(prices_df["date"])
-    price_wide = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean").sort_index()
+    price_wide_seeded = prices_df.pivot_table(index="date", columns="ticker", values="close", aggfunc="mean").sort_index()
+    # Forward-fill across the seeded range (which can start earlier than the requested
+    # window, per the carry-in rows above), THEN trim back to the real window — so a
+    # thinly-quoted security's stale seed price is used to correctly value day 1 of the
+    # window, without that seed's own (possibly much earlier) date leaking into the
+    # displayed range.
+    window_start_ts = pd.Timestamp(_date.today() - timedelta(days=lookback_days))
+    price_ffill = price_wide_seeded.ffill()
+    price_ffill = price_ffill[price_ffill.index >= window_start_ts]
+    price_wide = price_wide_seeded[price_wide_seeded.index >= window_start_ts]
 
     tx_df["date"] = pd.to_datetime(tx_df["date"])
     tx_df["delta"] = tx_df.apply(
@@ -5840,6 +5870,7 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     if len(common) == 0:
         return None
     price_wide = price_wide[common]
+    price_ffill = price_ffill[common]
     qty_changes = qty_changes[common]
 
     # Cumulative quantity as of each transaction date, then forward-filled onto the
@@ -5851,7 +5882,6 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     full_idx = price_wide.index.union(qty_cum.index).sort_values()
     qty_daily = qty_cum.reindex(full_idx).ffill().reindex(price_wide.index).fillna(0)
 
-    price_ffill = price_wide.ffill()
     prior_qty = qty_daily.shift(1)
     value_at_prior_qty_today = (prior_qty * price_ffill).sum(axis=1)
     value_at_prior_qty_yesterday = (prior_qty * price_ffill.shift(1)).sum(axis=1)
