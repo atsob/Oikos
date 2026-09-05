@@ -195,6 +195,24 @@ def search_ticker(q: str = Query(..., min_length=1)):
     return results
 
 
+# Display names for common ISO 4217 codes beyond seed_data.py's curated currency list —
+# used only as a fallback label when auto-creating a Currencies row lookup_ticker below
+# needs but doesn't have yet; an unrecognized code just falls back to itself as the name
+# (still a valid, if unlabeled, row — correctable afterward in Market Data -> Currencies).
+_ISO_CURRENCY_NAMES = {
+    "AUD": "Australian Dollar", "NZD": "New Zealand Dollar", "CNY": "Chinese Yuan",
+    "INR": "Indian Rupee", "MXN": "Mexican Peso", "ZAR": "South African Rand",
+    "THB": "Thai Baht", "IDR": "Indonesian Rupiah", "MYR": "Malaysian Ringgit",
+    "PHP": "Philippine Peso", "VND": "Vietnamese Dong", "DKK": "Danish Krone",
+    "ISK": "Icelandic Krona", "CLP": "Chilean Peso", "COP": "Colombian Peso",
+    "PEN": "Peruvian Sol", "ARS": "Argentine Peso", "SAR": "Saudi Riyal",
+    "QAR": "Qatari Riyal", "KWD": "Kuwaiti Dinar", "PKR": "Pakistani Rupee",
+    "BDT": "Bangladeshi Taka", "NGN": "Nigerian Naira", "KES": "Kenyan Shilling",
+    "MAD": "Moroccan Dirham", "CZK": "Czech Koruna", "HRK": "Croatian Kuna",
+    "UAH": "Ukrainian Hryvnia", "VEF": "Venezuelan Bolivar", "XOF": "West African CFA Franc",
+}
+
+
 @router.get("/lookup-ticker")
 def lookup_ticker(symbol: str = Query(..., min_length=1)):
     """Fetch metadata for a ticker from Yahoo Finance to pre-fill the security form."""
@@ -231,6 +249,19 @@ def lookup_ticker(symbol: str = Query(..., min_length=1)):
             row = cur.fetchone()
             if row:
                 currencies_id = row[0]
+            elif len(ccy_code) == 3:
+                # seed_data.py ships a curated subset of currencies, not the full ISO
+                # 4217 list — Yahoo can report one this install genuinely doesn't have
+                # yet (e.g. AUD, for an ASX-listed stock, if nothing already held is
+                # AUD-denominated). Failing the whole import over a missing reference
+                # row — as a raw "violates not-null constraint" DB error, before this
+                # fix — is worse than creating it on the fly; Market Data -> Currencies
+                # lets the name be corrected afterward if the fallback below is wrong.
+                cur.execute(
+                    "INSERT INTO Currencies (Currencies_ShortName, Currencies_Name) VALUES (%s, %s) RETURNING Currencies_Id",
+                    (ccy_code, _ISO_CURRENCY_NAMES.get(ccy_code, ccy_code)),
+                )
+                currencies_id = cur.fetchone()[0]
 
     isin = None
     try:
