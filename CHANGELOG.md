@@ -17,6 +17,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Fixed
 - **Inv. Performance → Benchmark's "All" (and any long lookback) could show wildly unrealistic returns** — e.g. one account's chart extended back to 1996 using its currently-held securities' full price history even though the account itself only started investing in 2007, compounding 11 extra years of pre-account price moves into the reported return. Lookback is now clamped to the account scope's actual first investment date. (Superseded in part by the point-in-time-holdings rewrite above, which fixes the same root cause more fundamentally, but the clamp remains as a performance guard against fetching decades of data a young account can never use.)
+- **The point-in-time-holdings rewrite above could itself produce a wildly wrong number on any window shorter than "All"** — e.g. a real 5Y chart briefly spiking to +1,787% before settling to a sane +63%. Its transaction replay was scoped to the selected lookback window, so a position opened *before* the window but sold *during* it only had the sell captured, not the earlier buy — reconstructed quantity went negative (one confirmed case: -5,720 phantom shares), which produced a four-digit-percent single-day swing once multiplied against that day's price. Transactions are now always replayed from the account's full history regardless of the selected lookback; only the price fetch (and the displayed range) stays scoped to the window.
 
 ## 2026-09-03
 

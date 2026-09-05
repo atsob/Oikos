@@ -5782,16 +5782,23 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     rather than today's holdings — also naturally includes a security's real price
     history for the period you actually held it, even if you've since sold out of it
     entirely (the old "today's Holdings, weights held constant" approximation dropped a
-    sold position from the whole index, including the years you did hold it)."""
+    sold position from the whole index, including the years you did hold it).
+
+    Transactions are replayed from the account's FULL history regardless of
+    lookback_days — only the resulting quantity series, and the price fetch below, are
+    scoped to the window. Filtering transactions to the window itself would see only
+    a sell for a position opened before it (and hold-with-no-trade positions wouldn't
+    show up in the window at all), understating quantity or driving it negative for the
+    days it's still actually held — which, multiplied against that day's price, is what
+    produced a spurious four-digit-percent one-day swing on real data before this fix."""
     tx_clause = _acct_clause(acct_ids, "i.Accounts_Id")
     tx_df = pd.read_sql(f"""
         SELECT i.Date::date AS date, s.Securities_Name AS ticker, i.Action AS action, i.Quantity AS quantity
         FROM Investments i
         JOIN Securities s ON s.Securities_Id = i.Securities_Id
-        WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut')
-          AND i.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL{tx_clause}
+        WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut'){tx_clause}
         ORDER BY i.Date
-    """, conn, params={"lb": lookback_days})
+    """, conn)
     if tx_df.empty:
         return None
 
@@ -5800,8 +5807,7 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
             SELECT DISTINCT i.Securities_Id, s.Securities_Name AS ticker
             FROM Investments i
             JOIN Securities s ON s.Securities_Id = i.Securities_Id
-            WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut')
-              AND i.Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL{tx_clause}
+            WHERE i.Action IN ('Buy','Sell','Reinvest','ShrIn','ShrOut'){tx_clause}
         ),
         price_counts AS (
             SELECT hp.Securities_Id FROM Historical_Prices hp
