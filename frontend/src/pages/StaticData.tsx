@@ -7,7 +7,7 @@ import type { RowClickedEvent } from 'ag-grid-community'
 import {
   api,
   getPayees, getCategories, getInstitutions, getAccountsMaster,
-  upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories,
+  upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories, autoDefaultCategory,
   getCurrenciesMaster,
   getPayeeTransactions, getCategoryTransactions,
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
@@ -18,7 +18,7 @@ import {
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
-import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy } from 'lucide-react'
+import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
 const COMPOUNDING_FREQUENCIES = ['Monthly', 'Quarterly', 'Semi-Annual', 'Annual']
@@ -80,6 +80,8 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
   const [mergeTarget, setMergeTarget] = useState('')
   const [merging, setMerging] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
+  const [autoDefaultRunning, setAutoDefaultRunning] = useState(false)
+  const [autoDefaultMsg, setAutoDefaultMsg] = useState<string | null>(null)
 
   const { data: payees = [], isLoading } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
@@ -156,6 +158,22 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     finally { setMerging(false) }
   }
 
+  // Bulk-recomputes every payee's Default Category from its own transaction history —
+  // whichever category its splits use most often, overwriting whatever was already
+  // set. Unlike Merge (which only ever touches the two payees you pick), this can
+  // change many rows at once and has no per-row confirmation, so the button itself
+  // confirms before running.
+  const handleAutoDefaultCategory = async () => {
+    if (!confirm("Recompute every payee's Default Category as whichever category it's used with most often, overwriting any already set? This can't be undone.")) return
+    setAutoDefaultRunning(true); setAutoDefaultMsg(null)
+    try {
+      const { updated } = await autoDefaultCategory()
+      qc.invalidateQueries({ queryKey: ['payees'] })
+      setAutoDefaultMsg(`Updated ${updated} payee${updated === 1 ? '' : 's'}.`)
+    } catch (e: unknown) { setAutoDefaultMsg(extractError(e)) }
+    finally { setAutoDefaultRunning(false) }
+  }
+
   // Stable reference matters — see Reports.tsx's PortfolioActionSignalsTab for the
   // identical comment/pattern: onColumnResized/onColumnMoved persist column state and
   // re-render this component, and a fresh array literal every render (this one wasn't
@@ -197,6 +215,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
+          {autoDefaultMsg && <span className="text-xs text-slate-500 bg-slate-100 rounded px-3 py-1">{autoDefaultMsg}</span>}
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} payees · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
@@ -205,6 +224,10 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           </Button>
           <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
             <ArrowRightLeft size={13} /> Merge Payees
+          </Button>
+          <Button size="sm" variant="secondary" onClick={handleAutoDefaultCategory} disabled={autoDefaultRunning}
+            title="Set every payee's Default Category to whichever category its transactions use most often">
+            <Wand2 size={13} /> {autoDefaultRunning ? 'Setting…' : 'Set Default Categories'}
           </Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
@@ -290,6 +313,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
                           <th className="px-2 py-1 text-left font-medium text-slate-500">Date</th>
                           <th className="px-2 py-1 text-left font-medium text-slate-500">Account</th>
                           <th className="px-2 py-1 text-left font-medium text-slate-500">Description</th>
+                          <th className="px-2 py-1 text-left font-medium text-slate-500">Category</th>
                           <th className="px-2 py-1 text-right font-medium text-slate-500">Amount</th>
                         </tr>
                       </thead>
@@ -299,6 +323,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
                             <td className="px-2 py-1 text-slate-600 whitespace-nowrap">{String(tx.date ?? '').slice(0, 10)}</td>
                             <td className="px-2 py-1 text-slate-600">{String(tx.account ?? '')}</td>
                             <td className="px-2 py-1 text-slate-600 truncate max-w-[180px]">{String(tx.description ?? '')}</td>
+                            <td className="px-2 py-1 text-slate-500 truncate max-w-[180px]">{String(tx.category ?? '')}</td>
                             <td className="px-2 py-1 text-right font-mono text-slate-700">{fmtNum(Number(tx.amount ?? 0), 2)} {String(tx.currency ?? '')}</td>
                           </tr>
                         ))}

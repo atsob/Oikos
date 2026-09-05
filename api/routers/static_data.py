@@ -140,17 +140,31 @@ def get_payee_top_categories(pid: int, limit: int = Query(5)):
 
 @router.get("/payees/{pid}/transactions")
 def get_payee_transactions(pid: int):
+    """Powers Merge Payees' "Transactions to be reassigned" preview. `category` is a
+    comma-joined list of distinct full category paths across the transaction's splits
+    (usually just one — only a split transaction spanning multiple categories shows
+    more than one), so a split-out grocery/pharmacy trip doesn't just silently pick one."""
     with get_db() as conn:
         df = pd.read_sql("""
+            WITH RECURSIVE ch AS (
+                SELECT Categories_Id, Categories_Name::TEXT AS full_path
+                FROM Categories WHERE Categories_Id_Parent IS NULL
+                UNION ALL
+                SELECT c.Categories_Id, ch.full_path || ' : ' || c.Categories_Name
+                FROM Categories c JOIN ch ON c.Categories_Id_Parent = ch.Categories_Id
+            )
             SELECT t.transactions_id AS id,
                    t.date,
                    a.accounts_name AS account,
                    t.description,
                    SUM(s.amount) AS amount,
-                   c.currencies_shortname AS currency
+                   c.currencies_shortname AS currency,
+                   STRING_AGG(DISTINCT COALESCE(ch.full_path, '(Uncategorized)'), ', '
+                              ORDER BY COALESCE(ch.full_path, '(Uncategorized)')) AS category
             FROM transactions t
             JOIN accounts a ON a.accounts_id = t.accounts_id
             JOIN splits s ON s.transactions_id = t.transactions_id
+            LEFT JOIN ch ON ch.categories_id = s.categories_id
             LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
             WHERE t.payees_id = %(pid)s
             GROUP BY t.transactions_id, t.date, a.accounts_name,
@@ -233,6 +247,50 @@ def merge_payees(data: dict):
         conn.close()
 
 
+@router.post("/payees/auto-default-category")
+def auto_default_category():
+    """Recomputes every payee's Default Category as whichever category its own
+    transaction splits use most often, overwriting whatever was there before
+    (including an already-set one) — a bulk "let the data decide" alternative to
+    picking each payee's default by hand. Ties broken by the lower Categories_Id, for
+    a deterministic result rather than whichever row Postgres happens to scan last.
+    Only touches payees with at least one categorized split; one with none keeps
+    whatever Default Category (or lack of one) it already had, since there's nothing
+    to compute a "most-used" category from."""
+    from database.connection import get_connection
+    from fastapi import HTTPException
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            WITH counts AS (
+                SELECT t.Payees_Id AS payees_id, s.Categories_Id AS categories_id, COUNT(*) AS n
+                FROM Transactions t
+                JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+                WHERE t.Payees_Id IS NOT NULL AND s.Categories_Id IS NOT NULL
+                GROUP BY t.Payees_Id, s.Categories_Id
+            ),
+            ranked AS (
+                SELECT payees_id, categories_id,
+                       ROW_NUMBER() OVER (PARTITION BY payees_id ORDER BY n DESC, categories_id ASC) AS rn
+                FROM counts
+            )
+            UPDATE Payees p
+            SET Categories_Id_Default = r.categories_id
+            FROM ranked r
+            WHERE r.payees_id = p.Payees_Id AND r.rn = 1
+              AND p.Categories_Id_Default IS DISTINCT FROM r.categories_id
+        """)
+        updated = cur.rowcount
+        conn.commit()
+        return {"updated": updated}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.delete("/payees/{pid}")
 def delete_payee(pid: int):
     from fastapi import HTTPException
@@ -300,6 +358,15 @@ def merge_categories(data: dict):
     try:
         cur = conn.cursor()
         cur.execute("UPDATE Splits SET Categories_Id=%s WHERE Categories_Id=%s", (target_id, source_id))
+        # Every other place a category can be referenced from, besides Splits — left
+        # out until now, so deleting the source below failed with a foreign-key
+        # violation (no ON DELETE action on Payees.Categories_Id_Default or
+        # Recurring_Template_Splits.Categories_Id) whenever a payee's default category
+        # or a recurring template's split still pointed at it, even with zero real
+        # transaction splits left to reassign.
+        cur.execute("UPDATE Recurring_Template_Splits SET Categories_Id=%s WHERE Categories_Id=%s", (target_id, source_id))
+        cur.execute("UPDATE Payees SET Categories_Id_Default=%s WHERE Categories_Id_Default=%s", (target_id, source_id))
+        cur.execute("UPDATE Payee_Rules SET Categories_Id=%s WHERE Categories_Id=%s", (target_id, source_id))
         cur.execute("DELETE FROM Annual_Budgets WHERE Categories_Id=%s", (source_id,))
         cur.execute("DELETE FROM Budgets WHERE Categories_Id=%s", (source_id,))
         cur.execute("DELETE FROM Categories WHERE Categories_Id=%s", (source_id,))
@@ -322,8 +389,18 @@ def delete_category(cid: int):
         splits = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM Recurring_Template_Splits WHERE Categories_Id=%s", (cid,))
         rt = cur.fetchone()[0]
-        if splits or rt:
-            raise HTTPException(400, f"Cannot delete: category is used in {splits} split(s) and {rt} recurring template split(s). Use Merge to reassign them first.")
+        # Payees.Categories_Id_Default has no ON DELETE action (unlike Payee_Rules/
+        # Budgets/Annual_Budgets below, which already SET NULL) — deleting a category
+        # some payee still uses as its default would otherwise fail on that foreign key
+        # with a raw 500 instead of this same informative "used in ..." message.
+        cur.execute("SELECT COUNT(*) FROM Payees WHERE Categories_Id_Default=%s", (cid,))
+        payees = cur.fetchone()[0]
+        if splits or rt or payees:
+            parts = []
+            if splits: parts.append(f"{splits} split(s)")
+            if rt: parts.append(f"{rt} recurring template split(s)")
+            if payees: parts.append(f"{payees} payee(s)' default category")
+            raise HTTPException(400, f"Cannot delete: category is used in {', '.join(parts)}. Use Merge to reassign them first.")
         cur.execute("DELETE FROM Payee_Rules WHERE Categories_Id=%s", (cid,))
         cur.execute("DELETE FROM Annual_Budgets WHERE Categories_Id=%s", (cid,))
         cur.execute("DELETE FROM Budgets WHERE Categories_Id=%s", (cid,))

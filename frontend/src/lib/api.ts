@@ -260,6 +260,12 @@ export const upsertPayee = (data: Record<string, unknown>) =>
 export const mergePayees = (source_id: number, target_id: number) =>
   api.post('/static-data/payees/merge', { source_id, target_id }).then(r => r.data)
 
+// Recomputes every payee's Default Category as whichever category its transaction
+// splits use most often, overwriting whatever was there before. Returns how many
+// payees' Default Category actually changed.
+export const autoDefaultCategory = () =>
+  api.post('/static-data/payees/auto-default-category').then(r => r.data)
+
 export const mergeCategories = (source_id: number, target_id: number) =>
   api.post('/static-data/categories/merge', { source_id, target_id }).then(r => r.data)
 

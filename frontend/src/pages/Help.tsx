@@ -790,7 +790,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H2>Static Data</H2>
         <P>Master reference data, in seven tabs:</P>
         <Ul>
-          <li><b>Payees</b> — who you pay/receive from; supports merging duplicates.</li>
+          <li><b>Payees</b> — who you pay/receive from; supports merging duplicates, and a <b>Set Default Categories</b> button that recomputes every payee's Default Category from its own transaction history.</li>
           <li><b>Categories</b> — the Income/Expense/Transfer/etc. taxonomy; also mergeable.</li>
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
           <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves Portfolio Analysis's Bond Quality view instead of "Direct / Unrated".</li>
@@ -809,6 +809,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           to Delete — same idea as a transaction's Duplicate: it copies every field into a new, unsaved record
           (dropping the id, which is what flips the modal from "Edit" to "New") so a similar entry doesn't need
           retyping from scratch.
+        </Note>
+        <Note>
+          Payees → <b>Set Default Categories</b> sets each payee's Default Category to whichever category its
+          transactions actually use most often — a one-click bulk pass instead of editing payees one at a time.
+          It asks for confirmation first, since it overwrites any Default Category already set and touches every
+          payee at once. Merge Payees' preview table also shows each transaction's Category, so you can see what
+          you're moving before confirming.
         </Note>
         <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
