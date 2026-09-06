@@ -21,7 +21,7 @@ def _df(df: pd.DataFrame) -> list:
 
 @router.get("/institutions")
 def get_institutions(search: Optional[str] = Query(None)):
-    clause = "AND (LOWER(Institutions_Name) LIKE %(s)s OR LOWER(Institutions_Type) LIKE %(s)s)" if search else ""
+    clause = "AND (LOWER(Institutions_Name) LIKE %(s)s OR LOWER(Institutions_Type::text) LIKE %(s)s)" if search else ""
     params: dict = {}
     if search:
         params["s"] = f"%{search.lower()}%"
@@ -701,7 +701,7 @@ def delete_account(aid: int):
 @router.get("/accounts-master")
 def get_accounts_master(search: Optional[str] = Query(None)):
     """Full account master data (all fields)."""
-    clause = "AND (LOWER(a.Accounts_Name) LIKE %(s)s OR LOWER(a.Accounts_Type) LIKE %(s)s)" if search else ""
+    clause = "AND (LOWER(a.Accounts_Name) LIKE %(s)s OR LOWER(a.Accounts_Type::text) LIKE %(s)s)" if search else ""
     params: dict = {}
     if search:
         params["s"] = f"%{search.lower()}%"

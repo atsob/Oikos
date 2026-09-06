@@ -983,6 +983,15 @@ CREATE TABLE IF NOT EXISTS User_Preferences (
     Updated_At TIMESTAMP DEFAULT NOW()
 );
 
+-- Separate, older generic text key-value store (predates User_Preferences above) —
+-- still actively used for broker-integration credentials/tokens (Saxo, Coinbase,
+-- Crypto.com) and importer response caching, see get_app_setting/save_app_setting
+-- in database/queries.py.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 
 -- =============================================================================
 -- IMPORT SUPPORT TABLES
@@ -1145,6 +1154,17 @@ CREATE TABLE IF NOT EXISTS Signal_Notifications (
     Previous_Signal   TEXT,
     Changed_At        TIMESTAMP DEFAULT NOW(),
     Acknowledged      BOOLEAN DEFAULT TRUE
+);
+
+-- Dismiss button backing for live-computed Dashboard alerts (golden/death cross,
+-- trailing stop) that have no acknowledgment table of their own — see
+-- _ensure_live_alert_dismissals_table's docstring in database/queries.py for how a
+-- dismissal self-heals (deleted the moment its own condition is no longer true).
+CREATE TABLE IF NOT EXISTS Live_Alert_Dismissals (
+    Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Alert_Type    TEXT NOT NULL,
+    Dismissed_At  TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (Securities_Id, Alert_Type)
 );
 
 

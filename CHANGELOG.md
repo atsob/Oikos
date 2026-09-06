@@ -7,6 +7,10 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **Static Data → Accounts now has Loan-specific fields for Loan-type accounts** (Quicken-style): **Loan Type** (Mortgage, Auto Loan, Student Loan, etc.), **Interest Rate** — either a single Fixed %, or Variable defined as an Index name (free text, e.g. "Euribor 12M") plus a Spread % on top, and **Linked Asset Account** (the Real Estate/Vehicle/Asset account the loan financed, e.g. tying a car loan to its car). All three are hidden for every other account type and cleared automatically if you switch a Loan account to a different type. Interest Rate and Linked Asset are also available (hidden by default) as grid columns.
 
+### Fixed
+- **The fresh-install schema script (`database/Oikos.sql`) was missing two tables** a new installation would otherwise never get: `Live_Alert_Dismissals` (backs the Dashboard's cross/trailing-stop Dismiss buttons) and `app_settings` (a pre-existing, unrelated gap found during the same audit — a simple key-value store used for broker-integration credentials and importer caching). Verified by running the complete script end-to-end against a throwaway database.
+- **Searching Static Data → Accounts or → Institutions by name/type could fail with a raw database error** ("function lower(accounts_type) does not exist") — `Accounts_Type`/`Institutions_Type` are Postgres enums, which `LOWER()` can't be applied to directly. Currently unreachable from the UI (neither grid's search box calls the endpoint with a search term — both filter client-side instead), but fixed so the underlying API endpoint works correctly if anything calls it that way.
+
 ### Added
 - **Trend-following signals: 50/200-day moving averages, golden/death-cross state, and a configurable trailing stop**, in three places:
   - **Securities Analysis → Portfolio Action Signals** gains 8 new columns: MA Trend (Golden = 50-day MA above 200-day, bullish regime; Death = below, bearish), Cross Event (set only on the trading day the two MAs actually crossed), MA50, MA200, Above MA200, Trailing Stop (triggered/OK), Stop Price, and 1Y High.
