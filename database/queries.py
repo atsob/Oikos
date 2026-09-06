@@ -6655,19 +6655,70 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
     return results
 
 
+def _ensure_live_alert_dismissals_table():
+    """Create Live_Alert_Dismissals if it does not exist.
+
+    Backs the Dismiss button on live-computed alerts (golden/death cross,
+    trailing stop) that don't otherwise have an acknowledgment table of their
+    own — unlike Signal_Notifications, there's nothing here to "change back
+    to" that would naturally clear the dismissal, so _get_trend_alerts itself
+    self-heals: it deletes a security's dismissal the moment that alert's own
+    condition is no longer true, so a *fresh* breach (price recovers above the
+    stop, then falls back below it again) shows again rather than staying
+    silenced forever.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Live_Alert_Dismissals (
+                    Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+                    Alert_Type    TEXT NOT NULL,
+                    Dismissed_At  TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (Securities_Id, Alert_Type)
+                )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def dismiss_live_alert(securities_id: int, alert_type: str) -> None:
+    """Silence a live-computed alert until its condition actually resolves and
+    re-triggers fresh — see _ensure_live_alert_dismissals_table's docstring."""
+    _ensure_live_alert_dismissals_table()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Live_Alert_Dismissals (Securities_Id, Alert_Type, Dismissed_At)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (Securities_Id, Alert_Type) DO UPDATE SET Dismissed_At = NOW()
+            """, (securities_id, alert_type))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _get_trend_alerts() -> list:
     """Live-computed trend-following heads-up: a golden/death cross on the most
     recent trading day, and a held position whose price has fallen the
     configured % below its own trailing 1-year high (Trailing Stop). Reuses
     get_portfolio_signals's own MA/cross/trailing-high computation rather than
-    duplicating it — no acknowledgment table needed, same as the bond/dividend
-    heads-up above: these clear on their own once no longer true (a cross stops
-    showing the day after it happened, a stop-loss clears once price recovers).
+    duplicating it.
 
     Golden Cross is surfaced for any actively-priced security (a buy signal
     worth seeing even on something not yet held); Death Cross and Trailing
     Stop are scoped to positions actually held (qty > 0) — a bearish signal or
-    a stop-loss level only matters for something you actually own.
+    a stop-loss level only matters for something you actually own. Both carry
+    the position's own unrealized P&L (EUR-denominated, so it's currency-safe
+    even for a foreign-listed security) — a Trailing Stop trip while still up
+    overall is a very different decision than one that's also underwater, so
+    it's called out explicitly and softens the alert's level from error to
+    warning when you're still in profit.
+
+    Each is individually dismissible (Live_Alert_Dismissals) — see that
+    table's docstring for how a dismissal expires on its own.
     """
     try:
         df = get_portfolio_signals(None)
@@ -6689,6 +6740,26 @@ def _get_trend_alerts() -> list:
     except Exception:
         pass
 
+    _ensure_live_alert_dismissals_table()
+    conn = get_connection()
+    try:
+        dismissed_df = pd.read_sql(
+            "SELECT Securities_Id AS securities_id, Alert_Type AS alert_type FROM Live_Alert_Dismissals", conn)
+    finally:
+        conn.close()
+    dismissed = {(int(r.securities_id), r.alert_type) for r in dismissed_df.itertuples()} if not dismissed_df.empty else set()
+
+    def pnl_clause(row) -> str:
+        cost = row.get('total_cost_eur')
+        pnl = row.get('unrealized_pnl_eur')
+        if cost is None or pnl is None or float(cost) <= 0:
+            return ''
+        pnl, cost = float(pnl), float(cost)
+        pct = pnl / cost * 100
+        arrow = '📈 up' if pnl >= 0 else '📉 down'
+        return f" You're {arrow} {abs(pct):.1f}% (€{pnl:,.2f}) vs cost — €{cost:,.2f} cost basis."
+
+    active = set()
     results = []
     for _, row in df.iterrows():
         sid = int(row['securities_id'])
@@ -6696,31 +6767,53 @@ def _get_trend_alerts() -> list:
         qty = float(row['current_qty']) if row.get('current_qty') is not None else 0.0
         cross = row.get('ma_cross_event')
         if cross == 'Golden Cross':
-            results.append({
-                'level': 'info',
-                'message': (f"📈 **Golden Cross** — {name}: 50-day MA just crossed above its "
-                            f"200-day MA (bullish trend signal)."),
-                'securities_id': sid, 'type': 'ma_cross',
-            })
+            active.add((sid, 'ma_cross'))
+            if (sid, 'ma_cross') not in dismissed:
+                results.append({
+                    'level': 'info',
+                    'message': (f"📈 **Golden Cross** — {name}: 50-day MA just crossed above its "
+                                f"200-day MA (bullish trend signal)."
+                                + (pnl_clause(row) if qty > 0 else '')),
+                    'securities_id': sid, 'type': 'ma_cross',
+                })
         elif cross == 'Death Cross' and qty > 0:
-            results.append({
-                'level': 'warning',
-                'message': (f"📉 **Death Cross** — {name}: 50-day MA just crossed below its "
-                            f"200-day MA (bearish trend signal)."),
-                'securities_id': sid, 'type': 'ma_cross',
-            })
+            active.add((sid, 'ma_cross'))
+            if (sid, 'ma_cross') not in dismissed:
+                results.append({
+                    'level': 'warning',
+                    'message': (f"📉 **Death Cross** — {name}: 50-day MA just crossed below its "
+                                f"200-day MA (bearish trend signal)." + pnl_clause(row)),
+                    'securities_id': sid, 'type': 'ma_cross',
+                })
         if qty > 0 and row.get('trailing_high_1y') is not None and row.get('price_today') is not None:
             high = float(row['trailing_high_1y'])
             price = float(row['price_today'])
             stop_price = high * (1 - stop_pct / 100)
             if price < stop_price:
-                results.append({
-                    'level': 'error',
-                    'message': (f"🔻 **Trailing Stop** — {name} is at **{price:,.4f}**, more than "
-                                f"{stop_pct:g}% below its trailing 1-year high of {high:,.4f} "
-                                f"(stop: {stop_price:,.4f})."),
-                    'securities_id': sid, 'type': 'trailing_stop',
-                })
+                active.add((sid, 'trailing_stop'))
+                if (sid, 'trailing_stop') not in dismissed:
+                    pnl = row.get('unrealized_pnl_eur')
+                    still_in_profit = pnl is not None and float(pnl) >= 0
+                    results.append({
+                        'level': 'warning' if still_in_profit else 'error',
+                        'message': (f"🔻 **Trailing Stop** — {name} is at **{price:,.4f}**, more than "
+                                    f"{stop_pct:g}% below its trailing 1-year high of {high:,.4f} "
+                                    f"(stop: {stop_price:,.4f})." + pnl_clause(row)),
+                        'securities_id': sid, 'type': 'trailing_stop',
+                    })
+
+    stale = dismissed - active
+    if stale:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "DELETE FROM Live_Alert_Dismissals WHERE Securities_Id=%s AND Alert_Type=%s",
+                    list(stale))
+            conn.commit()
+        finally:
+            conn.close()
+
     return results
 
 

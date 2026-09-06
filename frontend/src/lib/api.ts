@@ -85,6 +85,8 @@ export const acknowledgeSignal = (securitiesId: number) =>
   api.post(`/dashboard/alerts/acknowledge-signal/${securitiesId}`).then(r => r.data)
 export const acknowledgeSplit = (corporateActionsId: number) =>
   api.post(`/dashboard/alerts/acknowledge-split/${corporateActionsId}`).then(r => r.data)
+export const dismissTrendAlert = (securitiesId: number, alertType: 'ma_cross' | 'trailing_stop') =>
+  api.post(`/dashboard/alerts/dismiss-trend/${securitiesId}/${alertType}`).then(r => r.data)
 
 export const getUpcomingBills = (days = 14) =>
   api.get('/dashboard/upcoming-bills', { params: { days } }).then(r => r.data)

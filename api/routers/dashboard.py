@@ -273,6 +273,20 @@ def acknowledge_split(corporate_actions_id: int):
         raise HTTPException(500, str(e))
 
 
+@router.post("/alerts/dismiss-trend/{securities_id}/{alert_type}")
+def dismiss_trend_alert(securities_id: int, alert_type: str):
+    """Dismiss a golden/death cross or trailing-stop alert — see
+    Live_Alert_Dismissals for how the dismissal expires on its own."""
+    if alert_type not in ('ma_cross', 'trailing_stop'):
+        raise HTTPException(400, "alert_type must be 'ma_cross' or 'trailing_stop'")
+    try:
+        from database.queries import dismiss_live_alert
+        dismiss_live_alert(securities_id, alert_type)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/upcoming-bills")
 def get_upcoming_bills(days: int = Query(14)):
     """Upcoming bills, identified the same way Reports -> Cash Flow Forecast does —

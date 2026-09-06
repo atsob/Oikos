@@ -6,7 +6,7 @@ import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
-  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit,
+  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
@@ -123,6 +123,14 @@ function SecuritiesAlertsPanel() {
     mutationFn: (caId: number) => acknowledgeSplit(caId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
+  // Golden/death cross and trailing-stop alerts are live-computed (not stored,
+  // unlike Signal Change/Stock Split) — dismissing one silences it until its own
+  // condition actually resolves and re-triggers fresh (see Live_Alert_Dismissals'
+  // docstring server-side), rather than a one-time acknowledgment.
+  const dismissTrendMut = useMutation({
+    mutationFn: ({ sid, type }: { sid: number; type: 'ma_cross' | 'trailing_stop' }) => dismissTrendAlert(sid, type),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+  })
   // Signal Change alerts are per-security and re-trigger on the next algo/analyst
   // move, unlike Price Alerts (no dismiss here — those clear on their own once the
   // price crosses back, and are managed as standing alerts under Market Data).
@@ -139,10 +147,15 @@ function SecuritiesAlertsPanel() {
       .filter(a => a.type === 'stock_split' && a.corporate_actions_id != null)
       .map(a => Number(a.corporate_actions_id)),
   )], [alerts])
+  const trendKeys = React.useMemo(() => (alerts as Record<string, unknown>[])
+    .filter(a => (a.type === 'ma_cross' || a.type === 'trailing_stop') && a.securities_id != null)
+    .map(a => ({ sid: Number(a.securities_id), type: a.type as 'ma_cross' | 'trailing_stop' })),
+  [alerts])
   const dismissAllMut = useMutation({
     mutationFn: () => Promise.all([
       ...signalSecIds.map(sid => acknowledgeSignal(sid)),
       ...splitCaIds.map(caId => acknowledgeSplit(caId)),
+      ...trendKeys.map(({ sid, type }) => dismissTrendAlert(sid, type)),
     ]),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
   })
@@ -169,12 +182,12 @@ function SecuritiesAlertsPanel() {
           </span>
           {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
         </button>
-        {signalSecIds.length + splitCaIds.length > 1 && (
+        {signalSecIds.length + splitCaIds.length + trendKeys.length > 1 && (
           <button
             className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline ml-3"
             disabled={dismissAllMut.isPending}
             onClick={() => dismissAllMut.mutate()}
-            title="Dismiss all Signal Change and Stock Split alerts">
+            title="Dismiss all Signal Change, Stock Split, Cross, and Trailing Stop alerts">
             {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss All'}
           </button>
         )}
@@ -187,6 +200,7 @@ function SecuritiesAlertsPanel() {
             const isSignal = a.type === 'signal_change' && secId != null
             const caId = a.corporate_actions_id != null ? Number(a.corporate_actions_id) : null
             const isSplit = a.type === 'stock_split' && caId != null
+            const isTrend = (a.type === 'ma_cross' || a.type === 'trailing_stop') && secId != null
             return (
               <div key={i}
                 className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${secId != null ? 'cursor-pointer hover:brightness-95' : ''}`}
@@ -207,6 +221,14 @@ function SecuritiesAlertsPanel() {
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
                     onClick={(e) => { e.stopPropagation(); ackSplitMut.mutate(caId!) }}
                     title="Dismiss this notification">
+                    Dismiss
+                  </button>
+                )}
+                {isTrend && (
+                  <button
+                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                    onClick={(e) => { e.stopPropagation(); dismissTrendMut.mutate({ sid: secId!, type: a.type as 'ma_cross' | 'trailing_stop' }) }}
+                    title="Dismiss until this condition resolves and re-triggers fresh">
                     Dismiss
                   </button>
                 )}

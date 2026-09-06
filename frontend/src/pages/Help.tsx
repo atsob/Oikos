@@ -172,21 +172,26 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           A <b>Golden Cross</b> (50-day MA crossing above the 200-day — bullish) shows for any actively-priced
           security, held or not, since it's a buy signal worth seeing either way; a <b>Death Cross</b> (bearish) or
-          a <b>Trailing Stop</b> trip only shows for a position you actually hold. Neither needs a dismiss: a cross
-          alert clears on its own the day after it happened, and a trailing-stop alert clears once price recovers
-          back above the stop level (Tools → System → App Settings → Trailing Stop sets how far below the trailing
-          1-year high that is, default 20%).
+          a <b>Trailing Stop</b> trip only shows for a position you actually hold. Both carry your own unrealized
+          P&amp;L on that position (e.g. "You're up 4.8% (€11.76) vs cost") — a Trailing Stop trip that's still
+          net profitable shows as a milder warning rather than the usual red error, since giving back some gains
+          is a very different situation from a real loss. Tools → System → App Settings → Trailing Stop sets how
+          far below the trailing 1-year high counts as a trip (default 20%).
         </Note>
         <Note>
           Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
           Maturity/Coupon</b>, <b>Dividend Payment</b>, <b>Golden/Death Cross</b>, <b>Trailing Stop</b> — is
           clickable through to that security's Security Detail page. <b>Allocation Drift</b> alerts aren't tied to
           one security and stay non-clickable. A Signal
-          Change's <b>Dismiss</b> button still works on its own without triggering navigation. When there's more
-          than one Signal Change or Stock Split alert (combined), a <b>Dismiss All</b> button next to the panel
-          header acknowledges all of them in one click — handy since a newly-added security can arrive with
-          dozens of Stock Split notifications (its full split history) at once. Price Alerts don't have a dismiss
-          (individually or in bulk) since they clear on their own once the price crosses back.
+          Change's, Golden/Death Cross's, or Trailing Stop's <b>Dismiss</b> button still works on its own without
+          triggering navigation. When there's more than one Signal Change, Stock Split, Cross, or Trailing Stop
+          alert (combined), a <b>Dismiss All</b> button next to the panel header clears all of them in one click —
+          handy since a newly-added security can arrive with dozens of Stock Split notifications (its full split
+          history) at once. Unlike Signal Change and Stock Split (one-off, acknowledged forever), dismissing a
+          Cross or Trailing Stop only silences it while its condition stays true — a Trailing Stop reappears once
+          price first recovers back above the stop and then falls below it again, not just because time passes.
+          Price Alerts don't have a dismiss (individually or in bulk) since they clear on their own once the price
+          crosses back.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
