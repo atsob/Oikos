@@ -11,6 +11,7 @@ export interface AppSettings {
   dividendAlertLeadDays: number // Dashboard heads-up window for security dividend payments
   liveRefreshSeconds: number // auto-refresh interval for price/balance-driven views (0 = off)
   riskFreeRateSource: string // 'eur_estr' | 'us_tbill' — Sharpe Ratio's risk-free rate proxy
+  trailingStopPct: number // % below the trailing 1-year high that flags a security's Trailing Stop as triggered
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -24,6 +25,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   dividendAlertLeadDays: 3,
   liveRefreshSeconds: 60,
   riskFreeRateSource: 'eur_estr',
+  trailingStopPct: 20,
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

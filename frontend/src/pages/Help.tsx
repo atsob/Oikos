@@ -773,6 +773,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Ex-Div Date, Change/% Change) — most hidden by default to keep the table readable, but a click away via
           Columns.
         </Note>
+        <Note>
+          <b>MA Trend</b>, <b>Cross Event</b>, <b>MA50</b>/<b>MA200</b>, <b>Above MA200</b>, and <b>Trailing Stop</b>
+          are trend-following signals, hidden by default except MA Trend and Trailing Stop: MA Trend is Golden
+          (bullish — 50-day moving average above the 200-day) or Death (bearish — below); Cross Event is set only on
+          the trading day the two actually crossed (a "golden cross" buy signal or "death cross" sell/avoid signal),
+          not just the current regime; Trailing Stop triggers once price has fallen the configured % below its own
+          trailing 1-year high (Tools → System → App Settings → Trailing Stop, default 20%). The same figures appear
+          on a security's own Analysis tab and Prices tab chart.
+        </Note>
 
         <H3>🏖️ Financial Planning</H3>
         <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
@@ -868,10 +877,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;
           Volatility (Sharpe ratio plus 1M/3M/1Y/YTD annualized volatility), Price Performance (1D through 3Y and
-          YTD % change), 3-Year Range, and Valuation (analyst target, upside %, Fair Value estimate, forward
-          dividend yield) — the same figures as Securities Analysis → Portfolio Action Signals / Volatility, at a
-          glance without leaving the security. Shows for any security with signal data, even one you don't
-          currently hold.
+          YTD % change), 3-Year Range, <b>Trend</b> (MA Trend, Cross Event, MA50/MA200, Above MA200, Trailing Stop —
+          see Securities Analysis above for what each means), and Valuation (analyst target, upside %, Fair Value
+          estimate, forward dividend yield) — the same figures as Securities Analysis → Portfolio Action Signals /
+          Volatility, at a glance without leaving the security. Shows for any security with signal data, even one
+          you don't currently hold.
+        </Note>
+        <Note>
+          The <b>Prices</b> tab chart overlays fixed <b>MA50</b>/<b>MA200</b> lines (blue/pink, in addition to the
+          existing user-adjustable "MA Days" line) and a red trailing-stop reference line, plus a "Golden/Death
+          Cross" and "Trailing Stop" badge above the chart — all seeded from price history further back than the
+          visible window, so the lines are correct from the first date shown instead of needing 50/200 days to
+          "warm up" first.
         </Note>
         <Note>
           <b>Fair Value (Est.)</b> is Oikos's own approximation of the "reversion to historical trading multiple"
@@ -1088,7 +1105,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           </li>
           <li>
             <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting
-            currency, default transfer payee name) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
+            currency, default transfer payee name, trailing stop %) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
             AI summaries). App Settings — and every other saved preference across the app (report filters,
             last-used tabs, account selections, etc.) — are stored server-side, so they follow you across
             browsers, devices, and however you access Oikos (LAN IP, hostname, or remotely), instead of being

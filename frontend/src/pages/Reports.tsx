@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -4590,6 +4590,12 @@ type Signal = {
   final_signal: string | null
   fwd_yield_pct: number | null
   current_qty: number | null
+  ma50: number | null
+  ma200: number | null
+  above_ma200: boolean | null
+  ma_trend: string | null
+  ma_cross_event: string | null
+  trailing_high_1y: number | null
 }
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
@@ -4836,6 +4842,7 @@ function PortfolioActionSignalsTab() {
   // Overview/Investment Transactions tabs show, summed across every account.
   const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
   const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
+  const [settings] = useSettings()
 
   const secById = useMemo(() => {
     const m = new Map<number, Row>()
@@ -4866,8 +4873,12 @@ function PortfolioActionSignalsTab() {
     const costBasis = r.total_cost_eur != null ? Number(r.total_cost_eur) : null
     const prevClose = sec?.prev_close != null ? Number(sec.prev_close) : null
     const change = r.price_today != null && prevClose != null ? Number(r.price_today) - prevClose : null
+    const trailingStopPrice = r.trailing_high_1y != null ? Number(r.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
+    const trailingStopTriggered = trailingStopPrice != null && r.price_today != null ? Number(r.price_today) < trailingStopPrice : null
     return {
       ...r,
+      trailing_stop_price: trailingStopPrice,
+      trailing_stop_triggered: trailingStopTriggered,
       unrealized_pnl_pct: r.unrealized_pnl_eur != null && costBasis != null && costBasis > 0
         ? Number(r.unrealized_pnl_eur) / costBasis * 100
         : null,
@@ -4895,7 +4906,7 @@ function PortfolioActionSignalsTab() {
       dividend_rate: sec?.dividend_rate != null ? Number(sec.dividend_rate) : null,
       ex_dividend_date: sec?.ex_dividend_date ?? null,
     }
-  }), [data, secById, realizedById])
+  }), [data, secById, realizedById, settings.trailingStopPct])
 
   const filtered = useMemo(() => rows.filter(r => {
     if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
@@ -5009,6 +5020,30 @@ function PortfolioActionSignalsTab() {
       { field: 'pct_from_low_3y', headerName: '% from Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
         headerTooltip: 'Current price vs 3-year low as a percentage.', valueFormatter: p => pctFmt(p.value),
         cellClass: (p: { value: unknown }) => Number(p.value ?? 0) >= 0 ? 'text-green-700' : 'text-red-600' },
+      { field: 'ma_trend', headerName: 'MA Trend', width: 110,
+        headerTooltip: '50-day MA vs 200-day MA regime: Golden (bullish, 50 above 200) or Death (bearish, 50 below 200).',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Golden' ? 'text-green-700' : p.value === 'Death' ? 'text-red-600' : 'text-slate-400'}`,
+        valueFormatter: p => p.value ?? '—' },
+      { field: 'ma_cross_event', headerName: 'Cross Event', width: 120, hide: true,
+        headerTooltip: 'Set only on the trading day the 50/200-day MAs actually crossed — a golden cross (buy signal) or death cross (sell/avoid signal).',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Golden Cross' ? 'text-green-700' : p.value === 'Death Cross' ? 'text-red-600' : ''}`,
+        valueFormatter: p => p.value ?? '—' },
+      { field: 'ma50', headerName: 'MA50', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
+        headerTooltip: '50-day simple moving average.', valueFormatter: numFmt(4) },
+      { field: 'ma200', headerName: 'MA200', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
+        headerTooltip: '200-day simple moving average — the classic long-term trend filter.', valueFormatter: numFmt(4) },
+      { field: 'above_ma200', headerName: 'Above MA200', width: 120, hide: true,
+        headerTooltip: 'Whether the current price is above (hold/add) or below (avoid/exit) its 200-day MA.',
+        cellClass: (p: { value: boolean | null }) => `text-xs font-semibold ${p.value === true ? 'text-green-700' : p.value === false ? 'text-red-600' : 'text-slate-400'}`,
+        valueFormatter: p => p.value == null ? '—' : p.value ? 'Above' : 'Below' },
+      { field: 'trailing_stop_triggered', headerName: 'Trailing Stop', width: 130,
+        headerTooltip: `Triggered when price has fallen ${settings.trailingStopPct}% or more from its own trailing 1-year high (Tools → System → App Settings → Trailing Stop).`,
+        cellClass: (p: { value: boolean | null }) => `text-xs font-semibold ${p.value === true ? 'text-red-600' : p.value === false ? 'text-slate-400' : ''}`,
+        valueFormatter: p => p.value == null ? '—' : p.value ? '🔻 Triggered' : 'OK' },
+      { field: 'trailing_stop_price', headerName: 'Stop Price', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
+        headerTooltip: 'Trailing 1-year high minus the configured stop %.', valueFormatter: numFmt(4) },
+      { field: 'trailing_high_1y', headerName: '1Y High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
+        headerTooltip: 'Highest price in the last 1 year (post-split adjusted) — the reference price for the Trailing Stop.', valueFormatter: numFmt(4) },
       { field: 'week52_high', headerName: '52-Week High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true, valueFormatter: numFmt(4) },
       { field: 'week52_low', headerName: '52-Week Low', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true, valueFormatter: numFmt(4) },
       { field: 'volume', headerName: 'Volume', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110, hide: true,
@@ -5039,7 +5074,7 @@ function PortfolioActionSignalsTab() {
         valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
     ]
     return cols
-  }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [navigate, settings.trailingStopPct]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('portfolio-action-signals', colDefs)
   const gridFilter = useGridFilterState('portfolio-action-signals')
   const { gridApi, onGridReady } = useGridApi(api => {

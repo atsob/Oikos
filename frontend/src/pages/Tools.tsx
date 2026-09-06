@@ -2347,6 +2347,20 @@ function AppSettingsPanel() {
             </p>
           </div>
 
+          {/* Trailing stop */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Trailing Stop</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">% below trailing 1-year high</label>
+            <input type="number" min={1} max={90} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.trailingStopPct} onChange={e => set('trailingStopPct', Math.min(90, Math.max(1, Number(e.target.value) || 1)))} />
+            <p className="mt-2 text-xs text-slate-400">
+              How far a security's price can fall from its own trailing 1-year high before the Trailing Stop flag
+              trips, shown on Securities Analysis → Portfolio Action Signals and on a Security Detail's Overview and
+              Prices tabs. A trend-following exit rule — 15–25% is typical for individual equities, tighter for
+              lower-volatility names, wider for small-caps or crypto.
+            </p>
+          </div>
+
           {/* Live data refresh */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Live Data Refresh</h3>

@@ -1259,6 +1259,43 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                AND hp.Date >= COALESCE(ls.split_date, (CURRENT_DATE - INTERVAL '3 years'))
              GROUP BY hp.Securities_Id
         ),
+        -- Trailing 1-year high, used as the reference price for the trailing-stop
+        -- flag (the user-configurable stop distance is applied client-side, not here,
+        -- so a Settings change takes effect instantly without a fresh query).
+        -- Reuses last_split_in_window (looks back 3 years) since any split within the
+        -- shorter 1-year window is necessarily also within that 3-year lookback.
+        range_1y AS (
+            SELECT hp.Securities_Id,
+                   ROUND(MAX(hp.Close)::numeric, 4) AS high_1y
+              FROM Historical_Prices hp
+              LEFT JOIN last_split_in_window ls ON ls.Securities_Id = hp.Securities_Id
+             WHERE hp.Date >= (CURRENT_DATE - INTERVAL '1 year')
+               AND hp.Date >= COALESCE(ls.split_date, (CURRENT_DATE - INTERVAL '1 year'))
+             GROUP BY hp.Securities_Id
+        ),
+        -- 50-day and 200-day simple moving averages, computed per-day so the most
+        -- recent two trading days can be compared to detect an actual golden/death
+        -- cross event (not just today's regime). ma200/ma200_prev are nulled out
+        -- until 200 real trading days exist, so a young security doesn't get a
+        -- misleadingly early "MA200" from a partial window.
+        ma_series AS (
+            SELECT Securities_Id, Date,
+                   AVG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) AS ma50,
+                   AVG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) AS ma200,
+                   COUNT(*) OVER (PARTITION BY Securities_Id ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) AS n200,
+                   ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rn
+            FROM base_data
+        ),
+        ma_latest AS (
+            SELECT cur.Securities_Id,
+                   ROUND(cur.ma50::numeric, 4) AS ma50,
+                   CASE WHEN cur.n200 >= 200 THEN ROUND(cur.ma200::numeric, 4) ELSE NULL END AS ma200,
+                   prev.ma50 AS ma50_prev,
+                   CASE WHEN prev.n200 >= 200 THEN prev.ma200 ELSE NULL END AS ma200_prev
+            FROM ma_series cur
+            LEFT JOIN ma_series prev ON prev.Securities_Id = cur.Securities_Id AND prev.rn = cur.rn + 1
+            WHERE cur.rn = 1
+        ),
         latest_only AS (
             SELECT rp.*, yp.price_ytd_start
             FROM ranked_prices rp
@@ -1343,6 +1380,18 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
                 ROUND((((sig.price_today / NULLIF(r3.high_3y, 0)) - 1) * 100)::numeric, 2) as pct_from_high_3y,
                 ROUND((((sig.price_today / NULLIF(r3.low_3y,  0)) - 1) * 100)::numeric, 2) as pct_from_low_3y,
                 ROUND(sec.Dividend_Yield::numeric, 2) as fwd_yield_pct,
+                ml.ma50,
+                ml.ma200,
+                r1.high_1y AS trailing_high_1y,
+                CASE WHEN ml.ma200 IS NULL THEN NULL
+                     ELSE sig.price_today > ml.ma200 END as above_ma200,
+                CASE WHEN ml.ma50 IS NULL OR ml.ma200 IS NULL THEN NULL
+                     WHEN ml.ma50 > ml.ma200 THEN 'Golden'
+                     ELSE 'Death' END as ma_trend,
+                CASE WHEN ml.ma50_prev IS NULL OR ml.ma200_prev IS NULL OR ml.ma50 IS NULL OR ml.ma200 IS NULL THEN NULL
+                     WHEN ml.ma50_prev <= ml.ma200_prev AND ml.ma50 > ml.ma200 THEN 'Golden Cross'
+                     WHEN ml.ma50_prev >= ml.ma200_prev AND ml.ma50 < ml.ma200 THEN 'Death Cross'
+                     ELSE NULL END as ma_cross_event,
                 CASE
                     WHEN current_qty > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
                     WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
@@ -1354,6 +1403,8 @@ def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
             FROM portfolio_status sig
             JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
             LEFT JOIN range_3y r3 ON r3.Securities_Id = sig.Securities_Id
+            LEFT JOIN range_1y r1 ON r1.Securities_Id = sig.Securities_Id
+            LEFT JOIN ma_latest ml ON ml.Securities_Id = sig.Securities_Id
             LEFT JOIN latest_fx fx ON fx.Currencies_Id_1 = sec.Currencies_Id
             LEFT JOIN Securities_Quote sq ON sq.Securities_Id = sig.Securities_Id
         )

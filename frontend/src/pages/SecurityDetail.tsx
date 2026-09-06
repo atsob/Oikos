@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -69,6 +69,21 @@ function fmtPctLocal(n: unknown, dec = 2) {
   return fmtPct(Number(n), dec)
 }
 
+// Simple moving average, keyed by ISO date string. Takes a separate, further-back
+// -reaching price history than what's actually plotted, so a fixed MA50/MA200 line
+// has real values from the very first date of the visible window instead of
+// starting blank for its first 50/200 points — the same "seed further back, trim
+// to the display window" idea used for Benchmark's price ffill.
+function maSeriesMap(rows: Record<string, unknown>[], days: number): Map<string, number> {
+  const map = new Map<string, number>()
+  for (let i = days - 1; i < rows.length; i++) {
+    let sum = 0
+    for (let j = i - days + 1; j <= i; j++) sum += Number(rows[j].close)
+    map.set(String(rows[i].date).slice(0, 10), sum / days)
+  }
+  return map
+}
+
 // ── Prices Tab ────────────────────────────────────────────────────────────────
 const PRICES_TAB_COLS = [
   { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
@@ -104,6 +119,33 @@ function PricesTab({ secId }: { secId: number }) {
     queryFn: () => getPriceHistory(secId, fromDate),
     refetchInterval: liveRefetchMs,
   })
+  // Extra lookback purely to seed the MA50/MA200 lines below — see maSeriesMap's comment.
+  const maSeedFromDate = useMemo(() => {
+    const d = new Date(fromDate)
+    d.setDate(d.getDate() - 400)
+    return toLocalISODate(d)
+  }, [fromDate])
+  const { data: maSeedHistory = [] } = useQuery({
+    queryKey: ['price-history', secId, maSeedFromDate],
+    queryFn: () => getPriceHistory(secId, maSeedFromDate),
+    refetchInterval: liveRefetchMs,
+  })
+  const ma50Map = useMemo(() => maSeriesMap(maSeedHistory as Record<string, unknown>[], 50), [maSeedHistory])
+  const ma200Map = useMemo(() => maSeriesMap(maSeedHistory as Record<string, unknown>[], 200), [maSeedHistory])
+  const ma50Trace = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return { x: h.map(r => r.date), y: h.map(r => ma50Map.get(String(r.date).slice(0, 10)) ?? null) }
+  }, [history, ma50Map])
+  const ma200Trace = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return { x: h.map(r => r.date), y: h.map(r => ma200Map.get(String(r.date).slice(0, 10)) ?? null) }
+  }, [history, ma200Map])
+  // Shares the ['portfolio-signals'] query with AnalysisTab/PortfolioActionSignalsTab.
+  const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
+  const [settings] = useSettings()
+  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
+  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
   // Shares the ['sec-transactions', secId] query with InvestmentTransactionsTab —
   // switching tabs doesn't re-fetch.
   const { data: txHistory = [] } = useQuery({
@@ -265,13 +307,38 @@ function PricesTab({ secId }: { secId: number }) {
     font: { size: 10, color: '#7c3aed' },
   }], [avgCostPerShare])
 
+  // Trailing-stop reference line — trailing 1-year high minus the configured %
+  // (Tools → System → App Settings → Trailing Stop), same figure as Portfolio
+  // Action Signals and the Analysis tab's Trend section.
+  const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
+    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+    x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
+    line: { color: '#dc2626', width: 1.5, dash: 'dashdot' as const },
+  }], [trailingStopPrice])
+  const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
+    xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
+    text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
+    xanchor: 'right' as const, yanchor: 'bottom' as const,
+    font: { size: 10, color: '#dc2626' },
+  }], [trailingStopPrice])
+
   return (
     <div className="p-4 space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <PeriodSelector value={period} onChange={setPeriod} />
         {pctChange != null && !isLoading && (
           <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
             {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
+          </span>
+        )}
+        {signal?.ma_trend != null && (
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+            {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
+          </span>
+        )}
+        {trailingStopTriggered != null && (
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+            {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
           </span>
         )}
       </div>
@@ -283,6 +350,7 @@ function PricesTab({ secId }: { secId: number }) {
           onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
           className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
         />
+        <span className="text-xs text-slate-400">plus the fixed MA50/MA200 trend lines below</span>
       </div>
 
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
@@ -299,6 +367,20 @@ function PricesTab({ secId }: { secId: number }) {
               x: maData.x, y: maData.y,
               type: 'scatter', mode: 'lines', name: `MA${maDays}`,
               line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
+              yaxis: 'y',
+              connectgaps: false,
+            },
+            {
+              x: ma50Trace.x, y: ma50Trace.y,
+              type: 'scatter', mode: 'lines', name: 'MA50',
+              line: { color: '#0ea5e9', width: 1.5 },
+              yaxis: 'y',
+              connectgaps: false,
+            },
+            {
+              x: ma200Trace.x, y: ma200Trace.y,
+              type: 'scatter', mode: 'lines', name: 'MA200',
+              line: { color: '#db2777', width: 1.5 },
               yaxis: 'y',
               connectgaps: false,
             },
@@ -351,8 +433,8 @@ function PricesTab({ secId }: { secId: number }) {
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.15, x: 0 },
             bargap: 0.1,
-            shapes: [...alertShapes, ...avgCostShapes],
-            annotations: [...alertAnnotations, ...avgCostAnnotations],
+            shapes: [...alertShapes, ...avgCostShapes, ...trailingStopShapes],
+            annotations: [...alertAnnotations, ...avgCostAnnotations, ...trailingStopAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: true, responsive: true }}
@@ -550,7 +632,10 @@ function AnalysisSection({ title, cols, children }: { title: string; cols: numbe
 
 function AnalysisTab({ secId }: { secId: number }) {
   const { data: signalsData = [], isLoading } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const [settings] = useSettings()
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
+  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
+  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
@@ -589,6 +674,25 @@ function AnalysisTab({ secId }: { secId: number }) {
         <MiniStat label="% from High" value={pctVal(signal.pct_from_high_3y)} color={pctColor(signal.pct_from_high_3y)} />
         <MiniStat label="3Y Low" value={signal.low_3y != null ? fmt(signal.low_3y, 4) : '—'} />
         <MiniStat label="% from Low" value={pctVal(signal.pct_from_low_3y)} color={pctColor(signal.pct_from_low_3y)} />
+      </AnalysisSection>
+
+      <AnalysisSection title="Trend" cols={6}>
+        <MiniStat
+          label={<Tooltip text="50-day vs 200-day moving average regime: Golden (bullish, 50 above 200) or Death (bearish, 50 below 200).">MA Trend</Tooltip>}
+          value={String(signal.ma_trend ?? '—')} color={signal.ma_trend === 'Golden' ? 'text-green-600' : signal.ma_trend === 'Death' ? 'text-red-600' : undefined} />
+        <MiniStat
+          label={<Tooltip text="Set only on the trading day the 50/200-day MAs actually crossed.">Cross Event</Tooltip>}
+          value={String(signal.ma_cross_event ?? '—')} color={signal.ma_cross_event === 'Golden Cross' ? 'text-green-600' : signal.ma_cross_event === 'Death Cross' ? 'text-red-600' : undefined} />
+        <MiniStat label="MA50" value={signal.ma50 != null ? fmt(signal.ma50, 4) : '—'} />
+        <MiniStat label="MA200" value={signal.ma200 != null ? fmt(signal.ma200, 4) : '—'} />
+        <MiniStat
+          label={<Tooltip text="Whether the current price is above (hold/add) or below (avoid/exit) its 200-day MA — the classic long-term trend filter.">Above MA200</Tooltip>}
+          value={signal.above_ma200 == null ? '—' : signal.above_ma200 ? 'Above' : 'Below'}
+          color={signal.above_ma200 == null ? undefined : signal.above_ma200 ? 'text-green-600' : 'text-red-600'} />
+        <MiniStat
+          label={<Tooltip text={`Triggered when price has fallen ${settings.trailingStopPct}% or more from its own trailing 1-year high. Configurable under Tools → System → App Settings → Trailing Stop.`}>Trailing Stop</Tooltip>}
+          value={trailingStopTriggered == null ? '—' : trailingStopTriggered ? `🔻 Triggered @ ${fmt(trailingStopPrice, 4)}` : `OK (stop @ ${fmt(trailingStopPrice, 4)})`}
+          color={trailingStopTriggered == null ? undefined : trailingStopTriggered ? 'text-red-600' : undefined} />
       </AnalysisSection>
 
       <AnalysisSection title="Valuation" cols={5}>

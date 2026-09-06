@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-06
+
+### Added
+- **Trend-following signals: 50/200-day moving averages, golden/death-cross state, and a configurable trailing stop**, in three places:
+  - **Securities Analysis → Portfolio Action Signals** gains 8 new columns: MA Trend (Golden = 50-day MA above 200-day, bullish regime; Death = below, bearish), Cross Event (set only on the trading day the two MAs actually crossed), MA50, MA200, Above MA200, Trailing Stop (triggered/OK), Stop Price, and 1Y High.
+  - **A Stock/Bond/Fund's Analysis tab** shows the same set in a new "Trend" section.
+  - **A security's Prices tab chart** overlays fixed MA50/MA200 lines (in addition to the existing user-adjustable MA) and a trailing-stop reference line, plus "Golden/Death Cross" and "Trailing Stop" badges above the chart. Both lines are seeded from price history further back than the visible window, so they show real values from the first date on screen instead of needing 50/200 days to "warm up" first.
+  - The trailing-stop distance (default 20% below the trailing 1-year high) is user-configurable under **Tools → System → App Settings → Trailing Stop**, and updates every view above instantly since it's applied client-side rather than baked into the query.
+
 ## 2026-09-05
 
 ### Changed
