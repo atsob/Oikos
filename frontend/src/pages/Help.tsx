@@ -799,6 +799,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>🏖️ Financial Planning</H3>
         <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
+        <Note>
+          <b>Loan Amortization</b>'s <b>Loan Account</b> dropdown can pre-fill Loan Amount and Annual Rate from one
+          of your real Loan-type accounts instead of typing them by hand — pick "— Manual entry —" (the default)
+          to model a hypothetical loan instead. A Fixed-rate loan pre-fills both fields directly; a Variable-rate
+          one shows its Index + Spread definition (e.g. "Euribor 12M + 1.75%") instead of a rate, since no live
+          index value is tracked anywhere in the app — enter the current total rate yourself. Term (months) is
+          always manual, since no account field records a loan's original term or start date.
+        </Note>
 
         <H3>📋 Custom Reports</H3>
         <P>Build and save your own filtered report views.</P>

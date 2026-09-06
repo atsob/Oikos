@@ -8018,6 +8018,29 @@ function LoanAmortizationTab() {
   const [rate, setRate] = useState(4.5)
   const [termMonths, setTermMonths] = useState(240)
   const [showAll, setShowAll] = useState(false)
+  const [accountId, setAccountId] = useState('')
+
+  // Shares the ['accounts'] query with other Reports tabs — same source Dashboard's
+  // own account list is built from, so a Loan account's balance here matches what's
+  // shown everywhere else (today's actual balance, future-dated transactions excluded).
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const loanAccounts = useMemo(() => (accounts as Row[]).filter(a => a.type === 'Loan' && a.is_active !== false), [accounts])
+  const selectedAccount = loanAccounts.find(a => String(a.id) === accountId)
+
+  // Prefills Loan Amount and (for a Fixed-rate loan) Annual Rate from the account's
+  // own data — a loan's balance is stored negative (debt reduces net worth, same
+  // convention as Credit Card), so it's un-negated here. Term isn't tracked on the
+  // account at all (no start-date/original-term field), so it's always left as
+  // whatever the user last typed regardless of which account is picked.
+  const applyAccount = (id: string) => {
+    setAccountId(id)
+    const acc = loanAccounts.find(a => String(a.id) === id)
+    if (!acc) return
+    setPrincipal(Math.abs(Number(acc.balance ?? 0)))
+    if (acc.loan_rate_type !== 'Variable' && acc.loan_interest_rate_pct != null) {
+      setRate(Number(acc.loan_interest_rate_pct))
+    }
+  }
 
   const r = rate / 100 / 12
   const payment = r > 0 ? principal * r * Math.pow(1 + r, termMonths) / (Math.pow(1 + r, termMonths) - 1) : principal / termMonths
@@ -8034,8 +8057,30 @@ function LoanAmortizationTab() {
 
   return (
     <div className="space-y-4">
+      <div>
+        <label className="text-xs text-slate-500 block mb-1">Loan Account</label>
+        <select className="w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+          value={accountId} onChange={e => applyAccount(e.target.value)}>
+          <option value="">— Manual entry —</option>
+          {loanAccounts.map(a => (
+            <option key={String(a.id)} value={String(a.id)}>
+              {String(a.name)}{a.loan_type ? ` — ${String(a.loan_type)}` : ''}
+            </option>
+          ))}
+        </select>
+        {selectedAccount && (
+          <p className="mt-1.5 text-xs text-slate-500">
+            {selectedAccount.loan_type ? `${String(selectedAccount.loan_type)} · ` : ''}
+            {selectedAccount.loan_rate_type === 'Variable'
+              ? (selectedAccount.loan_rate_index || selectedAccount.loan_rate_spread_pct != null)
+                ? <>Variable rate: <b>{String(selectedAccount.loan_rate_index ?? '?')} + {selectedAccount.loan_rate_spread_pct != null ? fmtNum(Number(selectedAccount.loan_rate_spread_pct), 2) : '?'}%</b> — enter the current total rate below yourself, the index's live value isn't tracked here.</>
+                : 'Variable rate (no index/spread set on the account) — enter the current rate below yourself.'
+              : <>Loan Amount and Annual Rate below are pre-filled from this account{selectedAccount.currency !== 'EUR' ? ` (${String(selectedAccount.currency)}, no FX conversion)` : ''} — Term isn't tracked on the account, so it's always yours to set.</>}
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div><label className="text-xs text-slate-500 block mb-1">Loan Amount (€)</label><Input type="number" value={principal} onChange={e => setPrincipal(Number(e.target.value))} /></div>
+        <div><label className="text-xs text-slate-500 block mb-1">Loan Amount ({selectedAccount ? String(selectedAccount.currency ?? '€') : '€'})</label><Input type="number" value={principal} onChange={e => setPrincipal(Number(e.target.value))} /></div>
         <div><label className="text-xs text-slate-500 block mb-1">Annual Rate (%)</label><Input type="number" value={rate} onChange={e => setRate(Number(e.target.value))} step="0.1" /></div>
         <div><label className="text-xs text-slate-500 block mb-1">Term (months)</label><Input type="number" value={termMonths} onChange={e => setTermMonths(Number(e.target.value))} /></div>
       </div>

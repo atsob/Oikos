@@ -224,6 +224,11 @@ def get_accounts(include_future: bool = Query(False)):
                 c.Currencies_ShortName AS currency,
                 i.Institutions_Name    AS institution,
                 COALESCE(a.Credit_Limit, 0) AS credit_limit,
+                a.Loan_Type                     AS loan_type,
+                a.Loan_Rate_Type                 AS loan_rate_type,
+                a.Loan_Interest_Rate_Pct          AS loan_interest_rate_pct,
+                a.Loan_Rate_Index                AS loan_rate_index,
+                a.Loan_Rate_Spread_Pct            AS loan_rate_spread_pct,
                 CASE
                     WHEN a.Accounts_Type IN ('Brokerage','Margin','Other Investment')
                     THEN COALESCE(hv.value_eur, 0)
