@@ -563,6 +563,18 @@ def _run_startup_migrations():
         # rows all predate this column and are genuinely Yahoo's, hence the backfilled
         # default rather than NULL.
         "ALTER TABLE Fund_Top_Holdings ADD COLUMN IF NOT EXISTS Source VARCHAR(10) NOT NULL DEFAULT 'yahoo'",
+        # Static Data -> Accounts: Loan-specific details (Quicken-style), only shown/
+        # editable for Accounts_Type='Loan'. Rate_Type picks which of the two rate
+        # representations applies — a single fixed Interest_Rate_Pct, or a floating
+        # rate defined as an Index name (free text, e.g. "Euribor 12M") plus a
+        # Spread_Pct added on top; no live index-rate feed exists, so a Variable
+        # loan's actual current % isn't computed anywhere, just its definition.
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Type VARCHAR(30)",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Rate_Type VARCHAR(10) DEFAULT 'Fixed'",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Interest_Rate_Pct NUMERIC(7,4)",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Rate_Index VARCHAR(50)",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Rate_Spread_Pct NUMERIC(7,4)",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Linked_Asset_Accounts_Id INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

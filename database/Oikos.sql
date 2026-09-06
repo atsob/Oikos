@@ -253,6 +253,14 @@ CREATE TABLE Accounts (
     Accounts_Id_Linked INTEGER REFERENCES Accounts(Accounts_Id),  -- investment accounts: default linked cash account
     Accounts_Balance  NUMERIC(28, 18) DEFAULT 0,                  -- high precision for crypto/satoshi
     Notes             TEXT,                                       -- free-form: account type, holders, etc.
+    -- Loan-specific details (Accounts_Type='Loan' only) — see the migration note in
+    -- database/connection.py's _run_startup_migrations for the rate-type rationale.
+    Loan_Type                      VARCHAR(30),
+    Loan_Rate_Type                 VARCHAR(10) DEFAULT 'Fixed',
+    Loan_Interest_Rate_Pct         NUMERIC(7,4),
+    Loan_Rate_Index                VARCHAR(50),
+    Loan_Rate_Spread_Pct           NUMERIC(7,4),
+    Loan_Linked_Asset_Accounts_Id  INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL,
     embedding         vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id   ON Accounts(Accounts_Id);

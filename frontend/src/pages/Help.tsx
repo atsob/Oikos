@@ -841,6 +841,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           you're moving before confirming.
         </Note>
         <Note>
+          A <b>Loan</b>-type account's edit modal gains three extra fields: <b>Loan Type</b> (Mortgage, Auto Loan,
+          Student Loan, etc.), <b>Interest Rate</b> — a single Fixed %, or Variable defined as an Index name (free
+          text, e.g. "Euribor 12M") plus a Spread % on top, and <b>Linked Asset Account</b> (the Real Estate/
+          Vehicle/Asset account the loan financed, e.g. tying a car loan to its car). All three are hidden for
+          every other account type, and cleared automatically if you switch the account away from Loan. Interest
+          Rate and Linked Asset are also available as grid columns (hidden by default).
+        </Note>
+        <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
           draw from the same underlying ratings scale, so a rating set on either always matches a real notch.
         </Note>

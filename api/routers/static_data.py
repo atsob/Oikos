@@ -608,11 +608,23 @@ def upsert_account(data: dict):
     try:
         cur = conn.cursor()
         aid = data.get('id')
+        # Loan-only fields — cleared (not just hidden) whenever the account isn't a
+        # Loan, so switching a Loan to another type doesn't leave stale rate/asset-link
+        # data sitting in the row.
+        is_loan = data.get('type') == 'Loan'
+        loan_type = data.get('loan_type') or None if is_loan else None
+        loan_rate_type = data.get('loan_rate_type') or 'Fixed' if is_loan else None
+        loan_interest_rate_pct = data.get('loan_interest_rate_pct') or None if is_loan else None
+        loan_rate_index = data.get('loan_rate_index') or None if is_loan else None
+        loan_rate_spread_pct = data.get('loan_rate_spread_pct') or None if is_loan else None
+        loan_linked_asset_accounts_id = data.get('loan_linked_asset_accounts_id') or None if is_loan else None
         if aid:
             cur.execute("""
                 UPDATE Accounts SET
                     Accounts_Name=%s, Accounts_Type=%s, IBAN=%s, Is_Active=%s,
-                    Institutions_Id=%s, Currencies_Id=%s, Credit_Limit=%s, Accounts_Id_Linked=%s, Notes=%s
+                    Institutions_Id=%s, Currencies_Id=%s, Credit_Limit=%s, Accounts_Id_Linked=%s, Notes=%s,
+                    Loan_Type=%s, Loan_Rate_Type=%s, Loan_Interest_Rate_Pct=%s, Loan_Rate_Index=%s,
+                    Loan_Rate_Spread_Pct=%s, Loan_Linked_Asset_Accounts_Id=%s
                 WHERE Accounts_Id=%s
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
@@ -621,19 +633,24 @@ def upsert_account(data: dict):
                   data.get('credit_limit') or 0,
                   data.get('accounts_id_linked') or None,
                   data.get('notes') or None,
+                  loan_type, loan_rate_type, loan_interest_rate_pct, loan_rate_index,
+                  loan_rate_spread_pct, loan_linked_asset_accounts_id,
                   aid))
         else:
             cur.execute("""
                 INSERT INTO Accounts
-                    (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked, Notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
+                    (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked, Notes,
+                     Loan_Type, Loan_Rate_Type, Loan_Interest_Rate_Pct, Loan_Rate_Index, Loan_Rate_Spread_Pct, Loan_Linked_Asset_Accounts_Id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
                   data.get('institutions_id') or None,
                   data.get('currencies_id') or None,
                   data.get('credit_limit') or 0,
                   data.get('accounts_id_linked') or None,
-                  data.get('notes') or None))
+                  data.get('notes') or None,
+                  loan_type, loan_rate_type, loan_interest_rate_pct, loan_rate_index,
+                  loan_rate_spread_pct, loan_linked_asset_accounts_id))
             aid = cur.fetchone()[0]
         conn.commit()
         return {"id": aid}
@@ -700,11 +717,19 @@ def get_accounts_master(search: Optional[str] = Query(None)):
                    a.Credit_Limit AS credit_limit,
                    a.Accounts_Id_Linked AS accounts_id_linked,
                    la.Accounts_Name AS linked_account_name,
-                   a.Notes AS notes
+                   a.Notes AS notes,
+                   a.Loan_Type AS loan_type,
+                   a.Loan_Rate_Type AS loan_rate_type,
+                   a.Loan_Interest_Rate_Pct AS loan_interest_rate_pct,
+                   a.Loan_Rate_Index AS loan_rate_index,
+                   a.Loan_Rate_Spread_Pct AS loan_rate_spread_pct,
+                   a.Loan_Linked_Asset_Accounts_Id AS loan_linked_asset_accounts_id,
+                   laa.Accounts_Name AS loan_linked_asset_account_name
             FROM Accounts a
             JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
             LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id
             LEFT JOIN Accounts la ON a.Accounts_Id_Linked = la.Accounts_Id
+            LEFT JOIN Accounts laa ON a.Loan_Linked_Asset_Accounts_Id = laa.Accounts_Id
             WHERE 1=1 {clause}
             ORDER BY a.Accounts_Type, a.Accounts_Name
         """, conn, params=params if params else None)

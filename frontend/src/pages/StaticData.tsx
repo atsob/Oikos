@@ -17,7 +17,7 @@ import {
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum, todayLocal } from '@/lib/utils'
-import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
+import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES } from '@/lib/accountTypes'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
@@ -621,7 +621,10 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
 
   const openNew = () => {
     setEditRow({})
-    setForm({ name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '', notes: '' })
+    setForm({
+      name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '', notes: '',
+      loan_type: '', loan_rate_type: 'Fixed', loan_interest_rate_pct: '', loan_rate_index: '', loan_rate_spread_pct: '', loan_linked_asset_accounts_id: '',
+    })
     setError(null)
   }
 
@@ -639,6 +642,12 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         is_active: form.is_active,
         accounts_id_linked: form.accounts_id_linked ? Number(form.accounts_id_linked) : null,
         notes: form.notes || null,
+        loan_type: form.loan_type || null,
+        loan_rate_type: form.loan_rate_type || 'Fixed',
+        loan_interest_rate_pct: form.loan_interest_rate_pct ? Number(form.loan_interest_rate_pct) : null,
+        loan_rate_index: form.loan_rate_index || null,
+        loan_rate_spread_pct: form.loan_rate_spread_pct ? Number(form.loan_rate_spread_pct) : null,
+        loan_linked_asset_accounts_id: form.loan_linked_asset_accounts_id ? Number(form.loan_linked_asset_accounts_id) : null,
       })
       qc.invalidateQueries({ queryKey: ['accounts-master'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -683,6 +692,17 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
     { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
     { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
+    { field: 'loan_type', headerName: 'Loan Type', width: 130, hide: true },
+    { field: 'loan_interest_rate_pct', headerName: 'Interest Rate', width: 140, hide: true,
+      valueFormatter: (p: { data?: Record<string, unknown> }) => {
+        const r = p.data ?? {}
+        if (r.loan_rate_type === 'Variable') {
+          if (!r.loan_rate_index && r.loan_rate_spread_pct == null) return '—'
+          return `${String(r.loan_rate_index ?? '?')} + ${r.loan_rate_spread_pct != null ? fmtNum(Number(r.loan_rate_spread_pct), 2) : '?'}%`
+        }
+        return r.loan_interest_rate_pct != null ? `${fmtNum(Number(r.loan_interest_rate_pct), 2)}%` : '—'
+      } },
+    { field: 'loan_linked_asset_account_name', headerName: 'Linked Asset', flex: 1, minWidth: 140, hide: true },
     { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 160, hide: true },
     { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     {
@@ -763,10 +783,17 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             <Field label="Type *">
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.type ?? '')} onChange={e => {
                 const t = e.target.value
-                // Linked Account only applies to investment accounts — drop any
-                // existing link rather than silently keep saving a now-hidden value.
-                if (!INVESTMENT_ACCOUNT_TYPES.includes(t)) setForm(f => ({ ...f, type: t, accounts_id_linked: '' }))
-                else set('type', t)
+                setForm(f => ({
+                  ...f, type: t,
+                  // Linked Account only applies to investment accounts — drop any
+                  // existing link rather than silently keep saving a now-hidden value.
+                  ...(!INVESTMENT_ACCOUNT_TYPES.includes(t) ? { accounts_id_linked: '' } : {}),
+                  // Loan fields only apply to Loan accounts — same reasoning.
+                  ...(t !== 'Loan' ? {
+                    loan_type: '', loan_rate_type: 'Fixed', loan_interest_rate_pct: '',
+                    loan_rate_index: '', loan_rate_spread_pct: '', loan_linked_asset_accounts_id: '',
+                  } : {}),
+                }))
               }}>
                 {ACCOUNT_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
@@ -810,6 +837,54 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
                   ) as Record<string, unknown>[]} />
                 </select>
               </div>
+            )}
+            {String(form.type ?? '') === 'Loan' && (
+              <>
+                <div className="col-span-2">
+                  <Field label="Loan Type">
+                    <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.loan_type ?? '')} onChange={e => set('loan_type', e.target.value)}>
+                      <option value="">— none —</option>
+                      {LOAN_TYPES.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-medium text-slate-500 block mb-1">Interest Rate</label>
+                  <div className="flex gap-3 mb-2">
+                    {(['Fixed', 'Variable'] as const).map(rt => (
+                      <label key={rt} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="radio" name="loanRateType" checked={String(form.loan_rate_type ?? 'Fixed') === rt} onChange={() => set('loan_rate_type', rt)} />
+                        {rt === 'Fixed' ? 'Fixed %' : 'Variable (Index + Spread)'}
+                      </label>
+                    ))}
+                  </div>
+                  {String(form.loan_rate_type ?? 'Fixed') === 'Fixed' ? (
+                    <Input type="number" step="0.01" value={String(form.loan_interest_rate_pct ?? '')} onChange={e => set('loan_interest_rate_pct', e.target.value)} placeholder="e.g. 3.50" />
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input value={String(form.loan_rate_index ?? '')} onChange={e => set('loan_rate_index', e.target.value)} placeholder="Index, e.g. Euribor 12M" />
+                      <Input type="number" step="0.01" value={String(form.loan_rate_spread_pct ?? '')} onChange={e => set('loan_rate_spread_pct', e.target.value)} placeholder="Spread %, e.g. 1.50" />
+                    </div>
+                  )}
+                </div>
+                <div className="col-span-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-slate-500">Linked Asset Account</label>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" className="rounded" checked={showInactiveLinked} onChange={e => setShowInactiveLinked(e.target.checked)} />
+                      <span className="text-xs text-slate-500">Show inactive</span>
+                    </label>
+                  </div>
+                  <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.loan_linked_asset_accounts_id ?? '')} onChange={e => set('loan_linked_asset_accounts_id', e.target.value)}>
+                    <option value="">— none —</option>
+                    <AccountOptions accounts={acctList.filter(a =>
+                      String(a.id) !== String(form.id) && LOAN_LINKABLE_ASSET_TYPES.includes(String(a.type ?? '')) &&
+                      (showInactiveLinked || a.is_active !== false || String(a.id) === String(form.loan_linked_asset_accounts_id))
+                    ) as Record<string, unknown>[]} />
+                  </select>
+                  <p className="mt-1 text-xs text-slate-400">The Real Estate/Vehicle/Asset account this loan financed, if any.</p>
+                </div>
+              </>
             )}
             <div className="col-span-2">
               <Field label="Notes">

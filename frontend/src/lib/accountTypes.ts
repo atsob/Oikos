@@ -16,3 +16,13 @@ export const INVESTMENT_ACCOUNT_TYPES = ['Brokerage', 'Pension', 'Other Investme
 // CASH_ACCOUNT_TYPES above (which also includes Loan/Real Estate/Vehicle/Asset —
 // none of which make sense as a linked settlement account for an investment).
 export const LINKABLE_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card']
+
+// Account types eligible as a Loan account's Linked Asset Account (the thing the
+// loan financed — a house, a car, etc.), Static Data -> Accounts.
+export const LOAN_LINKABLE_ASSET_TYPES = ['Real Estate', 'Vehicle', 'Asset']
+
+// Loan Type options, Static Data -> Accounts (matches Quicken's own list).
+export const LOAN_TYPES = [
+  'Mortgage', 'Loan', 'Auto Loan', 'Consumer Loan', 'Commercial Loan',
+  'Student Loan', 'Military Loan', 'Business Loan', 'Construction Loan', 'Home Equity Loan',
+]
