@@ -164,15 +164,24 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>Insights &amp; Alerts</H3>
         <P>
           Auto-generated observations (unusual spending, upcoming bills, low balances, etc.) and any alert
-          rules you've triggered, both collapsible. <b>Bond maturity/coupon and security dividend payment alerts
-          appear automatically</b> for everything you currently hold — no setup needed, unlike price/allocation
-          alerts — once the event is within the lead time set under Tools → System → App Settings (7 and 3 days
-          by default).
+          rules you've triggered, both collapsible. <b>Bond maturity/coupon, security dividend payment, golden/death
+          cross, and trailing stop alerts appear automatically</b> for everything you currently hold — no setup
+          needed, unlike price/allocation alerts — bond/dividend once the event is within the lead time set under
+          Tools → System → App Settings (7 and 3 days by default).
         </P>
         <Note>
+          A <b>Golden Cross</b> (50-day MA crossing above the 200-day — bullish) shows for any actively-priced
+          security, held or not, since it's a buy signal worth seeing either way; a <b>Death Cross</b> (bearish) or
+          a <b>Trailing Stop</b> trip only shows for a position you actually hold. Neither needs a dismiss: a cross
+          alert clears on its own the day after it happened, and a trailing-stop alert clears once price recovers
+          back above the stop level (Tools → System → App Settings → Trailing Stop sets how far below the trailing
+          1-year high that is, default 20%).
+        </Note>
+        <Note>
           Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
-          Maturity/Coupon</b>, <b>Dividend Payment</b> — is clickable through to that security's Security Detail
-          page. <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal
+          Maturity/Coupon</b>, <b>Dividend Payment</b>, <b>Golden/Death Cross</b>, <b>Trailing Stop</b> — is
+          clickable through to that security's Security Detail page. <b>Allocation Drift</b> alerts aren't tied to
+          one security and stay non-clickable. A Signal
           Change's <b>Dismiss</b> button still works on its own without triggering navigation. When there's more
           than one Signal Change or Stock Split alert (combined), a <b>Dismiss All</b> button next to the panel
           header acknowledges all of them in one click — handy since a newly-added security can arrive with

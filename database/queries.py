@@ -6655,6 +6655,75 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
     return results
 
 
+def _get_trend_alerts() -> list:
+    """Live-computed trend-following heads-up: a golden/death cross on the most
+    recent trading day, and a held position whose price has fallen the
+    configured % below its own trailing 1-year high (Trailing Stop). Reuses
+    get_portfolio_signals's own MA/cross/trailing-high computation rather than
+    duplicating it — no acknowledgment table needed, same as the bond/dividend
+    heads-up above: these clear on their own once no longer true (a cross stops
+    showing the day after it happened, a stop-loss clears once price recovers).
+
+    Golden Cross is surfaced for any actively-priced security (a buy signal
+    worth seeing even on something not yet held); Death Cross and Trailing
+    Stop are scoped to positions actually held (qty > 0) — a bearish signal or
+    a stop-loss level only matters for something you actually own.
+    """
+    try:
+        df = get_portfolio_signals(None)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+
+    stop_pct = 20.0
+    try:
+        conn = get_connection()
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+            row = cur.fetchone()
+        conn.close()
+        if row and row[0] and row[0].get('trailingStopPct') is not None:
+            stop_pct = float(row[0]['trailingStopPct'])
+    except Exception:
+        pass
+
+    results = []
+    for _, row in df.iterrows():
+        sid = int(row['securities_id'])
+        name = row['securities_name']
+        qty = float(row['current_qty']) if row.get('current_qty') is not None else 0.0
+        cross = row.get('ma_cross_event')
+        if cross == 'Golden Cross':
+            results.append({
+                'level': 'info',
+                'message': (f"📈 **Golden Cross** — {name}: 50-day MA just crossed above its "
+                            f"200-day MA (bullish trend signal)."),
+                'securities_id': sid, 'type': 'ma_cross',
+            })
+        elif cross == 'Death Cross' and qty > 0:
+            results.append({
+                'level': 'warning',
+                'message': (f"📉 **Death Cross** — {name}: 50-day MA just crossed below its "
+                            f"200-day MA (bearish trend signal)."),
+                'securities_id': sid, 'type': 'ma_cross',
+            })
+        if qty > 0 and row.get('trailing_high_1y') is not None and row.get('price_today') is not None:
+            high = float(row['trailing_high_1y'])
+            price = float(row['price_today'])
+            stop_price = high * (1 - stop_pct / 100)
+            if price < stop_price:
+                results.append({
+                    'level': 'error',
+                    'message': (f"🔻 **Trailing Stop** — {name} is at **{price:,.4f}**, more than "
+                                f"{stop_pct:g}% below its trailing 1-year high of {high:,.4f} "
+                                f"(stop: {stop_price:,.4f})."),
+                    'securities_id': sid, 'type': 'trailing_stop',
+                })
+    return results
+
+
 def check_triggered_alerts() -> list:
     """Return list of triggered alert dicts ({level, message}).
     Never raises — returns [] on any error.
@@ -6826,6 +6895,12 @@ def check_triggered_alerts() -> list:
         # ── split amount mismatches (live-computed, clears once actually fixed) ─
         try:
             results.extend(_get_split_mismatch_alerts())
+        except Exception:
+            pass
+
+        # ── trend-following: golden/death cross, trailing stop (live-computed) ──
+        try:
+            results.extend(_get_trend_alerts())
         except Exception:
             pass
 
