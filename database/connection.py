@@ -575,6 +575,21 @@ def _run_startup_migrations():
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Rate_Index VARCHAR(50)",
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Rate_Spread_Pct NUMERIC(7,4)",
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Linked_Asset_Accounts_Id INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL",
+        # Static Data -> Accounts: additional Loan setup terms (Quicken-style) so the
+        # Loan Amortization calculator can compute an accurate remaining schedule and
+        # payoff date anchored to the loan's real history, instead of only "today
+        # forward assuming monthly everything". Payment_Frequency/Compounding_Period
+        # reuse TxModal's own PERIODICITIES vocabulary (Daily/Weekly/Bi-Weekly/Monthly/
+        # Bi-Monthly/Quarterly/Semi-Annual/Annual) for consistency with Recurring
+        # Templates. Next_Due_Date backs the Dashboard heads-up alert for an upcoming
+        # payment.
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Opening_Date DATE",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Original_Balance NUMERIC(18,2)",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Original_Length_Value INTEGER",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Original_Length_Unit VARCHAR(10) DEFAULT 'Years'",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Compounding_Period VARCHAR(20) DEFAULT 'Monthly'",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Payment_Frequency VARCHAR(20) DEFAULT 'Monthly'",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Next_Due_Date DATE",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

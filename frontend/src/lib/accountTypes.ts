@@ -26,3 +26,6 @@ export const LOAN_TYPES = [
   'Mortgage', 'Loan', 'Auto Loan', 'Consumer Loan', 'Commercial Loan',
   'Student Loan', 'Military Loan', 'Business Loan', 'Construction Loan', 'Home Equity Loan',
 ]
+
+// Units for a Loan's Original Length, Static Data -> Accounts.
+export const LOAN_LENGTH_UNITS = ['Years', 'Months', 'Weeks']

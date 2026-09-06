@@ -27,14 +27,16 @@ import {
   getTransactionById,
   addPrice,
   getSecurities, lookupTicker, upsertSecurity,
+  createTransfer, createTransaction,
   api,
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink } from '@/components/ui'
 import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
+import { LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown, Printer, X } from 'lucide-react'
-import { TxModal, useNoOpRecurring } from '@/components/TxModal'
+import { TxModal, useNoOpRecurring, addPeriod, PERIODICITIES } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef } from 'ag-grid-community'
@@ -8013,10 +8015,59 @@ function FireCalculatorTab() {
   )
 }
 
+// Payment periods per year for each of TxModal's PERIODICITIES values — shared
+// vocabulary for a loan's Compounding Period and Payment Schedule, so a loan set
+// up with (say) Semi-Annual compounding but Monthly payments computes correctly.
+const PERIODS_PER_YEAR: Record<string, number> = {
+  Daily: 365, Weekly: 52, 'Bi-Weekly': 26, Monthly: 12, 'Bi-Monthly': 6, Quarterly: 4, 'Semi-Annual': 2, Annual: 1,
+}
+
+// Converts a nominal annual rate under one compounding frequency into the
+// effective rate for one payment period, via the standard effective-annual-rate
+// bridge — this is what lets Compounding Period and Payment Schedule differ (a
+// loan can compound monthly but be paid quarterly). When both are 'Monthly' (the
+// default for manual entry and any account without these fields set) this
+// reduces to exactly rate/100/12, the plain formula the calculator always used.
+function periodRateFromAnnual(annualRatePct: number, compounding: string, paymentFreq: string): number {
+  const m = PERIODS_PER_YEAR[compounding] ?? 12
+  const n = PERIODS_PER_YEAR[paymentFreq] ?? 12
+  const nominal = annualRatePct / 100
+  const ear = Math.pow(1 + nominal / m, m) - 1
+  return Math.pow(1 + ear, 1 / n) - 1
+}
+
+type AmortRow = { month: number; payment: number; principal: number; interest: number; balance: number }
+
+// Builds a schedule, stopping as soon as the balance is paid off rather than
+// padding out to termPeriods regardless — matters once extraPerPeriod/oneTime
+// can pay a loan off early (the What-If tool), where continuing past payoff
+// would otherwise drive the running balance negative and corrupt every later
+// row's interest figure.
+function buildAmortSchedule(
+  principal: number, periodRate: number, termPeriods: number, payment: number,
+  extraPerPeriod = 0, oneTime?: { atPeriod: number; amount: number },
+): AmortRow[] {
+  const rows: AmortRow[] = []
+  let balance = principal
+  for (let m = 1; m <= termPeriods && balance > 0.005; m++) {
+    const int = balance * periodRate
+    let prin = payment - int + extraPerPeriod
+    if (oneTime && oneTime.atPeriod === m) prin += oneTime.amount
+    if (prin > balance) prin = balance
+    if (prin < 0) prin = 0
+    balance -= prin
+    rows.push({ month: m, payment: prin + int, principal: prin, interest: int, balance: Math.max(balance, 0) })
+  }
+  return rows
+}
+
 function LoanAmortizationTab() {
+  const qc = useQueryClient()
   const [principal, setPrincipal] = useState(200000)
   const [rate, setRate] = useState(4.5)
   const [termMonths, setTermMonths] = useState(240)
+  const [compoundingPeriod, setCompoundingPeriod] = useState('Monthly')
+  const [paymentFrequency, setPaymentFrequency] = useState('Monthly')
   const [showAll, setShowAll] = useState(false)
   const [accountId, setAccountId] = useState('')
 
@@ -8027,33 +8078,174 @@ function LoanAmortizationTab() {
   const loanAccounts = useMemo(() => (accounts as Row[]).filter(a => a.type === 'Loan' && a.is_active !== false), [accounts])
   const selectedAccount = loanAccounts.find(a => String(a.id) === accountId)
 
-  // Prefills Loan Amount and (for a Fixed-rate loan) Annual Rate from the account's
-  // own data — a loan's balance is stored negative (debt reduces net worth, same
-  // convention as Credit Card), so it's un-negated here. Term isn't tracked on the
-  // account at all (no start-date/original-term field), so it's always left as
-  // whatever the user last typed regardless of which account is picked.
+  // "Pay from" is any liquid account, same set as an investment account's Linked
+  // (settlement) Account picker — Cash/Checking/Savings/Credit Card.
+  const cashAccounts = useMemo(() => (accounts as Row[]).filter(a => LINKABLE_ACCOUNT_TYPES.includes(String(a.type ?? '')) && a.is_active !== false), [accounts])
+  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
+  const interestCategories = useMemo(() => (categories as Row[]).filter(c => c.type === 'Interest'), [categories])
+  const defaultInterestCategoryId = useMemo(() => {
+    const named = interestCategories.find(c => /loan interest/i.test(String(c.full_path ?? '')))
+    return String((named ?? interestCategories[0])?.id ?? '')
+  }, [interestCategories])
+
+  // Record-a-payment panel: which schedule row it's for (null = closed), and its
+  // (fully editable) fields — a real payment rarely matches the schedule exactly
+  // (rounding, a partial pre-payment), so every amount here can be overridden
+  // before posting rather than being locked to the schedule's own numbers.
+  const [payRow, setPayRow] = useState<{ month: number; principal: number; interest: number } | null>(null)
+  const [payDate, setPayDate] = useState(todayLocal())
+  const [payFromId, setPayFromId] = usePersist('loan_pay_from_account', '')
+  const [payPrincipal, setPayPrincipal] = useState('')
+  const [payInterest, setPayInterest] = useState('')
+  const [payCategoryId, setPayCategoryId] = useState('')
+  const [payMemo, setPayMemo] = useState('')
+  const [paySaving, setPaySaving] = useState(false)
+  const [payMsg, setPayMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const openPayRow = (row: { month: number; principal: number; interest: number }) => {
+    setPayRow(row)
+    setPayDate(todayLocal())
+    setPayPrincipal(row.principal.toFixed(2))
+    setPayInterest(row.interest.toFixed(2))
+    setPayCategoryId(defaultInterestCategoryId)
+    setPayMemo(selectedAccount ? `${String(selectedAccount.name)} payment` : '')
+    setPayMsg(null)
+  }
+
+  const handlePostPayment = async () => {
+    if (!selectedAccount || !payFromId) return
+    const prin = parseFloat(payPrincipal) || 0
+    const int = parseFloat(payInterest) || 0
+    if (prin <= 0 && int <= 0) { setPayMsg({ ok: false, text: 'Enter a principal and/or interest amount.' }); return }
+    if (int > 0 && !payCategoryId) { setPayMsg({ ok: false, text: 'Choose a category for the interest portion.' }); return }
+    setPaySaving(true); setPayMsg(null)
+    try {
+      if (prin > 0) {
+        await createTransfer({
+          from_account_id: Number(payFromId),
+          to_account_id: Number(selectedAccount.id),
+          date: payDate,
+          amount: prin,
+          description: payMemo || null,
+        })
+      }
+      if (int > 0) {
+        await createTransaction({
+          accounts_id: Number(payFromId),
+          date: payDate,
+          description: payMemo || null,
+          total_amount: -int,
+          payees_id: null,
+          categories_id: Number(payCategoryId),
+          memo: payMemo || null,
+          cleared: false,
+          reconciled: false,
+          is_draft: false,
+          accounts_id_target: null,
+        })
+      }
+      qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+      setPayMsg({ ok: true, text: `Posted — ${fmtEur(prin)} principal transfer, ${fmtEur(int)} interest expense.` })
+      setPayRow(null)
+    } catch (e: unknown) {
+      setPayMsg({ ok: false, text: e instanceof Error ? e.message : 'Failed to post payment' })
+    } finally {
+      setPaySaving(false)
+    }
+  }
+
+  // Prefills Loan Amount, (for a Fixed-rate loan) Annual Rate, Compounding Period,
+  // and Payment Schedule from the account's own data — a loan's balance is stored
+  // negative (debt reduces net worth, same convention as Credit Card), so it's
+  // un-negated here. When Opening Date and Original Length are both set, Term is
+  // also derived: total scheduled payments minus however many payment periods
+  // have already elapsed since the opening date — i.e. "payments remaining from
+  // today", not the loan's original full length. Any of these can still be
+  // overridden by hand afterward.
+  //
+  // Loan Amount falls back to Original Balance when the account's real balance is
+  // exactly 0 — Accounts_Balance is purely derived from real Transactions (same as
+  // every account in Oikos), so a freshly set-up loan with no opening-balance
+  // transaction recorded yet would otherwise always prefill to 0 despite Original
+  // Balance being set, which is never a useful starting point for the calculator.
   const applyAccount = (id: string) => {
     setAccountId(id)
     const acc = loanAccounts.find(a => String(a.id) === id)
     if (!acc) return
-    setPrincipal(Math.abs(Number(acc.balance ?? 0)))
+    const liveBalance = Math.abs(Number(acc.balance ?? 0))
+    setPrincipal(liveBalance > 0 ? liveBalance : Number(acc.loan_original_balance ?? 0))
     if (acc.loan_rate_type !== 'Variable' && acc.loan_interest_rate_pct != null) {
       setRate(Number(acc.loan_interest_rate_pct))
     }
+    const compounding = String(acc.loan_compounding_period ?? 'Monthly')
+    const freq = String(acc.loan_payment_frequency ?? 'Monthly')
+    setCompoundingPeriod(compounding)
+    setPaymentFrequency(freq)
+    if (acc.loan_opening_date && acc.loan_original_length_value) {
+      const unit = String(acc.loan_original_length_unit ?? 'Years')
+      const lengthYears = unit === 'Years' ? Number(acc.loan_original_length_value)
+        : unit === 'Months' ? Number(acc.loan_original_length_value) / 12
+        : Number(acc.loan_original_length_value) / 52
+      const n = PERIODS_PER_YEAR[freq] ?? 12
+      const totalPayments = Math.round(lengthYears * n)
+      const elapsedDays = (new Date(todayLocal()).getTime() - new Date(String(acc.loan_opening_date)).getTime()) / 86400000
+      const elapsedPeriods = Math.max(0, Math.round(elapsedDays / (365.25 / n)))
+      setTermMonths(Math.max(1, totalPayments - elapsedPeriods))
+    }
   }
 
-  const r = rate / 100 / 12
-  const payment = r > 0 ? principal * r * Math.pow(1 + r, termMonths) / (Math.pow(1 + r, termMonths) - 1) : principal / termMonths
-  const totalPaid = payment * termMonths
-  const totalInterest = totalPaid - principal
+  const periodRate = periodRateFromAnnual(rate, compoundingPeriod, paymentFrequency)
+  const payment = periodRate > 0
+    ? principal * periodRate * Math.pow(1 + periodRate, termMonths) / (Math.pow(1 + periodRate, termMonths) - 1)
+    : principal / termMonths
 
-  const schedule: { month: number; payment: number; principal: number; interest: number; balance: number }[] = []
-  let balance = principal
-  for (let m = 1; m <= termMonths; m++) {
-    const int = balance * r; const prin = payment - int; balance -= prin
-    schedule.push({ month: m, payment, principal: prin, interest: int, balance: Math.max(balance, 0) })
-  }
+  const schedule = useMemo(() => buildAmortSchedule(principal, periodRate, termMonths, payment), [principal, periodRate, termMonths, payment])
+  const totalInterest = schedule.reduce((s, r) => s + r.interest, 0)
+  const totalPaid = principal + totalInterest
+  const paymentsToPayoff = schedule.length
+  const payoffDate = addPeriod(todayLocal(), paymentFrequency, paymentsToPayoff)
   const display = showAll ? schedule : schedule.slice(0, 24)
+
+  // Principal-paid progress — only meaningful once Original Balance is set on the
+  // account (otherwise there's no "original" to measure progress against).
+  const originalBalance = selectedAccount?.loan_original_balance != null ? Number(selectedAccount.loan_original_balance) : null
+  const currentBalanceAbs = selectedAccount ? Math.abs(Number(selectedAccount.balance ?? 0)) : null
+  const paidPct = originalBalance && originalBalance > 0 && currentBalanceAbs != null
+    ? Math.max(0, Math.min(100, ((originalBalance - currentBalanceAbs) / originalBalance) * 100))
+    : null
+
+  // Equity — Linked Asset Account's own balance minus what's still owed on the
+  // loan. Only shown when a Linked Asset Account is actually set (Static Data →
+  // Accounts → this Loan account's edit modal).
+  const linkedAsset = selectedAccount?.loan_linked_asset_accounts_id != null
+    ? (accounts as Row[]).find(a => String(a.id) === String(selectedAccount.loan_linked_asset_accounts_id))
+    : null
+  const linkedAssetValue = linkedAsset ? Number(linkedAsset.balance ?? 0) : null
+  const equity = linkedAssetValue != null && currentBalanceAbs != null ? linkedAssetValue - currentBalanceAbs : null
+
+  // What-If tool: either a constant extra amount added to every future payment's
+  // principal, or a single lump-sum extra payment on a chosen date — recomputed
+  // live (no separate "See Results" step) against the same schedule builder used
+  // above, so "current" and "what-if" are always directly comparable.
+  const [whatIfMode, setWhatIfMode] = useState<'extra' | 'onetime'>('extra')
+  const [whatIfExtra, setWhatIfExtra] = useState('')
+  const [whatIfLumpSum, setWhatIfLumpSum] = useState('')
+  const [whatIfDate, setWhatIfDate] = useState(todayLocal())
+  const whatIfSchedule = useMemo(() => {
+    if (whatIfMode === 'extra') {
+      const extra = parseFloat(whatIfExtra) || 0
+      if (extra <= 0) return null
+      return buildAmortSchedule(principal, periodRate, termMonths, payment, extra)
+    }
+    const lump = parseFloat(whatIfLumpSum) || 0
+    if (lump <= 0) return null
+    const n = PERIODS_PER_YEAR[paymentFrequency] ?? 12
+    const daysOut = (new Date(whatIfDate).getTime() - new Date(todayLocal()).getTime()) / 86400000
+    const atPeriod = Math.max(1, Math.round(daysOut / (365.25 / n)))
+    return buildAmortSchedule(principal, periodRate, termMonths, payment, 0, { atPeriod, amount: lump })
+  }, [whatIfMode, whatIfExtra, whatIfLumpSum, whatIfDate, principal, periodRate, termMonths, payment, paymentFrequency])
+  const whatIfInterest = whatIfSchedule?.reduce((s, r) => s + r.interest, 0) ?? null
+  const whatIfPayoffDate = whatIfSchedule ? addPeriod(todayLocal(), paymentFrequency, whatIfSchedule.length) : null
 
   return (
     <div className="space-y-4">
@@ -8075,29 +8267,170 @@ function LoanAmortizationTab() {
               ? (selectedAccount.loan_rate_index || selectedAccount.loan_rate_spread_pct != null)
                 ? <>Variable rate: <b>{String(selectedAccount.loan_rate_index ?? '?')} + {selectedAccount.loan_rate_spread_pct != null ? fmtNum(Number(selectedAccount.loan_rate_spread_pct), 2) : '?'}%</b> — enter the current total rate below yourself, the index's live value isn't tracked here.</>
                 : 'Variable rate (no index/spread set on the account) — enter the current rate below yourself.'
-              : <>Loan Amount and Annual Rate below are pre-filled from this account{selectedAccount.currency !== 'EUR' ? ` (${String(selectedAccount.currency)}, no FX conversion)` : ''} — Term isn't tracked on the account, so it's always yours to set.</>}
+              : <>Loan Amount, Annual Rate, Compounding, Payment Schedule, and (when Opening Date + Original Length are
+                  set) Term are pre-filled from this account{selectedAccount.currency !== 'EUR' ? ` (${String(selectedAccount.currency)}, no FX conversion)` : ''} — every field can still be overridden by hand.</>}
           </p>
         )}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div><label className="text-xs text-slate-500 block mb-1">Loan Amount ({selectedAccount ? String(selectedAccount.currency ?? '€') : '€'})</label><Input type="number" value={principal} onChange={e => setPrincipal(Number(e.target.value))} /></div>
         <div><label className="text-xs text-slate-500 block mb-1">Annual Rate (%)</label><Input type="number" value={rate} onChange={e => setRate(Number(e.target.value))} step="0.1" /></div>
-        <div><label className="text-xs text-slate-500 block mb-1">Term (months)</label><Input type="number" value={termMonths} onChange={e => setTermMonths(Number(e.target.value))} /></div>
+        <div><label className="text-xs text-slate-500 block mb-1">Term (# payments)</label><Input type="number" value={termMonths} onChange={e => setTermMonths(Number(e.target.value))} /></div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Compounding Period</label>
+          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={compoundingPeriod} onChange={e => setCompoundingPeriod(e.target.value)}>
+            {PERIODICITIES.filter(p => p !== 'Daily').map(p => <option key={p}>{p}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Payment Schedule</label>
+          <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={paymentFrequency} onChange={e => setPaymentFrequency(e.target.value)}>
+            {PERIODICITIES.filter(p => p !== 'Daily').map(p => <option key={p}>{p}</option>)}
+          </select>
+        </div>
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Monthly Payment" value={fmtEur(payment)} color="text-blue-700" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard label="Payment" value={fmtEur(payment)} color="text-blue-700" />
         <KpiCard label="Total Interest" value={fmtEur(totalInterest)} color="text-red-600" />
         <KpiCard label="Total Paid" value={fmtEur(totalPaid)} />
+        <KpiCard label="Payoff Date" value={`${payoffDate.slice(0, 7)} (${paymentsToPayoff})`} />
       </div>
+
+      {paidPct != null && (
+        <div>
+          <div className="flex justify-between text-xs text-slate-500 mb-1">
+            <span>Principal Paid</span>
+            <span>{fmtEur(originalBalance! - currentBalanceAbs!)} of {fmtEur(originalBalance!)} ({paidPct.toFixed(1)}%)</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+            <div className="h-full bg-blue-600" style={{ width: `${paidPct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {equity != null && (
+        <div className="grid grid-cols-3 gap-3">
+          <KpiCard label={`${String(linkedAsset?.name ?? 'Linked Asset')} Value`} value={fmtEur(linkedAssetValue!)} />
+          <KpiCard label="Remaining Loan Balance" value={fmtEur(currentBalanceAbs!)} color="text-red-600" />
+          <KpiCard label="Equity" value={fmtEur(equity)} color={equity >= 0 ? 'text-green-700' : 'text-red-600'} />
+        </div>
+      )}
+
+      <Plot
+        data={[
+          {
+            x: [todayLocal(), ...schedule.map(row => addPeriod(todayLocal(), paymentFrequency, row.month))],
+            y: [principal, ...schedule.map(row => row.balance)],
+            type: 'scatter', mode: 'lines', name: 'Current Schedule',
+            line: { color: '#2563eb', width: 2 },
+          },
+          ...(whatIfSchedule ? [{
+            x: [todayLocal(), ...whatIfSchedule.map(row => addPeriod(todayLocal(), paymentFrequency, row.month))],
+            y: [principal, ...whatIfSchedule.map(row => row.balance)],
+            type: 'scatter' as const, mode: 'lines' as const, name: 'What-If',
+            line: { color: '#16a34a', width: 2, dash: 'dot' as const },
+          }] : []),
+        ]}
+        layout={{
+          height: 260,
+          margin: { t: 10, r: 20, b: 40, l: 60 },
+          yaxis: { title: `Balance (${selectedAccount ? String(selectedAccount.currency ?? '€') : '€'})` },
+          legend: { orientation: 'h', y: -0.2 },
+        }}
+        config={{ displayModeBar: false, responsive: true }}
+        style={{ width: '100%' }}
+      />
+
+      <div className="border border-slate-200 rounded-lg p-4 space-y-3">
+        <p className="text-sm font-semibold text-slate-700">What If…</p>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="radio" name="whatIfMode" checked={whatIfMode === 'extra'} onChange={() => setWhatIfMode('extra')} />
+            I paid an extra
+            <Input type="number" step="0.01" className="w-28 h-7" value={whatIfExtra} onChange={e => setWhatIfExtra(e.target.value)} />
+            in principal per payment
+          </label>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="radio" name="whatIfMode" checked={whatIfMode === 'onetime'} onChange={() => setWhatIfMode('onetime')} />
+            I made a one-time payment of
+            <Input type="number" step="0.01" className="w-28 h-7" value={whatIfLumpSum} onChange={e => setWhatIfLumpSum(e.target.value)} />
+            on
+            <Input type="date" className="w-40 h-7" value={whatIfDate} onChange={e => setWhatIfDate(e.target.value)} />
+          </label>
+        </div>
+        {whatIfSchedule && whatIfInterest != null && whatIfPayoffDate && (
+          <div className="grid grid-cols-3 gap-3 pt-1">
+            <KpiCard label="New Payoff Date" value={whatIfPayoffDate.slice(0, 7)} color="text-green-700" />
+            <KpiCard label="Payments Saved" value={String(paymentsToPayoff - whatIfSchedule.length)} color="text-green-700" />
+            <KpiCard label="Interest Saved" value={fmtEur(totalInterest - whatIfInterest)} color="text-green-700" />
+          </div>
+        )}
+      </div>
+
+      {payMsg && (
+        <p className={`text-xs px-3 py-2 rounded ${payMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>{payMsg.text}</p>
+      )}
+
+      {payRow && selectedAccount && (
+        <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-4 space-y-3">
+          <p className="text-sm font-semibold text-slate-700">Record Payment — Period {payRow.month}</p>
+          <p className="text-xs text-slate-500">
+            Posts a Transfer from Pay From → {String(selectedAccount.name)} for the Principal amount, and a
+            separate Interest-category expense from Pay From for the Interest amount. Every amount below is
+            editable — a real payment rarely matches the schedule exactly, and this also covers a partial
+            pre-payment (just zero out Interest and adjust Principal).
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Date</label>
+              <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Pay From</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={payFromId} onChange={e => setPayFromId(e.target.value)}>
+                <option value="">— select —</option>
+                {cashAccounts.map(a => <option key={String(a.id)} value={String(a.id)}>{String(a.name)}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Principal ({String(selectedAccount.currency ?? '€')})</label>
+              <Input type="number" step="0.01" value={payPrincipal} onChange={e => setPayPrincipal(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Interest ({String(selectedAccount.currency ?? '€')})</label>
+              <Input type="number" step="0.01" value={payInterest} onChange={e => setPayInterest(e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-500 block mb-1">Interest Category</label>
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={payCategoryId} onChange={e => setPayCategoryId(e.target.value)}>
+                <option value="">— select —</option>
+                {(categories as Row[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.full_path)}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-500 block mb-1">Memo</label>
+              <Input value={payMemo} onChange={e => setPayMemo(e.target.value)} />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handlePostPayment} disabled={paySaving || !payFromId}>
+              {paySaving ? 'Posting…' : 'Post Payment'}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setPayRow(null)} disabled={paySaving}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
       <WithCopy>
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Month</th>
+            <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Period</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Payment</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Principal</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Interest</th>
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Balance</th>
+            {selectedAccount && <th className="px-2 py-1.5 border-b border-slate-200 font-semibold"></th>}
           </tr></thead>
           <tbody>
             {display.map(row => (
@@ -8107,13 +8440,18 @@ function LoanAmortizationTab() {
                 <td className="px-2 py-1.5 text-right tabular-nums text-green-700">{fmtEur(row.principal)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{fmtEur(row.interest)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(row.balance)}</td>
+                {selectedAccount && (
+                  <td className="px-2 py-1.5 text-right">
+                    <button onClick={() => openPayRow(row)} className="text-xs text-blue-600 hover:underline">Record</button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
         {schedule.length > 24 && (
           <button onClick={() => setShowAll(!showAll)} className="mt-2 text-xs text-blue-600 hover:underline">
-            {showAll ? 'Show less' : `Show all ${schedule.length} months`}
+            {showAll ? 'Show less' : `Show all ${schedule.length} payments`}
           </button>
         )}
       </div>

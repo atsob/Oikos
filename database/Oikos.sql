@@ -261,6 +261,13 @@ CREATE TABLE Accounts (
     Loan_Rate_Index                VARCHAR(50),
     Loan_Rate_Spread_Pct           NUMERIC(7,4),
     Loan_Linked_Asset_Accounts_Id  INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL,
+    Loan_Opening_Date              DATE,
+    Loan_Original_Balance          NUMERIC(18,2),
+    Loan_Original_Length_Value     INTEGER,
+    Loan_Original_Length_Unit      VARCHAR(10) DEFAULT 'Years',
+    Loan_Compounding_Period        VARCHAR(20) DEFAULT 'Monthly',
+    Loan_Payment_Frequency         VARCHAR(20) DEFAULT 'Monthly',
+    Loan_Next_Due_Date             DATE,
     embedding         vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id   ON Accounts(Accounts_Id);

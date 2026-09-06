@@ -229,6 +229,14 @@ def get_accounts(include_future: bool = Query(False)):
                 a.Loan_Interest_Rate_Pct          AS loan_interest_rate_pct,
                 a.Loan_Rate_Index                AS loan_rate_index,
                 a.Loan_Rate_Spread_Pct            AS loan_rate_spread_pct,
+                a.Loan_Linked_Asset_Accounts_Id  AS loan_linked_asset_accounts_id,
+                a.Loan_Opening_Date              AS loan_opening_date,
+                a.Loan_Original_Balance          AS loan_original_balance,
+                a.Loan_Original_Length_Value     AS loan_original_length_value,
+                a.Loan_Original_Length_Unit      AS loan_original_length_unit,
+                a.Loan_Compounding_Period        AS loan_compounding_period,
+                a.Loan_Payment_Frequency         AS loan_payment_frequency,
+                a.Loan_Next_Due_Date             AS loan_next_due_date,
                 CASE
                     WHEN a.Accounts_Type IN ('Brokerage','Margin','Other Investment')
                     THEN COALESCE(hv.value_eur, 0)

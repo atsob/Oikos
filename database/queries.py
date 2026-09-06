@@ -6700,6 +6700,94 @@ def dismiss_live_alert(securities_id: int, alert_type: str) -> None:
         conn.close()
 
 
+_LOAN_PERIODS_PER_YEAR = {
+    'Daily': 365, 'Weekly': 52, 'Bi-Weekly': 26, 'Monthly': 12,
+    'Bi-Monthly': 6, 'Quarterly': 4, 'Semi-Annual': 2, 'Annual': 1,
+}
+
+
+def _loan_period_rate(annual_rate_pct: float, compounding: str, payment_freq: str) -> float:
+    """Mirrors Reports.tsx's periodRateFromAnnual exactly, so a Loan Payment alert's
+    estimated principal/interest split agrees with the Loan Amortization tab."""
+    m = _LOAN_PERIODS_PER_YEAR.get(compounding, 12)
+    n = _LOAN_PERIODS_PER_YEAR.get(payment_freq, 12)
+    nominal = annual_rate_pct / 100
+    ear = (1 + nominal / m) ** m - 1
+    return (1 + ear) ** (1 / n) - 1
+
+
+def _get_loan_payment_alerts() -> list:
+    """Heads-up for a Loan account's upcoming Loan_Next_Due_Date — no acknowledgment
+    needed, same as the bond/dividend heads-up above: it stops appearing once the
+    date passes (set Loan_Next_Due_Date forward again after recording the payment).
+
+    Estimates the principal/interest split for Fixed-rate loans that also have
+    Opening Date + Original Length set (needed to know payments remaining, and so
+    the payment amount via the standard annuity formula) — a Variable-rate loan,
+    or one missing those fields, still gets the due-date heads-up, just without a
+    dollar estimate.
+    """
+    lead_days = _get_app_setting_lead_days('loanAlertLeadDays', 7)
+    conn = get_connection()
+    try:
+        df = pd.read_sql("""
+            SELECT Accounts_Id AS id, Accounts_Name AS name, Accounts_Balance AS balance,
+                   Loan_Next_Due_Date AS next_due_date, Loan_Rate_Type AS rate_type,
+                   Loan_Interest_Rate_Pct AS rate_pct, Loan_Compounding_Period AS compounding,
+                   Loan_Payment_Frequency AS payment_freq, Loan_Opening_Date AS opening_date,
+                   Loan_Original_Length_Value AS length_value, Loan_Original_Length_Unit AS length_unit
+            FROM Accounts
+            WHERE Accounts_Type = 'Loan' AND Is_Active = TRUE AND Loan_Next_Due_Date IS NOT NULL
+        """, conn)
+    finally:
+        conn.close()
+    if df.empty:
+        return []
+
+    today = datetime.now().date()
+    results = []
+    for _, row in df.iterrows():
+        due_date = pd.Timestamp(row['next_due_date']).date()
+        days_until = (due_date - today).days
+        if not (0 <= days_until <= lead_days):
+            continue
+        when = 'today' if days_until == 0 else f"in {days_until} day{'s' if days_until != 1 else ''}"
+
+        amount_note = ''
+        try:
+            if (row['rate_type'] != 'Variable' and row['rate_pct'] is not None
+                    and row['opening_date'] is not None and row['length_value']):
+                freq = row['payment_freq'] or 'Monthly'
+                compounding = row['compounding'] or 'Monthly'
+                n = _LOAN_PERIODS_PER_YEAR.get(freq, 12)
+                length_unit = row['length_unit'] or 'Years'
+                length_val = float(row['length_value'])
+                length_years = length_val if length_unit == 'Years' else (length_val / 12 if length_unit == 'Months' else length_val / 52)
+                total_payments = round(length_years * n)
+                opening = pd.Timestamp(row['opening_date']).date()
+                elapsed_periods = max(0, round((today - opening).days / (365.25 / n)))
+                remaining = max(1, total_payments - elapsed_periods)
+                period_rate = _loan_period_rate(float(row['rate_pct']), compounding, freq)
+                balance = abs(float(row['balance'] or 0))
+                if period_rate > 0:
+                    payment = balance * period_rate * (1 + period_rate) ** remaining / ((1 + period_rate) ** remaining - 1)
+                else:
+                    payment = balance / remaining
+                interest = balance * period_rate
+                principal = payment - interest
+                amount_note = f" — est. {principal:,.2f} principal + {interest:,.2f} interest = {payment:,.2f} total"
+        except Exception:
+            amount_note = ''
+
+        results.append({
+            'level': 'info',
+            'message': (f"🏦 **Loan Payment** — {row['name']} payment due {when} "
+                        f"({due_date.strftime('%d %b %Y')}){amount_note}."),
+            'type': 'loan_payment',
+        })
+    return results
+
+
 def _get_trend_alerts() -> list:
     """Live-computed trend-following heads-up: a golden/death cross on the most
     recent trading day, and a held position whose price has fallen the
@@ -6994,6 +7082,12 @@ def check_triggered_alerts() -> list:
         # ── trend-following: golden/death cross, trailing stop (live-computed) ──
         try:
             results.extend(_get_trend_alerts())
+        except Exception:
+            pass
+
+        # ── loan payment heads-up (live-computed, clears once the date passes) ──
+        try:
+            results.extend(_get_loan_payment_alerts())
         except Exception:
             pass
 

@@ -17,7 +17,8 @@ import {
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { fmtNum, todayLocal } from '@/lib/utils'
-import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES } from '@/lib/accountTypes'
+import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES, LOAN_LENGTH_UNITS } from '@/lib/accountTypes'
+import { PERIODICITIES } from '@/components/TxModal'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
@@ -624,6 +625,8 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     setForm({
       name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '', notes: '',
       loan_type: '', loan_rate_type: 'Fixed', loan_interest_rate_pct: '', loan_rate_index: '', loan_rate_spread_pct: '', loan_linked_asset_accounts_id: '',
+      loan_opening_date: '', loan_original_balance: '', loan_original_length_value: '', loan_original_length_unit: 'Years',
+      loan_compounding_period: 'Monthly', loan_payment_frequency: 'Monthly', loan_next_due_date: '',
     })
     setError(null)
   }
@@ -648,6 +651,13 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         loan_rate_index: form.loan_rate_index || null,
         loan_rate_spread_pct: form.loan_rate_spread_pct ? Number(form.loan_rate_spread_pct) : null,
         loan_linked_asset_accounts_id: form.loan_linked_asset_accounts_id ? Number(form.loan_linked_asset_accounts_id) : null,
+        loan_opening_date: form.loan_opening_date || null,
+        loan_original_balance: form.loan_original_balance ? Number(form.loan_original_balance) : null,
+        loan_original_length_value: form.loan_original_length_value ? Number(form.loan_original_length_value) : null,
+        loan_original_length_unit: form.loan_original_length_unit || 'Years',
+        loan_compounding_period: form.loan_compounding_period || 'Monthly',
+        loan_payment_frequency: form.loan_payment_frequency || 'Monthly',
+        loan_next_due_date: form.loan_next_due_date || null,
       })
       qc.invalidateQueries({ queryKey: ['accounts-master'] })
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -792,6 +802,9 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
                   ...(t !== 'Loan' ? {
                     loan_type: '', loan_rate_type: 'Fixed', loan_interest_rate_pct: '',
                     loan_rate_index: '', loan_rate_spread_pct: '', loan_linked_asset_accounts_id: '',
+                    loan_opening_date: '', loan_original_balance: '', loan_original_length_value: '',
+                    loan_original_length_unit: 'Years', loan_compounding_period: 'Monthly',
+                    loan_payment_frequency: 'Monthly', loan_next_due_date: '',
                   } : {}),
                 }))
               }}>
@@ -847,6 +860,49 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
                       {LOAN_TYPES.map(t => <option key={t}>{t}</option>)}
                     </select>
                   </Field>
+                </div>
+                <div>
+                  <Field label="Opening Date">
+                    <Input type="date" value={String(form.loan_opening_date ?? '')} onChange={e => set('loan_opening_date', e.target.value)} />
+                  </Field>
+                  <p className="mt-1 text-xs text-slate-400">Date the loan started.</p>
+                </div>
+                <div>
+                  <Field label="Original Balance">
+                    <Input type="number" step="0.01" value={String(form.loan_original_balance ?? '')} onChange={e => set('loan_original_balance', e.target.value)} placeholder="e.g. 10000.00" />
+                  </Field>
+                  <p className="mt-1 text-xs text-slate-400">Amount of the loan on the opening date.</p>
+                </div>
+                <div>
+                  <Field label="Original Length">
+                    <div className="flex gap-2">
+                      <Input type="number" min={0} className="flex-1" value={String(form.loan_original_length_value ?? '')} onChange={e => set('loan_original_length_value', e.target.value)} />
+                      <select className="rounded-md border border-slate-300 px-2 py-1.5 text-sm" value={String(form.loan_original_length_unit ?? 'Years')} onChange={e => set('loan_original_length_unit', e.target.value)}>
+                        {LOAN_LENGTH_UNITS.map(u => <option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                  </Field>
+                </div>
+                <div>
+                  <Field label="Next Payment Due">
+                    <Input type="date" value={String(form.loan_next_due_date ?? '')} onChange={e => set('loan_next_due_date', e.target.value)} />
+                  </Field>
+                </div>
+                <div>
+                  <Field label="Compounding Period">
+                    <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.loan_compounding_period ?? 'Monthly')} onChange={e => set('loan_compounding_period', e.target.value)}>
+                      {PERIODICITIES.filter(p => p !== 'Daily').map(p => <option key={p}>{p}</option>)}
+                    </select>
+                  </Field>
+                  <p className="mt-1 text-xs text-slate-400">How often interest is calculated.</p>
+                </div>
+                <div>
+                  <Field label="Payment Schedule">
+                    <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={String(form.loan_payment_frequency ?? 'Monthly')} onChange={e => set('loan_payment_frequency', e.target.value)}>
+                      {PERIODICITIES.filter(p => p !== 'Daily').map(p => <option key={p}>{p}</option>)}
+                    </select>
+                  </Field>
+                  <p className="mt-1 text-xs text-slate-400">How often payments are due.</p>
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs font-medium text-slate-500 block mb-1">Interest Rate</label>

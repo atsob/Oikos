@@ -618,13 +618,23 @@ def upsert_account(data: dict):
         loan_rate_index = data.get('loan_rate_index') or None if is_loan else None
         loan_rate_spread_pct = data.get('loan_rate_spread_pct') or None if is_loan else None
         loan_linked_asset_accounts_id = data.get('loan_linked_asset_accounts_id') or None if is_loan else None
+        loan_opening_date = data.get('loan_opening_date') or None if is_loan else None
+        loan_original_balance = data.get('loan_original_balance') or None if is_loan else None
+        loan_original_length_value = data.get('loan_original_length_value') or None if is_loan else None
+        loan_original_length_unit = data.get('loan_original_length_unit') or 'Years' if is_loan else None
+        loan_compounding_period = data.get('loan_compounding_period') or 'Monthly' if is_loan else None
+        loan_payment_frequency = data.get('loan_payment_frequency') or 'Monthly' if is_loan else None
+        loan_next_due_date = data.get('loan_next_due_date') or None if is_loan else None
         if aid:
             cur.execute("""
                 UPDATE Accounts SET
                     Accounts_Name=%s, Accounts_Type=%s, IBAN=%s, Is_Active=%s,
                     Institutions_Id=%s, Currencies_Id=%s, Credit_Limit=%s, Accounts_Id_Linked=%s, Notes=%s,
                     Loan_Type=%s, Loan_Rate_Type=%s, Loan_Interest_Rate_Pct=%s, Loan_Rate_Index=%s,
-                    Loan_Rate_Spread_Pct=%s, Loan_Linked_Asset_Accounts_Id=%s
+                    Loan_Rate_Spread_Pct=%s, Loan_Linked_Asset_Accounts_Id=%s,
+                    Loan_Opening_Date=%s, Loan_Original_Balance=%s, Loan_Original_Length_Value=%s,
+                    Loan_Original_Length_Unit=%s, Loan_Compounding_Period=%s, Loan_Payment_Frequency=%s,
+                    Loan_Next_Due_Date=%s
                 WHERE Accounts_Id=%s
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
@@ -635,13 +645,18 @@ def upsert_account(data: dict):
                   data.get('notes') or None,
                   loan_type, loan_rate_type, loan_interest_rate_pct, loan_rate_index,
                   loan_rate_spread_pct, loan_linked_asset_accounts_id,
+                  loan_opening_date, loan_original_balance, loan_original_length_value,
+                  loan_original_length_unit, loan_compounding_period, loan_payment_frequency,
+                  loan_next_due_date,
                   aid))
         else:
             cur.execute("""
                 INSERT INTO Accounts
                     (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked, Notes,
-                     Loan_Type, Loan_Rate_Type, Loan_Interest_Rate_Pct, Loan_Rate_Index, Loan_Rate_Spread_Pct, Loan_Linked_Asset_Accounts_Id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
+                     Loan_Type, Loan_Rate_Type, Loan_Interest_Rate_Pct, Loan_Rate_Index, Loan_Rate_Spread_Pct, Loan_Linked_Asset_Accounts_Id,
+                     Loan_Opening_Date, Loan_Original_Balance, Loan_Original_Length_Value, Loan_Original_Length_Unit,
+                     Loan_Compounding_Period, Loan_Payment_Frequency, Loan_Next_Due_Date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
                   data.get('institutions_id') or None,
@@ -650,7 +665,10 @@ def upsert_account(data: dict):
                   data.get('accounts_id_linked') or None,
                   data.get('notes') or None,
                   loan_type, loan_rate_type, loan_interest_rate_pct, loan_rate_index,
-                  loan_rate_spread_pct, loan_linked_asset_accounts_id))
+                  loan_rate_spread_pct, loan_linked_asset_accounts_id,
+                  loan_opening_date, loan_original_balance, loan_original_length_value,
+                  loan_original_length_unit, loan_compounding_period, loan_payment_frequency,
+                  loan_next_due_date))
             aid = cur.fetchone()[0]
         conn.commit()
         return {"id": aid}
@@ -724,7 +742,14 @@ def get_accounts_master(search: Optional[str] = Query(None)):
                    a.Loan_Rate_Index AS loan_rate_index,
                    a.Loan_Rate_Spread_Pct AS loan_rate_spread_pct,
                    a.Loan_Linked_Asset_Accounts_Id AS loan_linked_asset_accounts_id,
-                   laa.Accounts_Name AS loan_linked_asset_account_name
+                   laa.Accounts_Name AS loan_linked_asset_account_name,
+                   a.Loan_Opening_Date AS loan_opening_date,
+                   a.Loan_Original_Balance AS loan_original_balance,
+                   a.Loan_Original_Length_Value AS loan_original_length_value,
+                   a.Loan_Original_Length_Unit AS loan_original_length_unit,
+                   a.Loan_Compounding_Period AS loan_compounding_period,
+                   a.Loan_Payment_Frequency AS loan_payment_frequency,
+                   a.Loan_Next_Due_Date AS loan_next_due_date
             FROM Accounts a
             JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
             LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id

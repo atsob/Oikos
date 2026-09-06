@@ -1,19 +1,38 @@
-import { useState } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { PageHeader } from '@/components/ui'
+import { Search } from 'lucide-react'
+
+// Flattens a React node tree down to its plain text — used both to build the
+// Search box's index and to derive a stable anchor id for each heading, so a
+// search result can jump straight to the paragraph it matched instead of just
+// the top of a whole page.
+function textOf(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join(' ')
+  if (React.isValidElement(node)) return textOf((node.props as { children?: React.ReactNode }).children)
+  return ''
+}
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+}
 
 // ── Shared prose primitives (no typography plugin — keep it minimal and consistent
 // with the rest of the app's Tailwind styling) ────────────────────────────────
 function H2({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-lg font-semibold text-slate-800 mt-8 mb-2 first:mt-0">{children}</h2>
+  return <h2 id={slugify(textOf(children))} className="text-lg font-semibold text-slate-800 mt-8 mb-2 first:mt-0">{children}</h2>
 }
 function H3({ children }: { children: React.ReactNode }) {
-  return <h3 className="text-sm font-semibold text-slate-700 mt-5 mb-1.5">{children}</h3>
+  return <h3 id={slugify(textOf(children))} className="text-sm font-semibold text-slate-700 mt-5 mb-1.5">{children}</h3>
 }
 function P({ children }: { children: React.ReactNode }) {
   return <p className="text-sm text-slate-600 leading-relaxed mb-2">{children}</p>
 }
 function Ul({ children }: { children: React.ReactNode }) {
   return <ul className="list-disc pl-5 text-sm text-slate-600 leading-relaxed space-y-1 mb-3">{children}</ul>
+}
+function Ol({ children }: { children: React.ReactNode }) {
+  return <ol className="list-decimal pl-5 text-sm text-slate-600 leading-relaxed space-y-2 mb-3">{children}</ol>
 }
 function Note({ children }: { children: React.ReactNode }) {
   return <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg px-3 py-2 mb-3">💡 {children}</div>
@@ -165,10 +184,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           Auto-generated observations (unusual spending, upcoming bills, low balances, etc.) and any alert
           rules you've triggered, both collapsible. <b>Bond maturity/coupon, security dividend payment, golden/death
-          cross, and trailing stop alerts appear automatically</b> for everything you currently hold — no setup
-          needed, unlike price/allocation alerts — bond/dividend once the event is within the lead time set under
-          Tools → System → App Settings (7 and 3 days by default).
+          cross, trailing stop, and Loan payment alerts appear automatically</b> for everything you currently hold
+          — no setup needed, unlike price/allocation alerts — bond/dividend/loan once the event is within the lead
+          time set under Tools → System → App Settings (7, 3, and 7 days by default).
         </P>
+        <Note>
+          A <b>Loan Payment</b> alert shows once a Loan account's Next Payment Due date (set on the account's edit
+          modal) is within its lead time. For a Fixed-rate loan that also has Opening Date and Original Length
+          set, it estimates the principal/interest split using the exact same math as Reports → Financial
+          Planning → Loan Amortization; otherwise it's just the due-date reminder on its own. It isn't clickable
+          through to anything (a Loan account has no detail page of its own) — head to Loan Amortization and pick
+          the account to see the full schedule or record the payment.
+        </Note>
         <Note>
           A <b>Golden Cross</b> (50-day MA crossing above the 200-day — bullish) shows for any actively-priced
           security, held or not, since it's a buy signal worth seeing either way; a <b>Death Cross</b> (bearish) or
@@ -800,12 +827,44 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>🏖️ Financial Planning</H3>
         <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
         <Note>
-          <b>Loan Amortization</b>'s <b>Loan Account</b> dropdown can pre-fill Loan Amount and Annual Rate from one
-          of your real Loan-type accounts instead of typing them by hand — pick "— Manual entry —" (the default)
-          to model a hypothetical loan instead. A Fixed-rate loan pre-fills both fields directly; a Variable-rate
-          one shows its Index + Spread definition (e.g. "Euribor 12M + 1.75%") instead of a rate, since no live
-          index value is tracked anywhere in the app — enter the current total rate yourself. Term (months) is
-          always manual, since no account field records a loan's original term or start date.
+          <b>Loan Amortization</b>'s <b>Loan Account</b> dropdown can pre-fill Loan Amount, Annual Rate, Compounding
+          Period, and Payment Schedule from one of your real Loan-type accounts instead of typing them by hand —
+          pick "— Manual entry —" (the default) to model a hypothetical loan instead. A Fixed-rate loan pre-fills
+          Annual Rate directly; a Variable-rate one shows its Index + Spread definition (e.g. "Euribor 12M +
+          1.75%") instead, since no live index value is tracked anywhere in the app — enter the current total rate
+          yourself. When the account also has Opening Date and Original Length set, Term is derived too: the
+          original number of payments minus however many have already elapsed since the opening date, so what's
+          shown is the schedule remaining from today, not the loan's original full length. Every pre-filled field
+          can still be overridden by hand.
+        </Note>
+        <Note>
+          Compounding Period and Payment Schedule don't have to match — the calculator uses the standard
+          effective-annual-rate method to convert a nominal rate under one compounding frequency into the correct
+          rate for each actual payment period, so (for example) a loan that compounds monthly but is paid
+          quarterly still computes correctly. When both are left at the default "Monthly", this reduces to the
+          plain rate÷12 formula the calculator always used.
+        </Note>
+        <Note>
+          Once a real Loan Account is picked with an Original Balance set, a <b>Principal Paid</b> progress bar
+          shows how much of the loan has been paid off. A <b>Payoff Date</b> KPI and a <b>Projected Payoff</b>{' '}
+          chart (balance declining to zero over time) are always shown. If the account also has a{' '}
+          <b>Linked Asset Account</b> set (Static Data → Accounts), an <b>Equity</b> row shows that asset's own
+          value minus the remaining loan balance — e.g. a house's value minus its mortgage.
+        </Note>
+        <Note>
+          The <b>What If…</b> panel models paying a constant extra amount every payment, or a single one-time
+          lump-sum payment on a chosen date — recomputed live as you type, plotted as a second line on the same
+          chart, with the new payoff date, payments saved, and interest saved shown alongside the original.
+        </Note>
+        <Note>
+          Once a real Loan Account is picked, every schedule row gets a <b>Record</b> button that opens a small
+          form — Date, Pay From (any Cash/Checking/Savings/Credit Card account), Principal, Interest, Interest
+          Category, Memo — pre-filled from that row but fully editable, so a real payment that doesn't match the
+          schedule exactly, or a partial pre-payment, is just as easy to record. Posting creates a genuine{' '}
+          <b>Transfer</b> (Pay From → the Loan account) for the Principal amount and a separate categorized{' '}
+          <b>expense</b> transaction for the Interest amount — two transactions, not one, since a single
+          transaction here can't be part-transfer and part-category at once. The Interest Category defaults to
+          one literally named "Loan Interest" if you have one, otherwise your first Interest-type category.
         </Note>
 
         <H3>📋 Custom Reports</H3>
@@ -849,12 +908,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           you're moving before confirming.
         </Note>
         <Note>
-          A <b>Loan</b>-type account's edit modal gains three extra fields: <b>Loan Type</b> (Mortgage, Auto Loan,
-          Student Loan, etc.), <b>Interest Rate</b> — a single Fixed %, or Variable defined as an Index name (free
-          text, e.g. "Euribor 12M") plus a Spread % on top, and <b>Linked Asset Account</b> (the Real Estate/
-          Vehicle/Asset account the loan financed, e.g. tying a car loan to its car). All three are hidden for
-          every other account type, and cleared automatically if you switch the account away from Loan. Interest
-          Rate and Linked Asset are also available as grid columns (hidden by default).
+          A <b>Loan</b>-type account's edit modal gains a full set of extra fields, hidden for every other account
+          type and cleared automatically if you switch the account away from Loan: <b>Loan Type</b> (Mortgage,
+          Auto Loan, Student Loan, etc.), <b>Opening Date</b>, <b>Original Balance</b>, <b>Original Length</b>{' '}
+          (value + Years/Months/Weeks), <b>Next Payment Due</b>, <b>Compounding Period</b>, <b>Payment
+          Schedule</b>, <b>Interest Rate</b> — a single Fixed %, or Variable defined as an Index name (free text,
+          e.g. "Euribor 12M") plus a Spread % on top, and <b>Linked Asset Account</b> (the Real Estate/Vehicle/
+          Asset account the loan financed, e.g. tying a car loan to its car). All of this feeds Reports → Financial
+          Planning → Loan Amortization's payoff calculations and the Dashboard's Loan Payment alert. Interest Rate
+          and Linked Asset are also available as grid columns (hidden by default).
         </Note>
         <Note>
           Institutions' and Issuers' <b>Moody's/S&amp;P/Fitch</b> fields are dropdowns, not free text — both
@@ -1227,22 +1289,134 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           what that specific report is for — a historical report defaults to including closed accounts; a
           current-snapshot view defaults to excluding them. A checkbox is always available to flip it.
         </P>
+
+        <H2>Workflows</H2>
+        <P>Step-by-step guides for real-world situations that touch more than one part of the app at once.</P>
+        <H3>Workflow: Recording a New Loan (e.g. Buying a House with a Mortgage)</H3>
+        <P>
+          Taking out a loan involves three things at once — a new asset (if the loan financed one), a new
+          liability, and possibly some of your own cash — so it takes a couple of one-time transactions to set
+          up correctly. Worked example: borrowing €200,000 from a bank to help buy a €250,000 house, putting down
+          €50,000 of your own cash.
+        </P>
+        <Ol>
+          <li>
+            <b>Create two accounts</b> (Static Data → Accounts): a <b>Real Estate</b> account for the house
+            (leave its balance at 0 for now), and a <b>Loan</b> account for the mortgage — fill in Loan Type,
+            Opening Date, Interest Rate, Original Length, Compounding Period, Payment Schedule, Next Payment Due,
+            and set <b>Linked Asset Account</b> to the house account (this is what makes the Equity view work
+            later).
+          </li>
+          <li>
+            <b>Record the closing as two Transfers</b> (New Transaction → Transfer), both dated the closing date
+            — this is what sets the accounts' real balances, since Original Balance alone is just reference
+            data for the payoff calculator, not something that moves money on its own:
+            <Ul>
+              <li>Transfer <b>Mortgage → House, €200,000</b> — sets the loan to −€200,000 owed and adds
+                €200,000 to the house's balance in one move.</li>
+              <li>Transfer <b>Cash/Checking → House, €50,000</b> (your down payment) — brings the house's
+                balance up to its full €250,000 purchase price.</li>
+            </Ul>
+            End state: House = €250,000, Mortgage = −€200,000, Cash down €50,000 — matching real double-entry
+            accounting (assets = liabilities + your own contribution). If the bank paid the seller directly and
+            your down payment isn't otherwise being tracked here, the Mortgage → House transfer on its own is
+            enough.
+          </li>
+          <li>
+            <b>Going forward, use Loan Amortization's Record button</b> each period to post the payment — it
+            handles the Cash → Mortgage principal transfer and the separate Interest expense for you. The house's
+            balance doesn't move during regular payments; if you want to reflect market appreciation over time,
+            that's a separate manual balance update on the Real Estate account itself.
+          </li>
+        </Ol>
       </>
     ),
   },
 ]
 
+// ── Search index ────────────────────────────────────────────────────────────
+// Built once from SECTIONS (a module-level constant, never changes at runtime):
+// walks each section's top-level children, grouping everything under whichever
+// H2/H3 heading precedes it — so a search result can point at the specific
+// paragraph it matched, not just "somewhere in this whole page". Anchor ids
+// match what H2/H3 render as their own `id` attribute (see slugify above), so
+// jumping to a result is a plain scrollIntoView.
+type SearchEntry = { sectionId: string; sectionLabel: string; heading: string; anchorId: string; text: string }
+
+function buildSearchIndex(): SearchEntry[] {
+  const entries: SearchEntry[] = []
+  for (const section of SECTIONS) {
+    const body = section.body as React.ReactElement<{ children?: React.ReactNode }>
+    const kids = body.props.children
+    const list = Array.isArray(kids) ? kids : [kids]
+    let heading = section.label
+    let anchorId = ''
+    let buffer: string[] = []
+    const flush = () => {
+      const text = buffer.join(' ').trim()
+      if (text) entries.push({ sectionId: section.id, sectionLabel: section.label, heading, anchorId, text })
+      buffer = []
+    }
+    for (const child of list) {
+      if (!React.isValidElement(child)) continue
+      if (child.type === H2 || child.type === H3) {
+        flush()
+        heading = textOf(child)
+        anchorId = slugify(heading)
+      } else {
+        buffer.push(textOf(child))
+      }
+    }
+    flush()
+  }
+  return entries
+}
+const SEARCH_INDEX = buildSearchIndex()
+
+// Short excerpt centered on the first match, for the results list.
+function snippet(text: string, query: string, len = 140): string {
+  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  if (idx < 0) return text.length > len ? text.slice(0, len) + '…' : text
+  const start = Math.max(0, idx - 40)
+  const end = Math.min(text.length, idx + query.length + 90)
+  return (start > 0 ? '…' : '') + text.slice(start, end).trim() + (end < text.length ? '…' : '')
+}
+
 export default function Help() {
   const [active, setActive] = useState(SECTIONS[0].id)
+  const [query, setQuery] = useState('')
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null)
   const current = SECTIONS.find(s => s.id === active) ?? SECTIONS[0]
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    return SEARCH_INDEX.filter(e => e.text.toLowerCase().includes(q) || e.heading.toLowerCase().includes(q)).slice(0, 25)
+  }, [query])
+
+  // Runs after switching `active` re-renders the target section's body, so the
+  // anchor element actually exists in the DOM by the time this fires.
+  useEffect(() => {
+    if (!pendingAnchor) return
+    document.getElementById(pendingAnchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPendingAnchor(null)
+  }, [active, pendingAnchor])
+
+  const goToResult = (e: SearchEntry) => {
+    setQuery('')
+    setActive(e.sectionId)
+    setPendingAnchor(e.anchorId)
+  }
+
+  const searching = query.trim().length >= 2
 
   return (
     <div className="flex flex-col md:flex-row h-full">
       <nav className="shrink-0 md:w-52 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto py-1 md:py-4">
         <p className="hidden md:block px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">User Guide</p>
         {SECTIONS.map(s => (
-          <button key={s.id} onClick={() => setActive(s.id)}
-            className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${active === s.id ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
+          <button key={s.id} onClick={() => { setActive(s.id); setQuery('') }}
+            className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${active === s.id && !searching ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
             {s.label}
           </button>
         ))}
@@ -1250,8 +1424,36 @@ export default function Help() {
 
       <div className="flex-1 min-w-0 overflow-auto">
         <PageHeader title="Help & User Guide" subtitle="How Oikos is organized and how to use it" />
+        <div className="px-6 pt-4">
+          <div className="relative max-w-md">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Search Help…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+            />
+          </div>
+        </div>
         <div className="px-6 py-6 max-w-3xl">
-          {current.body}
+          {searching ? (
+            <div>
+              <p className="text-xs text-slate-400 mb-3">
+                {results.length} result{results.length !== 1 ? 's' : ''} for "{query}"
+              </p>
+              <div className="space-y-2">
+                {results.map((r, i) => (
+                  <button key={i} onClick={() => goToResult(r)}
+                    className="block w-full text-left border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 hover:border-slate-300 transition-colors">
+                    <p className="text-xs text-slate-400">{r.sectionLabel}</p>
+                    <p className="text-sm font-semibold text-slate-700">{r.heading}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{snippet(r.text, query)}</p>
+                  </button>
+                ))}
+                {results.length === 0 && <p className="text-sm text-slate-400">No matches — try a different word.</p>}
+              </div>
+            </div>
+          ) : current.body}
         </div>
       </div>
     </div>
