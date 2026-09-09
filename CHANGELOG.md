@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-09
+
+### Fixed
+- **A CashOut investment transaction had no Withholding Tax field** — the field exists and is fully supported by the backend (it nets the tax off the linked cash amount), but the frontend only showed it for Dividend/IntInc/RtrnCap actions. Added CashOut to that list, so a full account liquidation (e.g. a pension cash-out) can capture the tax withheld at source the same way a dividend can.
+
 ## 2026-09-06
 
 ### Added

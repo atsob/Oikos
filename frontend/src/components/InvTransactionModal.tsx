@@ -23,7 +23,13 @@ export const CASH_ACTIONS = new Set(['Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnC
 // as opposed to Buy/ShrIn/Grant, which can establish a brand-new position.
 const POSITION_REQUIRED_ACTIONS = new Set(['Sell', 'Dividend', 'Reinvest', 'Split', 'ShrOut', 'Exercise', 'Expire', 'RtrnCap'])
 
-const TAX_ACTIONS = new Set(['Dividend', 'IntInc', 'RtrnCap'])
+// Withholding Tax field — CashOut included alongside the income-style actions
+// since a full account liquidation (e.g. a pension cash-out) can just as easily
+// have tax withheld at source before the net proceeds land in a cash account;
+// the backend's linked-transaction net calc (_upsert_cash_transaction) already
+// treats CashOut the same way as Dividend/IntInc/RtrnCap here, this was just
+// missing from the set that decides whether the field renders at all.
+const TAX_ACTIONS = new Set(['Dividend', 'IntInc', 'RtrnCap', 'CashOut'])
 
 export interface InvFormData {
   accounts_id: string

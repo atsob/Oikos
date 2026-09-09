@@ -409,6 +409,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>🔻 Short sell</b> to set Action to Sell and list every security again, since opening a short
           position doesn't require holding it first.
         </Note>
+        <Note>
+          The <b>Withholding Tax</b> field shows for Dividend, IntInc, RtrnCap, and <b>CashOut</b> — enter it as a{' '}
+          <b>negative</b> number. It nets off whatever amount is settled to a linked <b>Cash Account</b>, so a
+          full liquidation (e.g. a pension cash-out) can capture the tax withheld at source the same way a
+          dividend can. See Tips &amp; Interface → Workflows for the full worked example, including why{' '}
+          <b>Cash Account</b> should stay unset for a Pension/Brokerage/Other Investment/Margin account cashing
+          out to an external bank account.
+        </Note>
         <P>
           For deeper analysis — performance, risk, tax, dividend income, benchmarking — see the <b>Reports</b>{' '}
           section, which has several dedicated investment reports.
@@ -1329,6 +1337,38 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
             that's a separate manual balance update on the Real Estate account itself.
           </li>
         </Ol>
+
+        <H3>Workflow: Cashing Out a Pension (or Other Investment Account) to a Bank Account</H3>
+        <P>
+          Pension, Brokerage, Other Investment, and Margin accounts get their balance entirely from their own{' '}
+          <b>Investments</b> entries, not from Transactions — so unlike a Loan or Real Estate account, they can't
+          safely be one leg of a Transfer or use an Investments transaction's <b>Cash Account</b> field (that
+          field is built for a different purpose — an internal cash sub-account funding a Buy/Sell — and produces
+          backwards amounts for money leaving to an external account). The money actually arriving in your bank
+          account has to be captured as two separate, unlinked entries instead. Worked example: a pension worth
+          €78,671.67 cashed out, €10,675.05 withheld as tax, €67,996.62 landing in Checking.
+        </P>
+        <Ol>
+          <li>
+            <b>On the Pension account</b> (Investments → New Transaction): action <b>CashOut</b>, Total (acc.
+            currency) = €78,671.67 (the gross value), <b>Withholding Tax</b> = −€10,675.05 (negative) — and leave{' '}
+            <b>Cash Account</b> set to "— none —". This zeroes the pension out correctly on its own; the tax
+            amount doesn't need to be entered on the payment amount, it's on this transaction.
+          </li>
+          <li>
+            <b>On the destination account</b> (Cash Register → New Transaction, <i>not</i> Transfer): a plain
+            deposit for the net amount, €67,996.62 — same date, a description that references the event, and a
+            category that won't inflate Income & Expense reports as if it were a month of salary (an{' '}
+            <b>Investment</b>-type category works well here, e.g. "Pension / Retirement Distribution").
+          </li>
+        </Ol>
+        <Note>
+          Because these two entries aren't structurally linked (no shared Transfer, no target account), the
+          destination side won't show "Transfer to/from" the way a real transfer does — it just reads as a plain
+          deposit. That's the deliberate trade-off for keeping the investment account's balance correct. If a
+          Pension/Brokerage/Other Investment/Margin account's balance ever looks wrong after any editing, Investments →{' '}
+          <b>Sync Balances</b> recomputes it straight from its own Investments history.
+        </Note>
       </>
     ),
   },
