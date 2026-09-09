@@ -1,5 +1,6 @@
 import pandas as pd
 from database.connection import get_connection, get_db
+from database import crud
 
 from collections import deque
 from datetime import datetime, timedelta
@@ -2368,15 +2369,10 @@ def _confirm_draft_row(cur, tx_id: int) -> None:
     cur.execute("UPDATE Transactions SET Is_Draft = FALSE WHERE Transactions_Id = %s", (tx_id,))
 
     def _refresh(acc_id):
-        if acc_id:
-            cur.execute("""
-                UPDATE Accounts
-                   SET Accounts_Balance = COALESCE((
-                       SELECT SUM(Total_Amount) FROM Transactions
-                       WHERE Accounts_Id = %s AND Is_Draft = FALSE
-                   ), 0)
-                 WHERE Accounts_Id = %s
-            """, (acc_id, acc_id))
+        # Routed by account type (see database.crud.refresh_account_balance) so a
+        # Pension/Brokerage/Other Investment/Margin account's Investments-derived
+        # balance is never overwritten with a Transactions-only sum.
+        crud.refresh_account_balance(cur, acc_id)
 
     _refresh(src_account)
 

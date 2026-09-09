@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Fixed
 - **A CashOut investment transaction had no Withholding Tax field** — the field exists and is fully supported by the backend (it nets the tax off the linked cash amount), but the frontend only showed it for Dividend/IntInc/RtrnCap actions. Added CashOut to that list, so a full account liquidation (e.g. a pension cash-out) can capture the tax withheld at source the same way a dividend can.
+- **Fixed a balance-corruption risk for Pension/Brokerage/Other Investment/Margin accounts.** These account types keep their balance entirely from their own Investments history, not from Transactions — but several different code paths (the shared transaction-balance refresh helper, and the database trigger that maintains balances on every transaction write) had no awareness of that and would silently overwrite the correct balance with an incomplete Transactions-only sum whenever a Transactions row touched one of these accounts (e.g. a Transfer, or an Investments entry's linked Cash Account, landing on one of them). All such balance refreshes are now routed by account type, and the database trigger skips these account types entirely, so they can only ever be recomputed from their own Investments history. Verified against a working Brokerage cash-linked trade (unaffected) and an isolated Pension test case that previously would have corrupted.
 
 ## 2026-09-06
 

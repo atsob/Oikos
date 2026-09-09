@@ -9,6 +9,7 @@ from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from pydantic import BaseModel
 from database.connection import get_connection, get_db
+from database import crud
 
 router = APIRouter()
 
@@ -340,16 +341,9 @@ def apply_import(data: dict):
                 WHERE Transactions_Id IN ({placeholders})
             """, [session_id] + reconcile_ids)
 
-        # Refresh balance for the account after all inserts/reconciles
-        cur.execute("""
-            UPDATE Accounts
-               SET Accounts_Balance = COALESCE((
-                   SELECT SUM(Total_Amount)
-                   FROM Transactions
-                   WHERE Accounts_Id = %s AND Is_Draft = FALSE
-               ), 0)
-             WHERE Accounts_Id = %s
-        """, (account_id, account_id))
+        # Refresh balance for the account after all inserts/reconciles (routed by
+        # account type — see database.crud.refresh_account_balance)
+        crud.refresh_account_balance(cur, account_id)
 
         conn.commit()
     except Exception as e:

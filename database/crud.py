@@ -47,12 +47,20 @@ def update_accounts_balances(target_acc_id=None):
         cur.close()
         conn.close()
 
-def update_pension_balances():
-    """Update pension account balances."""
-    conn = get_connection()
-    cur = conn.cursor()
+def update_pension_balances(cur=None, target_acc_id=None):
+    """Update pension account balances (Investments-derived).
+
+    Pass an existing `cur` to run inside a caller's transaction (no commit/close
+    performed); omit it to run standalone (own connection, own commit). Pass
+    `target_acc_id` to scope to a single account instead of all Pension accounts.
+    """
+    owns_conn = cur is None
+    conn = None
+    if owns_conn:
+        conn = get_connection()
+        cur = conn.cursor()
     try:
-        cur.execute("""
+        sql = """
             UPDATE Accounts a
             SET Accounts_Balance = COALESCE((
                 SELECT
@@ -62,22 +70,37 @@ def update_pension_balances():
                 FROM Investments t
                 WHERE t.Accounts_Id = a.Accounts_Id
             ), 0)
-            WHERE a.Accounts_Type IN ('Pension');
-        """)
-        conn.commit()
-    except Exception as e:
+            WHERE a.Accounts_Type IN ('Pension')
+        """
+        params = ()
+        if target_acc_id:
+            sql += " AND a.Accounts_Id = %s"
+            params = (int(target_acc_id),)
+        cur.execute(sql, params)
+        if owns_conn:
+            conn.commit()
+    except Exception:
         log.exception("update_pension_balances failed")
         raise
     finally:
-        cur.close()
-        conn.close()
+        if owns_conn:
+            cur.close()
+            conn.close()
 
-def update_investment_balances():
-    """Update investment account balances."""
-    conn = get_connection()
-    cur = conn.cursor()
+def update_investment_balances(cur=None, target_acc_id=None):
+    """Update Brokerage/Other Investment/Margin account balances (Investments-derived).
+
+    Pass an existing `cur` to run inside a caller's transaction (no commit/close
+    performed); omit it to run standalone (own connection, own commit). Pass
+    `target_acc_id` to scope to a single account instead of all such accounts.
+    """
+    owns_conn = cur is None
+    conn = None
+    if owns_conn:
+        conn = get_connection()
+        cur = conn.cursor()
     try:
-        cur.execute("""
+        sql = """
             UPDATE Accounts a
             SET Accounts_Balance = COALESCE((
                 SELECT
@@ -86,21 +109,65 @@ def update_investment_balances():
                              ELSE 0 END)
                 FROM Investments t
                 WHERE t.Accounts_Id = a.Accounts_Id
-				AND (t.Transactions_Id IS NULL OR t.Transactions_Id NOT IN (SELECT Transactions_Id FROM Transactions))                 
+				AND (t.Transactions_Id IS NULL OR t.Transactions_Id NOT IN (SELECT Transactions_Id FROM Transactions))
             ), 0) +  COALESCE((
-                    SELECT SUM(Total_Amount) 
-                    FROM Transactions t 
+                    SELECT SUM(Total_Amount)
+                    FROM Transactions t
                     WHERE t.Accounts_Id = a.Accounts_Id
                 ), 0)
-            WHERE a.Accounts_Type IN ('Brokerage', 'Other Investment', 'Margin');
-        """)
-        conn.commit()
-    except Exception as e:
+            WHERE a.Accounts_Type IN ('Brokerage', 'Other Investment', 'Margin')
+        """
+        params = ()
+        if target_acc_id:
+            sql += " AND a.Accounts_Id = %s"
+            params = (int(target_acc_id),)
+        cur.execute(sql, params)
+        if owns_conn:
+            conn.commit()
+    except Exception:
         log.exception("update_investment_balances failed")
         raise
     finally:
-        cur.close()
-        conn.close()
+        if owns_conn:
+            cur.close()
+            conn.close()
+
+def refresh_account_balance(cur, *account_ids):
+    """Recompute Accounts_Balance for one or more accounts, using the correct
+    method for each account's type. Runs within the caller's existing
+    transaction (`cur`) — no commit is performed here, that's the caller's job.
+
+    Investment-type accounts (Pension, Brokerage, Other Investment, Margin) are
+    routed to their Investments-based recompute; every other type uses the
+    generic SUM(Transactions.Total_Amount) recompute. This is the single place
+    that should be used to refresh a balance after any write, so that no code
+    path can accidentally corrupt an investment-type account's balance by
+    treating it like a plain cash account.
+    """
+    seen = set()
+    for acc_id in account_ids:
+        if not acc_id or acc_id in seen:
+            continue
+        seen.add(acc_id)
+        cur.execute("SELECT Accounts_Type FROM Accounts WHERE Accounts_Id = %s", (int(acc_id),))
+        row = cur.fetchone()
+        if not row:
+            continue
+        acc_type = row[0]
+        if acc_type == 'Pension':
+            update_pension_balances(cur=cur, target_acc_id=acc_id)
+        elif acc_type in ('Brokerage', 'Other Investment', 'Margin'):
+            update_investment_balances(cur=cur, target_acc_id=acc_id)
+        else:
+            cur.execute("""
+                UPDATE Accounts
+                SET Accounts_Balance = COALESCE((
+                    SELECT SUM(Total_Amount)
+                    FROM Transactions
+                    WHERE Accounts_Id = %s AND Is_Draft = FALSE
+                ), 0)
+                WHERE Accounts_Id = %s
+            """, (int(acc_id), int(acc_id)))
 
 _LINKED_TX_VIABLE_ACTIONS = frozenset({'Buy', 'Sell', 'Dividend', 'IntInc', 'RtrnCap', 'MiscExp', 'MiscInc', 'CashOut', 'CashIn'})
 _LINKED_TX_CASH_OUT      = frozenset({'Buy', 'MiscExp', 'CashOut'})

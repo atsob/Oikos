@@ -590,6 +590,86 @@ def _run_startup_migrations():
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Compounding_Period VARCHAR(20) DEFAULT 'Monthly'",
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Payment_Frequency VARCHAR(20) DEFAULT 'Monthly'",
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Loan_Next_Due_Date DATE",
+        # Balance trigger fix: Pension/Brokerage/Other Investment/Margin accounts
+        # maintain Accounts_Balance from the Investments table (see database/crud.py:
+        # update_pension_balances / update_investment_balances), not from
+        # Transactions. Without this exclusion, any Transactions row touching one of
+        # these accounts (directly, or as Accounts_Id_Target via the single-row
+        # transfer model) silently overwrote its correct Investments-derived balance
+        # with an incomplete/wrong sum. See database/migrations/017_investment_balance_trigger_fix.sql
+        # and CHANGELOG 2026-09-09.
+        """
+        CREATE OR REPLACE FUNCTION public.update_accounts_balance_with_transfer()
+            RETURNS trigger
+            LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF (TG_OP = 'INSERT') THEN
+                IF NEW.Is_Draft THEN RETURN NULL; END IF;
+                UPDATE Accounts
+                   SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
+                 WHERE Accounts_Id = NEW.Accounts_Id
+                   AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
+                     WHERE Accounts_Id = NEW.Accounts_Id_Target
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                END IF;
+
+            ELSIF (TG_OP = 'DELETE') THEN
+                IF OLD.Is_Draft THEN RETURN NULL; END IF;
+                UPDATE Accounts
+                   SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
+                 WHERE Accounts_Id = OLD.Accounts_Id
+                   AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
+                     WHERE Accounts_Id = OLD.Accounts_Id_Target
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                END IF;
+
+            ELSIF (TG_OP = 'UPDATE') THEN
+                IF OLD.Is_Draft AND NEW.Is_Draft THEN
+                    RETURN NULL;
+                ELSIF OLD.Is_Draft AND NOT NEW.Is_Draft THEN
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
+                     WHERE Accounts_Id = NEW.Accounts_Id
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                    IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
+                        UPDATE Accounts
+                           SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
+                         WHERE Accounts_Id = NEW.Accounts_Id_Target
+                           AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                    END IF;
+                ELSIF NOT OLD.Is_Draft AND NEW.Is_Draft THEN
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
+                     WHERE Accounts_Id = OLD.Accounts_Id
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                    IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
+                        UPDATE Accounts
+                           SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
+                         WHERE Accounts_Id = OLD.Accounts_Id_Target
+                           AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                    END IF;
+                ELSE
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
+                     WHERE Accounts_Id = OLD.Accounts_Id
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                    UPDATE Accounts
+                       SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
+                     WHERE Accounts_Id = NEW.Accounts_Id
+                       AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
+                END IF;
+            END IF;
+            RETURN NULL;
+        END;
+        $$;
+        """,
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

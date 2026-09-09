@@ -4,6 +4,7 @@ from typing import Optional, Any
 from pydantic import BaseModel
 import pandas as pd
 from database.connection import get_db, get_connection
+from database import crud
 
 router = APIRouter()
 
@@ -18,19 +19,14 @@ def _df_to_list(df: pd.DataFrame) -> list:
 
 
 def _refresh_balance(cur, *account_ids: int) -> None:
-    """Recalculate Accounts_Balance from confirmed Transactions for each account_id."""
-    for acc_id in account_ids:
-        if acc_id is None:
-            continue
-        cur.execute("""
-            UPDATE Accounts
-               SET Accounts_Balance = COALESCE((
-                   SELECT SUM(Total_Amount)
-                   FROM Transactions
-                   WHERE Accounts_Id = %s AND Is_Draft = FALSE
-               ), 0)
-             WHERE Accounts_Id = %s
-        """, (acc_id, acc_id))
+    """Recalculate Accounts_Balance for each account_id, routed by account type.
+
+    Delegates to database.crud.refresh_account_balance so that Pension/Brokerage/
+    Other Investment/Margin accounts are always recomputed from Investments
+    instead of being overwritten with a Transactions-only sum (which would
+    corrupt their balance — see CHANGELOG 2026-09-09).
+    """
+    crud.refresh_account_balance(cur, *[a for a in account_ids if a is not None])
 
 
 # Whitelisted so sort_by can never be interpolated as raw SQL — maps the grid's

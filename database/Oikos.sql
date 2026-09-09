@@ -497,6 +497,12 @@ CREATE        INDEX IF NOT EXISTS idx_splits_category ON Splits(Categories_Id) W
 -- Total_Amount_Target on genuine two-row pairs too, and would still
 -- double-count on any future INSERT/UPDATE/DELETE of those specific rows —
 -- this fix does not cover that importer-specific pattern.
+-- Pension/Brokerage/Other Investment/Margin accounts maintain their balance
+-- from the Investments table (see database/crud.py: update_pension_balances /
+-- update_investment_balances), not from Transactions. Every UPDATE Accounts
+-- below excludes those account types so a Transactions-table write can never
+-- silently overwrite/corrupt their Investments-derived balance — matches the
+-- exclusion already used by database/crud.py's update_accounts_balances().
 CREATE OR REPLACE FUNCTION public.update_accounts_balance_with_transfer()
     RETURNS trigger
     LANGUAGE plpgsql
@@ -506,22 +512,26 @@ BEGIN
         IF NEW.Is_Draft THEN RETURN NULL; END IF;
         UPDATE Accounts
            SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
-         WHERE Accounts_Id = NEW.Accounts_Id;
+         WHERE Accounts_Id = NEW.Accounts_Id
+           AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
         IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
-             WHERE Accounts_Id = NEW.Accounts_Id_Target;
+             WHERE Accounts_Id = NEW.Accounts_Id_Target
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
         END IF;
 
     ELSIF (TG_OP = 'DELETE') THEN
         IF OLD.Is_Draft THEN RETURN NULL; END IF;
         UPDATE Accounts
            SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
-         WHERE Accounts_Id = OLD.Accounts_Id;
+         WHERE Accounts_Id = OLD.Accounts_Id
+           AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
         IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
-             WHERE Accounts_Id = OLD.Accounts_Id_Target;
+             WHERE Accounts_Id = OLD.Accounts_Id_Target
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
         END IF;
 
     ELSIF (TG_OP = 'UPDATE') THEN
@@ -531,30 +541,36 @@ BEGIN
             -- Draft → Confirmed: add balance
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
-             WHERE Accounts_Id = NEW.Accounts_Id;
+             WHERE Accounts_Id = NEW.Accounts_Id
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
             IF NEW.Accounts_Id_Target IS NOT NULL AND NEW.Total_Amount_Target IS NOT NULL THEN
                 UPDATE Accounts
                    SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount_Target
-                 WHERE Accounts_Id = NEW.Accounts_Id_Target;
+                 WHERE Accounts_Id = NEW.Accounts_Id_Target
+                   AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
             END IF;
         ELSIF NOT OLD.Is_Draft AND NEW.Is_Draft THEN
             -- Confirmed → Draft: remove balance
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
-             WHERE Accounts_Id = OLD.Accounts_Id;
+             WHERE Accounts_Id = OLD.Accounts_Id
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
             IF OLD.Accounts_Id_Target IS NOT NULL AND OLD.Total_Amount_Target IS NOT NULL THEN
                 UPDATE Accounts
                    SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount_Target
-                 WHERE Accounts_Id = OLD.Accounts_Id_Target;
+                 WHERE Accounts_Id = OLD.Accounts_Id_Target
+                   AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
             END IF;
         ELSE
             -- Both confirmed: normal update
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance - OLD.Total_Amount
-             WHERE Accounts_Id = OLD.Accounts_Id;
+             WHERE Accounts_Id = OLD.Accounts_Id
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
             UPDATE Accounts
                SET Accounts_Balance = Accounts_Balance + NEW.Total_Amount
-             WHERE Accounts_Id = NEW.Accounts_Id;
+             WHERE Accounts_Id = NEW.Accounts_Id
+               AND Accounts_Type NOT IN ('Pension', 'Brokerage', 'Other Investment', 'Margin');
         END IF;
     END IF;
     RETURN NULL;
