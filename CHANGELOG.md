@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Changed
 - **Dashboard now groups Savings accounts with Pension, not Cash** — the KPI row, the Net Worth Breakdown donut, and the Net Worth Trend chart all show "Cash" and "Pension & Savings" instead of "Cash & Savings" and "Pension". The historical Trend data was recomputed the same way retroactively, so past points reflect the new grouping too, not just the current total.
+- **Reports → Net Worth now groups Savings accounts with Pension the same way** — the Overview KPIs/chart, Summary per Type table, and Detail Analysis donut all show "Cash & Bank" and "Pension & Savings" instead of Savings sitting under Cash & Bank, matching the Dashboard's grouping. Account Balances (the per-account tab) is unaffected — it lists every account under its own real type regardless of this grouping.
 
 ## 2026-09-09
 

@@ -183,20 +183,22 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true, idKey, li
 // 1. NET WORTH
 // ════════════════════════════════════════════════════════════════════════════
 
+// Savings is grouped with Pension ("Pension & Savings"), not Cash & Bank — matches the
+// Dashboard's grouping (see frontend/src/pages/Dashboard.tsx's PEN_SAVINGS_TYPES).
 const NW_GROUP_MAP: Record<string, string> = {
-  'Cash': 'Cash & Bank', 'Checking': 'Cash & Bank', 'Savings': 'Cash & Bank', 'Bank': 'Cash & Bank',
+  'Cash': 'Cash & Bank', 'Checking': 'Cash & Bank', 'Bank': 'Cash & Bank',
   'Brokerage': 'Investments', 'Margin': 'Investments',
-  'Pension': 'Pension', 'Other Investment': 'Investments',
+  'Pension': 'Pension & Savings', 'Savings': 'Pension & Savings', 'Other Investment': 'Investments',
   'Real Estate': 'Other Assets', 'Vehicle': 'Other Assets', 'Asset': 'Other Assets',
   'Credit Card': 'Credit Cards',
   'Loan': 'Loans', 'Mortgage': 'Loans',
   'Liability': 'Other Liabilities',
 }
-const NW_ASSET_GROUPS = ['Cash & Bank', 'Investments', 'Pension', 'Other Assets']
+const NW_ASSET_GROUPS = ['Cash & Bank', 'Investments', 'Pension & Savings', 'Other Assets']
 const NW_LIAB_GROUPS  = ['Credit Cards', 'Loans', 'Other Liabilities']
 const NW_ALL_GROUPS   = [...NW_ASSET_GROUPS, ...NW_LIAB_GROUPS]
 const NW_GROUP_COLORS: Record<string, string> = {
-  'Cash & Bank': '#eab308', 'Investments': '#1e40af', 'Pension': '#06b6d4',
+  'Cash & Bank': '#eab308', 'Investments': '#1e40af', 'Pension & Savings': '#06b6d4',
   'Other Assets': '#8b5cf6', 'Credit Cards': '#ef4444', 'Loans': '#f97316', 'Other Liabilities': '#dc2626',
 }
 function nwGroup(type: string) { return NW_GROUP_MAP[type] ?? 'Other Assets' }
