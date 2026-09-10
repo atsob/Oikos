@@ -158,14 +158,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>The landing page — a snapshot of where things stand right now.</P>
         <H3>KPI cards</H3>
         <P>
-          Net Worth, Cash &amp; Savings, Investments, Pension, and Assets, each with a "vs prev month" and
-          "YTD" (or "daily" for Investments) change. Net Worth is the sum of the other four.
+          Net Worth, Cash, Investments, Pension &amp; Savings, and Assets, each with a "vs prev month" and
+          "YTD" (or "daily" for Investments) change. Net Worth is the sum of the other four. Savings accounts
+          are grouped into <b>Pension &amp; Savings</b>, not Cash — same as the Net Worth Breakdown and Trend
+          charts below.
         </P>
         <Note>
           Each card is a shortcut to where that number comes from: <b>Net Worth</b> opens Reports → Net Worth,{' '}
-          <b>Investments</b> opens Reports → Inv. Performance → P&amp;L, <b>Cash &amp; Savings</b> and{' '}
-          <b>Assets</b> open Cash Register, and <b>Pension</b> opens Investments → Transactions, scoped to the
-          pension account — with a <b>Back</b> button to return here, same as any other account link (see below).
+          <b>Investments</b> opens Reports → Inv. Performance → P&amp;L, <b>Cash</b> and{' '}
+          <b>Assets</b> open Cash Register, and <b>Pension &amp; Savings</b> opens Investments → Transactions,
+          scoped to the pension account — with a <b>Back</b> button to return here, same as any other account
+          link (see below).
         </Note>
         <Note>
           The <b>Options &amp; Account Selection</b> panel lets you include/exclude specific accounts and

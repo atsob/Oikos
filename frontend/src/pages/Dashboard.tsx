@@ -927,9 +927,13 @@ export default function Dashboard() {
     opts.includedAccounts === 'all' || (opts.includedAccounts as number[]).includes(Number(a.id)))
 
   // Aggregate KPIs from included accounts (grouped by type)
-  const CASH_TYPES = new Set(['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Other'])
+  const CASH_TYPES = new Set(['Cash', 'Checking', 'Credit Card', 'Loan', 'Other'])
   const INV_TYPES  = new Set(['Brokerage', 'Margin', 'Other Investment'])
   const PEN_TYPES  = new Set(['Pension'])
+  // Savings is grouped with Pension for the Dashboard KPIs/charts ("Pension & Savings"),
+  // not with Cash — see database.dashboard's historical_pension query for the matching
+  // backend grouping.
+  const PEN_SAVINGS_TYPES = new Set(['Pension', 'Savings'])
   const ASSET_TYPES = new Set(['Real Estate', 'Vehicle', 'Asset', 'Liability'])
 
   const sumByType = (types: Set<string>) =>
@@ -937,12 +941,13 @@ export default function Dashboard() {
 
   const totalCash     = sumByType(CASH_TYPES)
   const totalInv      = sumByType(INV_TYPES)
-  const totalPension  = sumByType(PEN_TYPES)
+  const totalPension  = sumByType(PEN_SAVINGS_TYPES)
   const totalAssets   = sumByType(ASSET_TYPES)
 
-  // The account carrying the largest balance among pension-type accounts — there can be
-  // several (old/inactive plans with a zero balance), but only one is ever the one this
-  // KPI's value is really about, so that's the one the KPI links through to.
+  // The account carrying the largest balance among actual Pension-type accounts (not
+  // Savings, even though Savings shares the KPI total) — there can be several (old/
+  // inactive plans with a zero balance), but only one is ever the one this KPI's value
+  // is really about, so that's the one the KPI links through to.
   const pensionAccount = included
     .filter(a => PEN_TYPES.has(String(a.type)))
     .sort((a, b) => Math.abs(Number(b.balance_eur ?? b.balance ?? 0)) - Math.abs(Number(a.balance_eur ?? a.balance ?? 0)))[0]
@@ -968,7 +973,7 @@ export default function Dashboard() {
   const deltaPrevMonth = prevMonthPoint != null ? totalNetWorth - Number(prevMonthPoint.total_net_worth) : null
   const deltaYTD       = ytdPoint       != null ? totalNetWorth - Number(ytdPoint.total_net_worth)       : null
 
-  // Cash & Savings deltas
+  // Cash deltas
   const deltaCashPrevMonth = prevMonthPoint != null ? totalCash - Number(prevMonthPoint.total_cash) : null
   const deltaCashYTD       = ytdPoint       != null ? totalCash - Number(ytdPoint.total_cash)       : null
 
@@ -976,7 +981,7 @@ export default function Dashboard() {
   const deltaInvDaily = yesterdayPoint != null ? totalInv - Number(yesterdayPoint.total_invested) : null
   const deltaInvYTD   = ytdPoint       != null ? totalInv - Number(ytdPoint.total_invested)       : null
 
-  // Pension deltas
+  // Pension & Savings deltas
   const deltaPenPrevMonth = prevMonthPoint != null ? totalPension - Number(prevMonthPoint.total_pension) : null
   const deltaPenYTD       = ytdPoint       != null ? totalPension - Number(ytdPoint.total_pension)       : null
 
@@ -1042,7 +1047,7 @@ export default function Dashboard() {
           />
           <StatCard
             compact
-            label="Cash & Savings"
+            label="Cash"
             value={fmtEur(totalCash)}
             subs={[
               deltaCashPrevMonth != null ? { text: `${fmtDelta(deltaCashPrevMonth)} vs prev month`, color: deltaColor(deltaCashPrevMonth) } : { text: '— vs prev month' },
@@ -1062,7 +1067,7 @@ export default function Dashboard() {
           />
           <StatCard
             compact
-            label="Pension"
+            label="Pension & Savings"
             value={fmtEur(totalPension)}
             subs={[
               deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
@@ -1159,10 +1164,10 @@ export default function Dashboard() {
               <div className="flex items-center justify-center h-64"><Spinner /></div>
             ) : (() => {
               const slices = [
-                { label: 'Cash & Savings', value: totalCash,    color: '#3b82f6' },  // blue
-                { label: 'Investments',    value: totalInv,     color: '#10b981' },  // emerald
-                { label: 'Pension',        value: totalPension, color: '#f59e0b' },  // amber
-                { label: 'Real Assets',    value: totalAssets,  color: '#ef4444' },  // red
+                { label: 'Cash',              value: totalCash,    color: '#3b82f6' },  // blue
+                { label: 'Investments',       value: totalInv,     color: '#10b981' },  // emerald
+                { label: 'Pension & Savings', value: totalPension, color: '#f59e0b' },  // amber
+                { label: 'Real Assets',       value: totalAssets,  color: '#ef4444' },  // red
               ].filter(s => s.value > 0)
               return (
                 <Plot
@@ -1227,7 +1232,7 @@ export default function Dashboard() {
                 data={[
                   { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_cash ?? 0)), name: 'Cash', stackgroup: 'one', fillcolor: '#3b82f6', line: { color: '#3b82f6' } },
                   { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_invested ?? 0)), name: 'Investments', stackgroup: 'one', fillcolor: '#10b981', line: { color: '#10b981' } },
-                  { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_pension ?? 0)), name: 'Pension', stackgroup: 'one', fillcolor: '#f59e0b', line: { color: '#f59e0b' } },
+                  { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_pension ?? 0)), name: 'Pension & Savings', stackgroup: 'one', fillcolor: '#f59e0b', line: { color: '#f59e0b' } },
                   { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_assets ?? 0)), name: 'Assets', stackgroup: 'one', fillcolor: '#ef4444', line: { color: '#ef4444' } },
                   { x: nwData.map(r => r.date), y: nwData.map(r => Number(r.total_net_worth ?? 0)), name: 'Net Worth', type: 'scatter', mode: 'lines', line: { color: '#1e40af', width: 2, dash: 'dot' } },
                 ]}

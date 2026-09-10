@@ -64,7 +64,7 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
                 WHERE Accounts_Id = a.Accounts_Id AND Date > dt.d
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
-        WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+        WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability','Savings')
         {acct_filter}
         UNION ALL
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
@@ -77,6 +77,10 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
         {acct_filter}
     ),
     historical_pension AS (
+        -- "Pension" bucket also includes Savings accounts (grouped with Pension in the
+        -- Dashboard KPIs/charts as "Pension & Savings") -- Savings accounts have no
+        -- Investments rows, so they reuse the Transactions-based balance-at-date formula
+        -- (same as historical_cash), not the Investments-based one Pension itself uses.
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
             a.Accounts_Balance - COALESCE((
                 SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur
@@ -86,6 +90,15 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
             ), 0) AS balance_at_date
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type IN ('Pension')
+        {acct_filter}
+        UNION ALL
+        SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
+            a.Accounts_Balance - COALESCE((
+                SELECT SUM(Total_Amount) FROM Transactions
+                WHERE Accounts_Id = a.Accounts_Id AND Date > dt.d
+            ), 0) AS balance_at_date
+        FROM dates dt CROSS JOIN Accounts a
+        WHERE a.Accounts_Type IN ('Savings')
         {acct_filter}
     ),
     historical_inv AS (

@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-10
+
+### Changed
+- **Dashboard now groups Savings accounts with Pension, not Cash** — the KPI row, the Net Worth Breakdown donut, and the Net Worth Trend chart all show "Cash" and "Pension & Savings" instead of "Cash & Savings" and "Pension". The historical Trend data was recomputed the same way retroactively, so past points reflect the new grouping too, not just the current total.
+
 ## 2026-09-09
 
 ### Fixed
