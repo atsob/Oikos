@@ -106,6 +106,8 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
   )
 }
 
+type AlertRow = Record<string, unknown>
+
 function SecuritiesAlertsPanel() {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -115,13 +117,22 @@ function SecuritiesAlertsPanel() {
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
   })
+  // Dismissing removes the just-dismissed row(s) from the cached list directly
+  // instead of invalidating/refetching — /dashboard/alerts recomputes several
+  // live checks (Golden/Death Cross, Trailing Stop, etc.) that take several
+  // seconds, and a dismiss doesn't change any of that, only which rows are
+  // acknowledged. The 5-minute refetchInterval above still keeps the list
+  // eventually consistent with the server.
+  const removeAlerts = (predicate: (a: AlertRow) => boolean) => {
+    qc.setQueryData<AlertRow[]>(['triggered-alerts'], (old) => (old ?? []).filter(a => !predicate(a)))
+  }
   const ackMut = useMutation({
     mutationFn: (sid: number) => acknowledgeSignal(sid),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+    onSuccess: (_data, sid) => removeAlerts(a => a.type === 'signal_change' && Number(a.securities_id) === sid),
   })
   const ackSplitMut = useMutation({
     mutationFn: (caId: number) => acknowledgeSplit(caId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+    onSuccess: (_data, caId) => removeAlerts(a => a.type === 'stock_split' && Number(a.corporate_actions_id) === caId),
   })
   // Golden/death cross and trailing-stop alerts are live-computed (not stored,
   // unlike Signal Change/Stock Split) — dismissing one silences it until its own
@@ -129,7 +140,7 @@ function SecuritiesAlertsPanel() {
   // docstring server-side), rather than a one-time acknowledgment.
   const dismissTrendMut = useMutation({
     mutationFn: ({ sid, type }: { sid: number; type: 'ma_cross' | 'trailing_stop' }) => dismissTrendAlert(sid, type),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+    onSuccess: (_data, vars) => removeAlerts(a => a.type === vars.type && Number(a.securities_id) === vars.sid),
   })
   // Signal Change alerts are per-security and re-trigger on the next algo/analyst
   // move, unlike Price Alerts (no dismiss here — those clear on their own once the
@@ -157,7 +168,10 @@ function SecuritiesAlertsPanel() {
       ...splitCaIds.map(caId => acknowledgeSplit(caId)),
       ...trendKeys.map(({ sid, type }) => dismissTrendAlert(sid, type)),
     ]),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['triggered-alerts'] }),
+    onSuccess: () => removeAlerts(a =>
+      (a.type === 'signal_change' && signalSecIds.includes(Number(a.securities_id))) ||
+      (a.type === 'stock_split' && splitCaIds.includes(Number(a.corporate_actions_id))) ||
+      trendKeys.some(k => k.type === a.type && k.sid === Number(a.securities_id))),
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   if (!(alerts as unknown[]).length) return null

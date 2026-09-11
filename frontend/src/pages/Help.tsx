@@ -221,7 +221,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Cross or Trailing Stop only silences it while its condition stays true — a Trailing Stop reappears once
           price first recovers back above the stop and then falls below it again, not just because time passes.
           Price Alerts don't have a dismiss (individually or in bulk) since they clear on their own once the price
-          crosses back.
+          crosses back. Dismissing — single or <b>Dismiss All</b> — clears the row(s) immediately rather than
+          waiting on a fresh alerts computation from the server; the panel re-syncs in the background on its normal
+          5-minute refresh.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —

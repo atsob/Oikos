@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 from database.connection import get_connection, get_db
 from database import crud
@@ -1206,7 +1207,32 @@ def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
     return df
 
 
-def get_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
+_PORTFOLIO_SIGNALS_TTL_SECONDS = 180
+_portfolio_signals_cache: dict = {}  # {selected_acc_id: (computed_at, DataFrame)}
+
+
+def get_portfolio_signals(selected_acc_id=None):
+    """Cached wrapper around _compute_portfolio_signals — the underlying query scans
+    ~5 years of daily prices across every security with several window functions
+    (moving averages, multi-period returns, volatility), taking several seconds
+    regardless of account filter. That's cheap to tolerate on an explicit page visit
+    (Securities & Portfolio Analysis -> Portfolio Signals) but was also the dominant
+    cost of the Dashboard's alerts endpoint (Golden/Death Cross, Trailing Stop), which
+    used to recompute it from scratch on every single alert dismiss because dismissing
+    invalidates the whole alerts query. A short TTL avoids that without meaningfully
+    staling the numbers, since the underlying price data itself only refreshes once a
+    day via the scheduler.
+    """
+    now = time.time()
+    cached = _portfolio_signals_cache.get(selected_acc_id)
+    if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
+        return cached[1].copy()
+    df = _compute_portfolio_signals(selected_acc_id)
+    _portfolio_signals_cache[selected_acc_id] = (now, df)
+    return df.copy()
+
+
+def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
     """Get signals for my investment portfolio."""
     conn = get_connection()
 
