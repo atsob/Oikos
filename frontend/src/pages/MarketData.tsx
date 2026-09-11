@@ -7,7 +7,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -1081,6 +1081,7 @@ function DownloadsTab() {
           <ActionRow id="yahoo-divs"  label="Download Dividend History" onClick={() => run('yahoo-divs',  () => downloadYahooDividends(sid))} />
           <ActionRow id="yahoo-splits" label="Download Split History" onClick={() => run('yahoo-splits', () => downloadStockSplits(sid))} />
           <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(sid))} />
+          <ActionRow id="fundamentals" label="Download Fundamentals (F-Score/Z-Score)" onClick={() => run('fundamentals', () => downloadFundamentals(sid))} />
           <ActionRow id="yahoo-px"    label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, sid))} />
         </div>
       </div>

@@ -21,10 +21,10 @@ import {
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
+  downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
-  getAccounts, getPortfolioSignals, getPnl, getIssuers,
+  getAccounts, getPortfolioSignals, getFundamentalScores, getPnl, getIssuers,
   getNews, markNewsRead,
   getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert,
 } from '@/lib/api'
@@ -630,10 +630,26 @@ function AnalysisSection({ title, cols, children }: { title: string; cols: numbe
   )
 }
 
+// Piotroski F-Score criterion keys -> a short human label, in the same order
+// database/queries.py::get_fundamental_scores evaluates them.
+const F_SCORE_LABELS: Record<string, string> = {
+  roa_positive: 'ROA > 0',
+  cfo_positive: 'Operating CF > 0',
+  roa_improving: 'ROA improving YoY',
+  accruals_quality: 'Operating CF > Net Income',
+  leverage_decreasing: 'Long-term debt ratio down YoY',
+  liquidity_improving: 'Current ratio up YoY',
+  no_dilution: 'No new shares issued',
+  margin_improving: 'Gross margin up YoY',
+  turnover_improving: 'Asset turnover up YoY',
+}
+
 function AnalysisTab({ secId }: { secId: number }) {
   const { data: signalsData = [], isLoading } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const { data: fundamentalsData = [] } = useQuery({ queryKey: ['fundamental-scores'], queryFn: getFundamentalScores, staleTime: 300_000 })
   const [settings] = useSettings()
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
+  const fundamental = (fundamentalsData as Record<string, unknown>[]).find(f => Number(f.securities_id) === secId)
   const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
   const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
 
@@ -706,6 +722,39 @@ function AnalysisTab({ secId }: { secId: number }) {
           value={pctVal(signal.fair_value_upside_pct)} color={pctColor(signal.fair_value_upside_pct)} />
         <MiniStat label="Fwd Dividend Yield" value={signal.fwd_yield_pct != null && Number(signal.fwd_yield_pct) > 0 ? `${Number(signal.fwd_yield_pct).toFixed(2)}%` : '—'} />
       </AnalysisSection>
+
+      {fundamental && (
+        <AnalysisSection title="Fundamentals" cols={3}>
+          <MiniStat
+            label={<Tooltip text="Piotroski F-Score: 9 fundamental tests of profitability, leverage/liquidity, and operating efficiency, comparing the two most recent fiscal years on file. Higher is fundamentally stronger. A test whose inputs are missing is left out of both the score and the max shown below.">F-Score</Tooltip>}
+            value={fundamental.f_score != null ? `${fundamental.f_score}/${fundamental.f_score_max ?? 9}` : '—'}
+            color={fundamental.f_score != null ? (Number(fundamental.f_score) >= 7 ? 'text-green-600' : Number(fundamental.f_score) <= 2 ? 'text-red-600' : undefined) : undefined} />
+          <MiniStat
+            label={<Tooltip text="Altman Z-Score: bankruptcy-risk gauge from balance-sheet/income-statement ratios plus current market cap. Designed for public manufacturing companies — treat with more caution for financials, utilities, and other asset-light or heavily-regulated sectors.">Z-Score</Tooltip>}
+            value={fundamental.z_score != null ? Number(fundamental.z_score).toFixed(2) : '—'}
+            color={fundamental.z_zone === 'Safe' ? 'text-green-600' : fundamental.z_zone === 'Distress' ? 'text-red-600' : fundamental.z_zone === 'Grey' ? 'text-amber-600' : undefined} />
+          <MiniStat
+            label={<Tooltip text="Safe Zone (>2.99): low bankruptcy risk. Grey Zone (1.81-2.99): some risk. Distress Zone (<1.81): high risk.">Z-Zone</Tooltip>}
+            value={String(fundamental.z_zone ?? '—')}
+            color={fundamental.z_zone === 'Safe' ? 'text-green-600' : fundamental.z_zone === 'Distress' ? 'text-red-600' : fundamental.z_zone === 'Grey' ? 'text-amber-600' : undefined} />
+          {!!fundamental.f_score_criteria && (
+            <div className="col-span-3 flex flex-wrap gap-1.5 mt-1">
+              {Object.entries(fundamental.f_score_criteria as Record<string, boolean | null>).map(([key, val]) => (
+                <span key={key}
+                  className={`text-xs px-2 py-0.5 rounded-full border ${
+                    val === true ? 'bg-green-50 text-green-700 border-green-200'
+                    : val === false ? 'bg-red-50 text-red-600 border-red-200'
+                    : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                  {val === true ? '✓' : val === false ? '✗' : '–'} {F_SCORE_LABELS[key] ?? key}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="col-span-3 text-xs text-slate-400">
+            As of fiscal year end {String(fundamental.fiscal_year_end ?? '—')} ({String(fundamental.data_years ?? 0)} year{fundamental.data_years === 1 ? '' : 's'} of statements on file).
+          </p>
+        </AnalysisSection>
+      )}
     </div>
   )
 }
@@ -2210,6 +2259,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
   )
 
   const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
+  const isStock = String(security.type ?? '') === 'Stock'
   const isBond = String(security.type ?? '') === 'Bond'
   const hasYahoo = !!(security.yahoo_ticker && String(security.yahoo_ticker).trim())
   const hasTv = !!(security.tv_symbol && String(security.tv_symbol).trim() && security.tv_exchange && String(security.tv_exchange).trim())
@@ -2223,6 +2273,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       jobs.push(['yahoo-divs', () => downloadYahooDividends(secId)])
       jobs.push(['yahoo-splits', () => downloadStockSplits(secId)])
       if (isFund) jobs.push(['fund-composition', () => downloadFundComposition(secId)])
+      if (isStock) jobs.push(['fundamentals', () => downloadFundamentals(secId)])
       jobs.push(['yahoo-px',   () => downloadYahooPrices('max', secId)])
     }
     if (hasTv) {
@@ -2268,6 +2319,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
             <ActionRow id="yahoo-divs" label="Download Dividend History" onClick={() => run('yahoo-divs', () => downloadYahooDividends(secId))} />
             <ActionRow id="yahoo-splits" label="Download Split History" onClick={() => run('yahoo-splits', () => downloadStockSplits(secId))} />
             {isFund && <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(secId))} />}
+            {isStock && <ActionRow id="fundamentals" label="Download Fundamentals (F-Score/Z-Score)" onClick={() => run('fundamentals', () => downloadFundamentals(secId))} />}
             <ActionRow id="yahoo-px" label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, secId))} />
           </div>
         </div>

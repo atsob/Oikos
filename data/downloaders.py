@@ -1254,6 +1254,176 @@ def download_fund_composition(target_sec_id=None):
         conn.close()
 
 
+_FUNDAMENTALS_COLUMNS = [
+    "Total_Assets", "Total_Liabilities", "Current_Assets", "Current_Liabilities",
+    "Long_Term_Debt", "Retained_Earnings", "Shares_Outstanding", "Total_Revenue",
+    "Gross_Profit", "Ebit", "Net_Income", "Operating_Cash_Flow",
+]
+
+
+def download_securities_fundamentals(target_sec_id=None):
+    """Download per-fiscal-year balance-sheet/income-statement/cash-flow line items
+    from Yahoo Finance for stocks, feeding the Piotroski F-Score and Altman Z-Score
+    computed live in database/queries.py::get_fundamental_scores.
+
+    Scoped to Securities_Type = 'Stock' — ETFs, funds, bonds, and crypto have no
+    financial statements, and yfinance's free-tier coverage for statements is
+    already spottier than its price/quote data (empty for many smaller or non-US
+    tickers), so a per-security fetch failure or empty result is recorded in
+    Securities_Fundamentals_Status rather than treated as fatal, matching
+    Fund_Composition's Fetch_Error convention.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    MAX_WORKERS = 5
+
+    conn = get_connection()
+    cur  = conn.cursor()
+    custom_session = get_custom_session()
+
+    def _row(df, *labels):
+        """First matching row (by label, in preference order) from a yfinance
+        statement DataFrame, as a Series indexed by fiscal-year-end date — or None
+        if the DataFrame is empty or has none of the labels (line-item naming and
+        coverage both vary by company)."""
+        if df is None or df.empty:
+            return None
+        for label in labels:
+            if label in df.index:
+                return df.loc[label]
+        return None
+
+    def _val(row, dt):
+        if row is None or dt not in row.index:
+            return None
+        try:
+            v = float(row.get(dt))
+        except (TypeError, ValueError):
+            return None
+        return v if math.isfinite(v) else None
+
+    def _fetch(sec_id, sec_name, symbol):
+        try:
+            import logging as _logging
+            _yf_logger = _logging.getLogger("yfinance")
+            _prev_level = _yf_logger.level
+            _yf_logger.setLevel(_logging.CRITICAL)
+            try:
+                ticker = yf.Ticker(symbol, session=custom_session)
+                bs  = ticker.balance_sheet
+                inc = ticker.income_stmt
+                cf  = ticker.cashflow
+            finally:
+                _yf_logger.setLevel(_prev_level)
+
+            rows = {
+                "Total_Assets":        _row(bs, "Total Assets"),
+                "Total_Liabilities":   _row(bs, "Total Liabilities Net Minority Interest"),
+                "Current_Assets":      _row(bs, "Current Assets"),
+                "Current_Liabilities": _row(bs, "Current Liabilities"),
+                # Some companies only report the combined line with capital leases.
+                "Long_Term_Debt":      _row(bs, "Long Term Debt", "Long Term Debt And Capital Lease Obligation"),
+                "Retained_Earnings":   _row(bs, "Retained Earnings"),
+                # Share Issued as fallback — Ordinary Shares Number is occasionally
+                # absent for foreign-listed or recently-IPO'd tickers.
+                "Shares_Outstanding":  _row(bs, "Ordinary Shares Number", "Share Issued"),
+                "Total_Revenue":       _row(inc, "Total Revenue"),
+                "Gross_Profit":        _row(inc, "Gross Profit"),
+                "Ebit":                _row(inc, "EBIT"),
+                "Net_Income":          _row(inc, "Net Income"),
+                "Operating_Cash_Flow": _row(cf, "Operating Cash Flow"),
+            }
+            if all(r is None for r in rows.values()):
+                return sec_id, sec_name, symbol, [], "No financial statements available from Yahoo"
+
+            fiscal_years = set()
+            for r in rows.values():
+                if r is not None:
+                    fiscal_years.update(r.index)
+
+            year_rows = []
+            for dt in fiscal_years:
+                values = tuple(_val(rows[c], dt) for c in _FUNDAMENTALS_COLUMNS)
+                if any(v is not None for v in values):
+                    year_rows.append((sec_id, pd.Timestamp(dt).date(), *values))
+
+            if not year_rows:
+                return sec_id, sec_name, symbol, [], "Statements returned but no usable line items"
+            return sec_id, sec_name, symbol, year_rows, None
+        except Exception as exc:
+            return sec_id, sec_name, symbol, [], str(exc)
+
+    try:
+        base_query = """
+            SELECT Securities_Id, Securities_Name, Yahoo_Ticker
+            FROM   Securities
+            WHERE  Yahoo_Ticker IS NOT NULL AND Yahoo_Ticker != ''
+              AND  Securities_Type = 'Stock'
+        """
+        if target_sec_id:
+            base_query += f" AND Securities_Id = {int(target_sec_id)}"
+        base_query += " ORDER BY Securities_Name ASC"
+        cur.execute(base_query)
+        stocks = cur.fetchall()
+
+        if not stocks:
+            logging.warning("No Stock securities with a Yahoo Ticker found.")
+            return
+
+        total = len(stocks)
+        print(f"Downloading fundamentals for {total} stock(s)…")
+
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(_fetch, sec_id, sec_name, symbol): sec_name
+                       for sec_id, sec_name, symbol in stocks}
+            for f in as_completed(futures):
+                results.append(f.result())
+
+        fundamentals_rows, ok_ids, error_rows = [], [], []
+        for sec_id, sec_name, symbol, year_rows, err in results:
+            if err:
+                print(f"  ⚠️ {sec_name} ({symbol}): {err}")
+                error_rows.append((sec_id, err))
+                continue
+            print(f"  ✔ {sec_name}: {len(year_rows)} fiscal year(s) cached")
+            fundamentals_rows.extend(year_rows)
+            ok_ids.append(sec_id)
+
+        if fundamentals_rows:
+            set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in _FUNDAMENTALS_COLUMNS)
+            execute_batch(cur, f"""
+                INSERT INTO Securities_Fundamentals
+                    (Securities_Id, Fiscal_Year_End, {", ".join(_FUNDAMENTALS_COLUMNS)})
+                VALUES (%s, %s, {", ".join(["%s"] * len(_FUNDAMENTALS_COLUMNS))})
+                ON CONFLICT (Securities_Id, Fiscal_Year_End) DO UPDATE SET {set_clause}
+            """, fundamentals_rows, page_size=500)
+
+        if ok_ids:
+            execute_batch(cur, """
+                INSERT INTO Securities_Fundamentals_Status (Securities_Id, Last_Updated, Fetch_Error)
+                VALUES (%s, NOW(), NULL)
+                ON CONFLICT (Securities_Id) DO UPDATE SET Last_Updated = NOW(), Fetch_Error = NULL
+            """, [(sec_id,) for sec_id in ok_ids], page_size=500)
+
+        if error_rows:
+            execute_batch(cur, """
+                INSERT INTO Securities_Fundamentals_Status (Securities_Id, Last_Updated, Fetch_Error)
+                VALUES (%s, NOW(), %s)
+                ON CONFLICT (Securities_Id) DO UPDATE SET Fetch_Error = EXCLUDED.Fetch_Error, Last_Updated = NOW()
+            """, error_rows, page_size=500)
+
+        conn.commit()
+        print(f"Fundamentals download complete — {len(ok_ids)} stock(s) cached, {len(error_rows)} error(s).")
+        logging.info(f"Fundamentals download: {len(ok_ids)} stocks cached, {len(error_rows)} errors.")
+
+    except Exception as e:
+        logging.error(f"❌ Error: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
 def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
     """Download historical security prices from Yahoo Finance.
 

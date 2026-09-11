@@ -87,6 +87,8 @@ export const acknowledgeSplit = (corporateActionsId: number) =>
   api.post(`/dashboard/alerts/acknowledge-split/${corporateActionsId}`).then(r => r.data)
 export const dismissTrendAlert = (securitiesId: number, alertType: 'ma_cross' | 'trailing_stop') =>
   api.post(`/dashboard/alerts/dismiss-trend/${securitiesId}/${alertType}`).then(r => r.data)
+export const acknowledgeZoneChange = (securitiesId: number) =>
+  api.post(`/dashboard/alerts/acknowledge-zone-change/${securitiesId}`).then(r => r.data)
 
 export const getUpcomingBills = (days = 14) =>
   api.get('/dashboard/upcoming-bills', { params: { days } }).then(r => r.data)
@@ -357,6 +359,9 @@ export const downloadStockSplits = (securityId?: number) =>
 
 export const downloadFundComposition = (securityId?: number) =>
   api.post('/market-data/download/fund-composition', securityId ? { security_id: securityId } : {}).then(r => r.data)
+
+export const downloadFundamentals = (securityId?: number) =>
+  api.post('/market-data/download/fundamentals', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
 export const downloadYahooPrices = (period: string, securityId?: number) =>
   api.post('/market-data/download/yahoo-prices', { period, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
@@ -909,6 +914,9 @@ export const getPriceChanges = () =>
 
 export const getPortfolioSignals = () =>
   api.get('/reports/portfolio-signals').then(r => r.data)
+
+export const getFundamentalScores = () =>
+  api.get('/reports/fundamental-scores').then(r => r.data)
 
 export const getGoals = () =>
   api.get('/reports/goals').then(r => r.data)

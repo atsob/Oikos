@@ -47,12 +47,13 @@ from data.downloaders import (
     download_dividend_history,
     download_stock_splits,
     download_fund_composition,
+    download_securities_fundamentals,
 )
 from ai.update_vector import update_all_embeddings
 from database.backup import DatabaseBackup
 from database.connection import get_connection
 from database.crud import generate_draft_transactions
-from database.queries import refresh_signal_notifications
+from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
 
 import os as _os
 _log_dir  = _os.getenv("APP_DATA_DIR", ".")
@@ -89,6 +90,9 @@ STOCK_SPLITS_MINUTE     = 0
 FUND_COMPOSITION_DAY     = 2  # 2nd of month at 07:30 — avoids colliding with monthly_summary (day 1)
 FUND_COMPOSITION_HOUR    = 7
 FUND_COMPOSITION_MINUTE  = 30
+FUNDAMENTALS_DAY         = 3  # 3rd of month at 07:30 — avoids colliding with fund_composition (day 2)
+FUNDAMENTALS_HOUR        = 7
+FUNDAMENTALS_MINUTE      = 30
 SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
 NEWS_FETCH_INTERVAL_MINUTES = 240     # Every 4 hours, 24×7
 
@@ -332,6 +336,25 @@ def _fund_composition_job():
         _record_job("fund_composition", "error", str(e))
 
 
+def _fundamentals_job():
+    """Download stock financial statements (balance sheet, income statement, cash
+    flow) once per month, feeding the Piotroski F-Score / Altman Z-Score shown in
+    Securities Analysis.
+
+    Runs monthly, same cadence and reasoning as fund composition — the underlying
+    filings only change quarterly at most, and each call is 3 statement fetches
+    per ticker (heavier than the daily info/quote refresh).
+    """
+    logging.info("Running monthly securities fundamentals refresh…")
+    try:
+        download_securities_fundamentals()
+        logging.info("Securities fundamentals refresh complete.")
+        _record_job("fundamentals", "success", "Completed OK")
+    except Exception as e:
+        logging.error(f"Securities fundamentals refresh failed: {e}", exc_info=True)
+        _record_job("fundamentals", "error", str(e))
+
+
 def _backup_job():
     """Create a daily database backup and purge files older than BACKUP_RETENTION_DAYS."""
     logging.info("Running daily database backup…")
@@ -389,10 +412,16 @@ def _recurring_drafts_job():
 
 
 def _signal_notifications_job():
-    """Compute final signals for all held securities and record any changes."""
+    """Compute final signals for all held securities and record any changes.
+    Also checks Altman Z-Score risk zones (Safe/Grey/Distress) for the same kind
+    of change — cheap (reads already-cached fundamentals, no heavy query) and a
+    zone can move between the monthly fundamentals refresh and now since it also
+    depends on today's market cap, so it rides this same frequent cadence rather
+    than the monthly download."""
     logging.info("Running signal notifications refresh…")
     try:
         refresh_signal_notifications()
+        refresh_fundamentals_notifications()
         logging.info("Signal notifications refreshed.")
         _record_job("signal_notifications", "success", "Completed OK")
     except Exception as e:
@@ -507,6 +536,9 @@ if __name__ == "__main__":
     # Fund composition: skip if already ran this month
     _last_fund_composition_month: int = -1
 
+    # Fundamentals (F-Score/Z-Score): skip if already ran this month
+    _last_fundamentals_month: int = -1
+
     # Signal notifications: first run deferred to tick loop
     _last_signal_refresh: datetime = datetime.min
 
@@ -584,6 +616,12 @@ if __name__ == "__main__":
         if now.day == fc_d and _in_window(now, fc_h, fc_m) and _last_fund_composition_month != now.month:
             _fund_composition_job()
             _last_fund_composition_month = now.month
+
+        # ── Fundamentals (F-Score/Z-Score): monthly ───────────────────────────
+        fn_d, fn_h, fn_m = _parse_monthly(sc.get('fundamentals', ''), FUNDAMENTALS_DAY, FUNDAMENTALS_HOUR, FUNDAMENTALS_MINUTE)
+        if now.day == fn_d and _in_window(now, fn_h, fn_m) and _last_fundamentals_month != now.month:
+            _fundamentals_job()
+            _last_fundamentals_month = now.month
 
         # ── Signal notifications: every N minutes ─────────────────────────────
         minutes_since_signal = (now - _last_signal_refresh).total_seconds() / 60

@@ -299,6 +299,17 @@ def acknowledge_split(corporate_actions_id: int):
         raise HTTPException(500, str(e))
 
 
+@router.post("/alerts/acknowledge-zone-change/{securities_id}")
+def acknowledge_zone_change(securities_id: int):
+    """Dismiss an Altman Z-Score zone-change notification for a security."""
+    try:
+        from database.queries import acknowledge_fundamentals_notification
+        acknowledge_fundamentals_notification(securities_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/alerts/dismiss-trend/{securities_id}/{alert_type}")
 def dismiss_trend_alert(securities_id: int, alert_type: str):
     """Dismiss a golden/death cross or trailing-stop alert — see

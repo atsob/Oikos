@@ -14,7 +14,7 @@ import {
   getNetWorthByAccount, getInvestmentPositionsHistory, getFxExposure,
   getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
   getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getSavingsForecast, getSavingsRecommendations,
@@ -4559,6 +4559,26 @@ function usePortfolioSignals() {
   return useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
 }
 
+// ── Shared hook for Piotroski F-Score / Altman Z-Score ────────────────────────
+// Stocks only, and only for ones with cached financial statements (Tools →
+// Scheduled Tasks → Securities Fundamentals, monthly) — a security with none
+// simply won't be in this list, so callers merge by securities_id and treat a
+// miss as "no data" rather than "zero."
+function useFundamentalScores() {
+  return useQuery({ queryKey: ['fundamental-scores'], queryFn: getFundamentalScores, staleTime: 300_000 })
+}
+
+type FundamentalScore = {
+  securities_id: number
+  f_score: number | null
+  f_score_max: number | null
+  f_score_criteria: Record<string, boolean | null> | null
+  z_score: number | null
+  z_zone: 'Safe' | 'Grey' | 'Distress' | null
+  fiscal_year_end: string | null
+  data_years: number | null
+}
+
 type Signal = {
   securities_id: number
   securities_name: string
@@ -4842,6 +4862,7 @@ function PortfolioActionSignalsTab() {
   const navigate = useNavigate()
   const { data = [], isLoading } = usePortfolioSignals()
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  const { data: fundamentals = [] } = useFundamentalScores()
   // All-time realized P&L per security, same FIFO-based figure Security Detail's
   // Overview/Investment Transactions tabs show, summed across every account.
   const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
@@ -4853,6 +4874,12 @@ function PortfolioActionSignalsTab() {
     for (const s of securities as Row[]) m.set(Number(s.id), s)
     return m
   }, [securities])
+
+  const fundamentalsById = useMemo(() => {
+    const m = new Map<number, FundamentalScore>()
+    for (const f of fundamentals as FundamentalScore[]) m.set(Number(f.securities_id), f)
+    return m
+  }, [fundamentals])
 
   const realizedById = useMemo(() => {
     const m = new Map<number, number>()
@@ -4873,6 +4900,7 @@ function PortfolioActionSignalsTab() {
   // logic in the portfolio-signals SQL query.
   const rows = useMemo(() => (data as Signal[]).map(r => {
     const sec = secById.get(r.securities_id)
+    const fs = fundamentalsById.get(r.securities_id)
     const qty = r.current_qty != null ? Number(r.current_qty) : null
     const costBasis = r.total_cost_eur != null ? Number(r.total_cost_eur) : null
     const prevClose = sec?.prev_close != null ? Number(sec.prev_close) : null
@@ -4909,8 +4937,12 @@ function PortfolioActionSignalsTab() {
       market_cap: sec?.market_cap != null ? Number(sec.market_cap) : null,
       dividend_rate: sec?.dividend_rate != null ? Number(sec.dividend_rate) : null,
       ex_dividend_date: sec?.ex_dividend_date ?? null,
+      f_score: fs?.f_score ?? null,
+      f_score_max: fs?.f_score_max ?? null,
+      z_score: fs?.z_score ?? null,
+      z_zone: fs?.z_zone ?? null,
     }
-  }), [data, secById, realizedById, settings.trailingStopPct])
+  }), [data, secById, fundamentalsById, realizedById, settings.trailingStopPct])
 
   const filtered = useMemo(() => rows.filter(r => {
     if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
@@ -5076,6 +5108,27 @@ function PortfolioActionSignalsTab() {
       { field: 'fair_value', headerName: 'Fair Value (Est.)', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 130,
         headerTooltip: "Oikos's own fair-value estimate: historical median P/E × current normalized EPS. See vs Fair Value % for the full explanation.",
         valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—' },
+      { field: 'f_score', headerName: 'F-Score', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
+        headerTooltip: 'Piotroski F-Score: 9 fundamental tests of profitability, leverage/liquidity, and operating efficiency, comparing the two most recent fiscal years on file — higher is fundamentally stronger. Stocks only, and only once financial statements are cached (Tools → Scheduled Tasks → Securities Fundamentals). A test whose inputs are missing is left out of both the score and the max shown after the slash.',
+        valueFormatter: (p: { value: unknown; data: Row }) => p.value != null ? `${p.value}/${p.data.f_score_max ?? 9}` : '—',
+        cellClass: (p: { value: unknown }) => {
+          if (p.value == null) return 'text-slate-400'
+          const v = Number(p.value)
+          return v >= 7 ? 'text-green-700 font-semibold' : v <= 2 ? 'text-red-600 font-semibold' : 'text-slate-600'
+        } },
+      { field: 'z_score', headerName: 'Z-Score', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
+        headerTooltip: 'Altman Z-Score — bankruptcy-risk gauge from balance-sheet/income-statement ratios plus current market cap. Above 2.99: Safe Zone. 1.81-2.99: Grey Zone. Below 1.81: Distress Zone. Designed for public manufacturing companies — treat with more caution for financials, utilities, and other asset-light or heavily-regulated sectors.',
+        valueFormatter: p => p.value != null ? Number(p.value).toFixed(2) : '—',
+        cellClass: (p: { value: unknown; data: Row }) => {
+          const zone = p.data.z_zone
+          return zone === 'Safe' ? 'text-green-700 font-semibold'
+            : zone === 'Distress' ? 'text-red-600 font-semibold'
+            : zone === 'Grey' ? 'text-amber-600 font-semibold'
+            : 'text-slate-400'
+        } },
+      { field: 'z_zone', headerName: 'Z-Zone', width: 100, hide: true,
+        headerTooltip: 'Altman Z-Score risk zone: Safe (>2.99), Grey (1.81-2.99), or Distress (<1.81).',
+        valueFormatter: p => p.value ?? '—' },
     ]
     return cols
   }, [navigate, settings.trailingStopPct]) // eslint-disable-line react-hooks/exhaustive-deps

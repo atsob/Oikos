@@ -1601,6 +1601,7 @@ _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
     "dividend_history", "stock_splits", "recurring_drafts", "news_fetch", "fund_composition",
+    "fundamentals",
 }
 
 _SEED_JOBS = [
@@ -1613,9 +1614,10 @@ _SEED_JOBS = [
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
     ("stock_splits",       "Stock Splits",           "Downloads stock split history for all tracked securities from Yahoo Finance and raises a dashboard alert for any newly discovered split.", "Sunday at 07:00", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
-    ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and records any changes for dashboard notifications.",               "Every 30 min, 24×7",             True),
+    ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications.", "Every 30 min, 24×7", True),
     ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
     ("fund_composition",    "Fund Composition (X-Ray)", "Downloads ETF/Mutual Fund look-through data (sector weights, top holdings, asset mix, expense ratio) from Yahoo Finance for Portfolio X-Ray.", "2nd of month at 07:30", True),
+    ("fundamentals",        "Securities Fundamentals", "Downloads stock financial statements (balance sheet, income statement, cash flow) from Yahoo Finance, feeding the Piotroski F-Score and Altman Z-Score in Securities Analysis.", "3rd of month at 07:30", True),
 ]
 
 
@@ -1698,14 +1700,18 @@ def _run_scheduler_job_fn(job_id: str):
             from database.crud import generate_draft_transactions
             generate_draft_transactions()
         elif job_id == "signal_notifications":
-            from database.queries import refresh_signal_notifications
+            from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
             refresh_signal_notifications()
+            refresh_fundamentals_notifications()
         elif job_id == "news_fetch":
             from ai.news_fetch import run as run_news_fetch
             run_news_fetch()
         elif job_id == "fund_composition":
             from data.downloaders import download_fund_composition
             download_fund_composition()
+        elif job_id == "fundamentals":
+            from data.downloaders import download_securities_fundamentals
+            download_securities_fundamentals()
         else:
             raise ValueError(f"No runnable function for custom job '{job_id}'")
         # Record success

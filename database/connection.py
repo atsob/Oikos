@@ -670,6 +670,34 @@ def _run_startup_migrations():
         END;
         $$;
         """,
+        # Piotroski F-Score / Altman Z-Score (Securities Analysis): raw per-fiscal-
+        # year balance-sheet/income-statement/cash-flow line items (stocks only —
+        # ETFs/funds/bonds have no financial statements), plus a fetch-status row
+        # per security so "not yet checked" is distinguishable from "checked, Yahoo
+        # has nothing." See database/queries.py::get_fundamental_scores and
+        # data/downloaders.py::download_securities_fundamentals.
+        """CREATE TABLE IF NOT EXISTS Securities_Fundamentals (
+               Securities_Id       INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Fiscal_Year_End     DATE NOT NULL,
+               Total_Assets        NUMERIC,
+               Total_Liabilities   NUMERIC,
+               Current_Assets      NUMERIC,
+               Current_Liabilities NUMERIC,
+               Long_Term_Debt      NUMERIC,
+               Retained_Earnings   NUMERIC,
+               Shares_Outstanding  NUMERIC,
+               Total_Revenue       NUMERIC,
+               Gross_Profit        NUMERIC,
+               Ebit                NUMERIC,
+               Net_Income          NUMERIC,
+               Operating_Cash_Flow NUMERIC,
+               PRIMARY KEY (Securities_Id, Fiscal_Year_End)
+           )""",
+        """CREATE TABLE IF NOT EXISTS Securities_Fundamentals_Status (
+               Securities_Id INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Last_Updated  TIMESTAMPTZ,
+               Fetch_Error   TEXT
+           )""",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

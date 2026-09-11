@@ -433,6 +433,19 @@ def download_fund_composition_endpoint(data: dict = {}):
         raise HTTPException(500, str(e))
 
 
+@router.post("/download/fundamentals")
+def download_fundamentals_endpoint(data: dict = {}):
+    """Download stock financial statements from Yahoo Finance (Piotroski F-Score /
+    Altman Z-Score in Securities Analysis). Stocks only — a non-stock security_id
+    is simply excluded by download_securities_fundamentals's own query, not an error."""
+    try:
+        from data.downloaders import download_securities_fundamentals
+        download_securities_fundamentals(target_sec_id=data.get("security_id"))
+        return {"ok": True, "message": "Fundamentals downloaded"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/download/yahoo-prices")
 def download_yahoo_prices(data: dict = {}):
     """Download historical prices from Yahoo Finance."""

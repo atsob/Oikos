@@ -6364,6 +6364,23 @@ def get_portfolio_signals_endpoint():
     return _df_to_list(df)
 
 
+@router.get("/fundamental-scores")
+def get_fundamental_scores_endpoint():
+    """Piotroski F-Score and Altman Z-Score for stocks with cached financial
+    statements — see database/queries.py::get_fundamental_scores for the
+    methodology and data/downloaders.py::download_securities_fundamentals for
+    where the underlying statements come from (Yahoo Finance, monthly, stocks
+    only). Only securities with at least one fiscal year on file are returned —
+    the frontend merges this into its existing securities list by securities_id
+    and shows a dash for anything unmatched (ETFs/funds/bonds, or a stock Yahoo
+    has no statements for)."""
+    from database.queries import get_fundamental_scores
+    df = get_fundamental_scores()
+    if df is None or df.empty:
+        return []
+    return _df_to_list(df)
+
+
 # ── Income & Expense Full (Streamlit-equivalent) ───────────────────────────────
 @router.get("/income-expense-full")
 def get_income_expense_full(

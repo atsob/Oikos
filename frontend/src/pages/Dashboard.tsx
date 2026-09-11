@@ -6,7 +6,7 @@ import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
-  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert,
+  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert, acknowledgeZoneChange,
   getUpcomingBills, getAnomalies, syncBalances,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
@@ -142,6 +142,13 @@ function SecuritiesAlertsPanel() {
     mutationFn: ({ sid, type }: { sid: number; type: 'ma_cross' | 'trailing_stop' }) => dismissTrendAlert(sid, type),
     onSuccess: (_data, vars) => removeAlerts(a => a.type === vars.type && Number(a.securities_id) === vars.sid),
   })
+  // Altman Z-Score zone change is a one-off acknowledgment like Signal Change
+  // (re-triggers only on the next actual zone move), not a self-healing live
+  // condition like the trend alerts above.
+  const ackZoneMut = useMutation({
+    mutationFn: (sid: number) => acknowledgeZoneChange(sid),
+    onSuccess: (_data, sid) => removeAlerts(a => a.type === 'zone_change' && Number(a.securities_id) === sid),
+  })
   // Signal Change alerts are per-security and re-trigger on the next algo/analyst
   // move, unlike Price Alerts (no dismiss here — those clear on their own once the
   // price crosses back, and are managed as standing alerts under Market Data).
@@ -162,16 +169,26 @@ function SecuritiesAlertsPanel() {
     .filter(a => (a.type === 'ma_cross' || a.type === 'trailing_stop') && a.securities_id != null)
     .map(a => ({ sid: Number(a.securities_id), type: a.type as 'ma_cross' | 'trailing_stop' })),
   [alerts])
+  // Zone Change alerts are per-security and re-trigger on the next actual Altman
+  // Z-Score zone move (Safe/Grey/Distress) — same one-off-acknowledgment shape as
+  // Signal Change above.
+  const zoneChangeSecIds = React.useMemo(() => [...new Set(
+    (alerts as Record<string, unknown>[])
+      .filter(a => a.type === 'zone_change' && a.securities_id != null)
+      .map(a => Number(a.securities_id)),
+  )], [alerts])
   const dismissAllMut = useMutation({
     mutationFn: () => Promise.all([
       ...signalSecIds.map(sid => acknowledgeSignal(sid)),
       ...splitCaIds.map(caId => acknowledgeSplit(caId)),
       ...trendKeys.map(({ sid, type }) => dismissTrendAlert(sid, type)),
+      ...zoneChangeSecIds.map(sid => acknowledgeZoneChange(sid)),
     ]),
     onSuccess: () => removeAlerts(a =>
       (a.type === 'signal_change' && signalSecIds.includes(Number(a.securities_id))) ||
       (a.type === 'stock_split' && splitCaIds.includes(Number(a.corporate_actions_id))) ||
-      trendKeys.some(k => k.type === a.type && k.sid === Number(a.securities_id))),
+      trendKeys.some(k => k.type === a.type && k.sid === Number(a.securities_id)) ||
+      (a.type === 'zone_change' && zoneChangeSecIds.includes(Number(a.securities_id)))),
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   if (!(alerts as unknown[]).length) return null
@@ -196,12 +213,12 @@ function SecuritiesAlertsPanel() {
           </span>
           {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
         </button>
-        {signalSecIds.length + splitCaIds.length + trendKeys.length > 1 && (
+        {signalSecIds.length + splitCaIds.length + trendKeys.length + zoneChangeSecIds.length > 1 && (
           <button
             className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline ml-3"
             disabled={dismissAllMut.isPending}
             onClick={() => dismissAllMut.mutate()}
-            title="Dismiss all Signal Change, Stock Split, Cross, and Trailing Stop alerts">
+            title="Dismiss all Signal Change, Stock Split, Cross, Trailing Stop, and Zone Change alerts">
             {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss All'}
           </button>
         )}
@@ -215,6 +232,7 @@ function SecuritiesAlertsPanel() {
             const caId = a.corporate_actions_id != null ? Number(a.corporate_actions_id) : null
             const isSplit = a.type === 'stock_split' && caId != null
             const isTrend = (a.type === 'ma_cross' || a.type === 'trailing_stop') && secId != null
+            const isZoneChange = a.type === 'zone_change' && secId != null
             return (
               <div key={i}
                 className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${secId != null ? 'cursor-pointer hover:brightness-95' : ''}`}
@@ -243,6 +261,14 @@ function SecuritiesAlertsPanel() {
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
                     onClick={(e) => { e.stopPropagation(); dismissTrendMut.mutate({ sid: secId!, type: a.type as 'ma_cross' | 'trailing_stop' }) }}
                     title="Dismiss until this condition resolves and re-triggers fresh">
+                    Dismiss
+                  </button>
+                )}
+                {isZoneChange && (
+                  <button
+                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                    onClick={(e) => { e.stopPropagation(); ackZoneMut.mutate(secId!) }}
+                    title="Dismiss this notification">
                     Dismiss
                   </button>
                 )}

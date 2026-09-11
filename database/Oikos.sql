@@ -1158,6 +1158,44 @@ CREATE TABLE IF NOT EXISTS Securities_Annual_EPS (
     PRIMARY KEY (Securities_Id, Fiscal_Year_End)
 );
 
+-- Raw balance-sheet/income-statement/cash-flow line items per fiscal year (from
+-- Yahoo's balance_sheet/income_stmt/cashflow — free tier exposes ~4 years, stock
+-- tickers only; ETFs/funds/bonds have no financial statements). Feeds the
+-- Piotroski F-Score and Altman Z-Score computed live in
+-- database/queries.py::get_fundamental_scores — stored as raw inputs rather than
+-- pre-computed scores so the scoring logic can be revised without a re-download,
+-- and so the per-criterion breakdown (which of the 9 F-Score tests passed) can be
+-- shown without recomputing from statements each time.
+CREATE TABLE IF NOT EXISTS Securities_Fundamentals (
+    Securities_Id       INTEGER NOT NULL
+                        REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Fiscal_Year_End     DATE NOT NULL,
+    Total_Assets        NUMERIC,
+    Total_Liabilities   NUMERIC,
+    Current_Assets      NUMERIC,
+    Current_Liabilities NUMERIC,
+    Long_Term_Debt      NUMERIC,
+    Retained_Earnings   NUMERIC,
+    Shares_Outstanding  NUMERIC,
+    Total_Revenue       NUMERIC,
+    Gross_Profit        NUMERIC,
+    Ebit                NUMERIC,
+    Net_Income          NUMERIC,
+    Operating_Cash_Flow NUMERIC,
+    PRIMARY KEY (Securities_Id, Fiscal_Year_End)
+);
+
+-- One row per security actually queried for fundamentals — tracks fetch health
+-- independently of Securities_Fundamentals itself, since a security with zero
+-- statement years (Yahoo has none for it, e.g. many ETFs/foreign small-caps) would
+-- otherwise leave no row anywhere to distinguish "not yet checked" from "checked,
+-- Yahoo has nothing." Mirrors Fund_Composition's Fetch_Error convention.
+CREATE TABLE IF NOT EXISTS Securities_Fundamentals_Status (
+    Securities_Id INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Last_Updated  TIMESTAMPTZ,
+    Fetch_Error   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS Alerts (
     Alert_Id      SERIAL PRIMARY KEY,
     Alert_Type    TEXT NOT NULL,
@@ -1177,6 +1215,18 @@ CREATE TABLE IF NOT EXISTS Signal_Notifications (
     Previous_Signal   TEXT,
     Changed_At        TIMESTAMP DEFAULT NOW(),
     Acknowledged      BOOLEAN DEFAULT TRUE
+);
+
+-- Mirrors Signal_Notifications above but tracks the Altman Z-Score risk zone
+-- (Safe/Grey/Distress) instead of the buy/sell signal — see
+-- database/queries.py::refresh_fundamentals_notifications.
+CREATE TABLE IF NOT EXISTS Fundamentals_Notifications (
+    Securities_Id   INTEGER PRIMARY KEY
+                    REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Last_Known_Zone TEXT,
+    Previous_Zone   TEXT,
+    Changed_At      TIMESTAMP DEFAULT NOW(),
+    Acknowledged    BOOLEAN DEFAULT TRUE
 );
 
 -- Dismiss button backing for live-computed Dashboard alerts (golden/death cross,

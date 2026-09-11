@@ -209,18 +209,29 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           far below the trailing 1-year high counts as a trip (default 20%).
         </Note>
         <Note>
+          A <b>Financial Health Change</b> alert fires when a stock's Altman <b>Z-Score</b> risk zone
+          (Safe/Grey/Distress — see Securities Analysis below) moves to a different zone from where it last stood.
+          Checked on the same 30-minute cadence as Signal Change (Z-Score depends on today's market cap as well as
+          the monthly-refreshed statements, so a zone can move between fundamentals downloads), and one-off
+          acknowledged like Signal Change — it reappears only on the next actual zone move, not just because time
+          passes. Moving into a worse zone (e.g. Safe → Grey) shows as a warning or error depending on severity;
+          moving into a better one shows as informational good news. Stocks only, and only once financial
+          statements are cached — see the Fundamentals note under Securities Analysis below.
+        </Note>
+        <Note>
           Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
-          Maturity/Coupon</b>, <b>Dividend Payment</b>, <b>Golden/Death Cross</b>, <b>Trailing Stop</b> — is
-          clickable through to that security's Security Detail page. <b>Allocation Drift</b> alerts aren't tied to
-          one security and stay non-clickable. A Signal
-          Change's, Golden/Death Cross's, or Trailing Stop's <b>Dismiss</b> button still works on its own without
-          triggering navigation. When there's more than one Signal Change, Stock Split, Cross, or Trailing Stop
-          alert (combined), a <b>Dismiss All</b> button next to the panel header clears all of them in one click —
-          handy since a newly-added security can arrive with dozens of Stock Split notifications (its full split
-          history) at once. Unlike Signal Change and Stock Split (one-off, acknowledged forever), dismissing a
-          Cross or Trailing Stop only silences it while its condition stays true — a Trailing Stop reappears once
-          price first recovers back above the stop and then falls below it again, not just because time passes.
-          Price Alerts don't have a dismiss (individually or in bulk) since they clear on their own once the price
+          Maturity/Coupon</b>, <b>Dividend Payment</b>, <b>Golden/Death Cross</b>, <b>Trailing Stop</b>,{' '}
+          <b>Financial Health Change</b> — is clickable through to that security's Security Detail page.{' '}
+          <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal Change's,
+          Golden/Death Cross's, Trailing Stop's, or Financial Health Change's <b>Dismiss</b> button still works on
+          its own without triggering navigation. When there's more than one Signal Change, Stock Split, Cross,
+          Trailing Stop, or Financial Health Change alert (combined), a <b>Dismiss All</b> button next to the panel
+          header clears all of them in one click — handy since a newly-added security can arrive with dozens of
+          Stock Split notifications (its full split history) at once. Unlike Signal Change, Stock Split, and
+          Financial Health Change (one-off, acknowledged until the next real change), dismissing a Cross or
+          Trailing Stop only silences it while its condition stays true — a Trailing Stop reappears once price
+          first recovers back above the stop and then falls below it again, not just because time passes. Price
+          Alerts don't have a dismiss (individually or in bulk) since they clear on their own once the price
           crosses back. Dismissing — single or <b>Dismiss All</b> — clears the row(s) immediately rather than
           waiting on a fresh alerts computation from the server; the panel re-syncs in the background on its normal
           5-minute refresh.
@@ -836,6 +847,21 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           trailing 1-year high (Tools → System → App Settings → Trailing Stop, default 20%). The same figures appear
           on a security's own Analysis tab and Prices tab chart.
         </Note>
+        <Note>
+          <b>F-Score</b> and <b>Z-Score</b> are fundamentals-based, shown for stocks only (not ETFs, funds, or
+          bonds — they have no financial statements) once their statements have been downloaded — a manual
+          "Download Fundamentals (F-Score/Z-Score)" button on Market Data → Downloads (or Security Detail →
+          Downloads for one stock), otherwise it happens automatically once a month, along with the other
+          Yahoo-sourced fields. <b>F-Score</b> (Piotroski, 0-9) counts 9 fundamental
+          tests across profitability, leverage/liquidity, and operating efficiency, comparing the two most recent
+          fiscal years on file — higher is fundamentally stronger; a test whose inputs are missing is left out of
+          both the score and the max shown after the slash (e.g. "6/8"), rather than counting as a fail. <b>Z-Score</b>{' '}
+          (Altman) is a bankruptcy-risk gauge combining balance-sheet/income-statement ratios with today's market
+          cap: above 2.99 is the Safe Zone, 1.81-2.99 the Grey Zone, below 1.81 the Distress Zone — shown as a dash
+          when any of its 5 required inputs is missing, since unlike the F-Score's additive points it has no partial
+          credit. This is the original formula for public manufacturing companies; treat it with more caution for
+          financials, utilities, and other asset-light or heavily-regulated sectors it wasn't designed around.
+        </Note>
 
         <H3>🏖️ Financial Planning</H3>
         <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
@@ -983,10 +1009,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;
           Volatility (Sharpe ratio plus 1M/3M/1Y/YTD annualized volatility), Price Performance (1D through 3Y and
           YTD % change), 3-Year Range, <b>Trend</b> (MA Trend, Cross Event, MA50/MA200, Above MA200, Trailing Stop —
-          see Securities Analysis above for what each means), and Valuation (analyst target, upside %, Fair Value
-          estimate, forward dividend yield) — the same figures as Securities Analysis → Portfolio Action Signals /
-          Volatility, at a glance without leaving the security. Shows for any security with signal data, even one
-          you don't currently hold.
+          see Securities Analysis above for what each means), Valuation (analyst target, upside %, Fair Value
+          estimate, forward dividend yield), and — stocks with cached financial statements only — a{' '}
+          <b>Fundamentals</b> section with F-Score, Z-Score, and the full 9-criterion F-Score breakdown. Most of
+          these are the same figures as Securities Analysis → Portfolio Action Signals / Volatility, at a glance
+          without leaving the security. Shows for any security with signal data, even one you don't currently hold.
         </Note>
         <Note>
           The <b>Prices</b> tab chart overlays fixed <b>MA50</b>/<b>MA200</b> lines (blue/pink, in addition to the

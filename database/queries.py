@@ -1,3 +1,4 @@
+import math
 import time
 import pandas as pd
 from database.connection import get_connection, get_db
@@ -1468,6 +1469,154 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
     conn.close()
     return df
 
+
+def _fscore_ratio(num, den):
+    """num/den, or None if either side is unusable (missing or zero denominator) —
+    None propagates as 'this criterion can't be evaluated', not as a failing 0,
+    since a data gap and a genuinely bad ratio mean different things for scoring."""
+    if num is None or den is None or den == 0:
+        return None
+    return num / den
+
+
+def get_fundamental_scores(securities_id: int = None) -> pd.DataFrame:
+    """Piotroski F-Score and Altman Z-Score for stocks with cached financial
+    statements (Securities_Fundamentals, populated by
+    data/downloaders.py::download_securities_fundamentals — Yahoo Finance,
+    stocks only, since ETFs/funds/bonds have no financial statements).
+
+    Computed live from the two most recent fiscal years on file (comparing the F-
+    Score's 9 criteria to the classic Piotroski (2000) test) rather than pre-
+    stored as a single number, so the per-criterion breakdown (which tests passed)
+    is available without redoing the arithmetic, and a future change to the
+    scoring logic doesn't need a re-download.
+
+    F-Score (0-9, higher = fundamentally stronger):
+      Profitability   — ROA positive; CFO positive; ROA improved YoY; CFO > Net
+                         Income (earnings quality / accruals)
+      Leverage/Liquidity — long-term-debt/assets ratio decreased YoY; current
+                         ratio improved YoY; no new shares issued
+      Efficiency      — gross margin improved YoY; asset turnover improved YoY
+    A criterion whose inputs are missing (Yahoo's statement coverage is uneven,
+    especially for smaller/foreign tickers) is left out of both the score and the
+    max — f_score_max can be below 9, distinguishing "scored low" from "can't be
+    fully evaluated." Long_Term_Debt specifically defaults missing to 0 rather
+    than leaving it out, since an absent debt line item on a real balance sheet
+    usually means the company just has none, not that Yahoo omitted a real value.
+
+    Z-Score (bankruptcy risk; the original public-manufacturing-company formula):
+      Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MarketCap/TL) + 1.0*(Sales/TA)
+      > 2.99 Safe Zone, 1.81-2.99 Grey Zone, < 1.81 Distress Zone.
+    Unlike the F-Score's additive points, every one of the 5 inputs is required —
+    a missing one (most often today's Market_Cap, from Securities_Quote, not yet
+    downloaded) leaves the whole score undefined rather than partial credit. This
+    formula was designed for public manufacturers; treat it with more caution for
+    financials, utilities, and other asset-light or heavily-regulated sectors.
+    """
+    conn = get_connection()
+    where = "WHERE f.Securities_Id = %(sid)s" if securities_id else ""
+    df = pd.read_sql(f"""
+        SELECT f.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
+               s.Ticker AS ticker, f.Fiscal_Year_End AS fiscal_year_end,
+               f.Total_Assets AS total_assets, f.Total_Liabilities AS total_liabilities,
+               f.Current_Assets AS current_assets, f.Current_Liabilities AS current_liabilities,
+               f.Long_Term_Debt AS long_term_debt, f.Retained_Earnings AS retained_earnings,
+               f.Shares_Outstanding AS shares_outstanding, f.Total_Revenue AS total_revenue,
+               f.Gross_Profit AS gross_profit, f.Ebit AS ebit, f.Net_Income AS net_income,
+               f.Operating_Cash_Flow AS operating_cash_flow,
+               q.Market_Cap AS market_cap
+        FROM   Securities_Fundamentals f
+        JOIN   Securities s ON s.Securities_Id = f.Securities_Id
+        LEFT JOIN Securities_Quote q ON q.Securities_Id = f.Securities_Id
+        {where}
+        ORDER BY f.Securities_Id, f.Fiscal_Year_End DESC
+    """, conn, params={"sid": securities_id} if securities_id else None)
+    conn.close()
+
+    if df.empty:
+        return df
+
+    def _n(v):
+        return None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+
+    results = []
+    for sec_id, grp in df.groupby('securities_id', sort=False):
+        grp = grp.sort_values('fiscal_year_end', ascending=False).reset_index(drop=True)
+        latest = grp.iloc[0]
+        prior = grp.iloc[1] if len(grp) > 1 else None
+
+        def _f(row, col):
+            return None if row is None else _n(row[col])
+
+        ta_n, ta_p   = _f(latest, 'total_assets'), _f(prior, 'total_assets')
+        ni_n         = _f(latest, 'net_income')
+        cfo_n        = _f(latest, 'operating_cash_flow')
+        ca_n, ca_p   = _f(latest, 'current_assets'), _f(prior, 'current_assets')
+        cl_n, cl_p   = _f(latest, 'current_liabilities'), _f(prior, 'current_liabilities')
+        # Missing long-term debt defaults to 0 (see docstring) — only for this field.
+        ltd_n = _f(latest, 'long_term_debt'); ltd_n = 0.0 if ltd_n is None else ltd_n
+        ltd_p = _f(prior, 'long_term_debt') if prior is not None else None
+        ltd_p = (0.0 if ltd_p is None else ltd_p) if prior is not None else None
+        sh_n, sh_p   = _f(latest, 'shares_outstanding'), _f(prior, 'shares_outstanding')
+        rev_n, rev_p = _f(latest, 'total_revenue'), _f(prior, 'total_revenue')
+        gp_n, gp_p   = _f(latest, 'gross_profit'), _f(prior, 'gross_profit')
+        re_n         = _f(latest, 'retained_earnings')
+        ebit_n       = _f(latest, 'ebit')
+        tl_n         = _f(latest, 'total_liabilities')
+        mcap         = _n(latest['market_cap'])
+
+        roa_n = _fscore_ratio(ni_n, ta_n)
+        roa_p = _fscore_ratio(_f(prior, 'net_income'), ta_p) if prior is not None else None
+        lev_n = _fscore_ratio(ltd_n, ta_n)
+        lev_p = _fscore_ratio(ltd_p, ta_p) if prior is not None else None
+        cr_n  = _fscore_ratio(ca_n, cl_n)
+        cr_p  = _fscore_ratio(ca_p, cl_p)
+        gm_n  = _fscore_ratio(gp_n, rev_n)
+        gm_p  = _fscore_ratio(gp_p, rev_p)
+        at_n  = _fscore_ratio(rev_n, ta_n)
+        at_p  = _fscore_ratio(rev_p, ta_p)
+
+        def _gt(a, b):
+            return None if (a is None or b is None) else a > b
+
+        criteria = {
+            'roa_positive':        None if roa_n is None else roa_n > 0,
+            'cfo_positive':        None if cfo_n is None else cfo_n > 0,
+            'roa_improving':       _gt(roa_n, roa_p),
+            'accruals_quality':    None if (cfo_n is None or ni_n is None) else cfo_n > ni_n,
+            'leverage_decreasing': _gt(lev_p, lev_n),
+            'liquidity_improving': _gt(cr_n, cr_p),
+            'no_dilution':         None if (sh_n is None or sh_p is None) else sh_n <= sh_p,
+            'margin_improving':    _gt(gm_n, gm_p),
+            'turnover_improving':  _gt(at_n, at_p),
+        }
+        evaluated = [v for v in criteria.values() if v is not None]
+        f_score = sum(1 for v in evaluated if v)
+        f_score_max = len(evaluated)
+
+        wc_n = None if (ca_n is None or cl_n is None) else ca_n - cl_n
+        z_inputs = (wc_n, re_n, ebit_n, ta_n, mcap, tl_n, rev_n)
+        if all(v is not None for v in z_inputs) and ta_n != 0 and tl_n != 0:
+            z_score = (1.2 * (wc_n / ta_n) + 1.4 * (re_n / ta_n) + 3.3 * (ebit_n / ta_n)
+                       + 0.6 * (mcap / tl_n) + 1.0 * (rev_n / ta_n))
+            z_zone = 'Safe' if z_score > 2.99 else ('Grey' if z_score >= 1.81 else 'Distress')
+        else:
+            z_score, z_zone = None, None
+
+        results.append({
+            'securities_id': int(sec_id),
+            'securities_name': str(latest['securities_name']),
+            'ticker': latest['ticker'],
+            'fiscal_year_end': str(latest['fiscal_year_end']),
+            'data_years': len(grp),
+            'f_score': f_score,
+            'f_score_max': f_score_max,
+            'f_score_criteria': criteria,
+            'z_score': round(z_score, 2) if z_score is not None else None,
+            'z_zone': z_zone,
+        })
+
+    return pd.DataFrame(results)
 
 
 def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
@@ -6107,6 +6256,103 @@ def acknowledge_signal_notification(securities_id: int):
         conn.close()
 
 
+_Z_ZONE_RANK = {'Distress': 0, 'Grey': 1, 'Safe': 2}
+
+
+def _ensure_fundamentals_notifications_table():
+    """Create Fundamentals_Notifications table if it does not exist.
+
+    Mirrors Signal_Notifications exactly (one row per security, Last/Previous +
+    Acknowledged) but tracks the Altman Z-Score risk zone (Safe/Grey/Distress)
+    instead of the buy/sell signal — see refresh_fundamentals_notifications."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Fundamentals_Notifications (
+                    Securities_Id   INTEGER PRIMARY KEY
+                                    REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+                    Last_Known_Zone TEXT,
+                    Previous_Zone   TEXT,
+                    Changed_At      TIMESTAMP DEFAULT NOW(),
+                    Acknowledged    BOOLEAN DEFAULT TRUE
+                )
+            """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def refresh_fundamentals_notifications():
+    """Compare current Altman Z-Score risk zones against stored ones; record any
+    changes (Safe/Grey/Distress) for the Dashboard's triggered-alerts panel.
+
+    Z-Score depends on today's market cap as well as the (monthly) cached
+    statements, so a zone can genuinely change between fundamentals refreshes —
+    called on the same cadence as signal notifications, not tied to the monthly
+    download. New securities are seeded silently (Acknowledged=TRUE) so a stock's
+    first-ever Z-Score doesn't flood the dashboard as a 'change'.
+    """
+    _ensure_fundamentals_notifications_table()
+    current = get_fundamental_scores()
+    if current.empty:
+        return
+    current = current[current['z_zone'].notna()]
+    if current.empty:
+        return
+
+    conn = get_connection()
+    try:
+        stored = pd.read_sql(
+            "SELECT Securities_Id AS securities_id, Last_Known_Zone AS last_known_zone "
+            "FROM Fundamentals_Notifications",
+            conn,
+        )
+        stored_map = (
+            stored.set_index('securities_id')['last_known_zone'].to_dict()
+            if not stored.empty else {}
+        )
+
+        with conn.cursor() as cur:
+            for _, row in current.iterrows():
+                sid  = int(row['securities_id'])
+                zone = row['z_zone']
+                prev = stored_map.get(sid)
+                if prev is None:
+                    cur.execute(
+                        "INSERT INTO Fundamentals_Notifications "
+                        "(Securities_Id, Last_Known_Zone, Previous_Zone, Acknowledged) "
+                        "VALUES (%s, %s, NULL, TRUE) ON CONFLICT (Securities_Id) DO NOTHING",
+                        (sid, zone),
+                    )
+                elif prev != zone:
+                    cur.execute(
+                        "UPDATE Fundamentals_Notifications "
+                        "SET Previous_Zone=%s, Last_Known_Zone=%s, "
+                        "    Changed_At=NOW(), Acknowledged=FALSE "
+                        "WHERE Securities_Id=%s",
+                        (prev, zone, sid),
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def acknowledge_fundamentals_notification(securities_id: int):
+    """Mark an Altman Z-Score zone change as acknowledged (user has seen it)."""
+    _ensure_fundamentals_notifications_table()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE Fundamentals_Notifications SET Acknowledged=TRUE WHERE Securities_Id=%s",
+                (securities_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _ensure_corporate_action_notifications_table():
     """Create Corporate_Action_Notifications table if it does not exist.
 
@@ -7046,6 +7292,46 @@ def check_triggered_alerts() -> list:
                                 f"{row['previous_signal'] or '—'} → **{row['current_signal']}**{suffix}"),
                     'securities_id': int(row['securities_id']),
                     'type': 'signal_change',
+                })
+        except Exception:
+            pass
+
+        # ── Altman Z-Score zone change notifications (pre-computed by scheduler) ─
+        try:
+            conn2b = get_connection()
+            pending_zones = pd.read_sql("""
+                SELECT fn.Securities_Id AS securities_id,
+                       s.Securities_Name AS securities_name,
+                       fn.Last_Known_Zone AS current_zone,
+                       fn.Previous_Zone AS previous_zone,
+                       fn.Changed_At AS changed_at
+                FROM Fundamentals_Notifications fn
+                JOIN Securities s ON s.Securities_Id = fn.Securities_Id
+                WHERE fn.Acknowledged = FALSE
+                ORDER BY fn.Changed_At DESC
+            """, conn2b)
+            conn2b.close()
+            for _, row in pending_zones.iterrows():
+                changed_at = row.get('changed_at')
+                if changed_at is not None:
+                    try:
+                        ts = pd.Timestamp(changed_at)
+                        when = f"{ts.day} {ts.strftime('%b %Y %H:%M')}"
+                    except Exception:
+                        when = str(changed_at)[:16]
+                else:
+                    when = None
+                suffix = f" (as of {when})" if when else ''
+                prev_zone, cur_zone = row['previous_zone'], row['current_zone']
+                improving = (_Z_ZONE_RANK.get(cur_zone, 1) > _Z_ZONE_RANK.get(prev_zone, 1)) if prev_zone else None
+                level = 'info' if improving else ('error' if cur_zone == 'Distress' else 'warning')
+                icon = '📈' if improving else '📉'
+                results.append({
+                    'level': level,
+                    'message': (f"{icon} **Financial Health Change** — {row['securities_name']}: "
+                                f"Altman Z-Score moved {prev_zone or '—'} → **{cur_zone}** Zone{suffix}"),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'zone_change',
                 })
         except Exception:
             pass
