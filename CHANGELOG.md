@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-11
+
+### Fixed
+- **Reports → Cash Flow Forecast / Savings → Forecast projected a full year of interest on today's balance, even when that balance only existed for a few days.** An account whose interest posts annually (or on any long cadence) had its next payment projected as `current balance × rate`, silently assuming the balance had been flat for the whole accrual period — so a savings account that received a large deposit just before the anniversary got credited a full year's interest on the new, much larger balance. Both the manual-rate-schedule path (`_project_schedule_payments`) and the historical-APY fallback path now walk the account's real transaction history (deposits, withdrawals, and transfers, already-posted or explicitly scheduled/recurring) day-by-day through the accrual period, compounding against the balance that was actually held at each point in time rather than one frozen snapshot. Verified against a real account whose balance jumped ~5x from a lump-sum transfer two days before the forecast date: the projected payment dropped from an inflated flat-balance figure to the correct one reflecting the lower balance held for most of the period.
+
 ## 2026-09-10
 
 ### Changed

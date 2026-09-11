@@ -138,7 +138,8 @@ def _tiered_interest(schedule: dict, balance: float, period_days: int) -> float:
 
 def _project_schedule_payments(schedules: list, balance: float, currency: str, fx: float,
                                 accounts_name: str, accounts_id: int, today, cutoff,
-                                real_last_date=None, real_cadence_days: Optional[int] = None) -> list:
+                                real_last_date=None, real_cadence_days: Optional[int] = None,
+                                balance_deltas: Optional[list] = None) -> list:
     """Walk a manual rate schedule forward from `today` to `cutoff`, returning one row
     per projected interest payment. Anchored to the account's own real, historically-
     observed posting cadence (real_last_date/real_cadence_days) when known — e.g. an
@@ -165,8 +166,9 @@ def _project_schedule_payments(schedules: list, balance: float, currency: str, f
         cycle_dt = step(cycle_dt)
     period_start, next_dt = cycle_dt, step(cycle_dt)
 
+    deltas = balance_deltas or []
     rows: list = []
-    running_balance = balance
+    running_balance = _balance_as_of(balance, deltas, period_start, today)
     while next_dt <= cutoff:
         active = _schedule_for_date(schedules, next_dt)
         if active is None:
@@ -178,10 +180,11 @@ def _project_schedule_payments(schedules: list, balance: float, currency: str, f
         # Clamp to the active schedule's own start: period_start can predate it (a
         # handoff between vintages), and days before a rate took effect don't accrue.
         accrual_start = max(period_start, active['effective_from'])
-        period_days = (next_dt - accrual_start).days
-        payment = _tiered_interest(active, running_balance, period_days)
+        payment, running_balance = _compound_with_deltas(
+            running_balance, deltas, accrual_start, next_dt,
+            lambda b, d: _tiered_interest(active, b, d),
+        )
         if payment > 0:
-            running_balance += payment
             rows.append({
                 'date': next_dt.isoformat(),
                 'payees_name': accounts_name,
@@ -194,6 +197,140 @@ def _project_schedule_payments(schedules: list, balance: float, currency: str, f
         period_start = next_dt
         next_dt = step(next_dt)
     return rows
+
+
+_ACCT_FLOW_PERIOD_STEP = {
+    'Daily': relativedelta(days=1), 'Weekly': relativedelta(weeks=1),
+    'Bi-Weekly': relativedelta(weeks=2), 'Monthly': relativedelta(months=1),
+    'Bi-Monthly': relativedelta(months=2), 'Quarterly': relativedelta(months=3),
+    'Semi-Annual': relativedelta(months=6), 'Annual': relativedelta(years=1),
+}
+
+
+def _account_period_balance_deltas(conn, account_ids, today, cutoff) -> dict:
+    """Every known principal-affecting balance change for the given accounts, dated
+    up to `cutoff` — both already-posted transactions (deposits, withdrawals,
+    transfers in either direction — a lump sum that landed last week is exactly as
+    real as one dated tomorrow) and, for what hasn't posted yet, explicitly
+    scheduled future transactions plus active Recurring Templates (transfers
+    included, both legs) projected forward. Interest-category splits are excluded
+    since those are the payments being projected, not deposits into the balance
+    that earns them.
+
+    This is what lets an interest projection compound against the account's real
+    balance path through an already-open accrual period instead of assuming
+    today's snapshot balance held for the whole period — e.g. an account whose
+    interest posts annually but which only reached its current balance via a large
+    deposit a few days ago would otherwise have a full year of interest projected
+    on that balance, when for most of the accrual period the true balance (and
+    therefore true accrued interest) was much lower.
+    Returns {accounts_id: [(date, amount_in_account_currency), ...]} sorted by date."""
+    ids = sorted(int(a) for a in account_ids)
+    deltas: dict = {aid: [] for aid in ids}
+    if not ids:
+        return deltas
+
+    df_posted = pd.read_sql("""
+        SELECT t.Accounts_Id AS accounts_id, t.Date AS date,
+               CASE WHEN t.Transfers_Id IS NOT NULL THEN t.Total_Amount ELSE s.Amount END AS amount,
+               CASE WHEN t.Transfers_Id IS NOT NULL THEN 'Principal'
+                    WHEN cat.Categories_Type = 'Interest' THEN 'Interest'
+                    ELSE 'Principal' END AS kind
+        FROM Transactions t
+        LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+        LEFT JOIN Categories cat ON cat.Categories_Id = s.Categories_Id
+        WHERE t.Accounts_Id = ANY(%(ids)s) AND t.Date <= %(cutoff)s
+    """, conn, params={"ids": ids, "cutoff": cutoff})
+    for _, r in df_posted.iterrows():
+        if r['kind'] != 'Principal' or pd.isna(r['amount']):
+            continue
+        d = pd.Timestamp(r['date']).date()
+        deltas[int(r['accounts_id'])].append((d, _fnum(r['amount'])))
+
+    df_tmpl = pd.read_sql("""
+        SELECT Accounts_Id AS accounts_id, Accounts_Id_Target AS accounts_id_target,
+               Total_Amount AS total_amount, Periodicity AS periodicity,
+               COALESCE(Next_Due_Date, CURRENT_DATE) AS next_due_date,
+               Total_Occurrences AS total_occurrences, Installment_Frequency AS installment_frequency
+        FROM Recurring_Templates
+        WHERE Active = TRUE
+          AND (End_Date IS NULL OR End_Date >= CURRENT_DATE)
+          AND (Accounts_Id = ANY(%(ids)s) OR Accounts_Id_Target = ANY(%(ids)s))
+    """, conn, params={"ids": ids})
+
+    today_ts = pd.Timestamp(today)
+    cutoff_ts = pd.Timestamp(cutoff)
+    for _, row in df_tmpl.iterrows():
+        step = _ACCT_FLOW_PERIOD_STEP.get(str(row['periodicity']), relativedelta(months=1))
+        total_occ = row.get('total_occurrences')
+        total_occ = int(total_occ) if pd.notna(total_occ) else None
+        inst_step = _ACCT_FLOW_PERIOD_STEP.get(str(row.get('installment_frequency')), relativedelta(months=1))
+        src = int(row['accounts_id'])
+        tgt = int(row['accounts_id_target']) if pd.notna(row.get('accounts_id_target')) else None
+        amount = _fnum(row['total_amount'])
+        occ = pd.Timestamp(row['next_due_date'])
+        while occ <= today_ts:
+            occ += step
+        while occ <= cutoff_ts:
+            for seq in range(total_occ or 1):
+                inst_date = occ if seq == 0 else occ + inst_step * seq
+                if inst_date > cutoff_ts:
+                    break
+                d = inst_date.date()
+                if tgt is not None:
+                    if src in deltas:
+                        deltas[src].append((d, -abs(amount)))
+                    if tgt in deltas:
+                        deltas[tgt].append((d, abs(amount)))
+                elif src in deltas:
+                    deltas[src].append((d, amount))
+            occ += step
+
+    for aid in deltas:
+        deltas[aid].sort(key=lambda x: x[0])
+    return deltas
+
+
+def _compound_with_deltas(balance: float, deltas: list, period_start, period_end, rate_fn) -> tuple:
+    """Compounds `balance` from period_start to period_end via `rate_fn(balance, days)`,
+    folding in any known dated balance changes (deposits/withdrawals/transfers already
+    projected for this account) at the point they actually occur, instead of assuming the
+    balance stays frozen for the whole period — the fix for a long (e.g. annual) cadence
+    otherwise projecting interest on today's balance for all 365 days even when scheduled
+    or recurring cash flow is known to change it before the payment date.
+    Returns (interest_earned, ending_balance)."""
+    bal = balance
+    total = 0.0
+    cur = period_start
+    for d_date, amount in deltas:
+        if d_date <= cur or d_date >= period_end:
+            continue
+        days = (d_date - cur).days
+        if days > 0:
+            gain = rate_fn(bal, days)
+            total += gain
+            bal += gain
+        bal += amount
+        cur = d_date
+    days = (period_end - cur).days
+    if days > 0:
+        gain = rate_fn(bal, days)
+        total += gain
+        bal += gain
+    return total, bal
+
+
+def _balance_as_of(current_balance: float, deltas: list, as_of, today) -> float:
+    """Back out `current_balance` (the true balance as observed `today`) to what it
+    was as of an earlier `as_of` date, by reversing every known delta dated after
+    `as_of` up to and including `today` — the starting point an interest
+    projection's already-open first accrual period needs, since `current_balance`
+    is a snapshot from partway (or all the way) through that period, not from its
+    start."""
+    if as_of >= today:
+        return current_balance
+    reversal = sum(amount for d, amount in deltas if as_of < d <= today)
+    return current_balance - reversal
 
 
 @router.get("/income-expense")
@@ -2747,6 +2884,13 @@ def get_cash_flow_forecast_full(
         if acct_ids and not df_rate_schedules.empty:
             df_rate_schedules = df_rate_schedules[df_rate_schedules['accounts_id'].astype(int).isin(acct_ids)].copy()
 
+        interest_acct_ids = set()
+        if not df_savings.empty:
+            interest_acct_ids |= set(df_savings['accounts_id'].astype(int))
+        if not df_rate_schedules.empty:
+            interest_acct_ids |= set(df_rate_schedules['accounts_id'].astype(int))
+        account_balance_deltas = _account_period_balance_deltas(conn, interest_acct_ids, today, cutoff)
+
         df_bonds = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
@@ -2958,6 +3102,7 @@ def get_cash_flow_forecast_full(
             info['schedules'], info['balance'], info['currency'], info['fx'],
             info['name'], accounts_id, today, cutoff,
             real_last_date=real_last, real_cadence_days=real_cad,
+            balance_deltas=account_balance_deltas.get(accounts_id),
         ))
 
     if not df_savings.empty:
@@ -2979,10 +3124,14 @@ def get_cash_flow_forecast_full(
             while next_dt <= today:
                 next_dt += _dt.timedelta(days=cadence_days)
 
-            running_balance = balance
+            deltas = account_balance_deltas.get(int(r['accounts_id']), [])
+            period_start = next_dt - _dt.timedelta(days=cadence_days)
+            running_balance = _balance_as_of(balance, deltas, period_start, today)
             while next_dt <= cutoff:
-                payment = running_balance * ((1 + apy / 100) ** (cadence_days / 365) - 1)
-                running_balance += payment
+                payment, running_balance = _compound_with_deltas(
+                    running_balance, deltas, period_start, next_dt,
+                    lambda b, d, apy=apy: b * ((1 + apy / 100) ** (d / 365) - 1),
+                )
                 interest_rows.append({
                     'date': next_dt.isoformat(),
                     'payees_name': str(r['accounts_name']),
@@ -2991,6 +3140,7 @@ def get_cash_flow_forecast_full(
                     'currency': str(r['currency']),
                     'frequency': f'Every {cadence_days}d',
                 })
+                period_start = next_dt
                 next_dt += _dt.timedelta(days=cadence_days)
 
     interest_rows.sort(key=lambda x: x['date'])
@@ -5360,6 +5510,12 @@ def get_savings_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
         from database.queries import _ensure_account_interest_rate_schema
         _ensure_account_interest_rate_schema()
         df_rate_schedules = _load_manual_rate_schedules(conn, ['Savings'])
+        interest_acct_ids = set()
+        if not df.empty:
+            interest_acct_ids |= set(df['accounts_id'].astype(int))
+        if not df_rate_schedules.empty:
+            interest_acct_ids |= set(df_rate_schedules['accounts_id'].astype(int))
+        account_balance_deltas = _account_period_balance_deltas(conn, interest_acct_ids, today, cutoff)
     schedules_by_account = _group_rate_schedules(df_rate_schedules)
 
     if df.empty:
@@ -5383,6 +5539,7 @@ def get_savings_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
                 manual['schedules'], balance, str(r['currency']), fx,
                 str(r['accounts_name']), accounts_id, today, cutoff,
                 real_last_date=real_last, real_cadence_days=cadence_days or None,
+                balance_deltas=account_balance_deltas.get(accounts_id),
             )
             if not payments:
                 continue
@@ -5418,14 +5575,25 @@ def get_savings_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
         # Compounding happens in the account's own currency (balance, APY%, and
         # cadence are all intrinsic to it) — only the resulting payments are
         # converted to EUR afterward, for cross-currency totals/monthly chart.
-        running_balance = balance
+        # Known balance changes within the accrual period — already-posted deposits/
+        # withdrawals/transfers as well as known future ones — are folded in via
+        # _compound_with_deltas so a long cadence (e.g. an annual payer) doesn't just
+        # apply APY to today's frozen balance for the whole period, and the current,
+        # still-open accrual period starts from its own real starting balance rather
+        # than today's snapshot.
+        deltas = account_balance_deltas.get(accounts_id, [])
         period_total = 0.0
         payments: list = []
+        period_start = next_date - _td(days=cadence_days)
+        running_balance = _balance_as_of(balance, deltas, period_start, today)
         while next_date <= cutoff:
-            payment = running_balance * ((1 + apy / 100) ** (cadence_days / 365) - 1)
-            running_balance += payment
+            payment, running_balance = _compound_with_deltas(
+                running_balance, deltas, period_start, next_date,
+                lambda b, d, apy=apy: b * ((1 + apy / 100) ** (d / 365) - 1),
+            )
             period_total += payment
             payments.append((next_date, payment))
+            period_start = next_date
             next_date += _td(days=cadence_days)
 
         if not payments:
