@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-12
+
+### Added
+- **Reports → Inv. Performance → Savings → Recommendations now shows each account's institution credit rating.** The ranking table and Idle Cash Opportunities' recommended target both surface a Rating badge — the most conservative of Moody's/S&P/Fitch, wherever set on Static Data → Institutions (green if Investment Grade, red if not, "Unrated" if no agency has rated it at all). Investment-grade status is derived from `Credit_Ratings_LT`'s numeric rank (Aaa/AAA through Baa3/BBB-) rather than its free-text Quality column, whose wording ("Upper Medium", "Prime", etc.) isn't a consistent Investment/Non-Investment binary in this database. Ranking still sorts purely by yield — a high-APY account at a weak or unrated institution is now visible as such rather than looking equivalent to a AAA bank, but the app doesn't auto-penalize yield for risk since that trade-off is a personal call.
+
 ## 2026-09-11
 
 ### Added

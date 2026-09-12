@@ -3524,6 +3524,23 @@ function SavingsAccountsTab() {
   const days = (v: unknown) => v != null ? String(Math.round(Number(v))) : '—'
   const dateStr = (v: unknown) => v ? String(v).slice(0, 10) : '—'
 
+  // Most conservative of Moody's/S&P/Fitch, wherever set on Static Data ->
+  // Institutions — null means no agency has rated it at all (distinct from a
+  // confirmed sub-investment-grade rating), shown as "Unrated" rather than
+  // silently treated as safe.
+  const ratingBadge = (rating: unknown, quality: unknown, investmentGrade: unknown) => {
+    if (rating == null) return <span className="text-xs text-slate-400 italic">Unrated</span>
+    const style = investmentGrade === true ? 'bg-green-50 text-green-700 border-green-200'
+      : investmentGrade === false ? 'bg-red-50 text-red-600 border-red-200'
+      : 'bg-slate-50 text-slate-500 border-slate-200'
+    return (
+      <span className={`text-xs px-1.5 py-0.5 rounded border font-semibold ${style}`}
+        title={quality != null ? `${String(quality)}${investmentGrade === false ? ' — Non-Investment Grade' : ''}` : undefined}>
+        {String(rating)}
+      </span>
+    )
+  }
+
   // ── View toggle ───────────────────────────────────────────────────────────────
   const VIEW_LABELS: Record<string, string> = { actual: '📋 Actual', forecast: '🔮 Forecast', recommendations: '💡 Recommendations' }
   const ViewToggle = (
@@ -3646,6 +3663,8 @@ function SavingsAccountsTab() {
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                       <ColHeader label="Account" sortKey="accounts_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Savings account name." />
                       <ColHeader label="Curr" sortKey="currency" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Account currency." />
+                      <ColHeader label="Institution" sortKey="institution_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="The bank this savings account is held at (Static Data → Accounts)." />
+                      <ColHeader label="Rating" sortKey="investment_grade" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Most conservative of Moody's/S&P/Fitch set on that institution (Static Data → Institutions) — green if Investment Grade, red if not, 'Unrated' if no agency has rated it. Hover a rating for its full grade." />
                       <ColHeader label="Current Balance" sortKey="current_balance" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Current ledger balance." />
                       <ColHeader label="APY %" sortKey="apy_pct" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Compound annualised rate from the account's last real interest period." />
                       <ColHeader label="Ann. YOC %" sortKey="annual_yoc_pct" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} align="right" tooltip="Simple annualised Yield on Cost from the same last real interest period." />
@@ -3656,6 +3675,8 @@ function SavingsAccountsTab() {
                         <tr key={i} className={`hover:bg-slate-50 ${i === 0 ? 'bg-green-50' : ''}`}>
                           <td className="px-3 py-2 font-medium">{i === 0 && '🏆 '}<AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
                           <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                          <td className="px-3 py-2 text-slate-500">{r.institution_name != null ? String(r.institution_name) : '—'}</td>
+                          <td className="px-3 py-2">{ratingBadge(r.rating, r.rating_quality, r.investment_grade)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
                           <td className="px-3 py-2 text-right tabular-nums font-semibold">{pct(r.apy_pct)}</td>
                           <td className="px-3 py-2 text-right tabular-nums text-slate-500">{pct(r.annual_yoc_pct)}</td>
@@ -3687,6 +3708,7 @@ function SavingsAccountsTab() {
                         <ColHeader label="Curr" sortKey="currency" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Account currency." />
                         <ColHeader label="Balance" sortKey="balance" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="Current balance sitting idle, earning no structured interest." />
                         <ColHeader label="Move To" sortKey="target_accounts_name" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Your best-performing savings account in the same currency." />
+                        <ColHeader label="Rating" sortKey="target_investment_grade" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Target institution's rating — see the Ranking table above for how it's derived. Weigh this against the yield below; a higher APY at a weaker or unrated institution isn't automatically the better move." />
                         <ColHeader label="Target APY %" sortKey="target_apy_pct" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="That account's last real interest period APY%." />
                         <ColHeader label="Potential Gain/yr" sortKey="potential_annual_gain_eur" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="Estimated additional annual interest if this balance earned the target account's APY% instead of sitting idle." />
                       </tr></thead>
@@ -3698,6 +3720,7 @@ function SavingsAccountsTab() {
                             <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.balance), 2)}</td>
                             <td className="px-3 py-2 text-blue-700">→ <AccountLink id={r.target_accounts_id as number} name={String(r.target_accounts_name)} type="Savings" /></td>
+                            <td className="px-3 py-2">{ratingBadge(r.target_rating, r.target_rating_quality, r.target_investment_grade)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{pct(r.target_apy_pct)}</td>
                             <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.potential_annual_gain_eur))}</td>
                           </tr>

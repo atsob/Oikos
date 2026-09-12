@@ -5645,6 +5645,40 @@ def get_savings_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
     }
 
 
+def _worst_institution_rating(row) -> dict:
+    """Given a row with moodys/sp/fitch (rank, quality, letter) triples already
+    joined against Credit_Ratings_LT, picks the single most conservative (numerically
+    highest Credit_Ratings_LT_Id) of whichever agencies actually rated the institution
+    — a bank rated AA by S&P but unrated by Moody's/Fitch is judged on that AA, but one
+    rated AA by S&P and BBB- by Fitch is judged on the BBB-, not averaged or best-cased.
+    investment_grade is derived from the rank number (<=10, i.e. Aaa/AAA down to
+    Baa3/BBB-) rather than Credit_Ratings_LT's own free-text Quality column, since
+    that column's wording isn't a consistent Investment/Non-Investment Grade binary
+    (e.g. 'Upper Medium', 'Prime') — the numeric scale is the reliable part of the
+    table. Returns {'letter', 'agency', 'quality', 'investment_grade'} all None when
+    the institution (or the account has none set) has no rating from any agency at
+    all — distinct from a confirmed rating, not defaulted to either extreme."""
+    candidates = []
+    for agency, rank_col, quality_col, letter_col in (
+        ('Moody\'s', 'moodys_rank', 'moodys_quality', 'moodys'),
+        ('S&P',      'sp_rank',     'sp_quality',     'sp'),
+        ('Fitch',    'fitch_rank',  'fitch_quality',  'fitch'),
+    ):
+        rank = row.get(rank_col)
+        if pd.notna(rank):
+            candidates.append((int(rank), agency, row.get(quality_col), row.get(letter_col)))
+    if not candidates:
+        return {'letter': None, 'agency': None, 'quality': None, 'investment_grade': None}
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    rank, agency, quality, letter = candidates[0]
+    return {
+        'letter': letter,
+        'agency': agency,
+        'quality': quality,
+        'investment_grade': rank <= 10,
+    }
+
+
 @router.get("/savings-recommendations")
 def get_savings_recommendations():
     """Ranks your existing savings accounts by expected APY% — a manually-defined rate
@@ -5653,7 +5687,16 @@ def get_savings_recommendations():
     otherwise the last-real-period APY% — and flags idle balances sitting in 0%-yield
     Cash/Checking accounts with a suggestion to move them into your best-performing
     savings account in the same currency instead. There's no external market of
-    savings accounts to recommend opening — only your own."""
+    savings accounts to recommend opening — only your own.
+
+    Each account also carries its institution's credit rating (the most conservative
+    of Moody's/S&P/Fitch, wherever set on Static Data -> Institutions) so a high-APY
+    account at a weak or unrated institution isn't recommended as if it were risk-free
+    — ranking still sorts by APY (yield is a fact; how much risk to accept for it is a
+    personal call this app doesn't make for you), but every ranking row and idle-cash
+    target surfaces the rating, and a target that's sub-investment-grade or entirely
+    unrated is flagged rather than silently treated as equivalent to a AAA bank.
+    """
     MATERIALITY_EUR = 50  # ignore idle balances too small to bother moving
 
     with get_db() as conn:
@@ -5679,8 +5722,22 @@ def get_savings_recommendations():
                    ), 1) AS fx_rate
             FROM Currencies c
         """, conn)
+        ratings_df = pd.read_sql("""
+            SELECT a.Accounts_Id AS accounts_id,
+                   i.Institutions_Name AS institution_name,
+                   i.Moodys AS moodys, crm.Credit_Ratings_LT_Id AS moodys_rank, crm.Quality AS moodys_quality,
+                   i.S_P    AS sp,     crs.Credit_Ratings_LT_Id AS sp_rank,     crs.Quality AS sp_quality,
+                   i.Fitch  AS fitch,  crf.Credit_Ratings_LT_Id AS fitch_rank, crf.Quality AS fitch_quality
+            FROM Accounts a
+            LEFT JOIN Institutions i ON i.Institutions_Id = a.Institutions_Id
+            LEFT JOIN Credit_Ratings_LT crm ON crm.Moodys = i.Moodys
+            LEFT JOIN Credit_Ratings_LT crs ON crs.S_P    = i.S_P
+            LEFT JOIN Credit_Ratings_LT crf ON crf.Fitch  = i.Fitch
+            WHERE a.Accounts_Type = 'Savings'
+        """, conn)
     fx_map = dict(zip(fx_df["currency"], fx_df["fx_rate"]))
     fx_map.setdefault("EUR", 1.0)
+    ratings_by_account = {int(r["accounts_id"]): r for _, r in ratings_df.iterrows()}
 
     ranking: list = []
     if not savings_df.empty:
@@ -5696,6 +5753,9 @@ def get_savings_recommendations():
                 blended = _tiered_interest(active, balance, 365) / balance * 100
                 apy_pct = yoc_pct = blended
                 manual_rate = True
+            rating_row = ratings_by_account.get(accounts_id)
+            rating = _worst_institution_rating(rating_row) if rating_row is not None else \
+                {'letter': None, 'agency': None, 'quality': None, 'investment_grade': None}
             ranking.append({
                 "accounts_id":        accounts_id,
                 "accounts_name":      str(r["accounts_name"]),
@@ -5705,6 +5765,11 @@ def get_savings_recommendations():
                 "annual_yoc_pct":     round(yoc_pct, 4),
                 "last_interest_date": str(r["last_interest_date"].date()) if pd.notna(r.get("last_interest_date")) else None,
                 "manual_rate":        manual_rate,
+                "institution_name":       str(rating_row["institution_name"]) if rating_row is not None and pd.notna(rating_row.get("institution_name")) else None,
+                "rating":                 rating['letter'],
+                "rating_agency":          rating['agency'],
+                "rating_quality":         rating['quality'],
+                "investment_grade":       rating['investment_grade'],
             })
         ranking.sort(key=lambda x: x["apy_pct"], reverse=True)
 
@@ -5733,6 +5798,10 @@ def get_savings_recommendations():
             "target_accounts_id":        best["accounts_id"],
             "target_accounts_name":      best["accounts_name"],
             "target_apy_pct":            best["apy_pct"],
+            "target_institution_name":   best["institution_name"],
+            "target_rating":             best["rating"],
+            "target_rating_quality":     best["rating_quality"],
+            "target_investment_grade":   best["investment_grade"],
             "potential_annual_gain":     round(potential_gain, 2),
             "potential_annual_gain_eur": round(potential_gain * fx_map.get(cur, 1), 2),
         })

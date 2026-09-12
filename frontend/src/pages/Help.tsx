@@ -769,7 +769,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           blended rate where one exists, otherwise last real period APY% — and flags idle balances sitting in
           0%-yield Cash/Checking accounts, estimating the annual gain from moving them into your best-performing
           savings account in the same currency — there's no external market of savings accounts to recommend
-          opening, only what you already have.
+          opening, only what you already have. Every ranked account (and every Idle Cash Opportunities target)
+          also shows its institution's credit <b>Rating</b> — the most conservative of Moody's/S&amp;P/Fitch,
+          wherever set on Static Data → Institutions: green if Investment Grade, red if not, "Unrated" (grey) if no
+          agency has rated it at all. Ranking still sorts purely by yield — the app surfaces the rating rather than
+          silently re-ranking by it, since how much risk to accept for extra yield is a personal call.
         </Note>
         <Note>
           In the Performance tab, security names in the <b>Top 15 Gainers/Losers</b> tables link to that
