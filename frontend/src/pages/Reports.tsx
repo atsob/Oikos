@@ -3611,7 +3611,7 @@ function SavingsAccountsTab() {
               <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                    <ColHeader label="Account" sortKey="accounts_name" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Savings account name." />
+                    <ColHeader label="Account" sortKey="accounts_name" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Savings account name." className="sticky left-0 bg-slate-50" />
                     <ColHeader label="Curr" sortKey="currency" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Account currency." />
                     <ColHeader label="Current Balance" sortKey="current_balance" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current ledger balance — the principal this forecast compounds forward." />
                     <ColHeader label="APY %" sortKey="apy_pct" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Compound annualised rate from the account's last real interest period — the rate this forecast assumes going forward." />
@@ -3623,13 +3623,13 @@ function SavingsAccountsTab() {
                   <tbody className="divide-y divide-slate-100">
                     {fcSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
+                        <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
                         <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">{days(r.cadence_days)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.period_forecast_eur))}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.projected_balance_eur), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.current_balance), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.apy_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500 whitespace-nowrap">{days(r.cadence_days)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600 whitespace-nowrap">{fmtEur(Number(r.period_forecast_eur))}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.projected_balance_eur), 2)}</td>
                         <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.next_payment_date)}</td>
                       </tr>
                     ))}
@@ -3661,7 +3661,7 @@ function SavingsAccountsTab() {
                 <div className="overflow-x-auto overflow-y-auto max-h-96">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                      <ColHeader label="Account" sortKey="accounts_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Savings account name." />
+                      <ColHeader label="Account" sortKey="accounts_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Savings account name." className="sticky left-0 bg-slate-50" />
                       <ColHeader label="Curr" sortKey="currency" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Account currency." />
                       <ColHeader label="Institution" sortKey="institution_name" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="The bank this savings account is held at (Static Data → Accounts)." />
                       <ColHeader label="Rating" sortKey="investment_grade" currentKey={rankSK} currentDir={rankSD} onSort={rankSort} tooltip="Most conservative of Moody's/S&P/Fitch set on that institution (Static Data → Institutions) — green if Investment Grade, red if not, 'Unrated' if no agency has rated it. Hover a rating for its full grade." />
@@ -3673,13 +3673,13 @@ function SavingsAccountsTab() {
                     <tbody className="divide-y divide-slate-100">
                       {rankSorted.map((r, i) => (
                         <tr key={i} className={`hover:bg-slate-50 ${i === 0 ? 'bg-green-50' : ''}`}>
-                          <td className="px-3 py-2 font-medium">{i === 0 && '🏆 '}<AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
+                          <td className={`px-3 py-2 font-medium whitespace-nowrap sticky left-0 ${i === 0 ? 'bg-green-50' : 'bg-white'}`}>{i === 0 && '🏆 '}<AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
                           <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.institution_name != null ? String(r.institution_name) : '—'}</td>
-                          <td className="px-3 py-2">{ratingBadge(r.rating, r.rating_quality, r.investment_grade)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.current_balance), 2)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{pct(r.apy_pct)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">{pct(r.annual_yoc_pct)}</td>
+                          <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{r.institution_name != null ? String(r.institution_name) : '—'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{ratingBadge(r.rating, r.rating_quality, r.investment_grade)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.current_balance), 2)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{pct(r.apy_pct)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-500 whitespace-nowrap">{pct(r.annual_yoc_pct)}</td>
                           <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_interest_date)}</td>
                         </tr>
                       ))}
@@ -3703,7 +3703,7 @@ function SavingsAccountsTab() {
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                        <ColHeader label="Idle In" sortKey="accounts_name" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Cash/Checking account currently holding the idle balance." />
+                        <ColHeader label="Idle In" sortKey="accounts_name" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Cash/Checking account currently holding the idle balance." className="sticky left-0 bg-slate-50" />
                         <ColHeader label="Type" sortKey="accounts_type" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Account type." />
                         <ColHeader label="Curr" sortKey="currency" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} tooltip="Account currency." />
                         <ColHeader label="Balance" sortKey="balance" currentKey={idleSK} currentDir={idleSD} onSort={idleSort} align="right" tooltip="Current balance sitting idle, earning no structured interest." />
@@ -3715,14 +3715,14 @@ function SavingsAccountsTab() {
                       <tbody className="divide-y divide-slate-100">
                         {idleSorted.map((r, i) => (
                           <tr key={i} className="hover:bg-slate-50">
-                            <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
-                            <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                            <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
                             <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.balance), 2)}</td>
-                            <td className="px-3 py-2 text-blue-700">→ <AccountLink id={r.target_accounts_id as number} name={String(r.target_accounts_name)} type="Savings" /></td>
-                            <td className="px-3 py-2">{ratingBadge(r.target_rating, r.target_rating_quality, r.target_investment_grade)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{pct(r.target_apy_pct)}</td>
-                            <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.potential_annual_gain_eur))}</td>
+                            <td className="px-3 py-2 text-blue-700 whitespace-nowrap">→ <AccountLink id={r.target_accounts_id as number} name={String(r.target_accounts_name)} type="Savings" /></td>
+                            <td className="px-3 py-2 whitespace-nowrap">{ratingBadge(r.target_rating, r.target_rating_quality, r.target_investment_grade)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.target_apy_pct)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600 whitespace-nowrap">{fmtEur(Number(r.potential_annual_gain_eur))}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -3802,7 +3802,7 @@ function SavingsAccountsTab() {
               <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                    <ColHeader label="Account" sortKey="accounts_name" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Savings account name." />
+                    <ColHeader label="Account" sortKey="accounts_name" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Savings account name." className="sticky left-0 bg-slate-50" />
                     <ColHeader label="Type" sortKey="accounts_type" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Account type." />
                     <ColHeader label="Curr" sortKey="currency" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Account currency." />
                     <ColHeader label="Principal" sortKey="principal" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} align="right" tooltip="Non-interest cash inflows within the selected period." />
@@ -3816,16 +3816,16 @@ function SavingsAccountsTab() {
                   <tbody className="divide-y divide-slate-100">
                     {detailSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
-                        <td className="px-3 py-2 text-slate-500">{String(r.accounts_type)}</td>
+                        <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
+                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
                         <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.principal ?? 0), 2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.avg_balance ?? 0), 2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtNum(Number(r.current_balance ?? 0), 2)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.principal ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-green-700 whitespace-nowrap">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.avg_balance ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{fmtNum(Number(r.current_balance ?? 0), 2)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.annual_yoc_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.apy_pct)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{days(r.holding_days)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3842,7 +3842,7 @@ function SavingsAccountsTab() {
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Savings account name.">Account</Tooltip></th>
+                <th className="px-3 py-2 text-left whitespace-nowrap sticky left-0 bg-slate-50"><Tooltip text="Savings account name.">Account</Tooltip></th>
                 <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Account type.">Type</Tooltip></th>
                 <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Account currency.">Curr</Tooltip></th>
                 <th className="px-3 py-2 text-right whitespace-nowrap"><Tooltip text="Average principal balance during the last interest period.">Avg Principal</Tooltip></th>
@@ -3857,15 +3857,15 @@ function SavingsAccountsTab() {
               <tbody className="divide-y divide-slate-100">
                 {(result?.detail_last ?? []).map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium whitespace-nowrap"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.currency)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-green-700">{r.last_interest_sum != null ? fmtNum(Number(r.last_interest_sum), 2) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.annual_interest_cash_last != null ? fmtNum(Number(r.annual_interest_cash_last), 2) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.annual_yoc_pct_last)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{pct(r.apy_pct_last)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{days(r.holding_days_last)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-green-700 whitespace-nowrap">{r.last_interest_sum != null ? fmtNum(Number(r.last_interest_sum), 2) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.annual_interest_cash_last != null ? fmtNum(Number(r.annual_interest_cash_last), 2) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.annual_yoc_pct_last)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.apy_pct_last)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{days(r.holding_days_last)}</td>
                     <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.period_start_date)}</td>
                     <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{dateStr(r.last_interest_date)}</td>
                   </tr>
