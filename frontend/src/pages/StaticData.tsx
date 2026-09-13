@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { usePersist, useGridColumnState, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridApi } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -203,6 +203,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     },
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-payees', payeeColDefs)
+  const gridScroll = useGridScrollState('static-data-payees')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -241,6 +242,8 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           rowData={filtered}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -447,6 +450,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     },
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-categories', categoryColDefs)
+  const gridScroll = useGridScrollState('static-data-categories')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -480,6 +484,8 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           rowData={filtered}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -729,6 +735,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     },
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
+  const gridScroll = useGridScrollState('static-data-accounts')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -765,6 +772,8 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           rowData={filtered}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -1300,6 +1309,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
     },
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
+  const gridScroll = useGridScrollState('static-data-institutions')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1328,6 +1338,8 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
           rowData={filtered}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -1481,6 +1493,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
     },
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-issuers', issuerColDefs)
+  const gridScroll = useGridScrollState('static-data-issuers')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1509,6 +1522,8 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
           rowData={filtered}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -98,6 +98,7 @@ const PRICES_TAB_COLS = [
 
 function PricesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
+  const gridScroll = useGridScrollState('security-detail-prices')
   const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
@@ -461,6 +462,8 @@ function PricesTab({ secId }: { secId: number }) {
           quickFilterText={priceSearch}
           rowSelection="multiple"
           onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
@@ -761,8 +764,10 @@ function AnalysisTab({ secId }: { secId: number }) {
 
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
+  const holdingsGridScroll = useGridScrollState('security-detail-holdings-by-account')
   const { gridApi: holdingsGridApi, onGridReady: onHoldingsGridReady } = useGridApi()
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
+  const txGridScroll = useGridScrollState('security-detail-all-transactions')
   const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -934,6 +939,8 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             theme="legacy"
             onGridReady={onHoldingsGridReady}
             rowData={holdings.holdings}
+            initialState={holdingsGridScroll.initialState}
+            onStateUpdated={holdingsGridScroll.onStateUpdated}
             onColumnMoved={holdingsGridCols.onColumnMoved}
             onColumnResized={holdingsGridCols.onColumnResized}
             columnDefs={holdingsGridCols.colDefs}
@@ -968,6 +975,8 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             onGridReady={onTxGridReady}
             rowData={transactions}
             quickFilterText={txSearch}
+            initialState={txGridScroll.initialState}
+            onStateUpdated={txGridScroll.onStateUpdated}
             onColumnMoved={txGridCols.onColumnMoved}
             onColumnResized={txGridCols.onColumnResized}
             columnDefs={txGridCols.colDefs}
@@ -1024,6 +1033,7 @@ const PRICE_ANOMALIES_COLS = [
 
 function PriceAnomaliesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-anomalies', PRICE_ANOMALIES_COLS)
+  const gridScroll = useGridScrollState('security-detail-anomalies')
   const { gridApi, onGridReady } = useGridApi()
   const qc = useQueryClient()
   const [threshold, setThreshold] = useState(100)
@@ -1076,6 +1086,8 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
               rowData={anomalies}
               rowSelection="multiple"
               onSelectionChanged={e => setSelected(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
+              initialState={gridScroll.initialState}
+              onStateUpdated={gridScroll.onStateUpdated}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -1181,6 +1193,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [deleteMut])
   const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
+  const gridScroll = useGridScrollState('security-detail-dividends')
   const { gridApi, onGridReady } = useGridApi()
 
   const handleAdd = () => {
@@ -1293,6 +1306,8 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               theme="legacy"
               onGridReady={onGridReady}
               rowData={dividends}
+              initialState={gridScroll.initialState}
+              onStateUpdated={gridScroll.onStateUpdated}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -1524,6 +1539,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     },
   ]
   const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
+  const gridScroll = useGridScrollState('security-detail-corporate-actions')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1548,6 +1564,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 theme="legacy"
                 onGridReady={onGridReady}
                 rowData={actions}
+                initialState={gridScroll.initialState}
+                onStateUpdated={gridScroll.onStateUpdated}
                 onColumnMoved={gridCols.onColumnMoved}
                 onColumnResized={gridCols.onColumnResized}
                 columnDefs={gridCols.colDefs}

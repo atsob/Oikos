@@ -1,8 +1,8 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { getSettings, saveSettings, subscribeSettings } from './settings'
 import type { AppSettings } from './settings'
 import { getPref, setPref, subscribePref } from './preferences'
-import type { GridApi, ColumnState, ColumnMovedEvent, ColumnResizedEvent, SortChangedEvent } from 'ag-grid-community'
+import type { GridApi, ColumnState, ColumnMovedEvent, ColumnResizedEvent, SortChangedEvent, StateUpdatedEvent, GridState } from 'ag-grid-community'
 
 export function useSettings(): [AppSettings, (s: AppSettings) => void] {
   const [settings, setSettings] = useState<AppSettings>(getSettings)
@@ -176,6 +176,55 @@ export function useGridFilterState(key: string) {
   }, [setFilterModel])
 
   return { filterModel, onFilterChanged, clearFilters, hasFilters } as const
+}
+
+/**
+ * Persists an ag-Grid's scroll position (vertical + horizontal) server-side via
+ * usePersist, keyed by `key`, so clicking through to a row's detail page (e.g.
+ * Security Detail) and hitting Back restores where you were instead of landing
+ * back at the top-left of the grid — same motivation as useGridFilterState, but
+ * for scroll position rather than filters, using ag-Grid's own built-in
+ * initialState/stateUpdated mechanism (GridState.scroll) rather than reaching
+ * into internal DOM scroll containers:
+ *
+ *   const gridScroll = useGridScrollState('portfolio-action-signals')
+ *   <AgGridReact initialState={gridScroll.initialState} onStateUpdated={gridScroll.onStateUpdated} .../>
+ *
+ * onStateUpdated fires for every kind of grid state change (columns, filters,
+ * sort, scroll, ...), not just scrolling, and firing on every scroll pixel would
+ * spam usePersist's server write on every tick — so this only extracts the
+ * `scroll` field and debounces the actual save. The debounced save is flushed
+ * (not discarded) on unmount, since that's exactly the moment a click-through to
+ * a detail page fires — losing the last pending position right when the user
+ * navigates away would defeat the entire point of persisting it.
+ */
+export function useGridScrollState(key: string) {
+  const [state, setState] = usePersist<{ top: number; left: number } | null>(`grid_scroll_${key}`, null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pending = useRef<{ top: number; left: number } | null>(null)
+
+  const onStateUpdated = useCallback((e: StateUpdatedEvent) => {
+    const scroll = e.api.getState().scroll
+    if (!scroll) return
+    pending.current = scroll
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      pending.current = null
+      setState(scroll)
+    }, 400)
+  }, [setState])
+
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      if (pending.current) setState(pending.current)
+    }
+  }, [setState])
+
+  const initialState = useMemo<GridState | undefined>(() => state ? { scroll: state } : undefined, [state])
+
+  return { initialState, onStateUpdated } as const
 }
 
 // ── useGridApi ───────────────────────────────────────────────────────────────

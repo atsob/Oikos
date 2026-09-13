@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -236,6 +236,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     return cols
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-securities', colDefs)
+  const gridScroll = useGridScrollState('market-data-securities')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -260,6 +261,8 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
       <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
         <AgGridReact theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -402,6 +405,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
     return cols
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-currencies', colDefs)
+  const gridScroll = useGridScrollState('market-data-currencies')
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -426,6 +430,8 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
         <AgGridReact theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -487,6 +493,7 @@ const FX_PRICES_COLS = [
 
 function FxPricesTab() {
   const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
+  const gridScroll = useGridScrollState('market-data-fx-prices')
   const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
@@ -628,6 +635,8 @@ function FxPricesTab() {
               quickFilterText={fxSearch}
               rowSelection="multiple"
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
+              initialState={gridScroll.initialState}
+              onStateUpdated={gridScroll.onStateUpdated}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -721,6 +730,7 @@ const SECURITIES_PRICES_COLS = [
 
 function SecuritiesPricesTab() {
   const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
+  const gridScroll = useGridScrollState('market-data-securities-prices')
   const { gridApi, onGridReady } = useGridApi()
   const { isDark } = useTheme()
   const qc = useQueryClient()
@@ -912,6 +922,8 @@ function SecuritiesPricesTab() {
               quickFilterText={priceSearch}
               rowSelection="multiple"
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
+              initialState={gridScroll.initialState}
+              onStateUpdated={gridScroll.onStateUpdated}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -1513,6 +1525,7 @@ export default function MarketData() {
   // below, same as before; this only fixes it surviving a navigate-away-and-back.
   const [search, setSearch] = usePersist('market_data_search', '')
   const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
+  const anomalyGridScroll = useGridScrollState('market-data-anomalies')
   const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi()
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
@@ -1552,6 +1565,8 @@ export default function MarketData() {
                   <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
                     <AgGridReact theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
+                      initialState={anomalyGridScroll.initialState}
+                      onStateUpdated={anomalyGridScroll.onStateUpdated}
                       onColumnMoved={anomalyGridCols.onColumnMoved}
                       onColumnResized={anomalyGridCols.onColumnResized} />
                   </div>

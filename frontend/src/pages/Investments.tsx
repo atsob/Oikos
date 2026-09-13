@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { usePersist, useGridColumnState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -430,6 +430,7 @@ export default function Investments() {
     ...makeCashCols(String(selectedAccount?.currency ?? 'EUR')),
   ], [selectedAccount])
   const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
+  const cashGridScroll = useGridScrollState('investments-cash')
   const { gridApi: cashGridApi, onGridReady: onCashGridReady } = useGridApi(api => api.autoSizeAllColumns())
 
   const txColDefs = useMemo(() => [
@@ -793,6 +794,8 @@ export default function Investments() {
                       onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                       onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
                       onGridReady={onCashGridReady}
+                      initialState={cashGridScroll.initialState}
+                      onStateUpdated={cashGridScroll.onStateUpdated}
                       onColumnMoved={cashGridCols.onColumnMoved}
                       onColumnResized={cashGridCols.onColumnResized}
                       onSortChanged={cashGridCols.onSortChanged}

@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-13
+
+### Fixed
+- **Every ag-Grid table in the app (19 grids across Reports, Security Detail, Market Data, Static Data, and Investments) reset to the top-left after navigating away and back** — clicking into a Security Detail page and hitting Back, or just switching tabs, re-mounted the grid from scratch, discarding both vertical and horizontal scroll position even though column layout/filters already survived the round trip. All of them now persist scroll position via ag-Grid's own `initialState`/`onStateUpdated` mechanism (`GridState.scroll`) — the same officially-supported approach already used for column order and filters — via a new shared `useGridScrollState` hook, debounced 400ms so a scroll gesture doesn't spam a save on every pixel. The two remaining ag-Grid tables (Cash Register, Investments → Transactions) stream rows server-side via ag-Grid's infinite row model, which this scroll-position mechanism doesn't support, so they're unaffected either way.
+- **That debounce could still lose the scroll position if you clicked through to a detail page quickly** — scrolling and then clicking within the 400ms debounce window unmounted the component before the pending save fired, and the cleanup simply discarded it instead of flushing it, so the fix above only "sometimes" worked depending on how fast you clicked. Now flushed on unmount instead of discarded. Verified live by reproducing the exact race (scroll, then click a row with zero delay) and confirming Back now restores the same position every time, plus a broader spot-check (Static Data → Institutions: scroll, switch tabs away and back, land in the same spot).
+
 ## 2026-09-12
 
 ### Added

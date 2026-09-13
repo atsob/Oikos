@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useSettings } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -4521,6 +4521,7 @@ function PriceChangesTab() {
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('price-changes', colDefs)
   const gridFilter = useGridFilterState('price-changes')
+  const gridScroll = useGridScrollState('price-changes')
   const { gridApi, onGridReady } = useGridApi(api => {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
   })
@@ -4566,6 +4567,8 @@ function PriceChangesTab() {
           defaultColDef={PORTFOLIO_SIGNALS_DEFAULT_COL_DEF}
           columnTypes={AG_GRID_COLUMN_TYPES}
           quickFilterText={search}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -5157,6 +5160,7 @@ function PortfolioActionSignalsTab() {
   }, [navigate, settings.trailingStopPct]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('portfolio-action-signals', colDefs)
   const gridFilter = useGridFilterState('portfolio-action-signals')
+  const gridScroll = useGridScrollState('portfolio-action-signals')
   const { gridApi, onGridReady } = useGridApi(api => {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
   })
@@ -5202,6 +5206,8 @@ function PortfolioActionSignalsTab() {
           defaultColDef={PORTFOLIO_SIGNALS_DEFAULT_COL_DEF}
           columnTypes={AG_GRID_COLUMN_TYPES}
           quickFilterText={search}
+          initialState={gridScroll.initialState}
+          onStateUpdated={gridScroll.onStateUpdated}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
