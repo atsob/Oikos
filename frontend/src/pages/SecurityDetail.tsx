@@ -274,6 +274,10 @@ function PricesTab({ secId }: { secId: number }) {
     }
   }, [history, txHistory, fromDate])
 
+  // Opaque background behind every reference-line label below, so text stays legible
+  // over the price line/candles it happens to cross instead of blending into them.
+  const annotationBg = isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.82)'
+
   // Horizontal threshold lines for this security's active price alerts, drawn full-width
   // via paper-relative x so they don't need a date to anchor to — matches the green/red
   // "Price Above"/"Price Below" color coding used on the Alerts tab.
@@ -288,12 +292,22 @@ function PricesTab({ secId }: { secId: number }) {
   const alertAnnotations = useMemo(() => priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
     const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    const color = isAbove ? '#16a34a' : '#dc2626'
     return {
       xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
       text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
-      font: { size: 10, color: isAbove ? '#16a34a' : '#dc2626' },
+      font: { size: 10, color }, bgcolor: annotationBg, bordercolor: color, borderwidth: 1, borderpad: 2,
     }
-  }), [priceAlerts])
+  }), [priceAlerts, annotationBg])
+
+  // Avg Cost and Trailing Stop are both drawn at the right edge and can land close
+  // together in value (e.g. a security trading near its trailing-stop level with a
+  // similar cost basis) — anchoring both away from whichever is lower/higher keeps
+  // their labels diverging instead of drifting toward each other and overlapping
+  // into unreadable overlaid text.
+  const avgCostAboveStop = avgCostPerShare != null && trailingStopPrice != null
+    ? avgCostPerShare >= trailingStopPrice
+    : true
 
   // Same idea as the alert lines above, for the position's average cost per share.
   const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
@@ -304,9 +318,9 @@ function PricesTab({ secId }: { secId: number }) {
   const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
     xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
     text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: 'top' as const,
-    font: { size: 10, color: '#7c3aed' },
-  }], [avgCostPerShare])
+    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'bottom' as const : 'top' as const,
+    font: { size: 10, color: '#7c3aed' }, bgcolor: annotationBg, bordercolor: '#8b5cf6', borderwidth: 1, borderpad: 2,
+  }], [avgCostPerShare, avgCostAboveStop, annotationBg])
 
   // Trailing-stop reference line — trailing 1-year high minus the configured %
   // (Tools → System → App Settings → Trailing Stop), same figure as Portfolio
@@ -314,14 +328,14 @@ function PricesTab({ secId }: { secId: number }) {
   const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
     type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
     x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
-    line: { color: '#dc2626', width: 1.5, dash: 'dashdot' as const },
+    line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
   }], [trailingStopPrice])
   const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
     xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
     text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: 'bottom' as const,
-    font: { size: 10, color: '#dc2626' },
-  }], [trailingStopPrice])
+    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'top' as const : 'bottom' as const,
+    font: { size: 10, color: '#dc2626' }, bgcolor: annotationBg, bordercolor: '#dc2626', borderwidth: 1, borderpad: 2,
+  }], [trailingStopPrice, avgCostAboveStop, annotationBg])
 
   return (
     <div className="p-4 space-y-4">
@@ -1906,7 +1920,7 @@ function OverviewPanel({ title, actions, children }: { title: string; actions?: 
   )
 }
 
-function OverviewTab({ secId, security, onEditDetails }: { secId: number; security: Record<string, unknown>; onEditDetails: () => void }) {
+function OverviewTab({ secId, security, securityLoading, onEditDetails }: { secId: number; security: Record<string, unknown>; securityLoading: boolean; onEditDetails: () => void }) {
   const liveRefetchMs = useLiveRefetchInterval()
   const { data: holdingsData, isLoading } = useQuery({
     queryKey: ['sec-holdings', secId],
@@ -1939,7 +1953,7 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
   const change = latestPrice != null && prevClose != null ? latestPrice - prevClose : null
   const pctChange = change != null && prevClose ? (change / prevClose) * 100 : null
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (isLoading || securityLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
     <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -2062,6 +2076,10 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     return ((last - first) / first) * 100
   })()
 
+  // Opaque background behind every reference-line label below, so text stays legible
+  // over the price line/candles it happens to cross instead of blending into them.
+  const annotationBg = isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.82)'
+
   // Same alert-threshold lines as the Prices tab chart — see its comment for why
   // paper-relative x is used.
   const alertShapes = useMemo(() => priceAlerts.map(a => {
@@ -2075,12 +2093,20 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   const alertAnnotations = useMemo(() => priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
     const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    const color = isAbove ? '#16a34a' : '#dc2626'
     return {
       xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
       text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
-      font: { size: 10, color: isAbove ? '#16a34a' : '#dc2626' },
+      font: { size: 10, color }, bgcolor: annotationBg, bordercolor: color, borderwidth: 1, borderpad: 2,
     }
-  }), [priceAlerts])
+  }), [priceAlerts, annotationBg])
+
+  // Avg Cost and Trailing Stop can land close together in value (see the Prices tab
+  // chart's identical comment) — anchor each away from the other so their labels
+  // diverge instead of overlapping into unreadable overlaid text.
+  const avgCostAboveStop = avgCostPerShare != null && trailingStopPrice != null
+    ? avgCostPerShare >= trailingStopPrice
+    : true
 
   // Same idea as the alert lines above, for the position's average cost per share.
   const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
@@ -2091,23 +2117,23 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
     xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
     text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: 'top' as const,
-    font: { size: 10, color: '#7c3aed' },
-  }], [avgCostPerShare])
+    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'bottom' as const : 'top' as const,
+    font: { size: 10, color: '#7c3aed' }, bgcolor: annotationBg, bordercolor: '#8b5cf6', borderwidth: 1, borderpad: 2,
+  }], [avgCostPerShare, avgCostAboveStop, annotationBg])
 
   // Same trailing-stop reference line as the Prices tab chart — trailing 1-year
   // high minus the configured % (Tools → System → App Settings → Trailing Stop).
   const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
     type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
     x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
-    line: { color: '#dc2626', width: 1.5, dash: 'dashdot' as const },
+    line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
   }], [trailingStopPrice])
   const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
     xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
     text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: 'bottom' as const,
-    font: { size: 10, color: '#dc2626' },
-  }], [trailingStopPrice])
+    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'top' as const : 'bottom' as const,
+    font: { size: 10, color: '#dc2626' }, bgcolor: annotationBg, bordercolor: '#dc2626', borderwidth: 1, borderpad: 2,
+  }], [trailingStopPrice, avgCostAboveStop, annotationBg])
 
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
@@ -3239,8 +3265,8 @@ export default function SecurityDetail() {
 
   const secId = Number(id)
 
-  const { data: securitiesRaw = [] } = useQuery({
-    queryKey: ['securities', ''],
+  const { data: securitiesRaw = [], isLoading: securitiesLoading } = useQuery({
+    queryKey: ['securities'],
     queryFn: () => getSecurities(),
   })
   const securities = securitiesRaw as Record<string, unknown>[]
@@ -3265,8 +3291,9 @@ export default function SecurityDetail() {
           <select
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium bg-white shadow-sm"
             value={secId || ''}
+            disabled={securitiesLoading}
             onChange={e => { if (e.target.value) navigate(`/securities/${e.target.value}`) }}>
-            <option value="">— Select a security —</option>
+            <option value="">{securitiesLoading ? 'Loading securities…' : '— Select a security —'}</option>
             {securities.map(s => (
               <option key={String(s.id)} value={String(s.id)}>
                 {String(s.name)} ({String(s.currency ?? '?')})
@@ -3293,7 +3320,7 @@ export default function SecurityDetail() {
             </div>
 
             <CardBody className="p-0">
-              {tab === 'Overview' && <OverviewTab secId={secId} security={security} onEditDetails={() => setTab('Setup')} />}
+              {tab === 'Overview' && <OverviewTab secId={secId} security={security} securityLoading={securitiesLoading} onEditDetails={() => setTab('Setup')} />}
               {tab === 'Setup' && <SecuritySetupTab security={security} />}
               {tab === 'Analysis' && <AnalysisTab secId={secId} />}
               {tab === 'Prices' && <PricesTab secId={secId} />}

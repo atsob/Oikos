@@ -761,7 +761,7 @@ function SecuritiesPricesTab() {
     },
   })
 
-  const { data: securities = [] } = useQuery({ queryKey: ['securities', ''], queryFn: () => getSecurities() })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const { data: history = [], isLoading } = useQuery({
     queryKey: ['price-history', secId, fromDate],
     queryFn: () => getPriceHistory(secId!, fromDate),
@@ -1008,7 +1008,7 @@ const PERIODS = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', 'max']
 
 function DownloadsTab() {
   const qc = useQueryClient()
-  const { data: securities = [] } = useQuery({ queryKey: ['securities', ''], queryFn: () => getSecurities() })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
 
   const [period, setPeriod] = useState('1mo')
