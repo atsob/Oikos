@@ -3,6 +3,17 @@ import { queryClient } from './queryClient'
 
 export const api = axios.create({ baseURL: '/api', withCredentials: true })
 
+// Every endpoint that inserts/updates/deletes Investments rows must call this so cached
+// P&L figures (Reports 'pnl'/'pnl-all', SecurityDetail 'pnl-all-time') and portfolio
+// signals (current qty/value driving 'portfolio-signals', e.g. the Securities Analysis
+// -> Portfolio Action Signals grid) don't keep showing pre-transaction numbers until
+// their staleTime lapses and something happens to remount them.
+export const invalidatePnl = () =>
+  queryClient.invalidateQueries({
+    predicate: q => typeof q.queryKey[0] === 'string'
+      && ((q.queryKey[0] as string).startsWith('pnl') || q.queryKey[0] === 'portfolio-signals'),
+  })
+
 // On session expiry/invalidation, redirect to /login — except for the /auth/me
 // probe's own 401 (that's the expected "not logged in yet" response RequireAuth
 // checks for, not a session that just expired), which would otherwise loop.
@@ -147,18 +158,18 @@ export const getLinkedAccount = (accountId: number) =>
   api.get(`/investments/linked-account/${accountId}`).then(r => r.data)
 
 export const batchUpdateInvestments = (ids: number[], changes: { accounts_id?: number; cash_account_id?: number }): Promise<{ updated: number; warnings: { account: string; security: string; quantity: number }[] }> =>
-  api.post('/investments/transactions/batch-update', { ids, ...changes }).then(r => r.data)
+  api.post('/investments/transactions/batch-update', { ids, ...changes }).then(r => { invalidatePnl(); return r.data })
 
 export const batchDeleteInvestments = (ids: number[]): Promise<{ deleted: number }> =>
-  api.post('/investments/transactions/batch-delete', { ids }).then(r => r.data)
+  api.post('/investments/transactions/batch-delete', { ids }).then(r => { invalidatePnl(); return r.data })
 
 export const previewInvestmentTransfer = (data: Record<string, unknown>) =>
   api.post('/investments/transfer/preview', data).then(r => r.data)
 export const executeInvestmentTransfer = (data: Record<string, unknown>) =>
-  api.post('/investments/transfer/execute', data).then(r => r.data)
+  api.post('/investments/transfer/execute', data).then(r => { invalidatePnl(); return r.data })
 
 export const stakingReinvest = (entries: Record<string, unknown>[]) =>
-  api.post('/investments/staking-reinvest', entries).then(r => r.data)
+  api.post('/investments/staking-reinvest', entries).then(r => { invalidatePnl(); return r.data })
 
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getIncomeExpense = (startDate: string, endDate: string) =>
@@ -556,10 +567,10 @@ export const previewCorporateAction = (secId: number, data: Record<string, unkno
   api.post(`/securities/${secId}/corporate-actions/preview`, data).then(r => r.data)
 
 export const executeCorporateAction = (secId: number, data: Record<string, unknown>) =>
-  api.post(`/securities/${secId}/corporate-actions/execute`, data).then(r => r.data)
+  api.post(`/securities/${secId}/corporate-actions/execute`, data).then(r => { invalidatePnl(); return r.data })
 
 export const applySplitCorporateAction = (secId: number, caId: number) =>
-  api.post(`/securities/${secId}/corporate-actions/${caId}/apply-split`).then(r => r.data)
+  api.post(`/securities/${secId}/corporate-actions/${caId}/apply-split`).then(r => { invalidatePnl(); return r.data })
 
 export const getSecurityPriceAnomalies = (secId: number, thresholdPct = 100) =>
   api.get(`/securities/${secId}/price-anomalies`, { params: { threshold_pct: thresholdPct } }).then(r => r.data)

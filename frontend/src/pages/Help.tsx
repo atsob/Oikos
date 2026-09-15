@@ -840,7 +840,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Currency, Exchange; Shares Held, Cost Basis, Avg Cost/Share, Realized P&amp;L; and the full Quote panel
           (Open, Prev Close, Day High/Low, 52-Week High/Low, Volume, Avg Volume, P/E, Market Cap, Ann Div/Share,
           Ex-Div Date, Change/% Change) — most hidden by default to keep the table readable, but a click away via
-          Columns.
+          Columns. A closed-out security (0 shares held) shows dimmed rather than removed from the list. Shares
+          Held/Cost Basis/Realized P&amp;L reflect any transaction you just saved immediately, not after a delay.
         </Note>
         <Note>
           <b>MA Trend</b>, <b>Cross Event</b>, <b>MA50</b>/<b>MA200</b>, <b>Above MA200</b>, and <b>Trailing Stop</b>
@@ -1049,7 +1050,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           ever been sold — the same all-time figure as Reports → Inv. Performance → P&amp;L, summed across every
           account. The % is against total capital ever invested in the position, not the cost basis of the shares
           actually sold (the app doesn't track that separately once a lot is closed). The <b>Current Value</b> card's
-          unrealized P&amp;L is likewise shown as both an amount and a percentage, against total cost basis.
+          unrealized P&amp;L is likewise shown as both an amount and a percentage, against total cost basis. Both
+          figures update immediately after you save, edit, or delete a transaction for this security — no need to
+          reload the page.
         </Note>
         <Note>
           A Stock or Bond's <b>In Funds</b> tab lists every ETF/Mutual Fund in your database that includes it

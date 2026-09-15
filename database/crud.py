@@ -513,6 +513,8 @@ def update_holdings():
               )
         """)
         conn.commit()
+        from database.queries import invalidate_portfolio_signals_cache
+        invalidate_portfolio_signals_cache()
     except Exception:
         conn.rollback()
         log.exception("update_holdings failed")

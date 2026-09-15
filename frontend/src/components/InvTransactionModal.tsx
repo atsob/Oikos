@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getFxRates, getLinkedAccount, getHoldings } from '@/lib/api'
-import { api } from '@/lib/api'
+import { api, invalidatePnl } from '@/lib/api'
 import { Input, Button, useEscapeKey, AccountOptions } from '@/components/ui'
 import { todayLocal } from '@/lib/utils'
 import { X, Save } from 'lucide-react'
@@ -66,11 +66,11 @@ export const emptyInvForm = (): InvFormData => ({
 })
 
 export const createInvestment = (data: Record<string, unknown>) =>
-  api.post('/investments/transactions', data).then(r => r.data)
+  api.post('/investments/transactions', data).then(r => { invalidatePnl(); return r.data })
 export const updateInvestment = (id: number, data: Record<string, unknown>) =>
-  api.put(`/investments/transactions/${id}`, data).then(r => r.data)
+  api.put(`/investments/transactions/${id}`, data).then(r => { invalidatePnl(); return r.data })
 export const deleteInvestment = (id: number) =>
-  api.delete(`/investments/transactions/${id}`).then(r => r.data)
+  api.delete(`/investments/transactions/${id}`).then(r => { invalidatePnl(); return r.data })
 
 export function InvTransactionModal({ form, onChange, accounts, allAccounts, securities, onSave, onDelete, onClose, saving, error, editId }: {
   form: InvFormData

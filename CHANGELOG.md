@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-15
+
+### Fixed
+- **A security's Realized P&L could keep showing a stale figure (e.g. €0.00) after you bought or sold it, until something happened to force a refetch.** Security Detail's Overview/Transactions tabs and Reports → Securities Analysis → Portfolio Action Signals cache all-time P&L under a shared React Query key with a 5-minute `staleTime`, but nothing invalidated it when an investment transaction was created, edited, deleted, transferred, or hit by a corporate action — so the figure quietly kept showing pre-transaction numbers. Every one of those mutations now clears the cache immediately. Verified live: edited a Sell transaction's price and watched Realized Gain/Loss update on screen instantly, with no reload.
+- **Reports → Securities Analysis → Portfolio Action Signals could keep showing a just-closed (or just-opened) position's old Shares Held/Cost Basis/current value for up to 3 minutes**, independent of the fix above — this data comes from a separate, server-side cache (`get_portfolio_signals`, added 2026-09-11 to speed up Dashboard alert dismissal) keyed off the Holdings table, which nothing invalidated when Holdings changed. `update_holdings()` — already called by every investment create/update/delete/transfer path — now clears that cache as soon as it writes Holdings. Verified by populating the cache, running `update_holdings()`, and confirming it was cleared and a fresh read reflected the change.
+
 ## 2026-09-13
 
 ### Fixed

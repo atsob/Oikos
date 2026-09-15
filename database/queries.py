@@ -1212,6 +1212,16 @@ _PORTFOLIO_SIGNALS_TTL_SECONDS = 180
 _portfolio_signals_cache: dict = {}  # {selected_acc_id: (computed_at, DataFrame)}
 
 
+def invalidate_portfolio_signals_cache():
+    """Drop the get_portfolio_signals() TTL cache. current_qty/current_value_eur in
+    that cache come from the Holdings table, so update_holdings() calls this right
+    after it writes Holdings — otherwise a just-closed or just-opened position can
+    keep showing its pre-change quantity/value for up to
+    _PORTFOLIO_SIGNALS_TTL_SECONDS after the transaction that changed it.
+    """
+    _portfolio_signals_cache.clear()
+
+
 def get_portfolio_signals(selected_acc_id=None):
     """Cached wrapper around _compute_portfolio_signals — the underlying query scans
     ~5 years of daily prices across every security with several window functions
