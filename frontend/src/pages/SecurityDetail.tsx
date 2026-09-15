@@ -1994,8 +1994,10 @@ function OverviewTab({ secId, security, onEditDetails }: { secId: number; securi
 
 // Compact price chart for the Overview tab — same underlying price-history/
 // transaction-marker data and 'sec_chart_period' persisted period as the
-// Prices tab's full chart, just without the MA line, volume axis, or the
-// editing/import tooling below it (those stay on the Prices tab).
+// Prices tab's full chart, plus the fixed MA50/MA200 trend lines, trailing-stop
+// line, and Golden/Death Cross + Trailing Stop badges, just without the
+// adjustable custom-MA line or the editing/import tooling below it (those stay
+// on the Prices tab).
 function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCostPerShare: number | null }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -2007,6 +2009,27 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     queryFn: () => getPriceHistory(secId, fromDate),
     refetchInterval: liveRefetchMs,
   })
+  // Extra lookback purely to seed the MA50/MA200 lines below — see maSeriesMap's comment.
+  const maSeedFromDate = useMemo(() => {
+    const d = new Date(fromDate)
+    d.setDate(d.getDate() - 400)
+    return toLocalISODate(d)
+  }, [fromDate])
+  const { data: maSeedHistory = [] } = useQuery({
+    queryKey: ['price-history', secId, maSeedFromDate],
+    queryFn: () => getPriceHistory(secId, maSeedFromDate),
+    refetchInterval: liveRefetchMs,
+  })
+  const ma50Map = useMemo(() => maSeriesMap(maSeedHistory as Record<string, unknown>[], 50), [maSeedHistory])
+  const ma200Map = useMemo(() => maSeriesMap(maSeedHistory as Record<string, unknown>[], 200), [maSeedHistory])
+  const ma50Trace = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return { x: h.map(r => r.date), y: h.map(r => ma50Map.get(String(r.date).slice(0, 10)) ?? null) }
+  }, [history, ma50Map])
+  const ma200Trace = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return { x: h.map(r => r.date), y: h.map(r => ma200Map.get(String(r.date).slice(0, 10)) ?? null) }
+  }, [history, ma200Map])
   const { data: txHistory = [] } = useQuery({
     queryKey: ['sec-transactions', secId],
     queryFn: () => getSecurityTransactions(secId),
@@ -2024,6 +2047,12 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     Number(a.securities_id) === secId &&
     a.threshold != null
   ), [allAlerts, secId])
+  // Shares the ['portfolio-signals'] query with AnalysisTab/PricesTab/PortfolioActionSignalsTab.
+  const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
+  const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
+  const [settings] = useSettings()
+  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
+  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
 
   const pctChange = (() => {
     const h = history as Record<string, unknown>[]
@@ -2066,6 +2095,20 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     font: { size: 10, color: '#7c3aed' },
   }], [avgCostPerShare])
 
+  // Same trailing-stop reference line as the Prices tab chart — trailing 1-year
+  // high minus the configured % (Tools → System → App Settings → Trailing Stop).
+  const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
+    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
+    x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
+    line: { color: '#dc2626', width: 1.5, dash: 'dashdot' as const },
+  }], [trailingStopPrice])
+  const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
+    xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
+    text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
+    xanchor: 'right' as const, yanchor: 'bottom' as const,
+    font: { size: 10, color: '#dc2626' },
+  }], [trailingStopPrice])
+
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
     const closeByDate = new Map(h.map(r => [String(r.date).slice(0, 10), Number(r.close)]))
@@ -2090,6 +2133,16 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
       title="Price History"
       actions={
         <div className="flex items-center gap-3">
+          {signal?.ma_trend != null && (
+            <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
+            </span>
+          )}
+          {trailingStopTriggered != null && (
+            <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+              {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
+            </span>
+          )}
           {pctChange != null && !isLoading && (
             <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
               {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
@@ -2108,6 +2161,20 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               type: 'scatter', mode: 'lines', name: 'Close',
               line: { color: '#3b82f6', width: 1.5 },
               yaxis: 'y',
+            },
+            {
+              x: ma50Trace.x, y: ma50Trace.y,
+              type: 'scatter', mode: 'lines', name: 'MA50',
+              line: { color: '#0ea5e9', width: 1.5 },
+              yaxis: 'y',
+              connectgaps: false,
+            },
+            {
+              x: ma200Trace.x, y: ma200Trace.y,
+              type: 'scatter', mode: 'lines', name: 'MA200',
+              line: { color: '#db2777', width: 1.5 },
+              yaxis: 'y',
+              connectgaps: false,
             },
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
@@ -2154,8 +2221,8 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.2, x: 0 },
             bargap: 0.1,
-            shapes: [...alertShapes, ...avgCostShapes],
-            annotations: [...alertAnnotations, ...avgCostAnnotations],
+            shapes: [...alertShapes, ...avgCostShapes, ...trailingStopShapes],
+            annotations: [...alertAnnotations, ...avgCostAnnotations, ...trailingStopAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: false, responsive: true }}

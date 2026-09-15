@@ -850,7 +850,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           the trading day the two actually crossed (a "golden cross" buy signal or "death cross" sell/avoid signal),
           not just the current regime; Trailing Stop triggers once price has fallen the configured % below its own
           trailing 1-year high (Tools → System → App Settings → Trailing Stop, default 20%). The same figures appear
-          on a security's own Analysis tab and Prices tab chart.
+          on a security's own Analysis tab and its Overview/Prices tab charts (MA50/MA200 and the trailing-stop
+          line as chart overlays, MA Trend/Trailing Stop as badges above the chart).
         </Note>
         <Note>
           <b>F-Score</b> and <b>Z-Score</b> are fundamentals-based, shown for stocks only (not ETFs, funds, or
