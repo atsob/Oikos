@@ -370,14 +370,27 @@ def refresh_access_token(
 # ===========================================================================
 
 def _api_get(access_token: str, url: str, params: dict | None = None) -> dict:
-    """GET a Saxo OpenAPI endpoint; raise on HTTP errors."""
+    """GET a Saxo OpenAPI endpoint; raise on HTTP errors.
+
+    requests' own raise_for_status() message ("401 Client Error: Unauthorized
+    for url: …") discards the response body — but Saxo's OpenAPI errors always
+    carry an ErrorCode/Message JSON payload explaining the real cause (e.g. an
+    AppKey not yet approved for Live access, a missing account entitlement, an
+    expired session), which is the one piece of information actually needed to
+    diagnose a 401/403 here. Surface it instead of losing it.
+    """
     resp = requests.get(
         url,
         headers={"Authorization": f"Bearer {access_token}"},
         params=params or {},
         timeout=30,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"Saxo API error {resp.status_code} for {url}: {detail}")
     return resp.json()
 
 

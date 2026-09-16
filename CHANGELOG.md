@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-16
+
+### Fixed
+- **The Trailing Stop/Avg Cost fix from 2026-09-15 (below) traded one problem for another.** Giving the floating labels an opaque background stopped them blending into the price line, but they still sat on top of it — so the box now hid whatever data was directly underneath, most often the most recent (and most important) price point at the chart's right edge. Widening the right margin to park them outside the plot area just relocated the problem: the labels landed next to the Volume axis and got clipped. Avg Cost, Trailing Stop, and price alerts are no longer floating annotations at all — they're now ordinary chart traces, exactly like Close/MA50/MA200/Buy/Sell already were: shown in the legend with their value in the name (e.g. "Avg Cost 355.5550"), toggleable by clicking the legend, included in the unified hover tooltip, and — since they're real chart data rather than an overlay — physically incapable of hiding or clipping anything. Verified on both the Prices tab and Overview chart.
+- **A Saxo Bank import 401 (e.g. "Fetch Saxo Accounts" failing right after a successful re-authentication) only ever showed Python's generic `requests` error text** ("401 Client Error: Unauthorized for url: …"), discarding Saxo's own error body — which is the one piece of information that actually explains the failure (an AppKey pending Saxo's Live-access approval, a missing account entitlement, a Sim/Live mismatch, etc.). Saxo API errors now surface their real `ErrorCode`/`Message` payload instead of the generic one-liner.
+
 ## 2026-09-15
 
 ### Added

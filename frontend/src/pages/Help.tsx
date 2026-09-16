@@ -1070,10 +1070,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           The price charts on <b>Overview</b> and <b>Prices</b> both draw a security's active price alerts as
-          horizontal threshold lines (green dashed for Price Above, red dashed for Price Below, labeled with the
-          threshold and note), plus a violet dotted <b>Avg Cost / Share</b> line whenever the security is
-          currently held — so the price's position relative to your alerts and your cost basis is visible at a
-          glance, without switching to the Alerts tab or doing the math yourself.
+          horizontal threshold lines (green dashed for Price Above, red dashed for Price Below), plus a violet
+          dotted <b>Avg Cost / Share</b> line whenever the security is currently held — so the price's position
+          relative to your alerts and your cost basis is visible at a glance, without switching to the Alerts tab
+          or doing the math yourself. Each one is a normal legend entry with its value in the name (e.g. "Avg Cost
+          355.5550"), just like Close/MA50/MA200 — click it in the legend to toggle that line off if it's in the way.
         </Note>
         <Note>
           The <b>Setup</b> tab shows a read-only <b>Price Scale</b> field (only when non-default) for securities
@@ -1210,6 +1211,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Saxo Bank → Authentication</b>: after authorizing with Saxo, the redirect back to Oikos carries the
           authorization code in the URL — it's picked up and pasted into the "authorization code" field
           automatically, so you don't need to copy it out of the address bar by hand.
+        </Note>
+        <Note>
+          A green <b>Authenticated</b> badge only means the OAuth token exchange succeeded — it does not mean
+          Saxo has granted this AppKey access to your actual account data. A <b>401 Unauthorized</b> on
+          "Fetch Saxo Accounts" right after authenticating usually means a newly-registered Live AppKey is still
+          pending Saxo's manual approval for live account/portfolio access (a separate step from OAuth, done on
+          Saxo's side), or that the AppKey was actually created for Simulation and needs the "Use Simulation
+          environment" checkbox ticked. The error banner shows Saxo's own error message, not just the HTTP status,
+          to help tell these apart.
         </Note>
         <Note>
           <b>Security Mapping</b>: on Interactive Brokers, Coinbase, Saxo Bank, Revolut Trading, Capital.com, and

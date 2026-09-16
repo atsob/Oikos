@@ -274,68 +274,45 @@ function PricesTab({ secId }: { secId: number }) {
     }
   }, [history, txHistory, fromDate])
 
-  // Opaque background behind every reference-line label below, so text stays legible
-  // over the price line/candles it happens to cross instead of blending into them.
-  const annotationBg = isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.82)'
+  // Avg Cost, Trailing Stop, and price alerts render as ordinary legend-toggleable line
+  // traces spanning the visible date range (same idea as the Close/MA50/MA200 traces
+  // above, and how Buy/Sell already appear in the legend) instead of paper-anchored
+  // shapes with floating text labels — those floated labels either sat on top of the
+  // price line or, pushed into the margin, ended up clipped next to the volume axis.
+  // A trace needs none of that: it's real chart data, so it can never be clipped or
+  // overlap anything it isn't actually drawn under, and its value lives in the legend.
+  const historyDates = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return h.length ? [h[0].date as string, h[h.length - 1].date as string] : []
+  }, [history])
 
-  // Horizontal threshold lines for this security's active price alerts, drawn full-width
-  // via paper-relative x so they don't need a date to anchor to — matches the green/red
-  // "Price Above"/"Price Below" color coding used on the Alerts tab.
-  const alertShapes = useMemo(() => priceAlerts.map(a => {
+  const alertTraces = useMemo(() => !historyDates.length ? [] : priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
+    const y = Number(a.threshold)
+    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
-      type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-      x0: 0, x1: 1, y0: Number(a.threshold), y1: Number(a.threshold),
+      x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
       line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+      hovertemplate: `${label}<extra></extra>`,
     }
-  }), [priceAlerts])
-  const alertAnnotations = useMemo(() => priceAlerts.map(a => {
-    const isAbove = a.alert_type === 'price_above'
-    const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
-    const color = isAbove ? '#16a34a' : '#dc2626'
-    return {
-      xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
-      text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
-      font: { size: 10, color }, bgcolor: annotationBg, bordercolor: color, borderwidth: 1, borderpad: 2,
-    }
-  }), [priceAlerts, annotationBg])
+  }), [priceAlerts, historyDates])
 
-  // Avg Cost and Trailing Stop are both drawn at the right edge and can land close
-  // together in value (e.g. a security trading near its trailing-stop level with a
-  // similar cost basis) — anchoring both away from whichever is lower/higher keeps
-  // their labels diverging instead of drifting toward each other and overlapping
-  // into unreadable overlaid text.
-  const avgCostAboveStop = avgCostPerShare != null && trailingStopPrice != null
-    ? avgCostPerShare >= trailingStopPrice
-    : true
-
-  // Same idea as the alert lines above, for the position's average cost per share.
-  const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
-    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-    x0: 0, x1: 1, y0: avgCostPerShare, y1: avgCostPerShare,
+  const avgCostTrace = useMemo(() => avgCostPerShare == null || !historyDates.length ? null : {
+    x: historyDates, y: [avgCostPerShare, avgCostPerShare], type: 'scatter' as const, mode: 'lines' as const,
+    name: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`,
     line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
-  }], [avgCostPerShare])
-  const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
-    xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
-    text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'bottom' as const : 'top' as const,
-    font: { size: 10, color: '#7c3aed' }, bgcolor: annotationBg, bordercolor: '#8b5cf6', borderwidth: 1, borderpad: 2,
-  }], [avgCostPerShare, avgCostAboveStop, annotationBg])
+    hovertemplate: `Avg Cost ${fmtNum(avgCostPerShare, 4)}<extra></extra>`,
+  }, [avgCostPerShare, historyDates])
 
   // Trailing-stop reference line — trailing 1-year high minus the configured %
   // (Tools → System → App Settings → Trailing Stop), same figure as Portfolio
   // Action Signals and the Analysis tab's Trend section.
-  const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
-    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-    x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
+  const trailingStopTrace = useMemo(() => trailingStopPrice == null || !historyDates.length ? null : {
+    x: historyDates, y: [trailingStopPrice, trailingStopPrice], type: 'scatter' as const, mode: 'lines' as const,
+    name: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`,
     line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
-  }], [trailingStopPrice])
-  const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
-    xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
-    text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'top' as const : 'bottom' as const,
-    font: { size: 10, color: '#dc2626' }, bgcolor: annotationBg, bordercolor: '#dc2626', borderwidth: 1, borderpad: 2,
-  }], [trailingStopPrice, avgCostAboveStop, annotationBg])
+    hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
+  }, [trailingStopPrice, historyDates])
 
   return (
     <div className="p-4 space-y-4">
@@ -399,6 +376,9 @@ function PricesTab({ secId }: { secId: number }) {
               yaxis: 'y',
               connectgaps: false,
             },
+            ...(avgCostTrace ? [avgCostTrace] : []),
+            ...(trailingStopTrace ? [trailingStopTrace] : []),
+            ...alertTraces,
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
@@ -448,8 +428,6 @@ function PricesTab({ secId }: { secId: number }) {
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.15, x: 0 },
             bargap: 0.1,
-            shapes: [...alertShapes, ...avgCostShapes, ...trailingStopShapes],
-            annotations: [...alertAnnotations, ...avgCostAnnotations, ...trailingStopAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: true, responsive: true }}
@@ -2076,64 +2054,41 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     return ((last - first) / first) * 100
   })()
 
-  // Opaque background behind every reference-line label below, so text stays legible
-  // over the price line/candles it happens to cross instead of blending into them.
-  const annotationBg = isDark ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.82)'
+  // Avg Cost, Trailing Stop, and price alerts render as ordinary legend-toggleable line
+  // traces — see the identical comment on the Prices tab chart for why (floated
+  // paper-anchored labels either sat on the price line or, pushed into the margin,
+  // ended up clipped next to the volume axis).
+  const historyDates = useMemo(() => {
+    const h = history as Record<string, unknown>[]
+    return h.length ? [h[0].date as string, h[h.length - 1].date as string] : []
+  }, [history])
 
-  // Same alert-threshold lines as the Prices tab chart — see its comment for why
-  // paper-relative x is used.
-  const alertShapes = useMemo(() => priceAlerts.map(a => {
+  const alertTraces = useMemo(() => !historyDates.length ? [] : priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
+    const y = Number(a.threshold)
+    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
-      type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-      x0: 0, x1: 1, y0: Number(a.threshold), y1: Number(a.threshold),
+      x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
       line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+      hovertemplate: `${label}<extra></extra>`,
     }
-  }), [priceAlerts])
-  const alertAnnotations = useMemo(() => priceAlerts.map(a => {
-    const isAbove = a.alert_type === 'price_above'
-    const label = `${isAbove ? '▲' : '▼'} ${fmtNum(Number(a.threshold), 4)}${a.note ? ` · ${String(a.note)}` : ''}`
-    const color = isAbove ? '#16a34a' : '#dc2626'
-    return {
-      xref: 'paper' as const, yref: 'y' as const, x: 1, y: Number(a.threshold),
-      text: label, showarrow: false, xanchor: 'right' as const, yanchor: 'bottom' as const,
-      font: { size: 10, color }, bgcolor: annotationBg, bordercolor: color, borderwidth: 1, borderpad: 2,
-    }
-  }), [priceAlerts, annotationBg])
+  }), [priceAlerts, historyDates])
 
-  // Avg Cost and Trailing Stop can land close together in value (see the Prices tab
-  // chart's identical comment) — anchor each away from the other so their labels
-  // diverge instead of overlapping into unreadable overlaid text.
-  const avgCostAboveStop = avgCostPerShare != null && trailingStopPrice != null
-    ? avgCostPerShare >= trailingStopPrice
-    : true
-
-  // Same idea as the alert lines above, for the position's average cost per share.
-  const avgCostShapes = useMemo(() => avgCostPerShare == null ? [] : [{
-    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-    x0: 0, x1: 1, y0: avgCostPerShare, y1: avgCostPerShare,
+  const avgCostTrace = useMemo(() => avgCostPerShare == null || !historyDates.length ? null : {
+    x: historyDates, y: [avgCostPerShare, avgCostPerShare], type: 'scatter' as const, mode: 'lines' as const,
+    name: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`,
     line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
-  }], [avgCostPerShare])
-  const avgCostAnnotations = useMemo(() => avgCostPerShare == null ? [] : [{
-    xref: 'paper' as const, yref: 'y' as const, x: 1, y: avgCostPerShare,
-    text: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'bottom' as const : 'top' as const,
-    font: { size: 10, color: '#7c3aed' }, bgcolor: annotationBg, bordercolor: '#8b5cf6', borderwidth: 1, borderpad: 2,
-  }], [avgCostPerShare, avgCostAboveStop, annotationBg])
+    hovertemplate: `Avg Cost ${fmtNum(avgCostPerShare, 4)}<extra></extra>`,
+  }, [avgCostPerShare, historyDates])
 
   // Same trailing-stop reference line as the Prices tab chart — trailing 1-year
   // high minus the configured % (Tools → System → App Settings → Trailing Stop).
-  const trailingStopShapes = useMemo(() => trailingStopPrice == null ? [] : [{
-    type: 'line' as const, xref: 'paper' as const, yref: 'y' as const,
-    x0: 0, x1: 1, y0: trailingStopPrice, y1: trailingStopPrice,
+  const trailingStopTrace = useMemo(() => trailingStopPrice == null || !historyDates.length ? null : {
+    x: historyDates, y: [trailingStopPrice, trailingStopPrice], type: 'scatter' as const, mode: 'lines' as const,
+    name: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`,
     line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
-  }], [trailingStopPrice])
-  const trailingStopAnnotations = useMemo(() => trailingStopPrice == null ? [] : [{
-    xref: 'paper' as const, yref: 'y' as const, x: 1, y: trailingStopPrice,
-    text: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`, showarrow: false,
-    xanchor: 'right' as const, yanchor: avgCostAboveStop ? 'top' as const : 'bottom' as const,
-    font: { size: 10, color: '#dc2626' }, bgcolor: annotationBg, bordercolor: '#dc2626', borderwidth: 1, borderpad: 2,
-  }], [trailingStopPrice, avgCostAboveStop, annotationBg])
+    hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
+  }, [trailingStopPrice, historyDates])
 
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
@@ -2202,6 +2157,9 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               yaxis: 'y',
               connectgaps: false,
             },
+            ...(avgCostTrace ? [avgCostTrace] : []),
+            ...(trailingStopTrace ? [trailingStopTrace] : []),
+            ...alertTraces,
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
@@ -2247,8 +2205,6 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
             legend: { orientation: 'h', y: -0.2, x: 0 },
             bargap: 0.1,
-            shapes: [...alertShapes, ...avgCostShapes, ...trailingStopShapes],
-            annotations: [...alertAnnotations, ...avgCostAnnotations, ...trailingStopAnnotations],
             ...plotLayout(isDark),
           }}
           config={{ displayModeBar: false, responsive: true }}
