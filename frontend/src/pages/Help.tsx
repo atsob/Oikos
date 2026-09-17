@@ -179,7 +179,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           Any account name shown on the Dashboard — the expanded <b>Accounts</b> panel, <b>Upcoming Bills</b>,
-          the <b>Pension</b> KPI card — links into that account's own Cash Register or Investments entry, scoped
+          the <b>Pension</b> KPI card, and a <b>Negative Balance</b>/<b>Credit Limit Nearly Reached</b> financial
+          insight — links into that account's own Cash Register or Investments entry, scoped
           to just it, the same as everywhere else in the app (see Reports for the full explanation). A{' '}
           <b>Back</b> button appears there to bring you straight back to the Dashboard.
         </Note>
@@ -298,6 +299,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           Amounts and balances are always shown in <b>that account's own currency</b> — a USD account shows
           "$", a EUR account shows "€", regardless of your reporting-currency setting elsewhere in the app.
+        </Note>
+        <Note>
+          Selecting a <b>Credit Card</b> or <b>Loan</b> account shows an extra info bar above the transaction
+          grid: <b>Balance to Date</b> and <b>Balance incl. Future Transactions</b> always; a Credit Card also
+          gets <b>Available Credit</b>, <b>Credit Limit</b>, and a <b>Credit Used</b> progress bar (green under
+          70% used, amber under 90%, red above) — shown only once that account has a Credit Limit set on its
+          Static Data → Accounts edit form.
         </Note>
         <Note>
           Account names shown throughout <b>Reports</b> are links here (or into Investments, for a Brokerage/

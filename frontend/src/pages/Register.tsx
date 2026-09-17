@@ -482,7 +482,10 @@ export default function Register() {
           {(() => {
             const balToDate = Number(selectedAccount.balance ?? 0)
             const balWithFuture = Number(selectedAccountFuture?.balance ?? selectedAccount.balance ?? 0)
-            const creditLimit = Number(selectedAccount.credit_limit ?? 0)
+            // Credit_Limit is stored negative, same sign convention as the balance owed
+            // (e.g. -3500.00) — Math.abs() it once here so the rest of this block can
+            // work in plain positive terms.
+            const creditLimit = Math.abs(Number(selectedAccount.credit_limit ?? 0))
             const availCredit = creditLimit > 0 ? creditLimit + balToDate : null  // balance is negative for CC
             return (
               <>

@@ -39,7 +39,28 @@ function saveOpts(o: DashOpts) { localStorage.setItem(OPTS_KEY, JSON.stringify(o
 
 // ── Insights panel (financial only) ──────────────────────────────────────────
 type InsightType = 'warning' | 'danger' | 'success' | 'info'
-interface Insight { type: InsightType; icon: string; title: string; message: string }
+interface Insight {
+  type: InsightType; icon: string; title: string; message: string
+  // Only set on account-scoped insights (negative_balance, credit_limit) — lets the
+  // account name embedded in title/message become a click-through to its Cash
+  // Register (or Investments) transactions, via the same AccountLink used elsewhere.
+  account_id?: number; account_type?: string; account_name?: string
+}
+
+// Swaps the account name inside an insight's title/message for a clickable
+// AccountLink, when the insight is account-scoped — same text otherwise.
+function insightText(text: string, ins: Insight): React.ReactNode {
+  if (ins.account_id == null || !ins.account_name) return text
+  const idx = text.indexOf(ins.account_name)
+  if (idx === -1) return text
+  return (
+    <>
+      {text.slice(0, idx)}
+      <AccountLink id={ins.account_id} name={ins.account_name} type={ins.account_type ?? null} />
+      {text.slice(idx + ins.account_name.length)}
+    </>
+  )
+}
 
 const I_STYLES: Record<InsightType, { bg: string; border: string; node: React.ReactNode }> = {
   warning: { bg: 'bg-amber-50', border: 'border-amber-300', node: <AlertTriangle size={15} className="text-amber-500 shrink-0" /> },
@@ -87,8 +108,8 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
               <div key={i} className={`flex gap-3 p-3 rounded-lg border ${s.bg} ${s.border}`}>
                 <div className="mt-0.5">{s.node}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800">{ins.title}</p>
-                  <p className="text-xs text-slate-600 mt-0.5">{ins.message}</p>
+                  <p className="text-sm font-semibold text-slate-800">{insightText(ins.title, ins)}</p>
+                  <p className="text-xs text-slate-600 mt-0.5">{insightText(ins.message, ins)}</p>
                 </div>
                 <button
                   onClick={() => dismiss(ins.title)}

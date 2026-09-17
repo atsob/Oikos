@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-17
+
+### Added
+- **Dashboard financial insights (Negative Balance, Credit Limit Nearly Reached) now link the account name straight to its Cash Register transactions**, scoped to that account with a Back button — reusing the same `AccountLink` click-through already used on Reports/Investments, rather than requiring you to go find the account manually. Overspending/Unusual Transaction/Savings Rate insights are unaffected — they aren't tied to a single account.
+
+### Fixed
+- **Cash Register never showed Available Credit / Credit Limit / Credit Used for any Credit Card account, on any account, ever.** `Accounts.Credit_Limit` is stored negative in the database (matching the sign convention of the balance owed, e.g. -7,100.00), but the credit-info bar's `creditLimit > 0` check assumed a positive number — which was never true for a single one of your credit cards, so that whole section silently never rendered regardless of which card was selected. Now takes the absolute value once up front; verified live showing Available Credit €3,749.82 / Credit Limit €7,100.00 / Credit Used €3,350.18 on "ALPHA - Gold Bonus MasterCard - 1009".
+
 ## 2026-09-16
 
 ### Fixed

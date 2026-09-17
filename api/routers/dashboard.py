@@ -663,7 +663,8 @@ def get_insights():
             pass
         try:
             df = pd.read_sql("""
-                SELECT a.Accounts_Name AS name, ROUND(a.Accounts_Balance::numeric,2) AS balance,
+                SELECT a.Accounts_Id AS account_id, a.Accounts_Name AS name, a.Accounts_Type AS account_type,
+                       ROUND(a.Accounts_Balance::numeric,2) AS balance,
                        c.Currencies_ShortName AS currency
                 FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
                 WHERE a.Is_Active = TRUE AND a.Accounts_Type IN ('Checking','Savings','Cash')
@@ -672,12 +673,13 @@ def get_insights():
             for _, row in df.iterrows():
                 insights.append({"type": "danger", "icon": "negative_balance",
                     "title": f"Negative balance: {row['name']}",
-                    "message": f"{row['name']} is overdrawn: {row['currency']} {float(row['balance']):,.2f}."})
+                    "message": f"{row['name']} is overdrawn: {row['currency']} {float(row['balance']):,.2f}.",
+                    "account_id": int(row["account_id"]), "account_type": row["account_type"], "account_name": row["name"]})
         except Exception:
             pass
         try:
             df = pd.read_sql("""
-                SELECT a.Accounts_Name AS name,
+                SELECT a.Accounts_Id AS account_id, a.Accounts_Name AS name, a.Accounts_Type AS account_type,
                        ROUND(ABS(a.Credit_Limit)::numeric,2) AS credit_limit,
                        ROUND((ABS(a.Credit_Limit) + a.Accounts_Balance)::numeric,2) AS remaining,
                        ROUND(((ABS(a.Credit_Limit) + a.Accounts_Balance) / NULLIF(ABS(a.Credit_Limit),0) * 100)::numeric,1) AS pct_remaining,
@@ -693,7 +695,8 @@ def get_insights():
                 pct_rem = float(row["pct_remaining"]) if row["pct_remaining"] is not None else 0
                 insights.append({"type": "danger" if pct_rem < 5 else "warning", "icon": "credit_limit",
                     "title": f"Credit limit nearly reached: {row['name']}",
-                    "message": f"{row['name']} has only {row['currency']} {float(row['remaining']):,.0f} ({pct_rem:.1f}%) of its {row['currency']} {float(row['credit_limit']):,.0f} limit remaining."})
+                    "message": f"{row['name']} has only {row['currency']} {float(row['remaining']):,.0f} ({pct_rem:.1f}%) of its {row['currency']} {float(row['credit_limit']):,.0f} limit remaining.",
+                    "account_id": int(row["account_id"]), "account_type": row["account_type"], "account_name": row["name"]})
         except Exception:
             pass
         try:
