@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-18
+
+### Fixed
+- **A security's Dividend Yield on Cost (YOC %) — Reports → Inv. Performance → P&L, and the same figure on Securities Analysis/Security Detail — could be wildly inflated, occasionally as far as 100%, whenever a `ShrIn` transaction (units arriving from outside the app — a Coinbase wallet "receive", or a position moved in from another broker) landed within the trailing 12 months.** The YOC formula's income numerator counted `ShrIn` alongside genuine `Dividend`/`Reinvest` income, double-dipping: those units already correctly count toward cost basis (via Holdings' own logic), so counting the same transfer as a full year of "yield" on top could dwarf real income entirely — e.g. one €616 Coinbase wallet transfer of ETH inflating that position's YOC to 42.56% when real ETH staking rewards over the year totaled a much more plausible ~1%. `ShrIn` removed from the income side of the calculation (it was always correctly excluded from the *Dividend Tracker* tab's own separate YOC calculation — only this one, shared by the P&L tab and Securities Analysis, had the bug, plus an unused dead-code copy in `database/queries.py` fixed for consistency). Verified against the real portfolio: every affected holding dropped into a realistic range (Ethereum 42.56% → 0.997%, Cosmos 51.30% → 1.19%), and a spot-check of dividend-paying stocks elsewhere in the portfolio landed in a sane 4-9%.
+
 ## 2026-09-17
 
 ### Added

@@ -756,6 +756,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           accounts without leaving the drill-down.
         </Note>
         <Note>
+          The drill-down's <b>YOC %</b> (Yield on Cost) column is trailing-12-month dividend/staking income
+          divided by cost basis — units that simply <b>arrived</b> in the account (a crypto wallet transfer-in, a
+          position moved from another broker) never count as income, only real <b>Dividend</b>/<b>Reinvest</b>{' '}
+          events do. A position built <i>entirely</i> from reinvested income with no direct purchase (e.g. a
+          crypto reward with no corresponding buy) can still show ~100% — its cost basis and its income are the
+          same event, which is mathematically correct but not a meaningful yield figure for that edge case.
+        </Note>
+        <Note>
           <b>Dividend Tracker → Forecast</b> has a period selector — <b>Till EOY</b>, <b>Next 6 Months</b>, or{' '}
           <b>Next 12 Months</b> — that bounds the projected total, monthly chart, and per-security table to real
           expected payment dates within that window (not a pro-rata slice of the annual rate), so a security due

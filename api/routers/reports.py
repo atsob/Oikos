@@ -918,12 +918,20 @@ def get_pnl(
             GROUP BY i.Accounts_Id, i.Securities_Id
         ),
         dividend_yoc AS (
+            -- ShrIn deliberately excluded: it's a transfer of already-owned units into
+            -- the account (e.g. a Coinbase wallet "receive", or moving a position from
+            -- another broker) — real capital that already counts toward cost basis via
+            -- Holdings' own BUY_ACTIONS, not investment income. Counting it here too
+            -- double-dipped: a single sizeable transfer-in could add a full year of
+            -- "yield" on top of the cost basis it had just created, once inflating one
+            -- security's YoC to 100% (its only "cost basis" was one ShrIn reward, so
+            -- income == cost) and another's to 40%+ from one large incoming transfer.
             SELECT
                 i.Securities_Id, i.Accounts_Id,
                 SUM(
                     CASE
                         WHEN i.Action = 'Dividend' THEN i.Total_Amount_AccCur
-                        WHEN i.Action IN ('Reinvest', 'ShrIn') THEN
+                        WHEN i.Action = 'Reinvest' THEN
                             i.Quantity * COALESCE(
                                 NULLIF(i.Price_Per_Share, 0),
                                 (SELECT hp.Close FROM Historical_Prices hp
@@ -935,7 +943,7 @@ def get_pnl(
                     END
                 ) AS annual_income
             FROM Investments i
-            WHERE i.Action IN ('Dividend', 'Reinvest', 'ShrIn')
+            WHERE i.Action IN ('Dividend', 'Reinvest')
               AND i.Date >= CURRENT_DATE - INTERVAL '1 year'
               AND i.Date <= (SELECT today FROM periods)
             GROUP BY i.Securities_Id, i.Accounts_Id

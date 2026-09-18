@@ -1862,12 +1862,16 @@ def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
             GROUP BY i.Accounts_Id, i.Securities_Id
         ),
         dividend_yoc AS (
+            -- ShrIn deliberately excluded — see the identical comment in
+            -- api/routers/reports.py:get_pnl's own dividend_yoc CTE (this copy is
+            -- unused by the live app, kept only for reference — see that function's
+            -- "ported verbatim from" docstring).
             SELECT
                 i.Securities_Id, i.Accounts_Id,
                 SUM(
                     CASE
                         WHEN i.Action = 'Dividend' THEN i.Total_Amount_AccCur
-                        WHEN i.Action IN ('Reinvest', 'ShrIn') THEN
+                        WHEN i.Action = 'Reinvest' THEN
                             i.Quantity * COALESCE(
                                 NULLIF(i.Price_Per_Share, 0),
                                 (SELECT hp.Close FROM Historical_Prices hp
@@ -1879,7 +1883,7 @@ def get_pnl_report_data(start_date: str = '1900-01-01', end_date: str = None):
                     END
                 ) AS annual_income
             FROM Investments i
-            WHERE i.Action IN ('Dividend', 'Reinvest', 'ShrIn')
+            WHERE i.Action IN ('Dividend', 'Reinvest')
               AND i.Date >= CURRENT_DATE - INTERVAL '1 year'
             GROUP BY i.Securities_Id, i.Accounts_Id
         ),
