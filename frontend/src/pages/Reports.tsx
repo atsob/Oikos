@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useSettings } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -95,9 +95,20 @@ function KpiCard({ label, value, color = '', subtitle, subtitleNode, tooltip, co
 }
 
 // ── Copy-to-Excel wrapper ─────────────────────────────────────────────────────
-function WithCopy({ children }: { children: React.ReactNode }) {
+// `scrollKey`, when given, persists and restores the scroll position of the
+// single scrollable child (a `overflow-y-auto` div wrapping a <table>) via
+// useScrollRestore — every WithCopy'd table whose rows link to a security/
+// account's own page needs this, since navigating there and hitting Back
+// remounts this whole page from scratch and would otherwise always reset to
+// the top regardless of how far down you'd scrolled to find that row. Reuses
+// this already-universal wrapper instead of wiring ref/onScroll onto each of
+// the ~30 call sites individually — WithCopy already wraps exactly one such
+// div in every case, cloning it in is the one-line-per-site version of the
+// same fix already applied directly to Stock Overlap/Expense Ratio.
+function WithCopy({ children, scrollKey }: { children: React.ReactNode; scrollKey?: string }) {
   const ref = React.useRef<HTMLDivElement>(null)
   const [copied, setCopied] = React.useState(false)
+  const scroll = useScrollRestore<HTMLDivElement>(scrollKey ?? '_unused', !!scrollKey)
   const copy = () => {
     const table = ref.current?.querySelector('table')
     if (!table) return
@@ -106,9 +117,14 @@ function WithCopy({ children }: { children: React.ReactNode }) {
       .join('\n')
     navigator.clipboard.writeText(tsv).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800) })
   }
+  const content = scrollKey && React.isValidElement(children)
+    ? React.cloneElement(children as React.ReactElement<{ ref?: React.Ref<HTMLDivElement>; onScroll?: (e: React.UIEvent<HTMLDivElement>) => void }>, {
+        ref: scroll.ref, onScroll: scroll.onScroll,
+      })
+    : children
   return (
     <div className="space-y-2" ref={ref}>
-      {children}
+      {content}
       <button onClick={copy} className={`no-print flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copied ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
         {copied ? '✓ Copied!' : '📋 Copy to Excel'}
       </button>
@@ -132,7 +148,7 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true, idKey, li
     if (idKey && r[idKey] != null) idByCategory[g] = Number(r[idKey])
   }
   return (
-    <WithCopy>
+    <WithCopy scrollKey="inv-positions-summary">
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
@@ -326,7 +342,7 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
 
   return (
     <div className="space-y-4">
-      <WithCopy>
+      <WithCopy scrollKey="nw-account-balances">
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
@@ -927,7 +943,7 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedIndustry}" · {selectedSector}</p>
             <button onClick={() => setSelectedIndustry(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
-          <WithCopy>
+          <WithCopy scrollKey="xray-sector-weighting-securities">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -1049,7 +1065,7 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedStyle}"</p>
             <button onClick={() => setSelectedStyle(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
-          <WithCopy>
+          <WithCopy scrollKey="xray-style-box-securities">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -1283,7 +1299,7 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedClass}"</p>
             <button onClick={() => setSelectedClass(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
-          <WithCopy>
+          <WithCopy scrollKey="xray-asset-allocation-securities">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -1424,7 +1440,7 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities rated "{selectedQuality}"</p>
             <button onClick={() => setSelectedQuality(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
-          <WithCopy>
+          <WithCopy scrollKey="xray-bond-quality-securities">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -1458,6 +1474,7 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data, isLoading } = useQuery({ queryKey: ['xray', 'stock-overlap', accountIds, compareDate], queryFn: () => getXrayStockOverlap(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const scroll = useScrollRestore<HTMLDivElement>('xray-stock-overlap', !isLoading)
   const resp = data as { rows: Row[]; compare_rows?: Row[]; compare_date?: string } | undefined
   const rows = resp?.rows ?? []
   const totalPortfolio = rows.length > 0 ? Number(rows[0].total_portfolio_eur ?? 0) : 0
@@ -1513,7 +1530,7 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
   return (
     <div className="space-y-4">
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1620,6 +1637,7 @@ function XrayExpenseRatioNotes() {
 function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const liveRefetchMs = useLiveRefetchInterval()
   const { data, isLoading } = useQuery({ queryKey: ['xray', 'expense-ratio', accountIds, compareDate], queryFn: () => getXrayExpenseRatio(accountIds, compareDate), refetchInterval: liveRefetchMs })
+  const scroll = useScrollRestore<HTMLDivElement>('xray-expense-ratio', !isLoading)
   const resp = data as { summary: Row | null; funds: Row[]; compare?: { summary: Row | null; funds: Row[] }; compare_date?: string } | undefined
   const summary = resp?.summary
   const funds = resp?.funds ?? []
@@ -1662,7 +1680,7 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
         <XrayExpenseRatioNotes />
       </div>
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1751,7 +1769,7 @@ function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
   return (
     <div className="space-y-3">
       <KpiCard label="Total Portfolio Value" value={fmtEur(total)} color="text-blue-700" />
-      <WithCopy>
+      <WithCopy scrollKey="holdings-snapshot">
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500">
@@ -1818,7 +1836,7 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
         </div>
       )}
     {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
-    <WithCopy>
+    <WithCopy scrollKey="detail-analysis">
     <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] text-xs">
       <table className="w-full border-collapse">
         <thead className="sticky top-0 z-10 bg-slate-50">
@@ -2190,7 +2208,7 @@ function PnlReport() {
             <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
             <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong></span>
           </div>
-          <WithCopy>
+          <WithCopy scrollKey="pnl-report-main">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -2784,7 +2802,7 @@ function DividendTrackerTab() {
               />
             )}
 
-            <WithCopy>
+            <WithCopy scrollKey="dividend-tracker-1">
               <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
@@ -2943,7 +2961,7 @@ function DividendTrackerTab() {
           : !recSorted.length ? (
             <p className="text-slate-400 text-sm py-8 text-center">No securities match the selected filters.</p>
           ) : (
-          <WithCopy>
+          <WithCopy scrollKey="dividend-tracker-2">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-260px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3068,7 +3086,7 @@ function DividendTrackerTab() {
             config={{ displayModeBar: false }} style={{ width: '100%' }}
           />
 
-          <WithCopy>
+          <WithCopy scrollKey="dividend-tracker-3">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3156,7 +3174,7 @@ function DividendTrackerTab() {
             </button>
             {detailOpen && (
               <div className="p-3">
-                <WithCopy>
+                <WithCopy scrollKey="dividend-tracker-4">
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3607,7 +3625,7 @@ function SavingsAccountsTab() {
               />
             )}
 
-            <WithCopy>
+            <WithCopy scrollKey="savings-accounts-1">
               <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3657,7 +3675,7 @@ function SavingsAccountsTab() {
           <>
             <div>
               <h4 className="text-sm font-semibold text-slate-700 mb-2">Your Savings Accounts, Ranked by APY%</h4>
-              <WithCopy>
+              <WithCopy scrollKey="savings-accounts-2">
                 <div className="overflow-x-auto overflow-y-auto max-h-96">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3699,7 +3717,7 @@ function SavingsAccountsTab() {
               {recResult.idle_opportunities.length === 0 ? (
                 <p className="text-slate-400 text-sm py-8 text-center">No material idle balances found in Cash/Checking accounts — nothing to redirect right now.</p>
               ) : (
-                <WithCopy>
+                <WithCopy scrollKey="savings-accounts-3">
                   <div className="overflow-x-auto overflow-y-auto max-h-96">
                     <table className="w-full text-sm">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3798,7 +3816,7 @@ function SavingsAccountsTab() {
 
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail — {result.period_label}</h4>
-            <WithCopy>
+            <WithCopy scrollKey="savings-accounts-4">
               <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3838,7 +3856,7 @@ function SavingsAccountsTab() {
 
       <div>
         <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail for Last Interest Period</h4>
-        <WithCopy>
+        <WithCopy scrollKey="savings-accounts-5">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -3910,7 +3928,7 @@ function BondScheduleTab() {
         layout={{ title: 'Maturity Timeline', height: 300, xaxis: { title: 'Maturity Date' }, yaxis: { title: 'Face Value (EUR)' }, margin: { t: 40, b: 60, l: 80, r: 20 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false }} style={{ width: '100%' }}
       />
-      <WithCopy>
+      <WithCopy scrollKey="bond-schedule">
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -4675,7 +4693,7 @@ function VolatilityTab() {
   const VolTable = ({ items, label, style }: { items: typeof highVol; label: string; style: string }) => (
     <div>
       <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${style}`}>{label}</div>
-      <WithCopy>
+      <WithCopy scrollKey="investment-signals">
         <table className="w-full text-sm">
           <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
             <th className="px-3 py-2 text-left">Security</th>
@@ -4838,7 +4856,7 @@ function InvestmentSignalsTab() {
       {/* Top efficiency picks table */}
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-2">🏆 Top Efficiency Picks (High Sharpe Ratio)</p>
-        <WithCopy>
+        <WithCopy scrollKey="portfolio-action-signals-secondary">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -5803,7 +5821,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
         <div className="space-y-3">
           <p className="text-sm font-semibold text-slate-700">{reportType} — {periodType} Breakdown</p>
           <p className="text-xs text-slate-400">Click any period cell to drill down into the underlying transactions.</p>
-          <WithCopy>
+          <WithCopy scrollKey="income-expense-1">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -6009,7 +6027,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             {(() => {
               const drillRows = drillCat === 'All Categories' ? rows : rows.filter(r => r.category_full_path === drillCat)
               return (
-                <WithCopy>
+                <WithCopy scrollKey="income-expense-2">
                 <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                   <table className="w-full border-collapse">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
@@ -6131,7 +6149,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                       <span className="text-slate-500">Transactions: {drillRows.length}</span>
                     </div>
                   )}
-                  <WithCopy>
+                  <WithCopy scrollKey="income-expense-3">
                   <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
                     <table className="w-full border-collapse">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
@@ -6426,7 +6444,7 @@ function CashFlowSection() {
         {scheduled.length === 0 ? (
           <p className="text-sm text-slate-400">No transactions scheduled within this horizon.</p>
         ) : (
-          <WithCopy>
+          <WithCopy scrollKey="cashflow-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -6469,7 +6487,7 @@ function CashFlowSection() {
         {templates.length === 0 ? (
           <p className="text-sm text-slate-400">No active recurring templates due within this horizon.</p>
         ) : (
-          <WithCopy>
+          <WithCopy scrollKey="cashflow-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -6558,7 +6576,7 @@ function CashFlowSection() {
         {dividends.length === 0 ? (
           <p className="text-sm text-slate-400">No dividend payments projected within this horizon.</p>
         ) : (
-          <WithCopy>
+          <WithCopy scrollKey="budget-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -6642,7 +6660,7 @@ function CashFlowSection() {
             {includeBonds ? 'No bond coupons or maturities projected within this horizon.' : "Excluded — enable 'Include Bonds' above to project bond coupon payments and maturity redemptions within this horizon."}
           </p>
         ) : (
-          <WithCopy>
+          <WithCopy scrollKey="budget-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
@@ -7136,7 +7154,7 @@ function CgTable({ rows, method, forceExpandAll }: { rows: Row[]; method: string
   const toggle = (key: string) => setExpanded(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s })
 
   return (
-    <WithCopy>
+    <WithCopy scrollKey="capital-gains-table">
     <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
       <table className="w-full text-xs">
         <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
@@ -7461,7 +7479,7 @@ function TaxLossHarvestingTab() {
       {rows.length === 0 ? (
         <p className="text-slate-500 text-sm py-4">No positions with unrealized losses.</p>
       ) : (
-        <WithCopy>
+        <WithCopy scrollKey="tax-loss-harvesting">
         <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
@@ -8737,6 +8755,7 @@ function CustomReportsSection() {
   const [ddPeriod, setDdPeriod] = useState('— All Periods —')
   const [ddResult, setDdResult] = useState<Row[] | null>(null)
   const [ddRunning, setDdRunning] = useState(false)
+  const ddScroll = useScrollRestore<HTMLDivElement>('custom-reports-drilldown', ddResult !== null)
 
   const accounts   = filterData?.accounts ?? []
   const categories = filterData?.categories ?? []
@@ -9248,7 +9267,7 @@ function CustomReportsSection() {
                   ddResult.length === 0
                     ? <div className="text-sm text-slate-400 mt-3">No entries found.</div>
                     : (
-                      <div className="mt-3 overflow-x-auto overflow-y-auto max-h-96">
+                      <div ref={ddScroll.ref} onScroll={ddScroll.onScroll} className="mt-3 overflow-x-auto overflow-y-auto max-h-96">
                         <div className="text-xs text-slate-500 mb-1">
                           {ddResult.length} {investmentMode ? 'entr' : 'transaction'}
                           {ddResult.length === 1 ? (investmentMode ? 'y' : '') : (investmentMode ? 'ies' : 's')}

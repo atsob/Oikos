@@ -14,7 +14,7 @@ import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { usePersist, useLiveRefetchInterval } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hooks'
 import { setPref } from '@/lib/preferences'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
@@ -690,6 +690,7 @@ function UpcomingBillsPanel() {
   })
   const list = bills as Record<string, unknown>[]
   const totalEur = list.reduce((sum, b) => sum + Number(b.amount_eur ?? 0), 0)
+  const scroll = useScrollRestore<HTMLDivElement>('dashboard-upcoming-bills', !isLoading)
 
   return (
     <Card>
@@ -723,7 +724,7 @@ function UpcomingBillsPanel() {
           ) : list.length === 0 ? (
             <p className="text-sm text-slate-400 px-4 py-5 text-center">No bills due in the next {days} days</p>
           ) : (
-            <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+            <div ref={scroll.ref} onScroll={scroll.onScroll} className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
               {list.map((b, idx) => {
                 const dueDate = String(b.date ?? '').slice(0, 10)
                 const daysUntil = dueDate

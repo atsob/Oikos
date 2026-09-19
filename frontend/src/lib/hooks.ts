@@ -244,6 +244,51 @@ export function useGridScrollState(key: string) {
   return { initialState, onStateUpdated } as const
 }
 
+// ── useScrollRestore ─────────────────────────────────────────────────────────
+// Same idea as useGridScrollState above, for a plain scrollable <div> (a hand-
+// rolled <table>, not ag-Grid) — e.g. Inv. Portfolio → Portfolio Analysis →
+// Stock Overlap/Expense Ratio, whose top-level rows link straight to a
+// security's own page with no drill-down step to reset the view on the way
+// back. Usage:
+//
+//   const scroll = useScrollRestore('xray-stock-overlap', !isLoading)
+//   <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-y-auto ...">
+//
+// `ready` should be true only once the scrollable content has actually
+// rendered (e.g. `!isLoading`) — restoring against an empty/loading container
+// would just no-op against a div with nothing to scroll yet, silently
+// dropping the saved position instead of applying it once real rows exist.
+export function useScrollRestore<T extends HTMLElement>(key: string, ready: boolean) {
+  const ref = useRef<T | null>(null)
+  const [saved, setSaved] = usePersist<number | null>(`scroll_${key}`, null)
+  const restored = useRef(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (ready && !restored.current && ref.current && saved != null) {
+      ref.current.scrollTop = saved
+      restored.current = true
+    }
+  }, [ready, saved])
+
+  const onScroll = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      timer.current = null
+      if (ref.current) setSaved(ref.current.scrollTop)
+    }, 400)
+  }, [setSaved])
+
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      if (ref.current) setSaved(ref.current.scrollTop)
+    }
+  }, [setSaved])
+
+  return { ref, onScroll } as const
+}
+
 // ── useGridApi ───────────────────────────────────────────────────────────────
 // Captures a grid's GridApi for use outside ag-Grid (e.g. CopyToExcelButton),
 // via onGridReady. Pass an optional onReady for anything else a grid already
