@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-19
+
+### Fixed
+- **Sorting a grid (e.g. Securities Analysis → Price Changes by M%), clicking through to a security, then hitting Back could land the grid scrolled to the wrong spot — sometimes all the way at the bottom of a shorter, filtered list.** Every grid's scroll position is persisted as a raw pixel offset, restored on remount via `useGridScrollState` (the shared hook behind the 2026-09-13 scroll-persistence work). Sorting or filtering changes which rows appear where, but never reset that saved pixel offset on its own — so a value captured once against a longer/differently-sorted list kept getting silently reapplied later, clamped by the browser to the bottom of whatever shorter list happened to be showing at the time, with no relation to what was actually scrolled to. `useGridScrollState` now resets the saved position to the top the instant ag-Grid reports a sort or filter change (while still leaving a freshly-restored sort from a previous visit alone, so restoring your saved sort doesn't erase its own just-restored scroll position). Fixed once, shared by all ~19 grids using this hook. Verified live: reproduced the exact stale offset, confirmed sorting resets it, then repeated the exact reported steps (sort M% → click a security → Back) and landed correctly at the top every time.
+
 ## 2026-09-18
 
 ### Fixed

@@ -204,6 +204,23 @@ export function useGridScrollState(key: string) {
   const pending = useRef<{ top: number; left: number } | null>(null)
 
   const onStateUpdated = useCallback((e: StateUpdatedEvent) => {
+    // A sort or filter change makes any already-saved scroll pixel offset
+    // meaningless — it was measured against a different row order/set. Left
+    // alone, a plain client-side "Back" navigation (where this hook's saved
+    // state is already warm and gets fed straight into ag-Grid's initialState
+    // on remount, no reload/race involved) can silently land the grid on a
+    // pixel offset that has nothing to do with the row you actually scrolled
+    // to — including clamped all the way to the bottom of a shorter, newly-
+    // filtered list. `gridInitializing` is excluded so restoring a previously
+    // -saved sort on mount doesn't immediately erase its own just-restored
+    // scroll position.
+    if (!e.sources.includes('gridInitializing') && (e.sources.includes('sort') || e.sources.includes('filter'))) {
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = null
+      pending.current = null
+      setState({ top: 0, left: 0 })
+      return
+    }
     const scroll = e.api.getState().scroll
     if (!scroll) return
     pending.current = scroll
