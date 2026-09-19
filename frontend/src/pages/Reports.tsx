@@ -1307,16 +1307,23 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
                   <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedClass})</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Unrealized P&L %</th>
                 </tr>
               </thead>
               <tbody>
-                {detailRows.map((r, i) => (
+                {detailRows.map((r, i) => {
+                  const upnl = r.unrealized_pnl_pct != null ? Number(r.unrealized_pnl_pct) : null
+                  return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums ${upnl == null ? 'text-slate-400' : upnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {upnl != null ? `${upnl >= 0 ? '+' : ''}${upnl.toFixed(2)}%` : '—'}
+                    </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

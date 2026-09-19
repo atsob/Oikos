@@ -3779,10 +3779,12 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
         {h_src_cte},
         holdings_value AS (
             SELECT h.Securities_Id, s.Securities_Type::text AS sec_type,
-                   SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur
+                   SUM(h.Quantity * COALESCE(p.Close,0) * COALESCE(fx.FX_Rate,1)) AS value_eur,
+                   SUM(h.Quantity * COALESCE(hc.Fifo_Avg_Cost_EUR, hc.Fifo_Avg_Price * COALESCE(fx.FX_Rate,1), 0)) AS cost_basis_eur
             FROM h_src h JOIN Securities s ON h.Securities_Id=s.Securities_Id
             LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
             LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
+            LEFT JOIN Holdings hc ON hc.Securities_Id=h.Securities_Id AND hc.Accounts_Id=h.Accounts_Id
             WHERE h.Quantity > 0{acct_clause}
             GROUP BY h.Securities_Id, s.Securities_Type
         )
@@ -3790,7 +3792,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
         detail_cte = f"""
         , direct_cash AS (
             SELECT 'Cash' AS asset_class, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
-                   {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur
+                   {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur,
+                   NULL::numeric AS sec_cost_basis_eur, NULL::numeric AS sec_total_value_eur
             FROM Accounts a
             LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
@@ -3805,7 +3808,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
                  WHEN hv.sec_type = 'Commodity' THEN 'Commodities'
                  ELSE 'Other'
                END AS asset_class,
-               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur,
+               hv.cost_basis_eur AS sec_cost_basis_eur, hv.value_eur AS sec_total_value_eur
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
     ),
@@ -3814,7 +3818,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
         -- into its generic "other" bucket) — routes the fund's whole value to
         -- one class instead of splitting across Yahoo's 6 asset buckets.
         SELECT fc.Asset_Class_Override AS asset_class, hv.Securities_Id AS securities_id,
-               s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+               s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur,
+               hv.cost_basis_eur AS sec_cost_basis_eur, hv.value_eur AS sec_total_value_eur
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
@@ -3822,7 +3827,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
     ),
     fund_detail_split AS (
         SELECT b.asset_class, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
-               hv.value_eur * b.pct AS value_eur
+               hv.value_eur * b.pct AS value_eur,
+               hv.cost_basis_eur AS sec_cost_basis_eur, hv.value_eur AS sec_total_value_eur
         FROM holdings_value hv
         JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
@@ -3843,7 +3849,8 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
     ),
     uncovered_detail AS (
         SELECT 'Uncovered Fund Exposure' AS asset_class,
-               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur,
+               hv.cost_basis_eur AS sec_cost_basis_eur, hv.value_eur AS sec_total_value_eur
         FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
           AND NOT EXISTS (
@@ -3879,7 +3886,10 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
     , class_totals AS (SELECT asset_class, SUM(value_eur) AS class_total FROM detail_combined GROUP BY asset_class)
     SELECT dc.asset_class, dc.securities_id, dc.name, dc.ticker,
            ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
-           ROUND((SUM(dc.value_eur)/NULLIF(ct.class_total,0)*100)::numeric,2) AS pct
+           ROUND((SUM(dc.value_eur)/NULLIF(ct.class_total,0)*100)::numeric,2) AS pct,
+           CASE WHEN MAX(dc.sec_cost_basis_eur) > 0
+                THEN ROUND(((MAX(dc.sec_total_value_eur) - MAX(dc.sec_cost_basis_eur)) / MAX(dc.sec_cost_basis_eur) * 100)::numeric, 2)
+                ELSE NULL END AS unrealized_pnl_pct
     FROM detail_combined dc JOIN class_totals ct ON ct.asset_class = dc.asset_class
     GROUP BY dc.asset_class, dc.securities_id, dc.name, dc.ticker, ct.class_total
     ORDER BY dc.asset_class, value_eur DESC

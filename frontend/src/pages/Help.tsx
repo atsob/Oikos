@@ -645,7 +645,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Weighting, and Style Box also include any <b>Cash &amp; Savings accounts</b> selected in the current
           Account Preset as a "Cash" bucket. Every Portfolio Analysis view supports click-to-drill-down: click a bucket/row (in
           the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,
-          Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for Stock Overlap.{' '}
+          Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for Stock Overlap. Asset
+          Allocation's drill-down also shows each security's <b>Unrealized P&amp;L %</b> (cost basis pooled across
+          every account holding it) — a security with no cost basis recorded anywhere shows "—".{' '}
           <b>Sector Weighting</b> goes two levels deep: click a sector to see its <b>Industry</b> breakdown, then
           an industry to see the individual securities in it — industry data only exists for direct holdings (a
           fund's look-through contribution has no industry breakdown from Yahoo, and groups into a{' '}
