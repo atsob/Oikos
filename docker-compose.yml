@@ -33,6 +33,9 @@ services:
       - OLLAMA_IP=${OLLAMA_IP:-127.0.0.1}
       - OLLAMA_PORT=${OLLAMA_PORT:-11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
       # First-login account, created once if the Users table is empty — see .env.example.
@@ -84,6 +87,9 @@ services:
       - OLLAMA_IP=${OLLAMA_IP:-127.0.0.1}
       - OLLAMA_PORT=${OLLAMA_PORT:-11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
     volumes:
