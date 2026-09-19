@@ -54,9 +54,12 @@ port 5432.
   `--profile full` alternative below. Oikos doesn't bundle its database into
   its own image; one or the other has to provide it.
 - **Ollama**, only if you want the AI-backed features (Dashboard's weekly/monthly
-  summaries, the RAG chat). Same two options as Postgres — host-native or
-  containerized. Skip it entirely and those features just won't be available;
-  nothing else in the app depends on it.
+  summaries, the RAG chat) running locally. Same two options as Postgres —
+  host-native or containerized. Skip it entirely and those features just won't
+  be available; nothing else in the app depends on it. Alternatively, set
+  `AI_PROVIDER=anthropic` in `.env` to run summaries/chat on hosted Claude
+  instead — no Ollama needed for that part, though the RAG chat's semantic
+  search still uses Ollama's embedding model either way (see 1b).
 
 ## 1. PostgreSQL setup
 
@@ -82,8 +85,12 @@ above to what you put in `.env` in the next step.
 ## 1b. Ollama setup (optional)
 
 Skip this if you don't want the AI-backed features (Dashboard's AI summaries,
-RAG chat) — everything else in the app works without it. Install Ollama
-directly on the host:
+RAG chat) — everything else in the app works without it. Also skip it for
+the chat model specifically if you'd rather set `AI_PROVIDER=anthropic` (see
+the env var table below) and run summaries/chat on hosted Claude instead —
+Ollama is still used for RAG chat's embedding model (`nomic-embed-text`) even
+then, since Anthropic has no embeddings API; only skip Ollama altogether if
+you don't want RAG semantic search either. Install Ollama directly on the host:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -269,7 +276,9 @@ marked; everything else has a working default or is an optional integration.
 | `DB_NAME` | | Database name (default `Oikos`) |
 | `DB_TIMEZONE` | | Applied to every DB session so timestamps display in local time (default `Europe/Athens`) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | **Yes**, first run only | Creates the first login account if the `Users` table is empty; harmless to leave set afterward |
-| `OLLAMA_IP` / `OLLAMA_PORT` / `OLLAMA_MODEL` | | Local LLM for AI summaries — optional, only if you use Ollama-backed features |
+| `AI_PROVIDER` | | Which LLM backend powers AI summaries/chat — `ollama` (default) or `anthropic` |
+| `OLLAMA_IP` / `OLLAMA_PORT` / `OLLAMA_MODEL` | | Local LLM for AI summaries/chat — used when `AI_PROVIDER=ollama` (default), and always for RAG chat's embedding model regardless of `AI_PROVIDER` |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | | Hosted Claude for AI summaries/chat — used when `AI_PROVIDER=anthropic`; get a key at [console.anthropic.com](https://console.anthropic.com) |
 | `EODHD_API_KEY` | | Market data provider key — get one at [eodhd.com](https://eodhd.com); optional, price/dividend downloads just won't work without it |
 | `GOCARDLESS_SECRET_ID` / `GOCARDLESS_SECRET_KEY` | | Pre-fills Importers → GoCardless (PSD2 open banking); optional, can be entered manually per session instead |
 | `SALTEDGE_APP_ID` / `SALTEDGE_SECRET` | | Pre-fills Importers → Salt Edge; same deal as GoCardless above |

@@ -1,20 +1,33 @@
 from langchain_ollama import ChatOllama
+from langchain_anthropic import ChatAnthropic
 from curl_cffi import requests as cryq
 from config.settings import ENV_CONFIG, OLLAMA_URL
 
 def init_llm(num_predict: int = 400):
-    """Initialize the Ollama LLM.
+    """Initialize the LLM backing the AI agent/summaries — either provider returns
+    a LangChain chat model with the same interface, so callers (create_ai_agent,
+    weekly/monthly summaries) don't need to know or care which one is active.
 
-    ChatOllama has no `timeout` field of its own — passing one directly is silently
-    accepted and ignored, leaving the underlying httpx client's default of no timeout
-    at all, so a slow or stuck Ollama server can hang a request indefinitely (and, for
-    callers that hold a DB connection open across the call, leak it as an
-    idle-in-transaction connection that blocks other things). The real place to set it
-    is `client_kwargs`, which flows through to httpx.Client(timeout=...). 600s comfortably
-    covers this model's normal response time on modest hardware (observed ~9 minutes for
-    a 400-token weekly summary) while still eventually failing a truly-stuck request
-    instead of hanging forever.
+    AI_PROVIDER selects the backend (see .env.example): 'ollama' (default) for a
+    fully local/private model, or 'anthropic' for hosted Claude.
     """
+    if ENV_CONFIG['ai_provider'] == 'anthropic':
+        return ChatAnthropic(
+            model=ENV_CONFIG['anthropic_model'],
+            anthropic_api_key=ENV_CONFIG['anthropic_api_key'],
+            temperature=0,
+            max_tokens=num_predict,
+            default_request_timeout=600,
+        )
+    # ChatOllama has no `timeout` field of its own — passing one directly is silently
+    # accepted and ignored, leaving the underlying httpx client's default of no timeout
+    # at all, so a slow or stuck Ollama server can hang a request indefinitely (and, for
+    # callers that hold a DB connection open across the call, leak it as an
+    # idle-in-transaction connection that blocks other things). The real place to set it
+    # is `client_kwargs`, which flows through to httpx.Client(timeout=...). 600s comfortably
+    # covers this model's normal response time on modest hardware (observed ~9 minutes for
+    # a 400-token weekly summary) while still eventually failing a truly-stuck request
+    # instead of hanging forever.
     return ChatOllama(
         model=ENV_CONFIG['ollama_model'],
         base_url=OLLAMA_URL,

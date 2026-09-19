@@ -1,10 +1,10 @@
 from ollama import Client
 from database.connection import get_connection
-from config.settings import ENV_CONFIG
+from config.settings import OLLAMA_URL
 
 
 def _embed(text: str) -> list[float]:
-    client = Client(host=ENV_CONFIG['OLLAMA_URL'])
+    client = Client(host=OLLAMA_URL)
     return client.embeddings(model="nomic-embed-text", prompt=text)["embedding"]
 
 
@@ -28,44 +28,54 @@ def semantic_search(question: str, top_k: int = 10) -> str:
 
         cur.execute(
             """
-            SELECT DISTINCT
-                t.date,
-                t.description,
-                CAST(t.total_amount AS DECIMAL(15,2))  AS total_amount,
-                curr.currencies_shortname               AS currency,
-                a.accounts_name,
-                COALESCE(
-                    (SELECT Payees_Name FROM Payees WHERE Payees_Id = t.payees_id),
-                    'UNKNOWN'
-                )                                       AS payee,
-                COALESCE(
-                    (WITH RECURSIVE ch AS (
-                        SELECT Categories_Id,
-                               Categories_Name::TEXT AS Full_Path
-                        FROM   Categories
-                        WHERE  Categories_Id_Parent IS NULL
-                        UNION ALL
-                        SELECT c.Categories_Id,
-                               ch.Full_Path || ' : ' || c.Categories_Name
-                        FROM   Categories c
-                        JOIN   ch ON c.Categories_Id_Parent = ch.Categories_Id
-                    )
-                    SELECT Full_Path FROM ch
-                    WHERE  Categories_Id = s.Categories_Id
-                    LIMIT  1),
-                    'Money Transfer'
-                )                                       AS category
-            FROM  Transactions t
-            JOIN  Splits      s    ON s.transactions_id = t.transactions_id
-            JOIN  Accounts    a    ON a.accounts_id     = t.accounts_id
-            JOIN  Currencies  curr ON curr.currencies_id = a.currencies_id
-            WHERE t.embedding IS NOT NULL
-              AND t.total_amount <> 0
-              AND s.Amount       <> 0
-              AND ABS(s.Amount)  = (
-                      SELECT MAX(ABS(Amount)) FROM Splits
-                      WHERE  transactions_id = t.transactions_id)
-            ORDER BY t.embedding <=> %s::vector
+            SELECT date, description, total_amount, currency, accounts_name, payee, category
+            FROM (
+                SELECT DISTINCT ON (t.transactions_id)
+                    t.date,
+                    t.description,
+                    CAST(t.total_amount AS DECIMAL(15,2))  AS total_amount,
+                    curr.currencies_shortname               AS currency,
+                    a.accounts_name,
+                    COALESCE(
+                        (SELECT Payees_Name FROM Payees WHERE Payees_Id = t.payees_id),
+                        'UNKNOWN'
+                    )                                       AS payee,
+                    COALESCE(
+                        (WITH RECURSIVE ch AS (
+                            SELECT Categories_Id,
+                                   Categories_Name::TEXT AS Full_Path
+                            FROM   Categories
+                            WHERE  Categories_Id_Parent IS NULL
+                            UNION ALL
+                            SELECT c.Categories_Id,
+                                   ch.Full_Path || ' : ' || c.Categories_Name
+                            FROM   Categories c
+                            JOIN   ch ON c.Categories_Id_Parent = ch.Categories_Id
+                        )
+                        SELECT Full_Path FROM ch
+                        WHERE  Categories_Id = s.Categories_Id
+                        LIMIT  1),
+                        'Money Transfer'
+                    )                                       AS category,
+                    t.embedding <=> %s::vector              AS distance
+                FROM  Transactions t
+                JOIN  Splits      s    ON s.transactions_id = t.transactions_id
+                JOIN  Accounts    a    ON a.accounts_id     = t.accounts_id
+                JOIN  Currencies  curr ON curr.currencies_id = a.currencies_id
+                WHERE t.embedding IS NOT NULL
+                  AND t.total_amount <> 0
+                  AND s.Amount       <> 0
+                  AND ABS(s.Amount)  = (
+                          SELECT MAX(ABS(Amount)) FROM Splits
+                          WHERE  transactions_id = t.transactions_id)
+                -- DISTINCT ON collapses the rare case of two splits tying for
+                -- max |Amount| on the same transaction (e.g. an even 50/50
+                -- split); ORDER BY must start with the DISTINCT ON column(s),
+                -- so the true similarity ordering/LIMIT happens in the outer
+                -- query below instead.
+                ORDER BY t.transactions_id, distance
+            ) ranked
+            ORDER BY distance
             LIMIT %s
             """,
             (q_vector, top_k),
