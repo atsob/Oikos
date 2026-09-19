@@ -1,7 +1,12 @@
 # Αγνοήστε συγκεκριμένα αρχεία
 #secrets.txt
 #config.py
-settings.py
+# config/settings.py used to be ignored after an earlier version of it hardcoded
+# a real password as an os.getenv() fallback. That's fixed now — it only reads
+# os.getenv(name, non-secret-default) — real secrets live solely in .env
+# (still ignored below), so this file is safe, and needs to be tracked to avoid
+# silently drifting out of sync across machines that build the Docker image.
+#settings.py
 
 # Αγνοήστε ολόκληρους φακέλους
 __pycache__/
