@@ -5122,11 +5122,17 @@ function PortfolioActionSignalsTab() {
       { field: 'above_ma200', headerName: 'Above MA200', width: 120, hide: true,
         headerTooltip: 'Whether the current price is above (hold/add) or below (avoid/exit) its 200-day MA.',
         cellClass: (p: { value: boolean | null }) => `text-xs font-semibold ${p.value === true ? 'text-green-700' : p.value === false ? 'text-red-600' : 'text-slate-400'}`,
-        valueFormatter: p => p.value == null ? '—' : p.value ? 'Above' : 'Below' },
+        valueFormatter: p => p.value == null ? '—' : p.value ? 'Above' : 'Below',
+        // Default text filter matches the raw boolean value ("true"/"false"), not the
+        // "Above"/"Below" the cell actually shows — filterValueGetter aligns the two.
+        filterValueGetter: (p: { data: { above_ma200: boolean | null } }) =>
+          p.data.above_ma200 == null ? '—' : p.data.above_ma200 ? 'Above' : 'Below' },
       { field: 'trailing_stop_triggered', headerName: 'Trailing Stop', width: 130,
         headerTooltip: `Triggered when price has fallen ${settings.trailingStopPct}% or more from its own trailing 1-year high (Tools → System → App Settings → Trailing Stop).`,
         cellClass: (p: { value: boolean | null }) => `text-xs font-semibold ${p.value === true ? 'text-red-600' : p.value === false ? 'text-slate-400' : ''}`,
-        valueFormatter: p => p.value == null ? '—' : p.value ? '🔻 Triggered' : 'OK' },
+        valueFormatter: p => p.value == null ? '—' : p.value ? '🔻 Triggered' : 'OK',
+        filterValueGetter: (p: { data: { trailing_stop_triggered: boolean | null } }) =>
+          p.data.trailing_stop_triggered == null ? '—' : p.data.trailing_stop_triggered ? '🔻 Triggered' : 'OK' },
       { field: 'trailing_stop_price', headerName: 'Stop Price', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
         headerTooltip: 'Trailing 1-year high minus the configured stop %.', valueFormatter: numFmt(4) },
       { field: 'trailing_high_1y', headerName: '1Y High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
