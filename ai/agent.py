@@ -129,10 +129,19 @@ Question: {input}
         verbose=True,
         prefix=custom_prefix,
         suffix=custom_suffix,
-        handle_parsing_errors=True,
         max_iterations=3,
         allow_dangerous_requests=True,
-        return_intermediate_steps=True,
+        # handle_parsing_errors/return_intermediate_steps are AgentExecutor
+        # constructor fields, not create_sql_agent's own named params — passing
+        # them as bare top-level kwargs silently routes them into **kwargs meant
+        # for agent *construction* instead, where they're swallowed and do
+        # nothing (confirmed: result["intermediate_steps"] came back completely
+        # missing despite this flag). agent_executor_kwargs is create_sql_agent's
+        # documented escape hatch straight into AgentExecutor's own constructor.
+        agent_executor_kwargs={
+            "handle_parsing_errors": True,
+            "return_intermediate_steps": True,
+        },
     )
 
     return agent_executor

@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-20
+
+### Fixed
+- **The AI Assistant would frequently discard a correct answer and show the dead-end "Agent stopped due to iteration limit or time limit." instead** — reproduced live: asking "What was my total spending last month?" got the right number (`-3620.02`) on its very first SQL query, but the agent never emitted the required `Final Answer:` line (a known weakness of small local models with this classic ReAct agent format), so it just repeated the same correct query two more times until `max_iterations` ran out and LangChain threw the whole thing away. Root cause: `create_ai_agent()` in `ai/agent.py` passed `handle_parsing_errors`/`return_intermediate_steps` as bare top-level arguments to `create_sql_agent()`, but that function only forwards *named* params (like `max_iterations`) to the underlying `AgentExecutor` — unnamed ones like these two fall into a different `**kwargs` meant for agent *construction* and are silently ignored, which is why `result["intermediate_steps"]` always came back completely missing even though the agent's own transcript clearly showed successful tool calls. Fixed by moving both into `agent_executor_kwargs`, `create_sql_agent`'s documented pass-through to `AgentExecutor`'s real constructor. With that working, `api/routers/ai_router.py`'s existing "synthesize an answer from the last observation" fallback (previously unreachable — `output` was already the non-empty "Agent stopped…" sentinel, so the empty-answer check never triggered) now correctly recognizes that sentinel as no real answer and surfaces the last successful query result instead. Verified live: the same question now returns the actual spending figure instead of the dead-end message.
+
 ## 2026-09-19
 
 ### Added

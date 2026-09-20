@@ -66,6 +66,13 @@ async def ask_ai(req: AskRequest):
 
         raw = result.get("output") or result.get("answer") or ""
         import re
+        # LangChain's own early-stopping message when the agent hits max_iterations/
+        # max_execution_time without ever emitting "Final Answer:" (small local models
+        # are unreliable at that convention, even after finding the right answer via a
+        # correct tool call). Treat it as no answer at all so the fallback below can
+        # surface the last tool observation instead of discarding a correct result.
+        if raw.strip().lower().startswith("agent stopped"):
+            raw = ""
         # Extract only the Final Answer if the model leaked its reasoning into output
         m = re.search(r'final answer[:\s]+(.*)', raw, re.IGNORECASE | re.DOTALL)
         if m:
