@@ -136,6 +136,8 @@ html.dark .bg-amber-50  { background-color: #2d1a00 !important; }
 html.dark .bg-red-50    { background-color: #2d0a0a !important; }
 html.dark .bg-blue-50   { background-color: #191444 !important; }
 html.dark .bg-green-50  { background-color: #052e16 !important; }
+html.dark .bg-teal-50   { background-color: #042f2e !important; }
+html.dark .bg-orange-50 { background-color: #431407 !important; }
 
 /* Badge/pill backgrounds (bg-COLOR-100 + text-COLOR-700) — the -100 tint never
    got a dark-mode pairing, so once the 700-weight text above was lightened for

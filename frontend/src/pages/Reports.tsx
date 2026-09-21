@@ -5279,7 +5279,7 @@ function SecuritiesSection() {
 const DEFAULT_CASH_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
 const DEFAULT_INV_TYPES = ['Brokerage', 'Other Investment', 'Margin']
 const ALL_ACCOUNT_TYPES = ['Cash', 'Checking', 'Savings', 'Credit Card', 'Brokerage', 'Pension', 'Other Investment', 'Margin', 'Loan', 'Real Estate', 'Vehicle', 'Asset', 'Liability', 'Other']
-const REPORT_TYPES = ['Total Summary', 'Income Analysis', 'Expense Analysis', 'Tax Analysis', 'Dividend Analysis', 'Interest Analysis'] as const
+const REPORT_TYPES = ['Total Summary', 'Income Analysis', 'Expense Analysis', 'Tax Analysis', 'Dividend Analysis', 'Interest Analysis', 'Trading Analysis', 'Investment Analysis'] as const
 type ReportType = typeof REPORT_TYPES[number]
 const PERIOD_TYPES = ['Monthly', 'Quarterly', 'Yearly'] as const
 type PeriodType = typeof PERIOD_TYPES[number]
@@ -5296,6 +5296,8 @@ function catTypeForReport(rt: ReportType): string | null {
   if (rt === 'Tax Analysis') return 'Tax'
   if (rt === 'Dividend Analysis') return 'Dividend'
   if (rt === 'Interest Analysis') return 'Interest'
+  if (rt === 'Trading Analysis') return 'Trading'
+  if (rt === 'Investment Analysis') return 'Investment'
   return null
 }
 
@@ -5389,15 +5391,19 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const qc = useQueryClient()
   const today = todayLocal()
   const ytdStart = `${new Date().getFullYear()}-01-01`
+  const lastYearStart = `${new Date().getFullYear() - 1}-01-01`
+  const lastYearEnd = `${new Date().getFullYear() - 1}-12-31`
   // YTD mode (default on, like Net Worth's) recomputes start/end fresh on every render
   // instead of trusting the persisted dates below, which would otherwise go stale — "today"
   // saved from a week ago is no longer today. Turning it off falls back to those persisted
-  // dates, so a deliberately-picked custom range still survives a reload.
+  // dates, so a deliberately-picked custom range still survives a reload. Last Year mode
+  // works the same way and is mutually exclusive with YTD (toggling one clears the other).
   const [ytdMode, setYtdMode] = usePersist('ie_ytd_mode', true)
+  const [lastYearMode, setLastYearMode] = usePersist('ie_last_year_mode', false)
   const [startDate, setStartDate] = usePersist('ie_start_date', ytdStart)
   const [endDate, setEndDate] = usePersist('ie_end_date', today)
-  const effStart = ytdMode ? ytdStart : startDate
-  const effEnd   = ytdMode ? today    : endDate
+  const effStart = ytdMode ? ytdStart : lastYearMode ? lastYearStart : startDate
+  const effEnd   = ytdMode ? today    : lastYearMode ? lastYearEnd   : endDate
   const [reportType, setReportType] = usePersist<ReportType>('ie_report_type', 'Total Summary')
   const [periodType, setPeriodType] = usePersist<PeriodType>('ie_period_type', 'Monthly')
   const [cashTypes, setCashTypes] = useState<string[]>(DEFAULT_CASH_TYPES)
@@ -5558,13 +5564,23 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
   const netSavings = overallIncome + overallExpense
   const savingsRate = overallIncome > 0 ? (netSavings / overallIncome) * 100 : 0
 
-  const bankTotal = allRows.filter(r => r.source_type === 'Bank').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
-  // Excludes realized investment P&L (categories_type 'Trading') so this reconciles
-  // exactly with Net Savings (bankTotal + invTotal === netSavings) — realized gains/
-  // losses are shown separately below instead, since they're lumpy one-off amounts
-  // rather than recurring cash flow and would otherwise distort the savings rate.
-  const invTotal = allRows.filter(r => r.source_type === 'Investment' && r.categories_type !== 'Trading').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  // Both bankTotal and invTotal exclude realized investment P&L (categories_type
+  // 'Trading') and one-off investment distributions (categories_type 'Investment',
+  // e.g. a pension/retirement plan cash-out — can land via either a Bank or an
+  // Investment account) — both shown separately below instead, since they're lumpy
+  // one-off amounts rather than recurring cash flow and would otherwise distort the
+  // savings rate (or, for a Bank-side cash-out, silently double-count against the
+  // dedicated Investment Distributions line below).
+  const bankTotal = allRows.filter(r => r.source_type === 'Bank' && r.categories_type !== 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  const invTotal = allRows.filter(r => r.source_type === 'Investment' && r.categories_type !== 'Trading' && r.categories_type !== 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
   const realizedPnl = allRows.filter(r => r.categories_type === 'Trading').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
+  // categories_type 'Investment' (distinct from source_type 'Investment' above) — a rare
+  // category type for one-off investment distributions that aren't recurring income,
+  // dividends, or trading gains (e.g. an early pension/retirement plan cash-out, which
+  // can be paid out via a regular Bank account rather than an Investment one). Excluded
+  // from Overall Income/Net Savings/Savings Rate/bankTotal/invTotal for the same reason
+  // Realized P&L is, and shown as its own line so it isn't silently invisible instead.
+  const investmentDistributions = allRows.filter(r => r.categories_type === 'Investment').reduce((s, r) => s + Number(r.split_amount ?? 0), 0)
   // Pivot rows by period
   type PivotRow = { category: string; cat_type: string; periods: Record<string, number>; total: number }
   const pivotMap = useMemo<PivotRow[]>(() => {
@@ -5675,14 +5691,17 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="mt-4">
-          <ChkBox label="YTD" checked={ytdMode} onChange={setYtdMode} />
+          <ChkBox label="YTD" checked={ytdMode} onChange={v => { setYtdMode(v); if (v) setLastYearMode(false) }} />
         </div>
-        <div className={ytdMode ? 'opacity-40 pointer-events-none' : ''}>
+        <div className="mt-4">
+          <ChkBox label="Last Year" checked={lastYearMode} onChange={v => { setLastYearMode(v); if (v) setYtdMode(false) }} />
+        </div>
+        <div className={(ytdMode || lastYearMode) ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">Start Date</label>
           <input type="date" value={effStart} onChange={e => setStartDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
-        <div className={ytdMode ? 'opacity-40 pointer-events-none' : ''}>
+        <div className={(ytdMode || lastYearMode) ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">End Date</label>
           <input type="date" value={effEnd} onChange={e => setEndDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
@@ -5710,7 +5729,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             value={invTypes} onChange={setInvTypes} />
         </div>
         <button onClick={() => {
-          setYtdMode(true); setStartDate(ytdStart); setEndDate(today)
+          setYtdMode(true); setLastYearMode(false); setStartDate(ytdStart); setEndDate(today)
           setReportType('Total Summary'); setPeriodType('Monthly')
           setCashTypes(DEFAULT_CASH_TYPES); setInvTypes(DEFAULT_INV_TYPES)
           setQStart(ytdStart); setQEnd(today); setQCash(DEFAULT_CASH_TYPES); setQInv(DEFAULT_INV_TYPES)
@@ -5748,18 +5767,18 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
       </div>
 
       {/* Sub-breakdown row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+      <div className={`grid grid-cols-2 gap-3 text-xs ${investmentDistributions !== 0 ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
         <div className="bg-slate-50 rounded p-2 text-center">
-          <p className="text-slate-400 mb-0.5">Earned & Reimbursed / Investments</p>
-          <p className="font-semibold">
+          <p className="text-slate-500 mb-0.5">Earned & Reimbursed / Investments</p>
+          <p className="text-sm font-semibold">
             <span className={bankIncome + bankInterest >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankIncome + bankInterest)}</span>
             {' / '}
             <span className={invIncome + invDiv + invInt >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invIncome + invDiv + invInt)}</span>
           </p>
         </div>
         <div className="bg-slate-50 rounded p-2 text-center">
-          <p className="text-slate-400 mb-0.5">Expenses / Taxes / Investments</p>
-          <p className="font-semibold">
+          <p className="text-slate-500 mb-0.5">Expenses / Taxes / Investments</p>
+          <p className="text-sm font-semibold">
             <span className={bankExpense >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankExpense)}</span>
             {' / '}
             <span className={taxTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(taxTotal)}</span>
@@ -5768,8 +5787,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           </p>
         </div>
         <div className="bg-slate-50 rounded p-2 text-center">
-          <p className="text-slate-400 mb-0.5">Savings by Cash / Investments</p>
-          <p className="font-semibold">
+          <p className="text-slate-500 mb-0.5">Savings by Cash / Investments</p>
+          <p className="text-sm font-semibold">
             <span className={bankTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(bankTotal)}</span>
             {' / '}
             <span className={invTotal >= 0 ? 'text-green-600' : 'text-red-600'}>{fmtEur(invTotal)}</span>
@@ -5777,10 +5796,18 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
         </div>
         <div className="bg-slate-50 rounded p-2 text-center">
           <Tooltip text="Realized gains/losses from closed investment trades (FIFO). Shown separately — excluded from Net Savings and Savings Rate above since it's a lumpy, one-off amount rather than recurring cash flow.">
-            <p className="text-slate-400 mb-0.5">Realized Investment P&L</p>
+            <p className="text-slate-500 mb-0.5">Realized Investment P&L</p>
           </Tooltip>
-          <p className={`font-semibold ${realizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(realizedPnl)}</p>
+          <p className={`text-sm font-semibold ${realizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(realizedPnl)}</p>
         </div>
+        {investmentDistributions !== 0 && (
+          <div className="bg-slate-50 rounded p-2 text-center">
+            <Tooltip text="Categorized as a one-off investment-account distribution (e.g. an early pension/retirement plan cash-out) rather than recurring income, dividends, or trading gains. Shown separately — excluded from Net Savings and Savings Rate above for the same reason.">
+              <p className="text-slate-500 mb-0.5">Investment Distributions</p>
+            </Tooltip>
+            <p className={`text-sm font-semibold ${investmentDistributions >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(investmentDistributions)}</p>
+          </div>
+        )}
       </div>
 
       <div className="border-t border-slate-200" />
@@ -5854,8 +5881,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
               </thead>
               <tbody>
                 {treeRows.map((r) => (
-                  <tr key={r.path} className={`border-b border-slate-100 hover:bg-slate-50 ${r.hasChildren ? 'bg-slate-50/70 font-semibold' : ''}`}>
-                    <td className="px-2 py-1 sticky left-0 bg-white font-medium" style={{ background: r.hasChildren ? 'rgba(248,250,252,0.9)' : undefined }}>
+                  <tr key={r.path} className={`border-b border-slate-100 hover:bg-slate-50 ${r.hasChildren ? 'bg-slate-50 font-semibold' : ''}`}>
+                    <td className={`px-2 py-1 sticky left-0 font-medium ${r.hasChildren ? 'bg-slate-50' : 'bg-white'}`}>
                       <span style={{ paddingLeft: r.depth * 16 }} className="inline-flex items-center gap-1">
                         {r.hasChildren ? (
                           <button
