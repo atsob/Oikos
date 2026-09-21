@@ -4752,6 +4752,7 @@ function VolatilityTab() {
 // ── Investment Signals Tab ────────────────────────────────────────────────────
 function InvestmentSignalsTab() {
   const { isDark } = useTheme()
+  const navigate = useNavigate()
   const { data = [], isLoading } = usePortfolioSignals()
   const [volCap, setVolCap] = usePersist('inv_sig_vol_cap', 95)
   const rows = data as Signal[]
@@ -4856,7 +4857,13 @@ function InvestmentSignalsTab() {
               ],
               ...plotLayout(isDark), hovermode: 'closest',
             }}
-            config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+            config={{ displayModeBar: false, responsive: true }} style={{ width: '100%', cursor: 'pointer' }}
+            onClick={(e: { points?: { pointIndex?: number }[] }) => {
+              const idx = e?.points?.[0]?.pointIndex
+              if (idx == null) return
+              const secId = chartRows[idx]?.securities_id
+              if (secId != null) navigate(`/securities/${secId}`)
+            }} />
         </div>
       )}
 

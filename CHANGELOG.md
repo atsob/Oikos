@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-21
+
+### Added
+- **Reports → Securities Analysis → Investment Signals: clicking a bubble on the Risk vs. Reward Matrix chart now opens that security's Security Detail page**, the same click-through already available from the table below it and everywhere else in Reports. Verified live: clicking a bubble navigated straight to `/securities/{id}`.
+
 ## 2026-09-20
 
 ### Fixed
