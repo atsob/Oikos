@@ -6,7 +6,7 @@ import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
 import {
   api,
-  getPayees, getCategories, getInstitutions, getAccountsMaster,
+  getPayees, getCategories, getInstitutions, getAccountsMaster, getAccounts,
   upsertPayee, upsertCategory, upsertInstitution, mergePayees, mergeCategories, autoDefaultCategory,
   getCurrenciesMaster,
   getPayeeTransactions, getCategoryTransactions,
@@ -16,7 +16,7 @@ import {
   getAccountInterestRates, upsertAccountInterestRateSchedule, deleteAccountInterestRateSchedule,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
-import { fmtNum, todayLocal } from '@/lib/utils'
+import { fmtNum, fmtEur, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES, LOAN_LENGTH_UNITS } from '@/lib/accountTypes'
 import { PERIODICITIES } from '@/components/TxModal'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
@@ -611,9 +611,29 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
   const { data: institutions = [] } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies-master'], queryFn: () => getCurrenciesMaster() })
 
+  // Read-only "Balance (EUR)" column: same convention as Institutions' Exposure column
+  // (see InstitutionsTab) — reuses Dashboard's own accounts endpoint so Brokerage/Margin/
+  // Other Investment accounts show their full holdings market value. The plain "Balance"
+  // column above is the raw ledger Accounts_Balance, which for those account types only
+  // tracks a residual cash sliver (buys/sells netted) rather than the account's real
+  // worth, and can look wildly wrong — e.g. negative on an account actually worth tens
+  // of thousands in holdings.
+  const { data: accountsForBalanceEur = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const balanceEurByAccount = useMemo(() => {
+    const map: Record<number, number> = {}
+    for (const a of accountsForBalanceEur as Record<string, unknown>[]) {
+      map[Number(a.id)] = Number(a.balance_eur ?? 0)
+    }
+    return map
+  }, [accountsForBalanceEur])
+  const rowsWithBalanceEur = useMemo(() =>
+    (accounts as Record<string, unknown>[]).map(r => ({ ...r, balance_eur: balanceEurByAccount[Number(r.id)] ?? 0 })),
+    [accounts, balanceEurByAccount]
+  )
+
   const visible = showInactive
-    ? (accounts as Record<string, unknown>[])
-    : (accounts as Record<string, unknown>[]).filter(a => Boolean(a.is_active))
+    ? rowsWithBalanceEur
+    : rowsWithBalanceEur.filter(a => Boolean(a.is_active))
 
   const filtered = search
     ? visible.filter(r =>
@@ -704,7 +724,17 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
     { field: 'currency', headerName: 'Currency', width: 90 },
-    { field: 'balance', headerName: 'Balance', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—' },
+    {
+      field: 'balance', headerName: 'Balance ⓘ', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
+      headerTooltip: "Raw ledger balance, in the account's own currency: the literal sum of every transaction ever entered on this account, including ones dated in the future (e.g. an already-scheduled payment or charge). For Brokerage/Margin/Other Investment accounts this is NOT the account's value — those types track cash flows only (deposits/withdrawals/dividends netted against buys/sells), not holdings — see \"Balance (EUR)\" for their real worth.",
+      valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—',
+    },
+    {
+      field: 'balance_eur', headerName: 'Balance (EUR) ⓘ', width: 150, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
+      headerTooltip: "True account value today, converted to EUR. For Brokerage/Margin/Other Investment accounts this is the current market value of holdings (not the cash-flow figure in \"Balance\"); for every other account type it's \"Balance\" converted to EUR, with any future-dated transactions already entered excluded — so it reflects what the balance actually is today, not the full ledger total. Read-only, computed from live account/holdings data.",
+      valueFormatter: (p: { value: unknown }) => fmtEur(Number(p.value ?? 0)),
+      cellClass: (p: { value: unknown }) => Number(p.value ?? 0) < 0 ? 'text-red-600' : undefined,
+    },
     { field: 'institution', headerName: 'Institution', flex: 1, minWidth: 140 },
     { field: 'iban', headerName: 'IBAN', flex: 1, minWidth: 140 },
     { field: 'linked_account_name', headerName: 'Linked Account', flex: 1, minWidth: 140 },
@@ -1219,9 +1249,28 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
 
   const { data = [], isLoading } = useQuery({ queryKey: ['institutions'], queryFn: () => getInstitutions() })
 
+  // Read-only "Exposure" column: total EUR balance across every account at this
+  // institution, any account type — reuses Dashboard's own accounts endpoint so
+  // investment accounts count their full holdings market value (not just their
+  // cash sliver), the same convention Net Worth/Dashboard already use.
+  const { data: accountsForExposure = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts() })
+  const exposureByInstitution = useMemo(() => {
+    const map: Record<number, number> = {}
+    for (const a of accountsForExposure as Record<string, unknown>[]) {
+      if (a.institutions_id == null) continue
+      const id = Number(a.institutions_id)
+      map[id] = (map[id] ?? 0) + Number(a.balance_eur ?? 0)
+    }
+    return map
+  }, [accountsForExposure])
+  const rowsWithExposure = useMemo(() =>
+    (data as Record<string, unknown>[]).map(r => ({ ...r, exposure_eur: exposureByInstitution[Number(r.id)] ?? 0 })),
+    [data, exposureByInstitution]
+  )
+
   const filtered = search
-    ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
-    : data as Record<string, unknown>[]
+    ? rowsWithExposure.filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
+    : rowsWithExposure
 
   const openEdit = (row: Record<string, unknown>) => {
     setEditRow(row)
@@ -1292,6 +1341,12 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
+    {
+      field: 'exposure_eur', headerName: 'Exposure (EUR)', width: 140, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
+      headerTooltip: 'Total balance across every account at this institution (any account type) — investment accounts count their full holdings market value, not just cash. Read-only, computed from live account data.',
+      valueFormatter: (p: { value: unknown }) => fmtEur(Number(p.value ?? 0)),
+      cellClass: (p: { value: unknown }) => Number(p.value ?? 0) < 0 ? 'text-red-600' : undefined,
+    },
     { field: 'bic', headerName: 'BIC', width: 110 },
     { field: 'moodys', headerName: "Moody's", width: 90 },
     { field: 'sp', headerName: 'S&P', width: 80 },

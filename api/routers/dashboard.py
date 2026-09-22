@@ -236,6 +236,7 @@ def get_accounts(include_future: bool = Query(False)):
                 a.Is_Active        AS is_active,
                 c.Currencies_ShortName AS currency,
                 i.Institutions_Name    AS institution,
+                a.Institutions_Id      AS institutions_id,
                 COALESCE(a.Credit_Limit, 0) AS credit_limit,
                 a.Loan_Type                     AS loan_type,
                 a.Loan_Rate_Type                 AS loan_rate_type,
@@ -388,6 +389,8 @@ def get_anomalies(days: int = Query(30), z: float = Query(2.5)):
             ),
             splits_eur AS (
                 SELECT
+                    t.Transactions_Id                                                  AS transaction_id,
+                    t.Accounts_Id                                                      AS account_id,
                     t.Date::text                                                       AS date,
                     p.Payees_Name,
                     cp.full_path                                                       AS category,
@@ -418,6 +421,8 @@ def get_anomalies(days: int = Query(30), z: float = Query(2.5)):
                 HAVING COUNT(*) >= 3 AND STDDEV(amount_eur) > 0
             )
             SELECT
+                se.transaction_id,
+                se.account_id,
                 se.date,
                 se.Payees_Name AS payees_name,
                 se.category,

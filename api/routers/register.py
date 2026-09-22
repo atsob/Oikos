@@ -323,13 +323,13 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
         cur = conn.cursor()
         # Fetch current state of this transaction
         cur.execute("""
-            SELECT Transfers_Id, Accounts_Id, Accounts_Id_Target
+            SELECT Transfers_Id, Accounts_Id, Accounts_Id_Target, Total_Amount_Target
             FROM Transactions WHERE Transactions_Id = %s
         """, (tx_id,))
         row = cur.fetchone()
         if row is None:
             raise HTTPException(404, "Transaction not found")
-        group_tid, src_account_id, old_target_id = row
+        group_tid, src_account_id, old_target_id, old_total_amount_target = row
         # Resolve the actual paired transaction using the shared Transfers_Id group key
         paired_id = None
         if group_tid:
@@ -381,8 +381,17 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
                     set_clause = ", ".join(f"{k} = %s" for k in mirror)
                     cur.execute(f"UPDATE Transactions SET {set_clause} WHERE Transactions_Id = %s",
                                 list(mirror.values()) + [paired_id])
-        elif new_target_id:
-            # No existing mirror but transfer target just set — create mirror leg
+        elif new_target_id and old_total_amount_target is None:
+            # No existing mirror but transfer target just set — create mirror leg.
+            # Gated on Total_Amount_Target IS NULL: a row that already has it set
+            # is a single-row transfer (e.g. an investment's linked cash leg, see
+            # api/routers/investments.py _upsert_cash_transaction) that already
+            # carries both sides on its own — its Accounts_Id_Target being set
+            # doesn't mean "the user just requested a transfer," it means "this is
+            # already a complete transfer." Without this gate, simply opening one
+            # of these in the Cash Register edit modal and saving — even with no
+            # actual change — looked exactly like "no mirror exists yet, but a
+            # target is set," spawning a spurious duplicate leg on every save.
             cur.execute("""
                 SELECT Date, Description, Total_Amount, Payees_Id, Cleared, Reconciled, Is_Draft
                 FROM Transactions WHERE Transactions_Id = %s

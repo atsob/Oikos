@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
-  getAccounts, getTransactions, getTransactionIds, getPayees, getCategories,
+  getAccounts, getTransactions, getTransactionIds, getTransactionById, getPayees, getCategories,
   clearAccount, reconcileAccount, searchAllTransactions,
   syncBalances, batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
@@ -140,6 +140,20 @@ export default function Register() {
       qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
     },
   })
+
+  // Arriving here via a "?transactionId=123" deep link (e.g. Dashboard's Unusual
+  // Transactions panel, double-click) — open that transaction for editing straight
+  // away, rather than requiring you to find and click the account's row yourself.
+  // Consumed once, same reasoning as the accountsId effect above.
+  useEffect(() => {
+    const incoming = searchParams.get('transactionId')
+    if (incoming == null) return
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('transactionId'); return p }, { replace: true })
+    getTransactionById(Number(incoming)).then(t => {
+      tx.openEdit({ ...t, accounts_id_target: t.transfer_account_id }, Number(t.accounts_id))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams])
 
   // Batch move/delete (multi-row selection toolbar)
   const [selectedIds, setSelectedIds] = useState<number[]>([])

@@ -765,6 +765,7 @@ function UpcomingBillsPanel() {
 
 // ── Unusual Transactions ──────────────────────────────────────────────────────
 function AnomaliesPanel() {
+  const navigate = useNavigate()
   const [days, setDays] = React.useState(30)
   const [open, setOpen] = usePersist('dashboard_anomalies_open', true)
   const { data: anomalies = [], isLoading } = useQuery({
@@ -803,7 +804,10 @@ function AnomaliesPanel() {
           ) : (
             <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto">
               {list.map((a, i) => (
-                <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                <div key={i}
+                  onDoubleClick={() => a.transaction_id != null && navigate(`/register?accountsId=${Number(a.account_id)}&transactionId=${Number(a.transaction_id)}&from=report`)}
+                  className="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-slate-50"
+                  title="Double-click to open in Cash Register">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">
                       {String(a.payees_name || a.payee || '—')}
