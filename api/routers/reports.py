@@ -5850,6 +5850,7 @@ def get_bond_schedule():
         WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond'
     )
     SELECT
+        bh.securities_id,
         bh.Securities_Name,
         bh.Quantity,
         bh.Face_Value,

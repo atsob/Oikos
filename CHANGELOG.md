@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-22
+
+### Fixed
+- **Reports → Inv. Performance → Bond Schedule: clicking a security name did nothing** — it looked like ordinary text rather than a link. `api/routers/reports.py`'s `get_bond_schedule()` computed `securities_id` in its `bond_holdings` CTE but never included it in the final `SELECT`, so the API response never carried it; the frontend already wrapped the name in the usual `SecLink`, which silently renders as plain unlinked text whenever its `id` prop is missing. Added `bh.securities_id` to the SELECT list. Verified live: the security name now renders as a link and clicking it navigates to `/securities/{id}`.
+
 ## 2026-09-21
 
 ### Added
