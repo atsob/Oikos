@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { usePersist, useGridColumnState, useGridScrollState, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridApi, useSettings } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -599,6 +599,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
 // ── Accounts Tab ──────────────────────────────────────────────────────────────
 function AccountsTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
+  const [{ reportingCurrency }] = useSettings()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
@@ -726,12 +727,12 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'currency', headerName: 'Currency', width: 90 },
     {
       field: 'balance', headerName: 'Balance ⓘ', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
-      headerTooltip: "Raw ledger balance, in the account's own currency: the literal sum of every transaction ever entered on this account, including ones dated in the future (e.g. an already-scheduled payment or charge). For Brokerage/Margin/Other Investment accounts this is NOT the account's value — those types track cash flows only (deposits/withdrawals/dividends netted against buys/sells), not holdings — see \"Balance (EUR)\" for their real worth.",
+      headerTooltip: `Raw ledger balance, in the account's own currency: the literal sum of every transaction ever entered on this account, including ones dated in the future (e.g. an already-scheduled payment or charge). For Brokerage/Margin/Other Investment accounts this is NOT the account's value — those types track cash flows only (deposits/withdrawals/dividends netted against buys/sells), not holdings — see "Balance (${reportingCurrency})" for their real worth.`,
       valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—',
     },
     {
-      field: 'balance_eur', headerName: 'Balance (EUR) ⓘ', width: 150, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
-      headerTooltip: "True account value today, converted to EUR. For Brokerage/Margin/Other Investment accounts this is the current market value of holdings (not the cash-flow figure in \"Balance\"); for every other account type it's \"Balance\" converted to EUR, with any future-dated transactions already entered excluded — so it reflects what the balance actually is today, not the full ledger total. Read-only, computed from live account/holdings data.",
+      field: 'balance_eur', headerName: `Balance (${reportingCurrency}) ⓘ`, width: 150, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
+      headerTooltip: `True account value today, converted to your reporting currency (${reportingCurrency}, set in Tools → System → App Settings). For Brokerage/Margin/Other Investment accounts this is the current market value of holdings (not the cash-flow figure in "Balance"); for every other account type it's "Balance" converted to ${reportingCurrency}, with any future-dated transactions already entered excluded — so it reflects what the balance actually is today, not the full ledger total. Read-only, computed from live account/holdings data.`,
       valueFormatter: (p: { value: unknown }) => fmtEur(Number(p.value ?? 0)),
       cellClass: (p: { value: unknown }) => Number(p.value ?? 0) < 0 ? 'text-red-600' : undefined,
     },
@@ -763,7 +764,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         </div>
       ),
     },
-  ], []) // eslint-disable-line react-hooks/exhaustive-deps
+  ], [reportingCurrency]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
   const gridScroll = useGridScrollState('static-data-accounts')
   const { gridApi, onGridReady } = useGridApi()
@@ -1241,6 +1242,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
   deepLinkEditId?: string | null; onDeepLinkHandled?: () => void
 }) {
   const qc = useQueryClient()
+  const [{ reportingCurrency }] = useSettings()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -1342,8 +1344,8 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
     { field: 'name', headerName: 'Institution', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
     {
-      field: 'exposure_eur', headerName: 'Exposure (EUR)', width: 140, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
-      headerTooltip: 'Total balance across every account at this institution (any account type) — investment accounts count their full holdings market value, not just cash. Read-only, computed from live account data.',
+      field: 'exposure_eur', headerName: `Exposure (${reportingCurrency}) ⓘ`, width: 150, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
+      headerTooltip: `Total balance across every account at this institution (any account type), converted to your reporting currency (${reportingCurrency}, set in Tools → System → App Settings) — investment accounts count their full holdings market value, not just cash. Read-only, computed from live account data.`,
       valueFormatter: (p: { value: unknown }) => fmtEur(Number(p.value ?? 0)),
       cellClass: (p: { value: unknown }) => Number(p.value ?? 0) < 0 ? 'text-red-600' : undefined,
     },
@@ -1362,7 +1364,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         </div>
       ),
     },
-  ], []) // eslint-disable-line react-hooks/exhaustive-deps
+  ], [reportingCurrency]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
   const gridScroll = useGridScrollState('static-data-institutions')
   const { gridApi, onGridReady } = useGridApi()
