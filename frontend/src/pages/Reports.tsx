@@ -4256,7 +4256,7 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
   // presetList/presetMap a new reference each time, retriggering the onChange effect
   // below in an infinite loop (setState -> re-render -> "new" empty deps -> setState...).
   const { data: accounts = EMPTY_PRESET_ROWS } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
-  const { data: presets = EMPTY_PRESET_ROWS, refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets', reportScope], queryFn: () => getPortfolioPresets(reportScope) })
+  const { data: presets = EMPTY_PRESET_ROWS, isSuccess: presetsLoaded, refetch: refetchPresets } = useQuery({ queryKey: ['portfolio-presets', reportScope], queryFn: () => getPortfolioPresets(reportScope) })
 
   // Inactive accounts stay selectable (an already-saved preset can still include one,
   // even with the checkbox off) — showInactive only controls whether they're offered
@@ -4288,9 +4288,20 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
   const currentIds = draftIds ?? new Set(savedIds)
 
   useEffect(() => {
+    // A saved preset's account list lives in `presets` (a real network fetch, never
+    // cached like the plain selPreset/draftIds prefs), so on a fresh page load
+    // `presetMap` starts out empty regardless of how fast selPreset itself resolved.
+    // Firing onChange before presets has actually loaded would commit to
+    // `presetMap[selPreset] ?? []` — an empty account list — kicking off the
+    // downstream (often expensive, e.g. Cash Flow Forecast) query with the wrong
+    // scope, only to redo it a moment later once presets arrives and this effect
+    // re-fires for real. Waiting here means a non-default preset costs one query,
+    // not two-plus. Full Portfolio needs no such gate — its `onChange(undefined)`
+    // doesn't depend on presetMap at all.
+    if (selPreset !== FULL_PORTFOLIO && !presetsLoaded) return
     onChange(selPreset === FULL_PORTFOLIO ? undefined : Array.from(currentIds))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selPreset, presetMap])
+  }, [selPreset, presetMap, presetsLoaded])
 
   const toggleAccount = (id: number) => {
     const next = new Set(draftIds ?? savedIds)
@@ -5890,10 +5901,10 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50">
-                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
-                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Type</th>
-                  {allPeriods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">{p}</th>)}
-                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 whitespace-nowrap">Category</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Type</th>
+                  {allPeriods.map(p => <th key={p} className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">{p}</th>)}
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -5923,12 +5934,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                       return (
                         <td key={p}
                           onClick={() => setDrillCell(isActive ? null : { category: r.path, period: p })}
-                          className={`px-2 py-1 text-right tabular-nums cursor-pointer rounded transition-colors ${isActive ? 'bg-blue-100 ring-1 ring-blue-400' : 'hover:bg-blue-50'} ${val >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          className={`px-2 py-1 text-right tabular-nums whitespace-nowrap cursor-pointer rounded transition-colors ${isActive ? 'bg-blue-100 ring-1 ring-blue-400' : 'hover:bg-blue-50'} ${val >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                           {val !== 0 ? fmtEur(val) : ''}
                         </td>
                       )
                     })}
-                    <td className={`px-2 py-1 text-right tabular-nums font-semibold ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
+                    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-semibold ${r.total >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(r.total)}</td>
                   </tr>
                 ))}
               </tbody>

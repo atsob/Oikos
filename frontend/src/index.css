@@ -39,6 +39,18 @@
   }
 }
 
+/* Numeric/currency cells (font-variant-numeric: tabular-nums, used across every
+   report/register table in the app for aligned digits) must never line-wrap.
+   Without this, a negative value in a narrow table column (many period columns
+   squeezed into one table, e.g. Reports -> Income & Expense's monthly
+   breakdown) can wrap right after the leading "-" — a hyphen-minus is a legal
+   line-break point under the Unicode line-breaking rules even with no
+   whitespace — splitting "-€6,185.60" into "-" on its own line above the
+   amount. Most call sites already paired tabular-nums with whitespace-nowrap
+   by hand; this makes it automatic everywhere instead of relying on every
+   future numeric cell remembering to add it too. */
+.tabular-nums { white-space: nowrap; }
+
 /* AG Grid customisation */
 .ag-theme-alpine { --ag-font-family: inherit; --ag-font-size: 13px; }
 
