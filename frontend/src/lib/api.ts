@@ -909,8 +909,11 @@ export const getTwr = (lookbackDays: number, accountIds?: number[]) =>
 export const getRiskMetrics = (lookbackDays: number, benchmarkSecId?: number | null, accountIds?: number[]) =>
   api.get('/reports/risk-metrics', { params: { lookback_days: lookbackDays, benchmark_sec_id: benchmarkSecId ?? undefined, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getBenchmarkCandidates = () =>
-  api.get('/reports/benchmark-candidates').then(r => r.data)
+export const getBenchmarkCandidates = (types?: string[], excludeId?: number) =>
+  api.get('/reports/benchmark-candidates', { params: {
+    types: types?.length ? types.join(',') : undefined,
+    exclude_id: excludeId ?? undefined,
+  } }).then(r => r.data)
 
 export const getTaxLossHarvesting = () =>
   api.get('/reports/tax-loss-harvesting').then(r => r.data)
@@ -961,7 +964,7 @@ export const getBondSchedule = () =>
 
 export const getBenchmark = (
   benchmarkIds: number[], compareAccountIds: number[], lookbackDays = 252,
-  accountIds?: number[], resample = 'Daily', ytd = false,
+  accountIds?: number[], resample = 'Daily', ytd = false, baseSecuritiesId?: number | null,
 ) =>
   api.get('/reports/benchmark', { params: {
     benchmark_ids: benchmarkIds.length ? benchmarkIds.join(',') : undefined,
@@ -969,6 +972,7 @@ export const getBenchmark = (
     lookback_days: lookbackDays,
     account_ids: accountIds?.join(',') || undefined, resample,
     ytd: ytd || undefined,
+    base_securities_id: baseSecuritiesId ?? undefined,
   } }).then(r => r.data)
 
 export const getCorrelation = (lookbackDays = 252, maxHoldings = 20, accountIds?: number[]) =>

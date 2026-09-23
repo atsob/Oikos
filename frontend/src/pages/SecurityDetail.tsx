@@ -33,6 +33,7 @@ import type { InvFormData } from '@/components/InvTransactionModal'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
 import { NewsList } from '@/pages/News'
+import { BenchmarkTab } from '@/pages/Reports'
 import type { NewsItem } from '@/pages/News'
 import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
 
@@ -3211,7 +3212,7 @@ function AlertsTab({ secId }: { secId: number }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition', 'In Funds'] as const
+const TABS = ['Overview', 'Setup', 'Analysis', 'Prices', 'Benchmark', 'Transactions', 'Price Anomalies', 'Dividends', 'Corporate Actions', 'News', 'Alerts', 'Downloads', 'Composition', 'In Funds'] as const
 type Tab = typeof TABS[number]
 
 export default function SecurityDetail() {
@@ -3229,6 +3230,7 @@ export default function SecurityDetail() {
   const security = securities.find(s => Number(s.id) === secId) ?? {} as Record<string, unknown>
   const isFund = ['ETF', 'Mutual Fund'].includes(String(security.type ?? ''))
   const isStockOrBond = ['Stock', 'Bond'].includes(String(security.type ?? ''))
+  const isEtf = String(security.type ?? '') === 'ETF'
 
   return (
     <div>
@@ -3266,7 +3268,7 @@ export default function SecurityDetail() {
             {/* Sub-tabs */}
             <div className="border-b border-slate-200 px-4">
               <div className="flex gap-1">
-                {TABS.filter(t => (t !== 'Composition' || isFund) && (t !== 'In Funds' || isStockOrBond)).map(t => (
+                {TABS.filter(t => (t !== 'Composition' || isFund) && (t !== 'In Funds' || isStockOrBond) && (t !== 'Benchmark' || isEtf)).map(t => (
                   <button key={t} onClick={() => setTab(t)}
                     className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                     {t}
@@ -3288,6 +3290,11 @@ export default function SecurityDetail() {
               {tab === 'Alerts' && <AlertsTab secId={secId} />}
               {tab === 'Downloads' && <DownloadsTab secId={secId} security={security} />}
               {tab === 'Composition' && <CompositionHoldingsTab secId={secId} />}
+              {tab === 'Benchmark' && (
+                <div className="p-5">
+                  <BenchmarkTab baseSecuritiesId={secId} baseLabel={String(security.name ?? '')} keyPrefix={`sec_bench_${secId}`} />
+                </div>
+              )}
               {tab === 'In Funds' && <FundMembershipTab secId={secId} />}
             </CardBody>
           </Card>

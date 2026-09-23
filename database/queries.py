@@ -4380,19 +4380,25 @@ def get_price_returns(lookback_days: int = 252, account_ids: tuple = None):
 # A8. BENCHMARK RETURNS
 # ======================================================
 
-def get_benchmark_candidates(min_days: int = 30):
-    """Market Index securities with enough price history to serve as a benchmark."""
+def get_benchmark_candidates(min_days: int = 30, types=('Market Index',), exclude_id: int = None):
+    """Securities of the given type(s) with enough price history to serve as a
+    benchmark. Defaults to Market Index only (the original Risk Metrics/Portfolio
+    Benchmark Comparison behavior); Security Detail's own Benchmark tab passes
+    types=('Market Index', 'ETF') so other ETFs/ETCs (stored as Securities_Type
+    'ETF' in this app — see e.g. "Invesco Physical Gold ETC") are offered too,
+    with exclude_id so a security never appears as a candidate against itself."""
     conn = get_connection()
-    df = pd.read_sql("""
+    exclude_clause = "AND s.Securities_Id != %(exclude_id)s" if exclude_id else ""
+    df = pd.read_sql(f"""
         SELECT s.Securities_Id AS id, s.Securities_Name AS name, s.Ticker AS ticker,
-               COUNT(hp.Date) AS price_days
+               s.Securities_Type AS type, COUNT(hp.Date) AS price_days
         FROM Securities s
         JOIN Historical_Prices hp ON hp.Securities_Id = s.Securities_Id
-        WHERE s.Securities_Type = 'Market Index'
-        GROUP BY s.Securities_Id, s.Securities_Name, s.Ticker
+        WHERE s.Securities_Type IN %(types)s {exclude_clause}
+        GROUP BY s.Securities_Id, s.Securities_Name, s.Ticker, s.Securities_Type
         HAVING COUNT(hp.Date) >= %(min_days)s
         ORDER BY s.Securities_Name
-    """, conn, params={"min_days": min_days})
+    """, conn, params={"min_days": min_days, "types": tuple(types), "exclude_id": exclude_id})
     conn.close()
     return df
 

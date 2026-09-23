@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-23
+
+### Added
+- **Security Detail gained a "Benchmark" tab for ETFs/ETCs**, comparing that security's own price performance against any number of other ETFs/ETCs, Market Indexes, and/or Accounts (their own holdings-weighted performance) — all indexed to 100 at the same start date, same chart/return-tile UI as Reports → Benchmark Comparison. Reused rather than duplicated: `api/routers/reports.py`'s existing `/reports/benchmark` endpoint (previously always benchmarking an account-weighted "Portfolio" line) gained an optional `base_securities_id` param that swaps the base line for a single security's own price history instead, and the frontend `BenchmarkTab` component (now exported from `Reports.tsx`) gained matching `baseSecuritiesId`/`baseLabel` props — Reports' own existing usages are unaffected since neither prop is passed there. Comparison candidates also widened from Market-Index-only to Market Index + ETF (`get_benchmark_candidates()` gained `types`/`exclude_id` params, defaulting to the original Market-Index-only behavior everywhere else), since ETCs are stored as `Securities_Type = 'ETF'` in this app (e.g. "Invesco Physical Gold ETC") — split into separate "Market Indexes" and "ETFs / ETCs" groups in the picker, with the current security excluded from its own candidate list. Verified live on "Xtrackers MSCI World ESG UCITS ETF": defaulted to comparing against "ALPHA ETF FTSE Athex Large Cap Equity UCITS (Dist)" (+18.58% vs +34.23% over 1Y), then added "IBKR - U24394356" as an account comparison and confirmed its own Return tile appeared correctly alongside.
+
 ## 2026-09-22
 
 ### Added

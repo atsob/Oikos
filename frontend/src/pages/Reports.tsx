@@ -2497,7 +2497,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
 
   const { data: bmCandidates = [] } = useQuery({
-    queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates, staleTime: 3_600_000,
+    queryKey: ['benchmark-candidates'], queryFn: () => getBenchmarkCandidates(), staleTime: 3_600_000,
   })
   const bms = bmCandidates as Row[]
 
@@ -3981,10 +3981,21 @@ const BENCHMARK_PALETTE = ['#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#ec4899'
 
 type BenchmarkTarget = { type: 'index' | 'account'; id: number }
 
-function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: { accountIds?: number[]; keyPrefix?: string; defaultYtd?: boolean }) {
+// baseSecuritiesId/baseLabel switch the base line from the account-weighted portfolio
+// to a single security's own price history (Security Detail's own Benchmark tab) —
+// accountIds is ignored in that mode, and the comparison-securities picker also offers
+// ETFs/ETCs (not just Market Indexes), excluding the base security itself.
+export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false, baseSecuritiesId, baseLabel }: {
+  accountIds?: number[]; keyPrefix?: string; defaultYtd?: boolean
+  baseSecuritiesId?: number; baseLabel?: string
+}) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data: candidates = [] } = useQuery({ queryKey: ['benchmark-candidates'], queryFn: getBenchmarkCandidates })
+  const candidateTypes = baseSecuritiesId ? ['Market Index', 'ETF'] : ['Market Index']
+  const { data: candidates = [] } = useQuery({
+    queryKey: ['benchmark-candidates', candidateTypes, baseSecuritiesId],
+    queryFn: () => getBenchmarkCandidates(candidateTypes, baseSecuritiesId),
+  })
   const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
   const [targets, setTargets] = usePersist<BenchmarkTarget[]>(`${keyPrefix}_targets`, [])
   const [lookback, setLookback] = usePersist(`${keyPrefix}_lookback`, 365)
@@ -4023,14 +4034,15 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
   const compareAccountIds = effectiveTargets.filter(t => t.type === 'account').map(t => t.id)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample],
-    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd),
+    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample, baseSecuritiesId],
+    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd, baseSecuritiesId),
     enabled: effectiveTargets.length > 0,
     refetchInterval: liveRefetchMs,
   })
-  const result = data as { series: { key: string; label: string; type: 'index' | 'account' }[]; rows: Record<string, unknown>[] } | undefined
+  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account' }[]; rows: Record<string, unknown>[] } | undefined
   const series = result?.series ?? []
   const rows = result?.rows ?? []
+  const portLabel = result?.base_label ?? baseLabel ?? 'Portfolio'
 
   const pctReturn = (v: unknown) => v != null ? (Number(v) / 100 - 1) * 100 : null
   const lastReturn = (key: string): number | null => {
@@ -4058,9 +4070,14 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
             <select className="rounded border border-slate-300 px-2 py-1 text-xs bg-white text-slate-500"
               value="" onChange={e => addTarget(e.target.value)}>
               <option value="">+ Add comparison…</option>
-              {availableIndexes.length > 0 && (
+              {availableIndexes.filter(c => c.type !== 'ETF').length > 0 && (
                 <optgroup label="Market Indexes">
-                  {availableIndexes.map(c => <option key={`index:${c.id}`} value={`index:${c.id}`}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
+                  {availableIndexes.filter(c => c.type !== 'ETF').map(c => <option key={`index:${c.id}`} value={`index:${c.id}`}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
+                </optgroup>
+              )}
+              {availableIndexes.filter(c => c.type === 'ETF').length > 0 && (
+                <optgroup label="ETFs / ETCs">
+                  {availableIndexes.filter(c => c.type === 'ETF').map(c => <option key={`index:${c.id}`} value={`index:${c.id}`}>{String(c.name)}{c.ticker ? ` (${c.ticker})` : ''}</option>)}
                 </optgroup>
               )}
               {availableAccounts.length > 0 && (
@@ -4096,7 +4113,7 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
       {portReturn != null && (
         <div className="flex flex-wrap gap-3">
           <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
-            <p className="text-xs text-slate-500 mb-1"><Tooltip text="Portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings.">Portfolio Return</Tooltip></p>
+            <p className="text-xs text-slate-500 mb-1"><Tooltip text={baseSecuritiesId ? `${portLabel}'s own total return over the selected period (indexed: end value ÷ start value − 1).` : "Portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings."}>{portLabel} Return</Tooltip></p>
             <p className={`text-xl font-bold ${portReturn >= 0 ? 'text-green-700' : 'text-red-600'}`}>{portReturn >= 0 ? '+' : ''}{portReturn.toFixed(2)}%</p>
           </div>
           {series.map((s, i) => {
@@ -4105,7 +4122,7 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
               <div key={s.key} className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
                 <p className="text-xs text-slate-500 mb-1 flex items-center justify-center gap-1.5">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: BENCHMARK_PALETTE[i % BENCHMARK_PALETTE.length] }} />
-                  <Tooltip text={s.type === 'account' ? "This account's own total return over the same period, indexed to the same start date." : "This benchmark's total return over the same period, indexed to the same start date as your portfolio."}>{s.label} Return</Tooltip>
+                  <Tooltip text={s.type === 'account' ? "This account's own total return over the same period, indexed to the same start date." : `This benchmark's total return over the same period, indexed to the same start date as ${portLabel}.`}>{s.label} Return</Tooltip>
                 </p>
                 <p className={`text-xl font-bold ${r == null ? 'text-slate-400' : r >= 0 ? 'text-green-700' : 'text-red-600'}`}>{r != null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}%` : '—'}</p>
               </div>
@@ -4116,7 +4133,7 @@ function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false }: {
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : rows.length > 0 && (
         <Plot
           data={[
-            { x: rows.map(r => r.date), y: rows.map(r => r.portfolio), name: 'Portfolio', type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2 } },
+            { x: rows.map(r => r.date), y: rows.map(r => r.portfolio), name: portLabel, type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 2 } },
             ...series.map((s, i) => ({
               x: rows.map(r => r.date), y: rows.map(r => r[s.key]), name: s.label,
               type: 'scatter' as const, mode: 'lines' as const,

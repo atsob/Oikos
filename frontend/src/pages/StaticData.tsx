@@ -627,7 +627,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     }
     return map
   }, [accountsForBalanceEur])
-  const rowsWithBalanceEur = useMemo(() =>
+  const rowsWithBalanceEur = useMemo<Record<string, unknown>[]>(() =>
     (accounts as Record<string, unknown>[]).map(r => ({ ...r, balance_eur: balanceEurByAccount[Number(r.id)] ?? 0 })),
     [accounts, balanceEurByAccount]
   )

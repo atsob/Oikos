@@ -4767,9 +4767,14 @@ def get_risk_metrics(
 
 # ── Benchmark candidates (for Risk Metrics benchmark selector) ────────────────
 @router.get("/benchmark-candidates")
-def get_benchmark_candidates_endpoint(min_days: int = Query(30)):
+def get_benchmark_candidates_endpoint(
+    min_days: int = Query(30),
+    types: Optional[str] = Query(None),
+    exclude_id: Optional[int] = Query(None),
+):
     from database.queries import get_benchmark_candidates
-    df = get_benchmark_candidates(min_days=min_days)
+    type_list = tuple(t.strip() for t in types.split(",") if t.strip()) if types else ('Market Index',)
+    df = get_benchmark_candidates(min_days=min_days, types=type_list, exclude_id=exclude_id)
     return _df_to_list(df)
 
 
@@ -6189,6 +6194,7 @@ def get_benchmark(
     account_ids: Optional[str] = Query(None),
     resample: str = Query("Daily"),
     ytd: bool = Query(False),
+    base_securities_id: Optional[int] = Query(None),
 ):
     """Portfolio (weighted avg of holdings) vs any number of comparison series — market
     indexes/securities (benchmark_ids, comma-separated Securities_Id) and/or other
@@ -6196,10 +6202,16 @@ def get_benchmark(
     each its own line rather than blended together) — all indexed to 100 at the same start
     date. ytd=true overrides lookback_days to "since Jan 1 this year".
 
-    Returns {"series": [{"key","label","type"}, ...], "rows": [{"date","portfolio",
-    <key>: value, ...}, ...]} — one row per date, with a dynamically-named column per
-    comparison series (rather than a single fixed "benchmark" column) since there can now
-    be any number of them.
+    base_securities_id switches the base line from the account-weighted portfolio to a
+    single security's own price history instead (Security Detail's Benchmark tab) —
+    account_ids is ignored in that mode. Either way the base line is still returned
+    under the "portfolio" key for a uniform response shape; base_label says what it
+    actually is ("Portfolio" for the account mode, the security's own name otherwise).
+
+    Returns {"base_label", "series": [{"key","label","type"}, ...], "rows": [{"date",
+    "portfolio", <key>: value, ...}, ...]} — one row per date, with a dynamically-named
+    column per comparison series (rather than a single fixed "benchmark" column) since
+    there can now be any number of them.
     """
     if ytd:
         from datetime import date as _date
@@ -6207,14 +6219,37 @@ def get_benchmark(
         lookback_days = (_today - _date(_today.year, 1, 1)).days + 1
 
     acct_ids = _parse_account_ids(account_ids)
-    bench_ids = _parse_account_ids(benchmark_ids)
+    bench_ids = [b for b in (_parse_account_ids(benchmark_ids) or []) if b != base_securities_id]
     cmp_acct_ids = _parse_account_ids(compare_account_ids)
 
     with get_db() as conn:
-        lookback_days = _clamp_lookback_to_inception(conn, acct_ids, lookback_days)
-        port_idx = _account_weighted_index(conn, acct_ids, lookback_days)
-        if port_idx is None:
-            return {"series": [], "rows": []}
+        if base_securities_id:
+            sec_row = pd.read_sql(
+                "SELECT Securities_Name AS name FROM Securities WHERE Securities_Id = %(id)s",
+                conn, params={"id": base_securities_id},
+            )
+            if sec_row.empty:
+                raise HTTPException(404, "Security not found")
+            base_label = sec_row["name"].iloc[0]
+            base_df = pd.read_sql("""
+                SELECT Date AS date, Close AS close FROM Historical_Prices
+                WHERE Securities_Id = %(id)s AND Date >= CURRENT_DATE - (%(lb)s || ' days')::INTERVAL
+                ORDER BY Date
+            """, conn, params={"id": base_securities_id, "lb": lookback_days})
+            if base_df.empty:
+                return {"base_label": base_label, "series": [], "rows": []}
+            base_df["date"] = pd.to_datetime(base_df["date"])
+            base_close = base_df.set_index("date")["close"]
+            first = base_close.iloc[0] if not pd.isna(base_close.iloc[0]) else (base_close.dropna().iloc[0] if not base_close.dropna().empty else None)
+            port_idx = base_close / first * 100 if first else None
+            if port_idx is None:
+                return {"base_label": base_label, "series": [], "rows": []}
+        else:
+            base_label = "Portfolio"
+            lookback_days = _clamp_lookback_to_inception(conn, acct_ids, lookback_days)
+            port_idx = _account_weighted_index(conn, acct_ids, lookback_days)
+            if port_idx is None:
+                return {"base_label": base_label, "series": [], "rows": []}
 
         acct_names: dict = {}
         if cmp_acct_ids:
@@ -6273,7 +6308,7 @@ def get_benchmark(
             entry[s["key"]] = round(float(v), 4) if v is not None and not pd.isna(v) else None
         rows.append(entry)
 
-    return {"series": series_meta, "rows": rows}
+    return {"base_label": base_label, "series": series_meta, "rows": rows}
 
 
 # ── Correlation matrix ─────────────────────────────────────────────────────────
