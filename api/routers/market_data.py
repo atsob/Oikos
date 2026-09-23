@@ -696,3 +696,79 @@ def delete_alert_endpoint(alert_id: int):
         return {"ok": True}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ── Shiller CAPE (U.S. market valuation) ────────────────────────────────────────
+
+@router.get("/shiller-cape")
+def get_shiller_cape_endpoint(years: Optional[int] = Query(None)):
+    """Full (or last N years of) U.S. Shiller CAPE monthly time series."""
+    from database.queries import get_shiller_cape
+    return _df(get_shiller_cape(years=years))
+
+
+@router.get("/shiller-cape/summary")
+def get_shiller_cape_summary_endpoint():
+    """Latest CAPE reading, its percentile rank since 1881, and the long-run median."""
+    from database.queries import get_shiller_cape_summary
+    result = get_shiller_cape_summary()
+    if result is None:
+        raise HTTPException(404, "No Shiller CAPE data yet — use Download below.")
+    return result
+
+
+@router.post("/download/shiller-cape")
+def download_shiller_cape_endpoint():
+    """Re-download the Shiller CAPE dataset from shillerdata.com."""
+    from data.downloaders import download_shiller_cape
+    result = download_shiller_cape()
+    if result.get("error"):
+        raise HTTPException(502, result["error"])
+    return {"ok": True, "message": f"{result['rows']} monthly rows updated"}
+
+
+@router.post("/download/country-cape")
+def download_country_cape_endpoint():
+    """Re-download country-level CAPE snapshots from Siblis Research's free-tier API."""
+    from data.downloaders import download_country_cape_ratios
+    result = download_country_cape_ratios()
+    msg = f"{result['rows']} snapshots updated"
+    if result.get("errors"):
+        msg += f" ({len(result['errors'])} countries failed)"
+    return {"ok": True, "message": msg}
+
+
+# ── Country CAPE ratios (manual entry) ──────────────────────────────────────────
+
+@router.get("/country-cape")
+def get_country_cape_endpoint():
+    from database.queries import get_country_cape_ratios
+    return _df(get_country_cape_ratios())
+
+
+class CountryCapePayload(BaseModel):
+    id: Optional[int] = None
+    country: str
+    as_of_date: str
+    cape_ratio: float
+    source: Optional[str] = None
+
+
+@router.post("/country-cape")
+def upsert_country_cape_endpoint(payload: CountryCapePayload):
+    from database.queries import upsert_country_cape_ratio
+    try:
+        upsert_country_cape_ratio(payload.country, payload.as_of_date, payload.cape_ratio, payload.source, payload.id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/country-cape/{cape_id}")
+def delete_country_cape_endpoint(cape_id: int):
+    from database.queries import delete_country_cape_ratio
+    try:
+        delete_country_cape_ratio(cape_id)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))

@@ -193,6 +193,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           time set under Tools → System → App Settings (7, 3, and 7 days by default).
         </P>
         <Note>
+          The <b>Market Valuation</b> tile (between Insights and Securities Alerts) shows the current U.S. Shiller
+          CAPE ratio, its valuation zone, and percentile since 1881 — auto-imported monthly, not tied to your own
+          holdings. It's context, not a trading signal, and links to Market Data → CAPE Ratios for the full history
+          and country-level ratios. Stays hidden until the first import has run.
+        </Note>
+        <Note>
           A <b>Loan Payment</b> alert shows once a Loan account's Next Payment Due date (set on the account's edit
           modal) is within its lead time. For a Fixed-rate loan that also has Opening Date and Original Length
           set, it estimates the principal/interest split using the exact same math as Reports → Financial
@@ -958,6 +964,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           columns all persist across visits.
         </Note>
         <Note>
+          Institutions' <b>Exposure</b> and Accounts' <b>Balance</b> both come with a second, read-only "(your
+          reporting currency)" column next to the plain one — hover the ⓘ on either header for what it means.
+          For Brokerage/Margin/Other Investment accounts, the plain columns are misleading on their own: an
+          account's raw ledger balance there tracks only a residual cash sliver (deposits/withdrawals/dividends
+          netted against buys/sells), not what it's actually worth, so it can show near-zero or even negative on
+          an account holding a real, substantial portfolio. The second column instead shows the current holdings
+          market value (for those account types) or the plain balance converted to your reporting currency
+          (everyone else), with any future-dated transactions already entered excluded — the same trustworthy
+          figure the Dashboard and Net Worth use everywhere else. Positive figures show in green, negative in red.
+        </Note>
+        <Note>
           Editing an existing Payee, Category, Account, Institution, or Issuer has a <b>Duplicate</b> button next
           to Delete — same idea as a transaction's Duplicate: it copies every field into a new, unsaved record
           (dropping the id, which is what flips the modal from "Edit" to "New") so a similar entry doesn't need
@@ -1013,7 +1030,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in eight tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, and Alerts.</P>
+        <P>Reference and price data, in nine tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
         <Note>
           Editing an existing Security or Currency has a <b>Duplicate</b> button next to Delete, copying every
           field into a new, unsaved record. Double-clicking a row on <b>Watchlist</b> or <b>Alerts</b> opens that
@@ -1021,14 +1038,36 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           button alongside Save, so removing one no longer means closing the modal first to find its trash icon
           in the table.
         </Note>
+        <Note>
+          <b>CAPE Ratios</b> shows the U.S. Shiller CAPE (cyclically adjusted P/E — S&amp;P 500 price over 10
+          years of inflation-adjusted earnings) as a full 1871–present chart plus its current value, valuation
+          zone, and percentile since 1881 — the same figures as the Dashboard's Market Valuation tile, which links
+          straight here. Below it, a <b>Country CAPE Ratios</b> table: 10 countries (US excluded — Shiller_Cape
+          above already covers it with far longer history) auto-import from Siblis Research's free API; anything
+          outside that set (e.g. Taiwan, Turkey) has no free structured source and is entered by hand — Add/Edit/
+          Delete a Country/Date/CAPE/Source snapshot, with a country filter and its own dedicated chart once at
+          least two snapshots exist for it. Both auto-imports refresh monthly (Tools → Scheduled Tasks →{' '}
+          <b>CAPE Ratios</b>) or on demand from the <b>Market Valuation</b> section of the Downloads tab. Treat a
+          high CAPE as long-horizon valuation context, not a timing signal — it describes the next decade's
+          starting base rate, not when a correction happens.
+        </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
-          page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, Transactions
+          page — Overview (My Holdings, Security Details, Quote at a glance), Setup, Analysis, Prices, — for
+          ETFs/ETCs only — <b>Benchmark</b>, Transactions
           (with a <b>New Transaction</b> button and a Tax column for withholding tax), Price
           Anomalies, Dividends, Corporate Actions, News, Alerts, Downloads, and — for ETF/Mutual Fund securities
           only — <b>Composition</b> (that fund's own Portfolio Analysis look-through data); Stock and Bond
           securities instead get an <b>In Funds</b> tab, all for that one security.
         </P>
+        <Note>
+          A security's <b>Benchmark</b> tab (ETFs/ETCs only) compares that security's own price performance
+          against any number of other ETFs/ETCs, Market Indexes, and/or your own Accounts (their holdings-weighted
+          performance) — same "Compare vs" chip picker, indexed-to-100 chart, and return % cards as Reports → Inv.
+          Performance → Benchmark, just with this one security as the base line instead of a portfolio. ETCs count
+          as ETFs for the comparison picker too (e.g. "Invesco Physical Gold ETC"), so gold/commodity trackers show
+          up alongside regular index ETFs, split into separate "Market Indexes" and "ETFs / ETCs" groups.
+        </Note>
         <Note>
           The <b>Analysis</b> tab shows Signals (Final/Math signal, analyst view, quality score), Risk &amp;
           Volatility (Sharpe ratio plus 1M/3M/1Y/YTD annualized volatility), Price Performance (1D through 3Y and

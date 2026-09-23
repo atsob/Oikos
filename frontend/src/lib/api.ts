@@ -377,6 +377,27 @@ export const downloadFundamentals = (securityId?: number) =>
 export const downloadYahooPrices = (period: string, securityId?: number) =>
   api.post('/market-data/download/yahoo-prices', { period, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 
+export const getShillerCape = (years?: number) =>
+  api.get('/market-data/shiller-cape', { params: { years } }).then(r => r.data)
+
+export const getShillerCapeSummary = () =>
+  api.get('/market-data/shiller-cape/summary').then(r => r.data)
+
+export const downloadShillerCape = () =>
+  api.post('/market-data/download/shiller-cape').then(r => r.data)
+
+export const downloadCountryCapeRatios = () =>
+  api.post('/market-data/download/country-cape').then(r => r.data)
+
+export const getCountryCapeRatios = () =>
+  api.get('/market-data/country-cape').then(r => r.data)
+
+export const upsertCountryCapeRatio = (data: { id?: number; country: string; as_of_date: string; cape_ratio: number; source?: string }) =>
+  api.post('/market-data/country-cape', data).then(r => r.data)
+
+export const deleteCountryCapeRatio = (id: number) =>
+  api.delete(`/market-data/country-cape/${id}`).then(r => r.data)
+
 export const downloadTvInfo = (securityId?: number, overwrite = false) =>
   api.post('/market-data/download/tv-info', { overwrite, ...(securityId ? { security_id: securityId } : {}) }).then(r => r.data)
 

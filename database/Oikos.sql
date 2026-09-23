@@ -997,6 +997,30 @@ CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
 
+-- U.S. Shiller CAPE (cyclically adjusted P/E) monthly time series, auto-imported
+-- from Robert Shiller's own dataset (shillerdata.com / Yale) — see
+-- data/downloaders.py::download_shiller_cape(). One row per calendar month back
+-- to 1871.
+CREATE TABLE IF NOT EXISTS Shiller_Cape (
+    Cape_Date   DATE PRIMARY KEY,
+    Cape_Ratio  NUMERIC(10, 4) NOT NULL,
+    Updated_At  TIMESTAMP DEFAULT NOW()
+);
+
+-- Country-level CAPE ratios — unlike Shiller_Cape above, no free structured/API
+-- source exists for these (e.g. Siblis Research publishes a browsable table but
+-- no export), so these are entered by hand, one row per country/date snapshot
+-- the user chooses to record.
+CREATE TABLE IF NOT EXISTS Country_Cape_Ratios (
+    Country_Cape_Id SERIAL PRIMARY KEY,
+    Country         VARCHAR(100) NOT NULL,
+    As_Of_Date      DATE NOT NULL,
+    Cape_Ratio      NUMERIC(10, 4) NOT NULL,
+    Source          VARCHAR(200),
+    Updated_At      TIMESTAMP DEFAULT NOW(),
+    UNIQUE (Country, As_Of_Date)
+);
+
 -- Server-side UI preferences (decimal/date format, saved report filters, last-used
 -- tabs, etc.) so they follow the user across browsers/devices/origins instead of
 -- being trapped in a single browser's localStorage.

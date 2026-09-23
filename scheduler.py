@@ -48,6 +48,8 @@ from data.downloaders import (
     download_stock_splits,
     download_fund_composition,
     download_securities_fundamentals,
+    download_shiller_cape,
+    download_country_cape_ratios,
 )
 from ai.update_vector import update_all_embeddings
 from database.backup import DatabaseBackup
@@ -93,6 +95,9 @@ FUND_COMPOSITION_MINUTE  = 30
 FUNDAMENTALS_DAY         = 3  # 3rd of month at 07:30 — avoids colliding with fund_composition (day 2)
 FUNDAMENTALS_HOUR        = 7
 FUNDAMENTALS_MINUTE      = 30
+SHILLER_CAPE_DAY         = 4  # 4th of month at 07:30 — avoids colliding with fundamentals (day 3)
+SHILLER_CAPE_HOUR        = 7
+SHILLER_CAPE_MINUTE      = 30
 SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
 NEWS_FETCH_INTERVAL_MINUTES = 240     # Every 4 hours, 24×7
 
@@ -355,6 +360,37 @@ def _fundamentals_job():
         _record_job("fundamentals", "error", str(e))
 
 
+def _shiller_cape_job():
+    """Download U.S. Shiller CAPE (shillerdata.com) and country-level CAPE
+    ratios (Siblis Research's free API) once per month, feeding the Dashboard's
+    market valuation tile and Market Data -> CAPE Ratios. Both sources only
+    publish new snapshots monthly at most, so a monthly cadence is all a more
+    frequent run could ever surface as new. A failure in one doesn't skip the
+    other — they're independent sources."""
+    logging.info("Running monthly CAPE (market valuation) refresh…")
+    errors = []
+    try:
+        result = download_shiller_cape()
+        if result.get("error"):
+            errors.append(f"Shiller CAPE: {result['error']}")
+        else:
+            logging.info(f"Shiller CAPE refresh complete ({result.get('rows', 0)} rows).")
+    except Exception as e:
+        logging.error(f"Shiller CAPE refresh failed: {e}", exc_info=True)
+        errors.append(f"Shiller CAPE: {e}")
+    try:
+        result = download_country_cape_ratios()
+        logging.info(f"Country CAPE refresh complete ({result.get('rows', 0)} snapshots).")
+        errors.extend(result.get("errors", []))
+    except Exception as e:
+        logging.error(f"Country CAPE refresh failed: {e}", exc_info=True)
+        errors.append(f"Country CAPE: {e}")
+    if errors:
+        _record_job("shiller_cape", "error", "; ".join(errors))
+    else:
+        _record_job("shiller_cape", "success", "Completed OK")
+
+
 def _backup_job():
     """Create a daily database backup and purge files older than BACKUP_RETENTION_DAYS."""
     logging.info("Running daily database backup…")
@@ -539,6 +575,9 @@ if __name__ == "__main__":
     # Fundamentals (F-Score/Z-Score): skip if already ran this month
     _last_fundamentals_month: int = -1
 
+    # Shiller CAPE: skip if already ran this month
+    _last_shiller_cape_month: int = -1
+
     # Signal notifications: first run deferred to tick loop
     _last_signal_refresh: datetime = datetime.min
 
@@ -622,6 +661,12 @@ if __name__ == "__main__":
         if now.day == fn_d and _in_window(now, fn_h, fn_m) and _last_fundamentals_month != now.month:
             _fundamentals_job()
             _last_fundamentals_month = now.month
+
+        # ── Shiller CAPE: monthly ──────────────────────────────────────────────
+        sh_d, sh_h, sh_m = _parse_monthly(sc.get('shiller_cape', ''), SHILLER_CAPE_DAY, SHILLER_CAPE_HOUR, SHILLER_CAPE_MINUTE)
+        if now.day == sh_d and _in_window(now, sh_h, sh_m) and _last_shiller_cape_month != now.month:
+            _shiller_cape_job()
+            _last_shiller_cape_month = now.month
 
         # ── Signal notifications: every N minutes ─────────────────────────────
         minutes_since_signal = (now - _last_signal_refresh).total_seconds() / 60

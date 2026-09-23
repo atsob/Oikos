@@ -1,6 +1,7 @@
 import math
 import time
 import pandas as pd
+from psycopg2.extras import execute_values
 from database.connection import get_connection, get_db
 from database import crud
 
@@ -4471,6 +4472,142 @@ def delete_benchmark_preset(preset_id: int):
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM Benchmark_Presets WHERE Preset_Id = %s", (preset_id,))
+    conn.commit()
+    conn.close()
+
+
+# ── Shiller CAPE (U.S. market valuation) ────────────────────────────────────────
+
+def _ensure_shiller_cape_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS Shiller_Cape (
+                Cape_Date   DATE PRIMARY KEY,
+                Cape_Ratio  NUMERIC(10, 4) NOT NULL,
+                Updated_At  TIMESTAMP DEFAULT NOW()
+            )
+        """)
+    conn.commit()
+
+
+def upsert_shiller_cape_rows(rows: list) -> int:
+    """Bulk upsert `[(date, cape_ratio), ...]` rows from the Shiller data import.
+    Returns the number of rows written."""
+    if not rows:
+        return 0
+    conn = get_connection()
+    _ensure_shiller_cape_table(conn)
+    with conn.cursor() as cur:
+        execute_values(cur, """
+            INSERT INTO Shiller_Cape (Cape_Date, Cape_Ratio, Updated_At)
+            VALUES %s
+            ON CONFLICT (Cape_Date) DO UPDATE
+                SET Cape_Ratio = EXCLUDED.Cape_Ratio,
+                    Updated_At = NOW()
+        """, [(d, c) for d, c in rows], template="(%s, %s, NOW())")
+    conn.commit()
+    conn.close()
+    return len(rows)
+
+
+def get_shiller_cape(years: int = None):
+    """Full (or last N years of) U.S. Shiller CAPE monthly time series."""
+    conn = get_connection()
+    _ensure_shiller_cape_table(conn)
+    clause = "WHERE Cape_Date >= CURRENT_DATE - (%(yrs)s || ' years')::INTERVAL" if years else ""
+    df = pd.read_sql(f"""
+        SELECT Cape_Date AS date, Cape_Ratio AS cape_ratio
+        FROM Shiller_Cape
+        {clause}
+        ORDER BY Cape_Date
+    """, conn, params={"yrs": years} if years else None)
+    conn.close()
+    return df
+
+
+def get_shiller_cape_summary():
+    """Latest CAPE reading plus its percentile rank against the full recorded
+    history, and the long-run median — the figures shown on the Dashboard tile."""
+    conn = get_connection()
+    _ensure_shiller_cape_table(conn)
+    df = pd.read_sql("SELECT Cape_Date AS date, Cape_Ratio AS cape_ratio FROM Shiller_Cape ORDER BY Cape_Date", conn)
+    conn.close()
+    if df.empty:
+        return None
+    latest = df.iloc[-1]
+    pctile = float((df["cape_ratio"] < latest["cape_ratio"]).mean() * 100)
+    return {
+        "date": str(latest["date"]),
+        "cape_ratio": float(latest["cape_ratio"]),
+        "percentile": round(pctile, 1),
+        "median": float(df["cape_ratio"].median()),
+        "min": float(df["cape_ratio"].min()),
+        "max": float(df["cape_ratio"].max()),
+        "months": int(len(df)),
+    }
+
+
+# ── Country CAPE ratios (manual entry — no free structured source exists) ──────
+
+def _ensure_country_cape_table(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS Country_Cape_Ratios (
+                Country_Cape_Id SERIAL PRIMARY KEY,
+                Country         VARCHAR(100) NOT NULL,
+                As_Of_Date      DATE NOT NULL,
+                Cape_Ratio      NUMERIC(10, 4) NOT NULL,
+                Source          VARCHAR(200),
+                Updated_At      TIMESTAMP DEFAULT NOW(),
+                UNIQUE (Country, As_Of_Date)
+            )
+        """)
+    conn.commit()
+
+
+def get_country_cape_ratios():
+    """Every manually-entered country CAPE snapshot, most recent first."""
+    conn = get_connection()
+    _ensure_country_cape_table(conn)
+    df = pd.read_sql("""
+        SELECT Country_Cape_Id AS id, Country AS country, As_Of_Date AS as_of_date,
+               Cape_Ratio AS cape_ratio, Source AS source
+        FROM Country_Cape_Ratios
+        ORDER BY As_Of_Date DESC, Country
+    """, conn)
+    conn.close()
+    return df
+
+
+def upsert_country_cape_ratio(country: str, as_of_date: str, cape_ratio: float, source: str = None, cape_id: int = None):
+    """Insert a new country CAPE snapshot, or update one by `cape_id` if given."""
+    conn = get_connection()
+    _ensure_country_cape_table(conn)
+    with conn.cursor() as cur:
+        if cape_id:
+            cur.execute("""
+                UPDATE Country_Cape_Ratios
+                SET Country = %s, As_Of_Date = %s, Cape_Ratio = %s, Source = %s, Updated_At = NOW()
+                WHERE Country_Cape_Id = %s
+            """, (country, as_of_date, cape_ratio, source, cape_id))
+        else:
+            cur.execute("""
+                INSERT INTO Country_Cape_Ratios (Country, As_Of_Date, Cape_Ratio, Source)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (Country, As_Of_Date) DO UPDATE
+                    SET Cape_Ratio = EXCLUDED.Cape_Ratio,
+                        Source     = EXCLUDED.Source,
+                        Updated_At = NOW()
+            """, (country, as_of_date, cape_ratio, source))
+    conn.commit()
+    conn.close()
+
+
+def delete_country_cape_ratio(cape_id: int):
+    conn = get_connection()
+    _ensure_country_cape_table(conn)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM Country_Cape_Ratios WHERE Country_Cape_Id = %s", (cape_id,))
     conn.commit()
     conn.close()
 

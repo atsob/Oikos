@@ -7,9 +7,9 @@ import {
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert, acknowledgeZoneChange,
-  getUpcomingBills, getAnomalies, syncBalances,
+  getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary,
 } from '@/lib/api'
-import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink } from '@/components/ui'
+import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip } from '@/components/ui'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
@@ -123,6 +123,43 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
           <p className="text-xs text-slate-400 pt-1">Based on last 90 days of transactions</p>
         </CardBody>
       )}
+    </Card>
+  )
+}
+
+// U.S. Shiller CAPE (cyclically adjusted P/E) — long-horizon market-valuation
+// context, not a trading signal (see the tooltip). Auto-imported monthly from
+// shillerdata.com; full history + a manual country-CAPE table live under
+// Market Data -> CAPE Ratios. Renders nothing until the first import has run
+// (retry: false so an empty table doesn't spam 404s).
+function MarketValuationPanel() {
+  const navigate = useNavigate()
+  const { data: summary } = useQuery({
+    queryKey: ['shiller-cape-summary'], queryFn: getShillerCapeSummary, retry: false, staleTime: 60 * 60 * 1000,
+  })
+  const s = summary as { date: string; cape_ratio: number; percentile: number; median: number } | undefined
+  if (!s) return null
+
+  const zone = s.percentile >= 90 ? { label: 'Historically Expensive', cls: 'text-red-600' }
+    : s.percentile >= 60 ? { label: 'Above Average', cls: 'text-amber-600' }
+    : s.percentile >= 40 ? { label: 'Fair Value', cls: 'text-slate-600' }
+    : { label: 'Below Average / Cheap', cls: 'text-green-700' }
+
+  return (
+    <Card>
+      <CardBody className="flex items-center justify-between gap-3 py-3">
+        <div className="flex items-center gap-3">
+          <Tooltip text={`U.S. Shiller CAPE: S&P 500 price divided by 10 years of inflation-adjusted earnings. ${s.percentile.toFixed(0)}th percentile since 1881 (median ${s.median.toFixed(1)}×) — describes the next decade's starting valuation base rate, not a crash-timing signal.`}>
+            <span className="text-sm text-slate-500">U.S. Shiller CAPE</span>
+          </Tooltip>
+          <span className="text-lg font-bold">{s.cape_ratio.toFixed(1)}×</span>
+          <span className={`text-xs font-medium ${zone.cls}`}>{zone.label}</span>
+          <span className="text-xs text-slate-400">({s.percentile.toFixed(0)}th pctile since 1881)</span>
+        </div>
+        <button className="text-xs text-blue-600 hover:underline shrink-0" onClick={() => navigate(`/market-data?tab=${encodeURIComponent('CAPE Ratios')}`)}>
+          View history →
+        </button>
+      </CardBody>
     </Card>
   )
 }
@@ -1157,6 +1194,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-3">
             <InsightsPanel insights={insights as Insight[]} />
+            <MarketValuationPanel />
             <SecuritiesAlertsPanel />
             <UncategorizedTransactionsPanel />
           </div>

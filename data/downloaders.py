@@ -2601,3 +2601,112 @@ def download_bond_prices_from_solidus(target_sec_id=None):
         cur.close()
         conn.close()
 
+
+def download_shiller_cape():
+    """Download Robert Shiller's own U.S. Shiller CAPE (cyclically adjusted P/E)
+    monthly dataset and upsert it into Shiller_Cape.
+
+    There's no formal API for this — Shiller's own spreadsheet is the primary
+    source every third-party CAPE site (multpl.com, YCharts, etc.) ultimately
+    re-publishes. Its download link lives on shillerdata.com behind a
+    content-versioned blob URL that changes whenever the file is updated, so
+    the page is scraped for the current "ie_data.xls" link each run rather than
+    hardcoding it.
+
+    The workbook's "Data" sheet has a decorative multi-row header; the real
+    column header row is row 8 (index 7), with "Date" as YYYY.MM (e.g. 2026.09)
+    and "CAPE" as the ratio itself. A trailing footnote row with a non-numeric
+    Date is dropped. Each YYYY.MM is mapped to the first of that month — the
+    dataset itself is monthly, so no finer date is meaningful.
+    """
+    conn = get_connection()
+    try:
+        page = requests.get("https://shillerdata.com/", timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+        page.raise_for_status()
+        # The link is protocol-relative ("//img1.wsimg.com/...") as embedded in the page.
+        match = re.search(r'//img1\.wsimg\.com/[^"\']*?ie_data\.xls\?ver=\d+', page.text)
+        if not match:
+            raise RuntimeError("Could not find the ie_data.xls download link on shillerdata.com")
+        xls_url = "https:" + match.group(0)
+
+        resp = requests.get(xls_url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+
+        df = pd.read_excel(io.BytesIO(resp.content), sheet_name="Data", header=7)
+        df = df[["Date", "CAPE"]].dropna()
+        df = df[pd.to_numeric(df["Date"], errors="coerce").notna()]
+
+        rows = []
+        for _, r in df.iterrows():
+            # Format to 2 decimals first — Python's default float repr drops the
+            # trailing zero on months like .10/.20/.30 (e.g. 1881.1 prints as
+            # "1881.1", not "1881.10"), which would silently misparse October as
+            # January and collide with the real January row on upsert.
+            year, month = f"{float(r['Date']):.2f}".split(".")
+            cape_date = f"{year}-{int(month):02d}-01"
+            rows.append((cape_date, float(r["CAPE"])))
+
+        from database.queries import upsert_shiller_cape_rows
+        written = upsert_shiller_cape_rows(rows)
+        logging.info(f"Shiller CAPE: upserted {written} monthly rows (latest {rows[-1][0] if rows else 'n/a'}).")
+        return {"rows": written}
+    except Exception as e:
+        logging.error(f"❌ Shiller CAPE download failed: {e}")
+        return {"rows": 0, "error": str(e)}
+    finally:
+        conn.close()
+
+
+# Ticker -> country name, for Siblis Research's free-tier CAPE API. Only tickers
+# that map to a single actual country are included — the free tier's other
+# indices (ACWI, WORLD, EMER, SXXP, the U.S. sector/style indices) are regional
+# or thematic, not a country, so they're left for the manual-entry table
+# instead. USA is deliberately excluded too: Shiller_Cape above already covers
+# it with a far longer, more authoritative history (1871-present vs. this free
+# tier's 8 recent snapshots), so importing it here would just be a confusing,
+# sparser duplicate of the Dashboard's own U.S. CAPE tile.
+_SIBLIS_COUNTRY_TICKERS = {
+    "CAC":   "France",
+    "CAN":   "Canada",
+    "DAX":   "Germany",
+    "HSI":   "Hong Kong",
+    "IBOV":  "Brazil",
+    "KOSPI": "South Korea",
+    "N225":  "Japan",
+    "NIFTY": "India",
+    "SSE":   "China",
+    "UKX":   "United Kingdom",
+}
+
+
+def download_country_cape_ratios():
+    """Download country-level CAPE ratios from Siblis Research's free-tier API
+    (https://siblisresearch.com/global-valuations-database/api/) — no key
+    needed, but the free tier only carries a handful of month-end snapshots per
+    ticker (not a continuous monthly series like Shiller_Cape), and only for
+    the countries in _SIBLIS_COUNTRY_TICKERS. Anything outside that set (e.g.
+    Taiwan, Turkey — visible on Siblis's own country-comparison page but not in
+    the free API's ticker universe) still needs the manual-entry table.
+
+    Upserts into Country_Cape_Ratios with Source="Siblis Research (free API)",
+    distinguishing these rows from hand-entered ones (which default to a plain
+    "Siblis Research" source in the UI) without needing a separate column.
+    """
+    from database.queries import upsert_country_cape_ratio
+    written = 0
+    errors = []
+    for ticker, country in _SIBLIS_COUNTRY_TICKERS.items():
+        try:
+            resp = requests.get(f"https://siblisresearch.com/api/v1/{ticker}/cape", timeout=20)
+            resp.raise_for_status()
+            payload = resp.json()
+            for point in payload.get("data", []):
+                as_of = point["trading_day (EOD)"]
+                upsert_country_cape_ratio(country, as_of, float(point["value"]), "Siblis Research (free API)")
+                written += 1
+        except Exception as e:
+            logging.warning(f"Siblis CAPE fetch failed for {ticker} ({country}): {e}")
+            errors.append(f"{country}: {e}")
+    logging.info(f"Country CAPE (Siblis free tier): upserted {written} snapshots across {len(_SIBLIS_COUNTRY_TICKERS)} countries.")
+    return {"rows": written, "errors": errors}
+

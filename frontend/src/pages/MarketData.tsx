@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
@@ -7,8 +7,8 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers } from '@/lib/api'
-import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES } from '@/components/ui'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios } from '@/lib/api'
+import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -1031,6 +1031,9 @@ function DownloadsTab() {
       qc.invalidateQueries({ queryKey: ['currencies'] })
       qc.invalidateQueries({ queryKey: ['fx-history'] })
       qc.invalidateQueries({ queryKey: ['xray'] })
+      qc.invalidateQueries({ queryKey: ['shiller-cape'] })
+      qc.invalidateQueries({ queryKey: ['shiller-cape-summary'] })
+      qc.invalidateQueries({ queryKey: ['country-cape'] })
     } catch (e) {
       setStatus(s => ({ ...s, [key]: 'error' }))
       setMessages(m => ({ ...m, [key]: extractError(e) }))
@@ -1157,6 +1160,15 @@ function DownloadsTab() {
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Greek Bonds</p>
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
           <ActionRow id="solidus" label="Download Bond Prices from Solidus PDF" onClick={() => run('solidus', downloadSolidusBonds)} />
+        </div>
+      </div>
+
+      {/* Shiller CAPE */}
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Market Valuation</p>
+        <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+          <ActionRow id="shiller-cape" label="Download Shiller CAPE (shillerdata.com)" onClick={() => run('shiller-cape', downloadShillerCape)} />
+          <ActionRow id="country-cape" label="Download Country CAPE Ratios (Siblis Research, free tier)" onClick={() => run('country-cape', downloadCountryCapeRatios)} />
         </div>
       </div>
 
@@ -1309,6 +1321,220 @@ function WatchlistTab() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// ── CAPE Ratios Tab ───────────────────────────────────────────────────────────
+// U.S. Shiller CAPE (auto-imported monthly from shillerdata.com) plus
+// country-level CAPE ratios — 10 countries auto-import from Siblis Research's
+// free-tier API (siblisresearch.com/global-valuations-database/api), a handful
+// of month-end snapshots per country rather than a continuous series; anything
+// outside that set has no free structured source and is entered by hand below.
+// Both auto-imports live under the "Market Valuation" section of the
+// Downloads tab.
+function ShillerCapeSection() {
+  const { isDark } = useTheme()
+  const { data: summary } = useQuery({ queryKey: ['shiller-cape-summary'], queryFn: getShillerCapeSummary, retry: false })
+  const { data: series = [] } = useQuery({ queryKey: ['shiller-cape'], queryFn: () => getShillerCape() })
+  const rows = series as { date: string; cape_ratio: number }[]
+  const s = summary as { date: string; cape_ratio: number; percentile: number; median: number; min: number; max: number; months: number } | undefined
+
+  const zone = (pctile: number) => pctile >= 90 ? { label: 'Historically Expensive', cls: 'text-red-600' }
+    : pctile >= 60 ? { label: 'Above Average', cls: 'text-amber-600' }
+    : pctile >= 40 ? { label: 'Fair Value', cls: 'text-slate-600' }
+    : { label: 'Below Average / Cheap', cls: 'text-green-700' }
+
+  if (!s) {
+    return (
+      <div className="p-5 text-sm text-slate-500">
+        No Shiller CAPE data yet — use <span className="font-mono">Download Shiller CAPE</span> on the Downloads tab to fetch it from shillerdata.com.
+      </div>
+    )
+  }
+  const z = zone(s.percentile)
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex flex-wrap gap-3">
+        <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text="Price of the S&P 500 divided by the 10-year moving average of inflation-adjusted earnings — Robert Shiller's cyclically adjusted P/E. Source: shillerdata.com.">Shiller CAPE ({String(s.date).slice(0, 7)})</Tooltip></p>
+          <p className="text-2xl font-bold">{s.cape_ratio.toFixed(2)}×</p>
+          <p className={`text-xs font-medium mt-1 ${z.cls}`}>{z.label}</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
+          <p className="text-xs text-slate-500 mb-1"><Tooltip text="Where today's CAPE ranks against every month since 1881 — 98th percentile means only ~2% of months in the record were higher.">Percentile since 1881</Tooltip></p>
+          <p className="text-2xl font-bold">{s.percentile.toFixed(1)}<span className="text-base">th</span></p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
+          <p className="text-xs text-slate-500 mb-1">Long-run Median</p>
+          <p className="text-2xl font-bold">{s.median.toFixed(1)}×</p>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
+          <p className="text-xs text-slate-500 mb-1">All-time Range</p>
+          <p className="text-2xl font-bold">{s.min.toFixed(1)}× – {s.max.toFixed(1)}×</p>
+        </div>
+      </div>
+      <p className="text-xs text-slate-400">
+        A high CAPE describes the next decade's starting valuation base rate — it has never reliably timed a correction, so treat it as long-horizon context, not a trading signal.
+      </p>
+      {rows.length > 0 && (
+        <Plot
+          data={[{ x: rows.map(r => r.date), y: rows.map(r => r.cape_ratio), type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 1.5 }, name: 'CAPE' }]}
+          layout={{ height: 340, yaxis: { title: 'CAPE Ratio' }, xaxis: { title: '' }, margin: { t: 20, b: 40, l: 60, r: 20 }, shapes: [
+            { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: s.median, y1: s.median, line: { color: '#94a3b8', width: 1, dash: 'dot' } },
+          ], ...plotLayout(isDark) }}
+          config={{ displayModeBar: false }} style={{ width: '100%' }}
+        />
+      )}
+    </div>
+  )
+}
+
+function CountryCapeSection() {
+  const { isDark } = useTheme()
+  const qc = useQueryClient()
+  const { data = [], isLoading } = useQuery({ queryKey: ['country-cape'], queryFn: getCountryCapeRatios })
+  const rows = data as Record<string, unknown>[]
+
+  const [showAdd, setShowAdd] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const [form, setForm] = useState({ country: '', as_of_date: todayLocal(), cape_ratio: '', source: 'Siblis Research' })
+  const [err, setErr] = useState('')
+
+  const countries = useMemo(() => [...new Set(rows.map(r => String(r.country)))].sort(), [rows])
+  const [filterCountry, setFilterCountry] = useState('')
+  const filteredRows = filterCountry ? rows.filter(r => String(r.country) === filterCountry) : rows
+  // Chart wants oldest-first; the table below (unaffected by this sort) shows
+  // newest-first, which reads better as a log of snapshots as they're added.
+  const chartRows = useMemo(() =>
+    filterCountry
+      ? rows.filter(r => String(r.country) === filterCountry)
+          .slice()
+          .sort((a, b) => String(a.as_of_date).localeCompare(String(b.as_of_date)))
+      : [],
+    [rows, filterCountry]
+  )
+
+  const upsertMut = useMutation({
+    mutationFn: upsertCountryCapeRatio,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['country-cape'] }); setShowAdd(false); setEditId(null); setErr('') },
+    onError: (e) => setErr(extractError(e)),
+  })
+  const deleteMut = useMutation({
+    mutationFn: deleteCountryCapeRatio,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['country-cape'] }),
+  })
+
+  const openAdd = () => { setForm({ country: '', as_of_date: todayLocal(), cape_ratio: '', source: 'Siblis Research' }); setEditId(null); setShowAdd(true) }
+  const openEdit = (row: Record<string, unknown>) => {
+    setForm({
+      country: String(row.country ?? ''),
+      as_of_date: String(row.as_of_date ?? '').slice(0, 10),
+      cape_ratio: String(row.cape_ratio ?? ''),
+      source: String(row.source ?? ''),
+    })
+    setEditId(Number(row.id))
+    setShowAdd(true)
+  }
+
+  const save = () => {
+    if (!form.country.trim()) return setErr('Country is required')
+    if (!form.cape_ratio) return setErr('CAPE ratio is required')
+    upsertMut.mutate({
+      id: editId ?? undefined,
+      country: form.country.trim(),
+      as_of_date: form.as_of_date,
+      cape_ratio: Number(form.cape_ratio),
+      source: form.source || undefined,
+    })
+  }
+
+  if (isLoading) return <div className="flex justify-center py-8"><Spinner /></div>
+
+  return (
+    <div className="p-5 pt-0 space-y-3">
+      <div className="flex justify-between items-center">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Country CAPE Ratios</p>
+          <p className="text-xs text-slate-400">10 countries auto-import via Siblis Research's free API (Downloads tab) — everything else (e.g. Taiwan, Turkey) has no free structured source and is entered by hand below.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select className="rounded-md border border-slate-300 px-2 py-1.5 text-sm bg-white" value={filterCountry} onChange={e => setFilterCountry(e.target.value)}>
+            <option value="">— All countries —</option>
+            {countries.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Snapshot</Button>
+        </div>
+      </div>
+
+      {filterCountry && (
+        chartRows.length > 1 ? (
+          <Plot
+            data={[{ x: chartRows.map(r => String(r.as_of_date).slice(0, 10)), y: chartRows.map(r => Number(r.cape_ratio)), type: 'scatter', mode: 'lines+markers', line: { color: '#3b82f6', width: 1.5 }, marker: { size: 5 }, name: filterCountry }]}
+            layout={{ height: 280, yaxis: { title: 'CAPE Ratio' }, xaxis: { title: '' }, margin: { t: 20, b: 40, l: 60, r: 20 }, ...plotLayout(isDark) }}
+            config={{ displayModeBar: false }} style={{ width: '100%' }}
+          />
+        ) : (
+          <p className="text-xs text-slate-400 py-4 text-center">Only one snapshot recorded for {filterCountry} — need at least two to draw a chart.</p>
+        )
+      )}
+
+      {showAdd && (
+        <Modal title={editId ? 'Edit Country CAPE' : 'Add Country CAPE'} onClose={() => { setShowAdd(false); setErr('') }}
+          footer={<>
+            {editId && <Button variant="destructive" onClick={() => { deleteMut.mutate(editId); setShowAdd(false); setErr('') }} disabled={upsertMut.isPending}><Trash2 size={14} /> Delete</Button>}
+            <span className="flex-1" />
+            <Button variant="secondary" onClick={() => { setShowAdd(false); setErr('') }}>Cancel</Button>
+            <Button onClick={save} disabled={upsertMut.isPending}>Save</Button>
+          </>}>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <Field label="Country *"><Input value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} placeholder="e.g. Japan" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="As Of *"><Input type="date" value={form.as_of_date} onChange={e => setForm(f => ({ ...f, as_of_date: e.target.value }))} /></Field>
+            <Field label="CAPE Ratio *"><Input type="number" step="0.1" value={form.cape_ratio} onChange={e => setForm(f => ({ ...f, cape_ratio: e.target.value }))} placeholder="e.g. 24.0" /></Field>
+          </div>
+          <Field label="Source"><Input value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="e.g. Siblis Research" /></Field>
+        </Modal>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-200">
+            <th className="px-3 py-2 text-left font-medium">Country</th>
+            <th className="px-3 py-2 text-right font-medium">CAPE Ratio</th>
+            <th className="px-3 py-2 text-left font-medium">As Of</th>
+            <th className="px-3 py-2 text-left font-medium">Source</th>
+            <th className="px-3 py-2"></th>
+          </tr></thead>
+          <tbody>
+            {filteredRows.map(r => (
+              <tr key={String(r.id)} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => openEdit(r)}>
+                <td className="px-3 py-2 font-medium">{String(r.country)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{Number(r.cape_ratio).toFixed(1)}×</td>
+                <td className="px-3 py-2">{String(r.as_of_date ?? '').slice(0, 10)}</td>
+                <td className="px-3 py-2 text-slate-500">{String(r.source ?? '—')}</td>
+                <td className="px-3 py-2 text-right"><Pencil size={13} className="text-slate-400" /></td>
+              </tr>
+            ))}
+            {filteredRows.length === 0 && (
+              <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400 text-sm">
+                {rows.length === 0 ? 'No country CAPE snapshots recorded yet.' : `No snapshots for ${filterCountry}.`}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function CapeRatiosTab() {
+  return (
+    <div>
+      <ShillerCapeSection />
+      <div className="border-t border-slate-200" />
+      <CountryCapeSection />
     </div>
   )
 }
@@ -1519,6 +1745,19 @@ function AlertsTab() {
 export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [tab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
+  // Deep-link support: "?tab=CAPE Ratios" (used by Dashboard's Market Valuation
+  // tile) switches to that tab even when a different one was last persisted —
+  // usePersist's initial value above only wins on a completely fresh visit with
+  // nothing saved yet, so a returning visitor needs this to actually force the
+  // switch. Cleared once consumed, so it doesn't re-fire on a later re-render
+  // or a manual tab switch back.
+  const deepLinkTab = searchParams.get('tab')
+  useEffect(() => {
+    if (deepLinkTab && TABS.includes(deepLinkTab)) {
+      setTab(deepLinkTab)
+      setSearchParams({}, { replace: true })
+    }
+  }, [deepLinkTab]) // eslint-disable-line react-hooks/exhaustive-deps
   // Persisted like `tab` above — plain useState would reset on remount, which is exactly
   // what happens when you drill into a security's own Security Detail page and hit Back,
   // silently dropping a filter you'd just typed. Still cleared explicitly on tab switches
@@ -1574,6 +1813,7 @@ export default function MarketData() {
               )
             )}
             {tab === 'Watchlist' && <WatchlistTab />}
+            {tab === 'CAPE Ratios' && <CapeRatiosTab />}
             {tab === 'Alerts' && <AlertsTab />}
           </CardBody>
         </Card>
