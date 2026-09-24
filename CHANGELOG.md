@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-24
+
+### Added
+- **Investments → Holdings gained a "Copy to Excel" button.** It's a plain HTML table (inline-editable Quantity/Staking inputs), not ag-Grid, so it couldn't reuse `<CopyToExcelButton>`'s `gridApi.getDataAsCsv()` the way Investments' own Transactions/Cash tabs and every other ag-Grid table in the app do — and a naive DOM-textContent scrape (the other existing plain-table approach, Reports' `WithCopy`) would have silently copied blank cells for Quantity/Staking, since an `<input>`'s value/checked state isn't part of its `textContent`. Builds the TSV from the same sorted row data and formatters the table itself renders instead. Styled and positioned to match `WithCopy`'s convention for plain tables (dark button, 📋 icon, bottom-left) rather than the ag-Grid button's (bordered, top-right) — the first version of this fix used the wrong one. Investments' Transactions/Cash tabs and Cash Register were checked too and already had Copy to Excel correctly via the ag-Grid convention; nothing needed there.
+
 ## 2026-09-23
 
 ### Added

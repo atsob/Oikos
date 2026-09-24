@@ -134,6 +134,40 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 
   const changedIds = Object.keys(edits).map(Number)
 
+  // Copy to Excel: this table is plain HTML, not ag-Grid, so it can't reuse
+  // <CopyToExcelButton>'s gridApi.getDataAsCsv() — and a naive DOM-textContent
+  // scrape (the other plain-table approach used elsewhere, e.g. Reports'
+  // WithCopy) would silently copy blank cells for Quantity/Staking, since an
+  // <input>'s value/checked state isn't part of its textContent. Built from
+  // the same sorted row data and formatters the table itself renders instead.
+  const [copiedHoldings, setCopiedHoldings] = useState(false)
+  const copyHoldingsToExcel = () => {
+    const headers = ['Account', 'Ticker', 'Security', 'Type', 'Quantity', 'Staking', 'Simple Avg', 'FIFO Avg', 'Last Price', 'Curr', 'Value (EUR)', 'Gain/Loss', 'Gain/Loss %', 'Price Date']
+    const lines = sortedHoldings.map(row => {
+      const edit = getEdit(row)
+      const gl = Number(row.gain_eur ?? 0)
+      const glPct = row.gain_pct != null ? Number(row.gain_pct) : null
+      return [
+        String(row.account ?? ''),
+        String(row.ticker ?? ''),
+        String(row.security ?? ''),
+        String(row.security_type ?? ''),
+        edit.quantity,
+        edit.staking ? 'Yes' : 'No',
+        fmtP(row.simple_avg_price, row.currency),
+        fmtP(row.fifo_avg_price, row.currency),
+        fmtP(row.last_price, row.currency),
+        String(row.currency ?? ''),
+        fmtEur(Number(row.value_eur ?? 0)),
+        fmtEur(gl),
+        glPct != null ? `${glPct >= 0 ? '+' : ''}${glPct.toFixed(2)}%` : '—',
+        row.price_date ? String(row.price_date).slice(0, 10) : '—',
+      ].join('\t')
+    })
+    const tsv = [headers.join('\t'), ...lines].join('\n')
+    navigator.clipboard.writeText(tsv).then(() => { setCopiedHoldings(true); setTimeout(() => setCopiedHoldings(false), 1500) })
+  }
+
   const stakingEntries = changedIds.flatMap(id => {
     const row = holdings.find(h => Number(h.id) === id)
     if (!row) return []
@@ -248,11 +282,16 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
         </table>
       </div>
 
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="secondary" size="sm" disabled={changedIds.length === 0} onClick={() => { setEdits({}); setMsg(null) }}>Reset</Button>
-        <Button size="sm" disabled={saving || changedIds.length === 0} onClick={handleSave}>
-          <Save size={14} /> {saving ? 'Saving…' : `Save${changedIds.length > 0 ? ` (${changedIds.length})` : ''}`}
-        </Button>
+      <div className="flex justify-between items-center gap-2 pt-1">
+        <button onClick={copyHoldingsToExcel} className={`no-print flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copiedHoldings ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
+          {copiedHoldings ? '✓ Copied!' : '📋 Copy to Excel'}
+        </button>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" disabled={changedIds.length === 0} onClick={() => { setEdits({}); setMsg(null) }}>Reset</Button>
+          <Button size="sm" disabled={saving || changedIds.length === 0} onClick={handleSave}>
+            <Save size={14} /> {saving ? 'Saving…' : `Save${changedIds.length > 0 ? ` (${changedIds.length})` : ''}`}
+          </Button>
+        </div>
       </div>
     </div>
   )
