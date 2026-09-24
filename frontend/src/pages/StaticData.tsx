@@ -729,6 +729,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
       field: 'balance', headerName: 'Balance ⓘ', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
       headerTooltip: `Raw ledger balance, in the account's own currency: the literal sum of every transaction ever entered on this account, including ones dated in the future (e.g. an already-scheduled payment or charge). For Brokerage/Margin/Other Investment accounts this is NOT the account's value — those types track cash flows only (deposits/withdrawals/dividends netted against buys/sells), not holdings — see "Balance (${reportingCurrency})" for their real worth.`,
       valueFormatter: (p: { value: unknown }) => p.value != null ? fmtNum(Number(p.value), 2) : '—',
+      cellClass: (p: { value: unknown }) => { const v = Number(p.value ?? 0); return v < 0 ? 'text-red-600' : v > 0 ? 'text-green-600' : undefined },
     },
     {
       field: 'balance_eur', headerName: `Balance (${reportingCurrency}) ⓘ`, width: 150, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',

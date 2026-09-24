@@ -262,6 +262,68 @@ Once trusted, `https://<host>:8443` loads without a warning from that device
 going forward. Add more accounts, or change your own password, from the
 sidebar's **Account** panel once logged in.
 
+## Optional: Connecting Claude to Oikos (MCP server)
+
+`mcp_server.py` in the repo root is a read-only [MCP](https://modelcontextprotocol.io)
+server that lets Claude Desktop or Claude Code answer questions against your
+real Oikos data — net worth, accounts, transactions, holdings, market
+valuation, and anything else the app's own REST API returns via GET. It's
+read-only *by construction*: the one HTTP tool it exposes only ever issues
+GET requests (hardcoded, not something a calling agent can change), and every
+mutating Oikos endpoint is POST/PUT/DELETE — so nothing reachable through it
+can create, edit, or delete a record.
+
+This file is fully standalone (only the `mcp` and `requests` packages, no
+other Oikos module required), so the machine running Claude Desktop does
+**not** need a full Oikos checkout — copy just `mcp_server.py` to it. It talks
+to Oikos purely over HTTPS, the same way a browser does, so it doesn't need
+to run on the same host as Oikos itself either.
+
+**Important:** `mcp_server.py` always runs on whatever machine is running
+Claude Desktop/Code, not wherever Oikos itself is deployed — MCP's stdio
+transport spawns it as a *local* child process of that app. So `OIKOS_API_URL`
+needs to be an address reachable *from that machine* — your Oikos host's LAN
+IP or Tailscale IP if you're on a separate device (the common case, and what
+the default below assumes), or `http://127.0.0.1:8080` (the app port
+directly, skipping the nginx/TLS layer and its self-signed cert entirely)
+only in the less common case where you're running Claude Desktop/Code
+directly on the Oikos host itself.
+
+1. On the machine running Claude Desktop/Code, install the two dependencies:
+   ```bash
+   pip install "mcp[cli]" requests
+   ```
+2. Add it to that app's MCP config — `claude_desktop_config.json` for Claude
+   Desktop, or `.mcp.json` (or `claude mcp add oikos -- python mcp_server.py`
+   if you're inside the repo checkout) for Claude Code:
+   ```json
+   {
+     "mcpServers": {
+       "oikos": {
+         "command": "python",
+         "args": ["<path-to>/mcp_server.py"],
+         "env": {
+           "OIKOS_API_URL": "https://<your-host-or-tailscale-ip>:8443",
+           "OIKOS_MCP_USERNAME": "<your ADMIN_USERNAME>",
+           "OIKOS_MCP_PASSWORD": "<your ADMIN_PASSWORD>"
+         }
+       }
+     }
+   }
+   ```
+   `OIKOS_API_URL` defaults to this deployment's own address if you leave it
+   out; the username/password vars are only required when `mcp_server.py` is
+   running outside a full checkout (no `.env` to fall back to). Since Step 5's
+   TLS certificate is self-signed, certificate verification is off by default
+   for this script's own requests — set `OIKOS_VERIFY_SSL=true` in that same
+   `env` block once the client machine actually trusts it (having gone through
+   Step 5's cert-trust steps there too), or point it at a specific CA/cert
+   file path instead of the system trust store.
+3. Restart Claude Desktop (or reconnect the MCP server in Claude Code). Ask
+   it something like "what's my net worth" to confirm it's working — it calls
+   `list_endpoints()` first to see what's available, then `oikos_get(path, params)`
+   to fetch it.
+
 ## Environment variable reference
 
 All variables live in `.env` (copied from `.env.example`). Required ones are

@@ -1346,6 +1346,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           jobs (configurable under Tools → Scheduled Tasks), which write a short plain-English recap of cash
           flow, top payees, investment P&amp;L, and net worth — shown on the Dashboard.
         </P>
+        <H3>Claude Desktop / Claude Code (MCP)</H3>
+        <P>
+          Separate from the in-app chat above: <code>mcp_server.py</code> in the repo root is a read-only{' '}
+          <a href="https://modelcontextprotocol.io" target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">MCP</a>{' '}
+          server that lets Claude Desktop or Claude Code — running on any machine, not just this one — answer
+          questions against your real Oikos data over HTTPS, the same way a browser does. It's read-only by
+          construction (the one tool it exposes only ever issues GET requests, hardcoded — every mutating Oikos
+          endpoint is POST/PUT/DELETE, so nothing reachable through it can create, edit, or delete a record), and
+          fully standalone (just the <code>mcp</code>/<code>requests</code> Python packages — the machine running
+          Claude Desktop doesn't need a full Oikos checkout). See <b>INSTALL.md</b>'s "Optional: Connecting
+          Claude to Oikos" section for setup.
+        </P>
       </>
     ),
   },
