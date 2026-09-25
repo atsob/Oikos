@@ -178,6 +178,9 @@ export const getIncomeExpense = (startDate: string, endDate: string) =>
 export const getTopCategories = (startDate: string, endDate: string, catType = 'Expense', topN = 10) =>
   api.get('/reports/top-categories', { params: { start_date: startDate, end_date: endDate, cat_type: catType, top_n: topN } }).then(r => r.data)
 
+export const getCostsByBroker = (startDate: string, endDate: string) =>
+  api.get('/reports/costs-by-broker', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
+
 export const getSavingsRate = (months = 12) =>
   api.get('/reports/savings-rate', { params: { months } }).then(r => r.data)
 

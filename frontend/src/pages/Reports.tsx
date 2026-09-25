@@ -20,7 +20,7 @@ import {
   getSavingsForecast, getSavingsRecommendations,
   getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
-  getIncomeExpenseFull,
+  getIncomeExpenseFull, getCostsByBroker,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
   getCustomReportFilterData, runCustomReport, runCustomReportDrillDown, runCustomReportInvestmentDrillDown,
   updateTransaction, upsertSplits, getSplits, getCategories, getPayees, deleteTransaction,
@@ -1886,6 +1886,149 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
   )
 }
 
+// Every investment-related cost, grouped by the broker/institution that
+// charged it, so the real all-in cost of holding at each one is visible in
+// one place instead of scattered across sub-categories. Two sources, unioned
+// server-side: cash-side fees categorised under "Investment Expenses" (Service
+// Fees, Custody Fees, VAT on Fees, Transfer Fees, Lawyer Fees, etc.), and
+// Investments-table charges recorded directly on the investment account
+// itself (Saxo custody/VAT/CFD-financing CashOuts, FxPro MT5 swap MiscExps,
+// etc.) — the latter never goes through Splits/Categories at all, so it's
+// otherwise invisible everywhere else in the app, Income & Expense included.
+// Prompted by working out Alpha Finance's quarterly custody fee (a variable
+// "cost" receipt plus a fixed custody+VAT pair) — this generalizes that to
+// every broker/institution at once, not just Alpha Finance.
+type CostByBrokerRow = {
+  broker: string; category: string; source: 'cash' | 'investment'
+  transaction_id: number; account_id: number; date: string
+  description: string | null; account_name: string; amount: number
+}
+function CostsByBrokerTab() {
+  const navigate = useNavigate()
+  const [ytd, setYtd] = usePersist('costs_broker_ytd', false)
+  const [lookback, setLookback] = usePersist('costs_broker_lookback', 36500)
+  const [expandedBroker, setExpandedBroker] = useState<Set<string>>(new Set())
+  const [expandedCategory, setExpandedCategory] = useState<Set<string>>(new Set())
+
+  const today = new Date()
+  const startDate = ytd ? `${today.getFullYear()}-01-01` : toLocalISODate(new Date(today.getTime() - lookback * 86400000))
+  const endDate = '2099-12-31'
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['costs-by-broker', startDate, endDate],
+    queryFn: () => getCostsByBroker(startDate, endDate),
+  })
+  const result = data as { by_broker: { broker: string; total: number; by_category: { category: string; amount: number }[] }[]; transactions: CostByBrokerRow[] } | undefined
+  const byBroker = result?.by_broker ?? []
+  const allTransactions = result?.transactions ?? []
+  const grandTotal = byBroker.reduce((s, b) => s + Number(b.total), 0)
+
+  const toggleBroker = (broker: string) => setExpandedBroker(prev => {
+    const next = new Set(prev)
+    if (next.has(broker)) next.delete(broker); else next.add(broker)
+    return next
+  })
+  const toggleCategory = (key: string) => setExpandedCategory(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
+  const openTransaction = (r: CostByBrokerRow) => {
+    if (r.source === 'cash') {
+      navigate(`/register?accountsId=${r.account_id}&transactionId=${r.transaction_id}&from=report`)
+    } else {
+      navigate(`/investments?accountsId=${r.account_id}&tab=transactions&investmentId=${r.transaction_id}&from=report`)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-slate-500">
+          <Tooltip text="Every investment-related cost — cash-side fees categorised under 'Investment Expenses' (Service Fees, Custody Fees, VAT on Fees, Transfer Fees, Lawyer Fees, etc.), plus charges recorded directly on the investment account itself (broker custody/VAT/financing charges, swap fees, etc.) — grouped by the account's Institution. A reimbursement posted under the same category (e.g. someone else's share of a cost you fronted, credited back to you) nets against it rather than adding to it — shown in green when a category or broker nets to a credit overall. Click a broker, then a category, to drill down to individual transactions; double-click one to open it.">
+            Lookback
+          </Tooltip>
+        </label>
+        <button onClick={() => setYtd(true)}
+          className={`px-2 py-1 text-xs rounded border ${ytd ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+          YTD
+        </button>
+        {([91, 182, 365, 730, 1095, 1825, 36500] as const).map(d => (
+          <button key={d} onClick={() => { setYtd(false); setLookback(d) }}
+            className={`px-2 py-1 text-xs rounded border ${!ytd && lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+            {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : 'All'}
+          </button>
+        ))}
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
+        <WithCopy>
+          <div className="space-y-2">
+            <div className="bg-slate-50 rounded-lg p-4 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-600">Total across all brokers</span>
+              <span className={`text-xl font-bold ${grandTotal < 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(grandTotal)}</span>
+            </div>
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-b-2 border-slate-200 text-xs text-slate-500">
+                  <th className="text-left px-2 py-1.5">Broker</th>
+                  <th className="text-right px-2 py-1.5">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byBroker.map(b => (
+                  <React.Fragment key={b.broker}>
+                    <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer font-medium" onClick={() => toggleBroker(b.broker)}>
+                      <td className="px-2 py-1.5">
+                        <span className="inline-flex items-center gap-1">
+                          {expandedBroker.has(b.broker) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                          {b.broker}
+                        </span>
+                      </td>
+                      <td className={`px-2 py-1.5 text-right tabular-nums ${Number(b.total) < 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(Number(b.total))}</td>
+                    </tr>
+                    {expandedBroker.has(b.broker) && b.by_category.map(c => {
+                      const catKey = `${b.broker}::${c.category}`
+                      const catTransactions = allTransactions.filter(t => t.broker === b.broker && t.category === c.category)
+                      return (
+                        <React.Fragment key={catKey}>
+                          <tr className="border-b border-slate-50 text-slate-500 hover:bg-slate-50 cursor-pointer" onClick={() => toggleCategory(catKey)}>
+                            <td className="px-2 py-1 pl-7">
+                              <span className="inline-flex items-center gap-1">
+                                {expandedCategory.has(catKey) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                                {c.category}
+                              </span>
+                            </td>
+                            <td className={`px-2 py-1 text-right tabular-nums ${Number(c.amount) < 0 ? 'text-green-700' : ''}`}>{fmtEur(Number(c.amount))}</td>
+                          </tr>
+                          {expandedCategory.has(catKey) && catTransactions.map(t => (
+                            <tr key={`${t.source}-${t.transaction_id}`}
+                              className="border-b border-slate-50 text-xs text-slate-400 hover:bg-blue-50 hover:text-slate-600 cursor-pointer"
+                              onDoubleClick={() => openTransaction(t)}>
+                              <td className="px-2 py-1 pl-12">
+                                <span className="tabular-nums">{String(t.date).slice(0, 10)}</span>{' — '}
+                                {t.description || '—'}{' · '}{t.account_name}
+                              </td>
+                              <td className={`px-2 py-1 text-right tabular-nums ${Number(t.amount) < 0 ? 'text-green-600' : ''}`}>{fmtEur(Number(t.amount))}</td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      )
+                    })}
+                  </React.Fragment>
+                ))}
+                {byBroker.length === 0 && (
+                  <tr><td colSpan={2} className="px-2 py-8 text-center text-slate-400">No investment expense transactions in this range.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </WithCopy>
+      )}
+    </div>
+  )
+}
+
 function InvPositionsSection({ startDate: initialStartDate }: { startDate: string }) {
   const [tab, setTab] = usePersist('inv_positions_tab', 'Graph')
   // One-time migration: this sub-tab was labeled 'X-Ray' before the rename to
@@ -1923,10 +2066,11 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
         </div>
       )}
 
-      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'FX Exposure', 'Portfolio Analysis']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'FX Exposure', 'Portfolio Analysis', 'Costs by Broker']} active={tab} onChange={setTab} />
       {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Summary' && <InvPositionsSummary startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
+      {tab === 'Costs by Broker' && <CostsByBrokerTab />}
       {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
       {tab === 'FX Exposure' && <FxExposureTab accountIds={presetAccountIds} />}
       {tab === 'Portfolio Analysis' && <XRayTab accountIds={presetAccountIds} />}

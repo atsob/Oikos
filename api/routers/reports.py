@@ -421,6 +421,164 @@ def get_top_categories(
     return _df_to_list(df)
 
 
+_INVESTMENT_CHARGE_LABELS = {
+    "CUSTODYFEE": "Custody Fee",
+    "VAT": "VAT on Fees",
+    "CFDFINANCE": "CFD Financing",
+    "FINANCINGCOST": "Financing Cost",
+    "SERVICEFEE": "Service Fee",
+    "COMMISSION": "Commission",
+    "SWAP": "Swap Fee",
+    "BAL": "Balance Charge",
+}
+
+
+def _investment_cost_category(description: Optional[str]) -> str:
+    """Best-effort human label for an Investments-table cost row's Description.
+
+    Broker sync tools log per-charge rows as pipe-delimited machine tags —
+    e.g. "SAXO|CHARGE|CUSTODYFEE||2026-08-03|0_1200" or "FXP|MT5|SWAP|21152641" —
+    with no Categories_Id at all (unlike cash-side fees, which go through
+    Splits/Categories). Parse the charge-type token out of that tag instead of
+    lumping everything into one bucket; older, manually-entered rows have no
+    such tag and fall back to their raw free-text description as-is.
+    """
+    if description is None or (isinstance(description, float) and math.isnan(description)):
+        return "Miscellaneous Expense"
+    d = str(description).strip()
+    if not d:
+        return "Miscellaneous Expense"
+    parts = d.split("|")
+    if len(parts) >= 2:
+        # A known charge-type token can sit in different positions depending on
+        # the broker's own tag format — "SOURCE|CHARGE|TYPE|..." (Saxo),
+        # "SOURCE|TYPE|TICKER" (Capital.com), "SOURCE|PLATFORM|TYPE|ticket-id"
+        # (FxPro) — so scan every token after the source rather than assuming
+        # a fixed position.
+        for token in parts[1:]:
+            label = _INVESTMENT_CHARGE_LABELS.get(token.upper())
+            if label:
+                return label
+        # Unrecognised but still a structured "SOURCE|TYPE|..." tag: the type
+        # token is right after the source, unless that slot is the generic
+        # "CHARGE" marker, in which case the real type is the one after it.
+        idx = 2 if parts[1].upper() == "CHARGE" and len(parts) > 2 else 1
+        token = parts[idx]
+        if token and not token.strip("-").isdigit():
+            return token.replace("_", " ").title()
+    return d
+
+
+@router.get("/costs-by-broker")
+def get_costs_by_broker(
+    start_date: str = Query("2000-01-01"),
+    end_date: str = Query("2099-12-31"),
+):
+    """Investment-related costs, grouped by the broker/institution that
+    charged them, so the real all-in cost of holding at each one is visible
+    in one place instead of scattered across sub-categories. Two sources,
+    unioned:
+      1. Cash-side fees under the "Investment Expenses" category tree
+         (Service Fees, Custody Fees, VAT on Fees, Transfer Fees, Lawyer
+         Fees, etc.) — the ones a person categorised by hand.
+      2. Investments-table charges recorded directly on the investment
+         account itself (Saxo custody/VAT/CFD-financing CashOuts, FxPro MT5
+         swap MiscExps, etc.) — these never go through Splits/Categories at
+         all, so the cash-side query alone misses them entirely. Action =
+         'MiscExp' is definitionally a broker-charged cost and is always
+         included; Action = 'CashOut' is ambiguous (real cash withdrawals —
+         a pension cash-out, an insurance contract closure — use it too) so
+         it's only included when the Description carries the sync tool's
+         own "|CHARGE|" tag, which pension/insurance cash-outs never do.
+    Deliberately no account-type restriction to Cash/Checking/etc. the way
+    Income & Expense has: these fees are typically recorded on an investment
+    account's own linked cash sub-account, which is already that type, but a
+    fee posted directly on a Brokerage/Margin account itself (accounts_id_target
+    IS NULL still excludes transfer-mirror legs either way) should count too.
+    """
+    cash_query = """
+    WITH RECURSIVE CategoryHierarchy AS (
+        SELECT Categories_Id, Categories_Name::TEXT AS Full_Path, Categories_Id_Parent
+        FROM Categories WHERE Categories_Id_Parent IS NULL
+        UNION ALL
+        SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name, c.Categories_Id_Parent
+        FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+    )
+    SELECT
+        COALESCE(i.Institutions_Name, 'No Institution Set') AS broker,
+        COALESCE(c.Categories_Name, 'Uncategorized') AS category,
+        'cash' AS source,
+        t.Transactions_Id AS transaction_id,
+        a.Accounts_Id AS account_id,
+        t.Date AS date,
+        t.Description AS description,
+        a.Accounts_Name AS account_name,
+        -- Signed, not ABS(): an Expense-category split is conventionally
+        -- negative (negate it here so a plain cost comes out positive), but
+        -- a *reimbursement* posted under the same category — e.g. someone
+        -- else's share of a lawsuit's legal fees you fronted, credited back
+        -- to you — is conventionally positive, and ABS()-ing it would count
+        -- it as an ADDITIONAL cost instead of netting it against the real
+        -- one. Summed per broker/category below, so it nets correctly there.
+        -COALESCE(s.Amount, t.Total_Amount) AS amount
+    FROM Transactions t
+    JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
+    LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id
+    LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+    LEFT JOIN Categories c ON s.Categories_Id = c.Categories_Id
+    LEFT JOIN CategoryHierarchy cat ON s.Categories_Id = cat.Categories_Id
+    WHERE t.Date BETWEEN %(start_date)s AND %(end_date)s
+      AND t.Accounts_Id_Target IS NULL
+      AND SPLIT_PART(COALESCE(cat.Full_Path, ''), ' : ', 1) = 'Investment Expenses'
+    """
+    investment_query = """
+    SELECT
+        COALESCE(inst.Institutions_Name, 'No Institution Set') AS broker,
+        i.Description AS category,
+        'investment' AS source,
+        i.Investments_Id AS transaction_id,
+        a.Accounts_Id AS account_id,
+        i.Date AS date,
+        i.Description AS description,
+        a.Accounts_Name AS account_name,
+        -- Investments.Total_Amount_AccCur is always a positive magnitude —
+        -- direction comes from Action, not sign — and every Action reaching
+        -- this query (MiscExp, CHARGE-tagged CashOut) is already a genuine
+        -- outflow, so ABS() here is a no-op, not a netting risk like the
+        -- cash-side query above.
+        ABS(i.Total_Amount_AccCur) AS amount
+    FROM Investments i
+    JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
+    LEFT JOIN Institutions inst ON a.Institutions_Id = inst.Institutions_Id
+    WHERE i.Date BETWEEN %(start_date)s AND %(end_date)s
+      AND i.Total_Amount_AccCur != 0
+      AND (i.Action = 'MiscExp' OR (i.Action = 'CashOut' AND i.Description ILIKE '%%|CHARGE|%%'))
+    """
+    with get_db() as conn:
+        cash_df = pd.read_sql(cash_query, conn, params={"start_date": start_date, "end_date": end_date})
+        inv_df = pd.read_sql(investment_query, conn, params={"start_date": start_date, "end_date": end_date})
+
+    if not inv_df.empty:
+        inv_df["category"] = inv_df["description"].apply(_investment_cost_category)
+
+    df = pd.concat([cash_df, inv_df], ignore_index=True) if not inv_df.empty else cash_df
+    if df.empty:
+        return {"by_broker": [], "transactions": []}
+    df = df.sort_values("date", ascending=False)
+
+    by_broker = (
+        df.groupby("broker")["amount"].sum().sort_values(ascending=False).reset_index()
+        .rename(columns={"amount": "total"})
+    )
+    by_broker_category = df.groupby(["broker", "category"])["amount"].sum().reset_index()
+    by_broker["by_category"] = by_broker["broker"].apply(
+        lambda b: _df_to_list(by_broker_category[by_broker_category["broker"] == b][["category", "amount"]]
+                               .sort_values("amount", ascending=False))
+    )
+
+    return {"by_broker": _df_to_list(by_broker), "transactions": _df_to_list(df)}
+
+
 @router.get("/savings-rate")
 def get_savings_rate(months: int = Query(12)):
     """Monthly savings rate for the last N months."""

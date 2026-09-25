@@ -631,6 +631,27 @@ export default function Investments() {
     }
   }, [accounts, securities])
 
+  // Arriving here via a "?investmentId=123" deep link (e.g. Reports → Inv.
+  // Portfolio → Costs by Broker, double-click on a transaction row) — open
+  // that investment transaction for editing straight away, same reasoning as
+  // Register's transactionId effect. Waits for `accounts`/`securities` to
+  // have loaded — openEdit resolves the Account and Security dropdowns by
+  // matching row.account/row.ticker against them, and firing before those
+  // queries resolve would leave both stuck on "— select —" forever, since
+  // openEdit only reads them once, at call time. Consumed once (the
+  // accounts/securities gate just re-runs this harmlessly until then).
+  useEffect(() => {
+    const incoming = searchParams.get('investmentId')
+    if (incoming == null) return
+    if (accounts.length === 0 || securities.length === 0) return
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('investmentId'); return p }, { replace: true })
+    getInvestments({ id: Number(incoming) }).then(r => {
+      const row = (r as { investments: Record<string, unknown>[] }).investments[0]
+      if (row) openEdit(row)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams, accounts, securities])
+
   return (
     <div>
       <PageHeader

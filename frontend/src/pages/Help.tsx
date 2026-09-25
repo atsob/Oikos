@@ -727,6 +727,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           per-security trade plan — once a fund spans multiple classes there's no longer one clean security to
           buy/sell to fix a specific class's deficit, so this view stops at the class-level Rebalance € figure.
         </Note>
+        <Note>
+          <b>Costs by Broker</b> totals every investment-related cost — cash-side fees categorised under
+          "Investment Expenses" (Service Fees, Custody Fees, VAT on Fees, Transfer Fees, Lawyer Fees, etc.), plus
+          charges recorded directly on the investment account itself (broker custody/VAT/financing charges, swap
+          fees, etc., which never go through Splits/Categories and are otherwise invisible everywhere else in the
+          app) — grouped by the account's Institution, with the standard YTD/3M/6M/1Y/2Y/3Y/5Y/All lookback. Click
+          a broker, then a category, to drill down to individual transactions; double-click one to open it (Cash
+          Register or Investments, whichever it actually lives in). A reimbursement posted under the same category
+          — e.g. someone else's share of a cost you fronted, credited back to you — nets against it rather than
+          adding to it, shown in green when a category or broker nets to a credit overall.
+        </Note>
 
         <H3>💹 Inv. Performance</H3>
         <P>

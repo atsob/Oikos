@@ -113,6 +113,7 @@ _SORTABLE_COLUMNS = {
 @router.get("/list")
 def get_investments(
     account_id: Optional[int] = Query(None),
+    id: Optional[int] = Query(None),
     from_date: str = Query("2000-01-01"),
     to_date: str = Query("2099-12-31"),
     action: Optional[str] = Query(None),
@@ -123,6 +124,12 @@ def get_investments(
     limit: int = Query(500),
     offset: int = Query(0),
 ):
+    # `id` deep-links a single row (e.g. Costs by Broker's transaction drill-down)
+    # regardless of date range — widen from_date/to_date so it can't be filtered
+    # out by whatever window happens to be selected elsewhere on the page.
+    if id is not None:
+        from_date, to_date = "1900-01-01", "2099-12-31"
+    id_clause = "AND i.Investments_Id = %(id)s" if id is not None else ""
     acc_clause = "AND i.Accounts_Id = %(acc)s" if account_id else ""
     action_clause = "AND i.Action = %(action)s" if action else ""
     ticker_clause = "AND LOWER(s.Ticker) LIKE %(ticker)s" if ticker else ""
@@ -191,11 +198,13 @@ def get_investments(
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
         LEFT JOIN full_running fr ON fr.investments_id = i.investments_id
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
-          {acc_clause} {action_clause} {ticker_clause} {search_clause}
+          {id_clause} {acc_clause} {action_clause} {ticker_clause} {search_clause}
         ORDER BY {order_clause}
         LIMIT %(limit)s OFFSET %(offset)s
     """
     params: dict = {"from_date": from_date, "to_date": to_date, "limit": limit, "offset": offset}
+    if id is not None:
+        params["id"] = id
     if account_id:
         params["acc"] = account_id
     if action:
@@ -213,7 +222,7 @@ def get_investments(
         FROM Investments i
         LEFT JOIN Securities s ON i.Securities_Id = s.Securities_Id
         WHERE i.Date BETWEEN %(from_date)s AND %(to_date)s
-          {acc_clause} {action_clause} {ticker_clause} {search_clause}
+          {id_clause} {acc_clause} {action_clause} {ticker_clause} {search_clause}
     """
     with get_db() as conn:
         total = pd.read_sql(count_query, conn, params=params).iloc[0]["total"]
