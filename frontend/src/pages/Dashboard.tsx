@@ -169,7 +169,7 @@ type AlertRow = Record<string, unknown>
 function SecuritiesAlertsPanel() {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const { data: alerts = [] } = useQuery({
+  const { data: alerts = [], isLoading } = useQuery({
     queryKey: ['triggered-alerts'],
     queryFn: getAlerts,
     staleTime: 5 * 60 * 1000,
@@ -249,6 +249,20 @@ function SecuritiesAlertsPanel() {
       (a.type === 'zone_change' && zoneChangeSecIds.includes(Number(a.securities_id)))),
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
+  // /dashboard/alerts recomputes several live checks (Golden/Death Cross,
+  // Trailing Stop, etc. — see the dismiss comment above) and can take a few
+  // seconds, during which `alerts` is still just its `[]` default — without
+  // this, the whole panel silently renders nothing the entire time, which
+  // reads as "no alerts" rather than "still checking".
+  if (isLoading) {
+    return (
+      <Card>
+        <CardBody className="flex items-center gap-2 py-3 text-sm text-slate-400">
+          <Spinner size={14} /> Loading alerts…
+        </CardBody>
+      </Card>
+    )
+  }
   if (!(alerts as unknown[]).length) return null
 
   const levelStyle = (level: string) => {

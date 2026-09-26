@@ -1607,9 +1607,19 @@ def get_fundamental_scores(securities_id: int = None) -> pd.DataFrame:
 
         wc_n = None if (ca_n is None or cl_n is None) else ca_n - cl_n
         z_inputs = (wc_n, re_n, ebit_n, ta_n, mcap, tl_n, rev_n)
+        z_terms = None
         if all(v is not None for v in z_inputs) and ta_n != 0 and tl_n != 0:
-            z_score = (1.2 * (wc_n / ta_n) + 1.4 * (re_n / ta_n) + 3.3 * (ebit_n / ta_n)
-                       + 0.6 * (mcap / tl_n) + 1.0 * (rev_n / ta_n))
+            # Named individually (not just summed) so a zone-change notification can
+            # point at whichever one is weakest, not just report the total — see
+            # refresh_fundamentals_notifications/check_triggered_alerts.
+            z_terms = {
+                'working_capital_to_assets':   1.2 * (wc_n / ta_n),
+                'retained_earnings_to_assets': 1.4 * (re_n / ta_n),
+                'ebit_to_assets':              3.3 * (ebit_n / ta_n),
+                'market_cap_to_liabilities':   0.6 * (mcap / tl_n),
+                'sales_to_assets':             1.0 * (rev_n / ta_n),
+            }
+            z_score = sum(z_terms.values())
             z_zone = 'Safe' if z_score > 2.99 else ('Grey' if z_score >= 1.81 else 'Distress')
         else:
             z_score, z_zone = None, None
@@ -1625,6 +1635,7 @@ def get_fundamental_scores(securities_id: int = None) -> pd.DataFrame:
             'f_score_criteria': criteria,
             'z_score': round(z_score, 2) if z_score is not None else None,
             'z_zone': z_zone,
+            'z_terms': {k: round(v, 2) for k, v in z_terms.items()} if z_terms is not None else None,
         })
 
     return pd.DataFrame(results)
@@ -6435,6 +6446,12 @@ def _ensure_fundamentals_notifications_table():
                     Acknowledged    BOOLEAN DEFAULT TRUE
                 )
             """)
+            # Added later: the actual Z-Score value alongside the zone label, so a
+            # zone-change notification can show e.g. "2.85 -> 1.72" (how close/far
+            # from the boundary) instead of just the zone names — see
+            # refresh_fundamentals_notifications and check_triggered_alerts.
+            cur.execute("ALTER TABLE Fundamentals_Notifications ADD COLUMN IF NOT EXISTS Last_Known_Score NUMERIC")
+            cur.execute("ALTER TABLE Fundamentals_Notifications ADD COLUMN IF NOT EXISTS Previous_Score   NUMERIC")
         conn.commit()
     finally:
         conn.close()
@@ -6461,34 +6478,54 @@ def refresh_fundamentals_notifications():
     conn = get_connection()
     try:
         stored = pd.read_sql(
-            "SELECT Securities_Id AS securities_id, Last_Known_Zone AS last_known_zone "
+            "SELECT Securities_Id AS securities_id, Last_Known_Zone AS last_known_zone, "
+            "       Last_Known_Score AS last_known_score "
             "FROM Fundamentals_Notifications",
             conn,
         )
-        stored_map = (
+        zone_map = (
             stored.set_index('securities_id')['last_known_zone'].to_dict()
+            if not stored.empty else {}
+        )
+        score_map = (
+            stored.set_index('securities_id')['last_known_score'].to_dict()
             if not stored.empty else {}
         )
 
         with conn.cursor() as cur:
             for _, row in current.iterrows():
-                sid  = int(row['securities_id'])
-                zone = row['z_zone']
-                prev = stored_map.get(sid)
-                if prev is None:
+                sid   = int(row['securities_id'])
+                zone  = row['z_zone']
+                score = row['z_score']
+                prev_zone = zone_map.get(sid)
+                if prev_zone is None:
                     cur.execute(
                         "INSERT INTO Fundamentals_Notifications "
-                        "(Securities_Id, Last_Known_Zone, Previous_Zone, Acknowledged) "
-                        "VALUES (%s, %s, NULL, TRUE) ON CONFLICT (Securities_Id) DO NOTHING",
-                        (sid, zone),
+                        "(Securities_Id, Last_Known_Zone, Previous_Zone, Last_Known_Score, Previous_Score, Acknowledged) "
+                        "VALUES (%s, %s, NULL, %s, NULL, TRUE) ON CONFLICT (Securities_Id) DO NOTHING",
+                        (sid, zone, score),
                     )
-                elif prev != zone:
+                elif prev_zone != zone:
+                    # A real zone transition — snapshot the score on both sides of
+                    # it (whatever was last on file as "current" becomes "previous"),
+                    # so the notification can show e.g. "2.85 -> 1.72", not just the
+                    # zone names.
+                    prev_score = score_map.get(sid)
                     cur.execute(
                         "UPDATE Fundamentals_Notifications "
                         "SET Previous_Zone=%s, Last_Known_Zone=%s, "
+                        "    Previous_Score=%s, Last_Known_Score=%s, "
                         "    Changed_At=NOW(), Acknowledged=FALSE "
                         "WHERE Securities_Id=%s",
-                        (prev, zone, sid),
+                        (prev_zone, zone, prev_score, score, sid),
+                    )
+                else:
+                    # Same zone, but the score itself drifts daily with market cap —
+                    # keep it current so the *next* real transition's "previous"
+                    # value is accurate, without touching Changed_At/Acknowledged.
+                    cur.execute(
+                        "UPDATE Fundamentals_Notifications SET Last_Known_Score=%s WHERE Securities_Id=%s",
+                        (score, sid),
                     )
         conn.commit()
     finally:
@@ -7461,6 +7498,8 @@ def check_triggered_alerts() -> list:
                        s.Securities_Name AS securities_name,
                        fn.Last_Known_Zone AS current_zone,
                        fn.Previous_Zone AS previous_zone,
+                       fn.Last_Known_Score AS current_score,
+                       fn.Previous_Score AS previous_score,
                        fn.Changed_At AS changed_at
                 FROM Fundamentals_Notifications fn
                 JOIN Securities s ON s.Securities_Id = fn.Securities_Id
@@ -7468,6 +7507,13 @@ def check_triggered_alerts() -> list:
                 ORDER BY fn.Changed_At DESC
             """, conn2b)
             conn2b.close()
+            _Z_TERM_LABELS = {
+                'working_capital_to_assets':   'Working Capital / Total Assets',
+                'retained_earnings_to_assets': 'Retained Earnings / Total Assets',
+                'ebit_to_assets':               'EBIT / Total Assets',
+                'market_cap_to_liabilities':   'Market Cap / Total Liabilities',
+                'sales_to_assets':              'Sales / Total Assets',
+            }
             for _, row in pending_zones.iterrows():
                 changed_at = row.get('changed_at')
                 if changed_at is not None:
@@ -7478,15 +7524,46 @@ def check_triggered_alerts() -> list:
                         when = str(changed_at)[:16]
                 else:
                     when = None
-                suffix = f" (as of {when})" if when else ''
                 prev_zone, cur_zone = row['previous_zone'], row['current_zone']
                 improving = (_Z_ZONE_RANK.get(cur_zone, 1) > _Z_ZONE_RANK.get(prev_zone, 1)) if prev_zone else None
                 level = 'info' if improving else ('error' if cur_zone == 'Distress' else 'warning')
                 icon = '📈' if improving else '📉'
+
+                # The actual score, not just the zone label — shows how close to
+                # (or far past) the 1.81/2.99 boundary it is. Previous_Score can be
+                # NULL for a notification whose zone-change row already existed
+                # before this column was added — falls back to just "now X.XX".
+                # Folded into the same parenthetical as the "as of" date rather
+                # than a separate one, so the message doesn't end in "(...)( ...)".
+                cur_score, prev_score = row.get('current_score'), row.get('previous_score')
+                score_text = (f"{float(prev_score):.2f} → {float(cur_score):.2f}" if prev_score is not None
+                              else f"now {float(cur_score):.2f}") if cur_score is not None else None
+                paren_bits = [b for b in (score_text, f"as of {when}" if when else None) if b]
+                suffix = f" ({', '.join(paren_bits)})" if paren_bits else ''
+
+                # Z-Score depends on 5 weighted ratios (see get_fundamental_scores);
+                # only Market Cap/Total Liabilities moves day-to-day (the other 4
+                # come from financial statements, refreshed monthly), so this is
+                # almost always what a zone change actually reflects, but it's
+                # computed rather than assumed in case a fresh statement download
+                # shifted one of the others instead.
+                driver_clause = ''
+                try:
+                    sec_scores = get_fundamental_scores(int(row['securities_id']))
+                    if not sec_scores.empty:
+                        z_terms = sec_scores.iloc[0].get('z_terms')
+                        if z_terms:
+                            weakest_key = min(z_terms, key=lambda k: z_terms[k])
+                            driver_clause = (f" — currently weakest: **{_Z_TERM_LABELS.get(weakest_key, weakest_key)}**"
+                                              f" ({z_terms[weakest_key]:+.2f} of the score)")
+                except Exception:
+                    pass
+
                 results.append({
                     'level': level,
                     'message': (f"{icon} **Financial Health Change** — {row['securities_name']}: "
-                                f"Altman Z-Score moved {prev_zone or '—'} → **{cur_zone}** Zone{suffix}"),
+                                f"Altman Z-Score moved {prev_zone or '—'} → **{cur_zone}** Zone{suffix}"
+                                f"{driver_clause}"),
                     'securities_id': int(row['securities_id']),
                     'type': 'zone_change',
                 })

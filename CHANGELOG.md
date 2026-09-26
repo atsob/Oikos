@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-09-26
+
+### Fixed
+- **Dashboard's "🔔 N triggered alerts" panel rendered nothing at all while its data was loading** — indistinguishable from "no alerts," since `SecuritiesAlertsPanel` returned `null` whenever the list was empty, and a still-loading query's data defaults to `[]` the exact same way. `/dashboard/alerts` genuinely takes a few seconds (it recomputes several live checks — Golden/Death Cross, Trailing Stop, etc. — not just a simple read), so this was a real, regularly-hit gap, not an edge case. Now shows a small "Loading alerts…" spinner row while the query is in flight, and only collapses to nothing once it's actually confirmed empty.
+
+### Added
+- **Dashboard's "Financial Health Change" alerts (Altman Z-Score zone moves) now say why, not just that it moved.** Previously: "Altman Z-Score moved Grey → Distress Zone" with no further detail, even though the Z-Score itself (`database/queries.py::get_fundamental_scores`) is a sum of 5 weighted ratios computed live from cached financial statements plus today's market cap — the zone label alone doesn't say how close to the boundary it is or which input is behind the move. Now shows the actual score on both sides of the transition — e.g. "(2.85 → 1.72, as of 25 Sep 2026 23:02)" — and, computed fresh rather than assumed, which of the 5 weighted terms (Working Capital/Total Assets, Retained Earnings/Total Assets, EBIT/Total Assets, Market Cap/Total Liabilities, Sales/Total Assets) is currently weakest, e.g. "— currently weakest: **Working Capital / Total Assets** (-0.02 of the score)". `Fundamentals_Notifications` gained `Last_Known_Score`/`Previous_Score` columns (mirroring its existing `Last_Known_Zone`/`Previous_Zone`), refreshed on every scheduler check now — not just when the zone actually changes — so the score stays current for whenever the *next* real transition needs a "previous" value to diff against; a zone-change row that already existed before this column was added just falls back to showing "(now X.XX)" with no `→`, since there's no prior score on file for it. `get_fundamental_scores()` also now returns each security's 5 named term values (`z_terms`), available to the frontend's own Piotroski/Altman table too, not just this notification. Verified live against the two real pending alerts: GameStop (Safe → Grey, now 2.98, weakest: Retained Earnings/Total Assets) and British American Tobacco (Grey → Distress, now 1.80, weakest: Working Capital/Total Assets).
+
 ## 2026-09-25
 
 ### Added
