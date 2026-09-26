@@ -391,6 +391,15 @@ export function TxModal({
   const setSplit = (i: number, k: keyof SplitRow, v: string) =>
     onSplitsChange(splits.map((s, j) => j === i ? { ...s, [k]: v } : s))
 
+  // Positive = incoming to this account (green), negative = outgoing (red) —
+  // same convention as every amount column elsewhere in the app. Also flips
+  // the transfer-target label: a positive transfer amount means the money is
+  // arriving here *from* that other account, not being sent *to* it.
+  const parsedAmount = form.total_amount === '' ? NaN : Number(form.total_amount)
+  const amountColorClass = Number.isNaN(parsedAmount) || parsedAmount === 0 ? ''
+    : parsedAmount > 0 ? 'text-green-700' : 'text-red-600'
+  const isIncomingTransfer = !Number.isNaN(parsedAmount) && parsedAmount > 0
+
   const otherAccounts = accounts.filter(a =>
     a.id !== form.accounts_id &&
     CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')) &&
@@ -442,7 +451,7 @@ export function TxModal({
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Amount *</label>
               <div className="flex gap-1.5">
-                <Input className="flex-1 min-w-0" type="number" step="0.01" placeholder="0.00" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} />
+                <Input className={cn('flex-1 min-w-0 font-medium', amountColorClass)} type="number" step="0.01" placeholder="0.00" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} />
                 <AmountCalculator value={form.total_amount} onApply={v => set('total_amount', v)} />
               </div>
             </div>
@@ -452,7 +461,7 @@ export function TxModal({
             <div className="space-y-3">
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-500">Transfer To Account *</label>
+                  <label className="text-xs font-medium text-slate-500">Transfer {isIncomingTransfer ? 'From' : 'To'} Account *</label>
                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
                     <input
                       type="checkbox"
