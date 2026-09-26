@@ -271,7 +271,14 @@ valuation, and anything else the app's own REST API returns via GET. It's
 read-only *by construction*: the one HTTP tool it exposes only ever issues
 GET requests (hardcoded, not something a calling agent can change), and every
 mutating Oikos endpoint is POST/PUT/DELETE — so nothing reachable through it
-can create, edit, or delete a record.
+can create, edit, or delete a record. It never talks to the database
+directly either — it only ever calls Oikos's own REST API over HTTPS, so
+there's no DB credential of any kind for it to hold, read-only or otherwise.
+It also blanks out anything sensitive before handing a response back to
+Claude — IBANs, account/card numbers, passwords, API keys/secrets/refresh
+tokens, emails, phone numbers, whatever endpoint they came from — and blocks
+the broker-integration settings endpoints (`/api/bank/*`, where those API
+keys/secrets live) outright.
 
 This file is fully standalone (only the `mcp` and `requests` packages, no
 other Oikos module required), so the machine running Claude Desktop does

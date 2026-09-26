@@ -1364,10 +1364,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           server that lets Claude Desktop or Claude Code — running on any machine, not just this one — answer
           questions against your real Oikos data over HTTPS, the same way a browser does. It's read-only by
           construction (the one tool it exposes only ever issues GET requests, hardcoded — every mutating Oikos
-          endpoint is POST/PUT/DELETE, so nothing reachable through it can create, edit, or delete a record), and
-          fully standalone (just the <code>mcp</code>/<code>requests</code> Python packages — the machine running
-          Claude Desktop doesn't need a full Oikos checkout). See <b>INSTALL.md</b>'s "Optional: Connecting
-          Claude to Oikos" section for setup.
+          endpoint is POST/PUT/DELETE, so nothing reachable through it can create, edit, or delete a record) and
+          never touches the database directly — it only calls Oikos's own REST API over HTTPS, so there's no DB
+          credential of any kind involved. It also strips IBANs, account/card numbers, passwords, API
+          keys/secrets/tokens, emails, and phone numbers out of every response before Claude sees it, and blocks
+          the broker-integration settings endpoints (<code>/api/bank/*</code>) outright. Fully standalone (just
+          the <code>mcp</code>/<code>requests</code> Python packages — the machine running Claude Desktop doesn't
+          need a full Oikos checkout). See <b>INSTALL.md</b>'s "Optional: Connecting Claude to Oikos" section for
+          setup.
         </P>
       </>
     ),

@@ -29,6 +29,24 @@ endpoints is POST/PUT/DELETE (confirmed across every router in api/routers/),
 so restricting the HTTP verb is a structural guarantee, not a convention this
 file has to keep re-checking.
 
+No direct database access, ever: this file only ever speaks HTTPS to Oikos's
+own REST API (never imports `database`/psycopg2/a connection string), so there
+is no DB user or credential of any kind for this connector to be scoped
+read-only — it's structurally narrower than that, with no SQL access at all.
+
+Sensitive-field redaction: some of Oikos's own GET endpoints return fields
+that were never meant to leave the household (IBANs on the accounts-master
+endpoint, an institution contact's phone/email, broker-integration API
+keys/secrets/refresh tokens on the bank-sync settings endpoints). Every
+response this file returns is passed through `_redact()` first, which walks
+the JSON recursively and blanks any field whose name matches a denylist
+(IBAN, account/card numbers, passwords, API keys/secrets/tokens, email,
+phone) regardless of which endpoint it came from — including endpoints not
+in the curated list below, since oikos_get() accepts any Oikos GET path.
+`/api/bank/*` (broker-sync credential storage — Saxo/Coinbase/Crypto.com app
+keys and secrets, refresh tokens) is blocked outright on top of that, since
+nothing useful for "reading financial data" lives there anyway.
+
 TLS: the Pi's :8443 endpoint is expected to use a self-signed/home-lab
 certificate, so certificate verification is OFF by default (OIKOS_VERIFY_SSL
 unset). Set OIKOS_VERIFY_SSL=true once you have a certificate this machine
@@ -92,9 +110,55 @@ server = MCPServer(
         "(Shiller CAPE), and anything else its own web UI can see. Call "
         "list_endpoints() first for a curated set of ready-to-use paths and their "
         "parameters, then oikos_get(path, params) to fetch data. There is no write "
-        "tool — nothing called here can ever modify Oikos's data."
+        "tool — nothing called here can ever modify Oikos's data. Sensitive fields "
+        "(IBAN, card/account numbers, passwords, API keys/secrets/tokens, email, "
+        "phone) are stripped from every response, and broker-integration settings "
+        "(/api/bank/*) are blocked outright."
     ),
 )
+
+# Endpoint paths blocked outright — broker-sync credential storage, not
+# financial data. Every GET route under here exists to populate a settings
+# form with the household's own stored API key/secret/refresh token for Saxo,
+# Coinbase, Crypto.com, etc. (confirmed by reading api/routers/bank_router.py
+# directly), so there's no "read my finances" use case this connector needs
+# it for — simplest to block the whole prefix rather than track which routes
+# under it are safe as the integrations list grows.
+_BLOCKED_PATH_PREFIXES = ("/api/bank/",)
+
+# Field names (case-insensitive, underscores ignored) whose values get
+# blanked out of every response, regardless of which endpoint returned them —
+# covers oikos_get() calls to any Oikos GET path, not just the curated list
+# above. "email"/"phone" use substring matching since real field names vary
+# (e.g. "contact_email"); everything else is an exact match so it doesn't
+# also catch unrelated fields that merely contain the word (e.g. "token_valid").
+_REDACT_EXACT = {
+    "iban", "accountnumber", "cardnumber", "creditcardnumber", "cvv", "cvv2",
+    "password", "passwordhash", "apikey", "apisecret", "appkey", "appsecret",
+    "refreshtoken", "accesstoken", "clientsecret", "clientid", "secret",
+    "token", "ssn", "socialsecuritynumber", "taxid",
+}
+_REDACT_SUBSTRING = ("email", "phone")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("_", "").replace("-", "")
+    if normalized in _REDACT_EXACT:
+        return True
+    return any(term in normalized for term in _REDACT_SUBSTRING)
+
+
+def _redact(value):
+    """Recursively blank sensitive fields out of a parsed JSON response."""
+    if isinstance(value, dict):
+        return {
+            k: "[redacted]" if _is_sensitive_key(k) else _redact(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
 
 _session = requests.Session()
 _session_token: str | None = None
@@ -201,11 +265,16 @@ def oikos_get(path: str, params: dict | None = None) -> dict:
 
     path must start with "/api/" — see list_endpoints() for ready-to-use
     examples. Always issues a GET; there is no way to write, update, or
-    delete Oikos data through this tool.
+    delete Oikos data through this tool. Broker-integration settings
+    (/api/bank/*) are off-limits, and IBAN/card/account numbers, passwords,
+    API keys/secrets/tokens, email, and phone fields are stripped from
+    whatever comes back.
     """
     global _session_token
     if not path.startswith("/api/"):
         raise ValueError('path must start with "/api/" — see list_endpoints() for examples')
+    if path.startswith(_BLOCKED_PATH_PREFIXES):
+        raise ValueError(f"{path} is off-limits — broker-integration credentials live under /api/bank/, not financial data")
     _ensure_login()
     resp = _session.get(f"{BASE_URL}{path}", params=params or {}, cookies={"oikos_session": _session_token}, timeout=30, verify=VERIFY_SSL)
     if resp.status_code == 401:
@@ -216,7 +285,7 @@ def oikos_get(path: str, params: dict | None = None) -> dict:
         _ensure_login()
         resp = _session.get(f"{BASE_URL}{path}", params=params or {}, cookies={"oikos_session": _session_token}, timeout=30, verify=VERIFY_SSL)
     resp.raise_for_status()
-    return resp.json()
+    return _redact(resp.json())
 
 
 if __name__ == "__main__":
