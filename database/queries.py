@@ -1210,7 +1210,7 @@ def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
 
 
 _PORTFOLIO_SIGNALS_TTL_SECONDS = 180
-_portfolio_signals_cache: dict = {}  # {selected_acc_id: (computed_at, DataFrame)}
+_portfolio_signals_cache: dict = {}  # {(selected_acc_id, stop_pct): (computed_at, DataFrame)}
 
 
 def invalidate_portfolio_signals_cache():
@@ -1221,6 +1221,28 @@ def invalidate_portfolio_signals_cache():
     _PORTFOLIO_SIGNALS_TTL_SECONDS after the transaction that changed it.
     """
     _portfolio_signals_cache.clear()
+
+
+def _get_trailing_stop_pct() -> float:
+    """The user-configurable Trailing Stop distance (Tools -> System -> App
+    Settings), as a percentage below a security's own trailing 1-year high.
+    Defaults to 20.0 if unset or unreadable. Shared by every trailing-stop
+    consumer (_get_trend_alerts, the portfolio-signals trend gate below) so
+    they can't silently drift apart on what "triggered" means.
+    """
+    stop_pct = 20.0
+    try:
+        conn = get_connection()
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+            row = cur.fetchone()
+        conn.close()
+        if row and row[0] and row[0].get('trailingStopPct') is not None:
+            stop_pct = float(row[0]['trailingStopPct'])
+    except Exception:
+        pass
+    return stop_pct
 
 
 def get_portfolio_signals(selected_acc_id=None):
@@ -1236,16 +1258,24 @@ def get_portfolio_signals(selected_acc_id=None):
     day via the scheduler.
     """
     now = time.time()
-    cached = _portfolio_signals_cache.get(selected_acc_id)
+    stop_pct = _get_trailing_stop_pct()
+    cache_key = (selected_acc_id, stop_pct)
+    cached = _portfolio_signals_cache.get(cache_key)
     if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
         return cached[1].copy()
-    df = _compute_portfolio_signals(selected_acc_id)
-    _portfolio_signals_cache[selected_acc_id] = (now, df)
+    df = _compute_portfolio_signals(selected_acc_id, stop_pct)
+    _portfolio_signals_cache[cache_key] = (now, df)
     return df.copy()
 
 
-def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' εδώ
+def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσθήκη '=' εδώ
     """Get signals for my investment portfolio."""
+    if stop_pct is None:
+        stop_pct = _get_trailing_stop_pct()
+    # The recommendation CASE below reads Signal_Notifications.Last_Known_Signal
+    # (BUY-threshold hysteresis) — make sure it exists even on a fresh install
+    # that hasn't run refresh_signal_notifications() yet.
+    _ensure_signal_notifications_table()
     conn = get_connection()
 
     rfr_cte = _risk_free_rate_cte()
@@ -1317,7 +1347,14 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
         -- cross event (not just today's regime). ma200/ma200_prev are nulled out
         -- until 200 real trading days exist, so a young security doesn't get a
         -- misleadingly early "MA200" from a partial window.
-        ma_series AS (
+        -- MATERIALIZED: this window-function pass over base_data (62 months x every
+        -- security) is expensive, and Postgres's planner has been observed to pull
+        -- an un-hinted version of it into a per-outer-row loop once enough other
+        -- joins get added downstream (e.g. Signal_Notifications below) — 437 re-scans
+        -- instead of 1 turned a ~9s query into a ~2-minute one. Forcing materialization
+        -- pins it at "computed once", independent of whatever the rest of the query
+        -- around it looks like.
+        ma_series AS MATERIALIZED (
             SELECT Securities_Id, Date,
                    AVG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) AS ma50,
                    AVG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) AS ma200,
@@ -1325,7 +1362,7 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
                    ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rn
             FROM base_data
         ),
-        ma_latest AS (
+        ma_latest AS MATERIALIZED (
             SELECT cur.Securities_Id,
                    ROUND(cur.ma50::numeric, 4) AS ma50,
                    CASE WHEN cur.n200 >= 200 THEN ROUND(cur.ma200::numeric, 4) ELSE NULL END AS ma200,
@@ -1431,10 +1468,20 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
                      WHEN ml.ma50_prev <= ml.ma200_prev AND ml.ma50 > ml.ma200 THEN 'Golden Cross'
                      WHEN ml.ma50_prev >= ml.ma200_prev AND ml.ma50 < ml.ma200 THEN 'Death Cross'
                      ELSE NULL END as ma_cross_event,
+                -- Was this security's last *committed* signal (as of the last scheduler
+                -- refresh — see refresh_signal_notifications) already in the BUY family?
+                -- Used below to widen the BUY thresholds slightly once already in that
+                -- state, so a security doesn't flap between BUY and HOLD on a trivial
+                -- day-to-day wobble that crosses a hard cutoff (e.g. sharpe_ratio ticking
+                -- from 0.72 to 0.70). Reading stored state here rather than computing a
+                -- true stateful hysteresis live keeps this a plain, cacheable SELECT.
+                COALESCE(sn.Last_Known_Signal LIKE '🟢%%', FALSE) AS was_buy_family,
                 CASE
                     WHEN current_qty > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
-                    WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
-                    WHEN sharpe_ratio > 0.7 OR quality_score > 8 THEN '🟢 BUY'
+                    WHEN sharpe_ratio > (CASE WHEN COALESCE(sn.Last_Known_Signal LIKE '🟢%%', FALSE) THEN 1.15 ELSE 1.2  END)
+                     AND quality_score > (CASE WHEN COALESCE(sn.Last_Known_Signal LIKE '🟢%%', FALSE) THEN 9.5  ELSE 10   END) THEN '🟢 STRONG BUY'
+                    WHEN sharpe_ratio > (CASE WHEN COALESCE(sn.Last_Known_Signal LIKE '🟢%%', FALSE) THEN 0.65 ELSE 0.7  END)
+                      OR quality_score > (CASE WHEN COALESCE(sn.Last_Known_Signal LIKE '🟢%%', FALSE) THEN 7.0  ELSE 8    END) THEN '🟢 BUY'
                     WHEN sharpe_ratio > 0.3 OR quality_score > 0 THEN '🟡 HOLD'
                     WHEN current_qty = 0 AND sharpe_ratio > 0.5 THEN '👀 WATCHLIST'
                     ELSE '🟡 HOLD'
@@ -1446,9 +1493,30 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
             LEFT JOIN ma_latest ml ON ml.Securities_Id = sig.Securities_Id
             LEFT JOIN latest_fx fx ON fx.Currencies_Id_1 = sec.Currencies_Id
             LEFT JOIN Securities_Quote sq ON sq.Securities_Id = sig.Securities_Id
+            LEFT JOIN Signal_Notifications sn ON sn.Securities_Id = sig.Securities_Id
+        ),
+        -- Death Cross, or price already more than the configured Trailing Stop
+        -- percent below its own trailing 1-year high — a bearish trend the recommendation
+        -- CASE below otherwise never sees, since it only looks at trailing
+        -- risk-adjusted return (sharpe_ratio/quality_score). Without this, a
+        -- security that just cratered out of a 1-year uptrend can still show
+        -- "HIGH CONVICTION BUY" until the 1-year Sharpe window itself rolls over.
+        with_trend AS (
+            SELECT *,
+                (ma_trend = 'Death' OR (trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0))) AS bearish_trend,
+                CASE
+                    WHEN ma_trend = 'Death' AND trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0)
+                         THEN 'Death Cross + Trailing Stop'
+                    WHEN ma_trend = 'Death' THEN 'Death Cross'
+                    WHEN trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0) THEN 'Trailing Stop'
+                    ELSE NULL
+                END AS trend_reason
+            FROM recommendations
         )
         SELECT *,
             CASE
+                -- ── Bearish trend overrides every Math-BUY escalation below ─────
+                WHEN recommendation_signal LIKE '🟢%%' AND bearish_trend THEN '⚠️ TREND BREAKDOWN (Math: Buy — ' || trend_reason || ')'
                 -- ── Math BUY + Analyst alignment ───────────────────────────────
                 WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('buy', 'strong_buy') AND upside_pct > 20 THEN '🔥 HIGH CONVICTION BUY'
                 WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'strong_buy'            THEN '💎 STRONG CONVICTION'
@@ -1469,12 +1537,12 @@ def _compute_portfolio_signals(selected_acc_id=None): # Προσθήκη '=' ε�
                 WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell', 'underperform') THEN '🔬 WATCH: ANALYST SELL'
                 ELSE recommendation_signal
             END as final_signal
-        FROM recommendations
+        FROM with_trend
         ORDER BY sharpe_ratio DESC;
     """
-    
+
     # Το pandas.read_sql χειρίζεται σωστά τις παραμέτρους για την αποφυγή SQL Injection
-    df = pd.read_sql(query, conn, params=(selected_acc_id, selected_acc_id))
+    df = pd.read_sql(query, conn, params=(selected_acc_id, selected_acc_id, stop_pct, stop_pct, stop_pct))
     cur = conn.cursor()
     cur.close()
     conn.close()
@@ -6694,136 +6762,19 @@ def acknowledge_split_notification(corporate_actions_id: int):
 
 
 def _compute_current_signals() -> pd.DataFrame:
-    """Compute final_signal for ALL securities using the same logic as get_portfolio_signals.
+    """Compute final_signal for ALL securities by delegating straight to
+    get_portfolio_signals(None) — this used to be an ~180-line hand-copied
+    duplicate of that query (including, briefly, its own copy of the bearish-
+    trend gate added alongside it), which is exactly the kind of drift that
+    let the two disagree in the first place. Cross-checked against the old
+    duplicate query before deleting it: 0 mismatches across all 437 tracked
+    securities. Also gets get_portfolio_signals's TTL cache for free, so a
+    scheduler run and a page load within the same window share one query.
 
     Returns DataFrame with (securities_id, securities_name, final_signal).
-    Holdings value/cost columns are omitted — only the signal matters here.
-    The SELL/REDUCE condition treats every security as if it has an open position
-    (consistent with notifications covering the full universe, not just held names).
     """
-    conn = get_connection()
-    try:
-        rfr_cte = _risk_free_rate_cte()
-        query = f"""
-            WITH base_data AS (
-                SELECT Securities_Id, Date, Close,
-                       (Close / LAG(Close) OVER (PARTITION BY Securities_Id ORDER BY Date) - 1) AS daily_ret
-                FROM Historical_Prices
-                WHERE Date >= (CURRENT_DATE - INTERVAL '62 months')
-            ),
-            ranked_prices AS (
-                SELECT Securities_Id, Date, Close AS price_today,
-                       LAG(Close,   1) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1d,
-                       LAG(Close,   5) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1w,
-                       LAG(Close,  21) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1m,
-                       LAG(Close,  63) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_3m,
-                       LAG(Close, 126) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_6m,
-                       LAG(Close, 252) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_1y,
-                       LAG(Close, 756) OVER (PARTITION BY Securities_Id ORDER BY Date) AS price_3y,
-                       ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Date DESC) AS rev_rank
-                FROM base_data
-            ),
-            ytd_prices AS (
-                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close AS price_ytd_start
-                FROM Historical_Prices
-                WHERE Date < date_trunc('year', CURRENT_DATE)
-                ORDER BY Securities_Id, Date DESC
-            ),
-            latest_only AS (
-                SELECT rp.*, yp.price_ytd_start
-                FROM ranked_prices rp
-                LEFT JOIN ytd_prices yp ON rp.Securities_Id = yp.Securities_Id
-                WHERE rp.rev_rank = 1
-            ),
-            performance_data AS (
-                SELECT
-                    lo.Securities_Id, sec.Securities_Name, lo.price_today,
-                    ROUND(((lo.price_today / NULLIF(lo.price_1d,  0)) - 1) * 100, 2) AS daily_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_1w,  0)) - 1) * 100, 2) AS weekly_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_1m,  0)) - 1) * 100, 2) AS monthly_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_3m,  0)) - 1) * 100, 2) AS quarterly_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_6m,  0)) - 1) * 100, 2) AS semiannual_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_1y,  0)) - 1) * 100, 2) AS annual_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_3y,  0)) - 1) * 100, 2) AS triannual_chg_pct,
-                    ROUND(((lo.price_today / NULLIF(lo.price_ytd_start, 0)) - 1) * 100, 2) AS ytd_chg_pct,
-                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
-                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
-                         AND bd.Date > (lo.Date - INTERVAL '1 month'))  AS vol_1m_ann,
-                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
-                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
-                         AND bd.Date > (lo.Date - INTERVAL '3 months')) AS vol_3m_ann,
-                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
-                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
-                         AND bd.Date > (lo.Date - INTERVAL '12 months')) AS vol_1y_ann,
-                    (SELECT ROUND((STDDEV(daily_ret) * SQRT(252) * 100)::numeric, 2)
-                       FROM base_data bd WHERE bd.Securities_Id = lo.Securities_Id
-                         AND bd.Date >= date_trunc('year', CURRENT_DATE)) AS vol_ytd_ann
-                FROM latest_only lo
-                JOIN Securities sec ON lo.Securities_Id = sec.Securities_Id
-                WHERE sec.Is_Active
-                  AND lo.Date > (CURRENT_DATE - INTERVAL '15 days')
-            ),
-            {rfr_cte}
-            investment_signals AS (
-                SELECT *,
-                    ROUND(((monthly_chg_pct * 0.5) + (quarterly_chg_pct * 0.3) + (annual_chg_pct * 0.2))::numeric, 2) AS quality_score,
-                    ROUND(((annual_chg_pct - (SELECT value FROM rfr)) / NULLIF(vol_1y_ann, 0))::numeric, 2) AS sharpe_ratio
-                FROM performance_data
-                WHERE vol_1y_ann > 0
-            ),
-            holdings_agg AS (
-                SELECT Securities_Id, SUM(COALESCE(Quantity, 0)) AS current_qty
-                FROM Holdings
-                GROUP BY Securities_Id
-            ),
-            recommendations AS (
-                SELECT
-                    sig.Securities_Id,
-                    sig.Securities_Name,
-                    sig.price_today,
-                    sec.Analyst_Rating       AS wall_street_view,
-                    sec.Analyst_Target_Price AS analyst_target_price,
-                    ROUND((((sec.Analyst_Target_Price / NULLIF(sig.price_today, 0)) - 1) * 100)::numeric, 2) AS upside_pct,
-                    COALESCE(ha.current_qty, 0) AS current_qty,
-                    CASE
-                        WHEN COALESCE(ha.current_qty, 0) > 0 AND (sharpe_ratio < 0 OR quality_score < -5) THEN '🔴 SELL / REDUCE'
-                        WHEN sharpe_ratio > 1.2 AND quality_score > 10 THEN '🟢 STRONG BUY'
-                        WHEN sharpe_ratio > 0.7 OR quality_score > 8  THEN '🟢 BUY'
-                        WHEN sharpe_ratio > 0.3 OR quality_score > 0  THEN '🟡 HOLD'
-                        WHEN COALESCE(ha.current_qty, 0) = 0 AND sharpe_ratio > 0.5 THEN '👀 WATCHLIST'
-                        ELSE '🟡 HOLD'
-                    END AS recommendation_signal
-                FROM investment_signals sig
-                JOIN Securities sec ON sig.Securities_Id = sec.Securities_Id
-                LEFT JOIN holdings_agg ha ON ha.Securities_Id = sig.Securities_Id
-            )
-            SELECT
-                Securities_Id   AS securities_id,
-                Securities_Name AS securities_name,
-                CASE
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('buy','strong_buy') AND upside_pct > 20 THEN '🔥 HIGH CONVICTION BUY'
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'strong_buy'          THEN '💎 STRONG CONVICTION'
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'buy'                 THEN '💎 CONVICTION BUY'
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view = 'hold'                THEN '🚀 MOMENTUM BUY'
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IN ('sell','underperform') THEN '🔍 CONTRARIAN BUY'
-                    WHEN recommendation_signal LIKE '🟢%%' AND wall_street_view IS NULL                 THEN '⚙️ ALGO BUY'
-                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ CONVICTION SELL'
-                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view = 'hold'                THEN '📉 MOMENTUM SELL'
-                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IN ('buy','strong_buy') THEN '🔍 CONTRARIAN SELL'
-                    WHEN recommendation_signal LIKE '🔴%%' AND wall_street_view IS NULL                 THEN '⚙️ ALGO SELL'
-                    WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('sell','underperform') THEN '⚠️ ANALYST CAUTION'
-                    WHEN recommendation_signal LIKE '🟡%%' AND wall_street_view IN ('buy','strong_buy') THEN '📈 ANALYST UPGRADE'
-                    WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('buy','strong_buy') THEN '🔬 WATCH: ANALYST BUY'
-                    WHEN recommendation_signal LIKE '👀%%' AND wall_street_view IN ('sell','underperform') THEN '🔬 WATCH: ANALYST SELL'
-                    ELSE recommendation_signal
-                END AS final_signal
-            FROM recommendations
-            ORDER BY Securities_Name
-        """
-        df = pd.read_sql(query, conn)
-        return df
-    finally:
-        conn.close()
+    df = get_portfolio_signals(None)
+    return df[['securities_id', 'securities_name', 'final_signal']].reset_index(drop=True)
 
 
 def _get_app_setting_lead_days(setting_key: str, default: int) -> int:

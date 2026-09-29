@@ -889,6 +889,19 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           line as chart overlays, MA Trend/Trailing Stop as badges above the chart).
         </Note>
         <Note>
+          <b>Math Signal</b> (STRONG BUY/BUY/HOLD/WATCHLIST/SELL) comes purely from trailing risk-adjusted return —
+          Sharpe Ratio and a quality score blending 1-month/1-quarter/1-year price change — with no awareness of
+          trend. <b>Final Signal</b> combines it with the Analyst View and Upside % (e.g. "🔥 HIGH CONVICTION BUY"
+          needs a Math BUY, an analyst "buy"/"strong buy" rating, and &gt;20% upside to target) — <b>except</b> when
+          MA Trend is Death or Trailing Stop has triggered, in which case Final Signal shows{' '}
+          <b>"⚠️ TREND BREAKDOWN (Math: Buy — &lt;reason&gt;)"</b> instead of any BUY-family label, naming which
+          one fired (Death Cross, Trailing Stop, or both) — added after a security showed HIGH CONVICTION BUY
+          despite its own Death Cross and triggered Trailing Stop sitting right next to it, since trailing 1-year
+          return can stay positive for weeks after a sharp reversal. Math Signal's own BUY/STRONG BUY cutoffs also
+          widen slightly (roughly 5-10%) once a security's last committed signal was already in the BUY family, so
+          it takes a real move — not a rounding-distance wobble — to fall back out of it.
+        </Note>
+        <Note>
           <b>F-Score</b> and <b>Z-Score</b> are fundamentals-based, shown for stocks only (not ETFs, funds, or
           bonds — they have no financial statements) once their statements have been downloaded — a manual
           "Download Fundamentals (F-Score/Z-Score)" button on Market Data → Downloads (or Security Detail →

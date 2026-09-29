@@ -5186,6 +5186,9 @@ function PortfolioActionSignalsTab() {
     const v = sig.toUpperCase()
     if (v.includes('CONVICTION SELL') || v.includes('UNDERPERFORM')) return 'text-red-900 font-bold'
     if (v.includes('SELL') || v.includes('CAUTION'))                  return 'text-red-600 font-bold'
+    // Checked before the generic BUY/CONVICTION matches below, since this label
+    // literally ends in "(Math: Buy)" — it must never read as a buy signal.
+    if (v.includes('TREND BREAKDOWN'))                                return 'text-amber-700 font-bold'
     if (v.includes('HIGH CONVICTION BUY'))                            return 'text-green-900 font-bold'
     if (v.includes('STRONG') || v.includes('CONVICTION BUY'))        return 'text-green-700 font-bold'
     if (v.includes('BUY') || v.includes('UPGRADE'))                  return 'text-green-600 font-semibold'
