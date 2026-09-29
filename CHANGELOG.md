@@ -5,6 +5,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ## 2026-09-29
 
 ### Added
+- **The Claude MCP connector's curated `list_endpoints()` gained `price_history` and `fx_rates`** — a separate Claude session doing a monthly P&L recompute couldn't find either (both are real, working Oikos endpoints — `/api/market-data/price-history` and `/api/market-data/fx-rates` — just not in the curated list `list_endpoints()` hands out), burned ten guessed path variants on the missing one, and gave up on `price_history` entirely, going to Yahoo instead of Oikos's own complete ATHEX price history. Both now list their exact required/optional params (`price_history` needs `security_id`, singular, not the more guessable `securities_id` — the actual reason every guess failed silently, since `oikos_get()` just surfaces FastAPI's validation error without highlighting which param it's about) so this doesn't cost another ten guesses next time.
+
+### Added
 - **The new "⚠️ TREND BREAKDOWN" label (above) now says which specific technical broke down, not just that one did** — e.g. "⚠️ TREND BREAKDOWN (Math: Buy — Death Cross)" or "(Math: Buy — Trailing Stop)", or both together as "(Math: Buy — Death Cross + Trailing Stop)" when they coincide (Engie SA, Taiwan Semiconductor, and every tracked crypto pair currently show this combined case). Same "say why, not just that" pattern as this week's Financial Health Change alerts. Verified live on GameStop (Death Cross only) and Sandisk (Trailing Stop only, still in a Golden Cross) — both label correctly.
 
 ### Fixed

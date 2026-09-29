@@ -234,7 +234,15 @@ ENDPOINTS = {
     },
     "securities": {
         "path": "/api/market-data/securities", "params": [],
-        "description": "Every tracked security: name, ticker, type, currency, latest price.",
+        "description": "Every tracked security: name, ticker, type, currency, latest price. Use its id as security_id for price_history below.",
+    },
+    "price_history": {
+        "path": "/api/market-data/price-history", "params": ["security_id (required)", "from_date"],
+        "description": "Daily close/high/low/volume history for one security (security_id is required — get it from the securities endpoint), from_date onward (default 2020-01-01, no end-date param — returns through the latest close).",
+    },
+    "fx_rates": {
+        "path": "/api/market-data/fx-rates", "params": ["currency_id", "from_date"],
+        "description": "Historical daily FX rates vs EUR, from_date onward (default 2020-01-01); currency_id optionally filters to one currency (get ids from the securities/accounts data), otherwise returns every tracked currency.",
     },
     "cash_flow_forecast": {
         "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids"],
