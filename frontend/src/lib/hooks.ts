@@ -239,7 +239,15 @@ export function useGridScrollState(key: string) {
     }
   }, [setState])
 
-  const initialState = useMemo<GridState | undefined>(() => state ? { scroll: state } : undefined, [state])
+  // ag-Grid reads `initialState` once, at grid creation — it is NOT a live/controlled
+  // prop. Frozen here via useState's lazy initializer (computed once, from whatever
+  // was already persisted when this component mounted) rather than a useMemo keyed on
+  // `state`, which used to recompute on every later `state` update — including the
+  // very scroll-reset two lines above, which fires on every single filter/sort change.
+  // ag-Grid's React wrapper treats a changed `initialState` object as "apply this grid
+  // state now," so that recompute was re-applying stale state mid-interaction, closing
+  // whatever column filter popup the user had open after their very first keystroke.
+  const [initialState] = useState<GridState | undefined>(() => state ? { scroll: state } : undefined)
 
   return { initialState, onStateUpdated } as const
 }

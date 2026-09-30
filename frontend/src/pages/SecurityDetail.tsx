@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react'
-import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -100,7 +100,10 @@ const PRICES_TAB_COLS = [
 function PricesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
   const gridScroll = useGridScrollState('security-detail-prices')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('security-detail-prices')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -444,6 +447,12 @@ function PricesTab({ secId }: { secId: number }) {
             <Trash2 size={13} /> Delete {selectedDates.length} selected
           </Button>
         )}
+        {gridFilter.hasFilters && (
+          <button onClick={() => gridFilter.clearFilters(gridApi)}
+            className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+            ✕ Clear Filters
+          </button>
+        )}
         <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
         <CopyToExcelButton gridApi={gridApi} />
       </div>
@@ -457,6 +466,7 @@ function PricesTab({ secId }: { secId: number }) {
           onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           columnDefs={gridCols.colDefs}
@@ -764,7 +774,10 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const { gridApi: holdingsGridApi, onGridReady: onHoldingsGridReady } = useGridApi()
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
   const txGridScroll = useGridScrollState('security-detail-all-transactions')
-  const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi()
+  const txGridFilter = useGridFilterState('security-detail-all-transactions')
+  const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi(api => {
+    if (txGridFilter.filterModel) api.setFilterModel(txGridFilter.filterModel)
+  })
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data: txData = [], isLoading: txLoading } = useQuery({
@@ -961,6 +974,12 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
               <ArrowLeftRight size={14} /> Transfer
             </Button>
+            {txGridFilter.hasFilters && (
+              <button onClick={() => txGridFilter.clearFilters(txGridApi)}
+                className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                ✕ Clear Filters
+              </button>
+            )}
             <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
             <CopyToExcelButton gridApi={txGridApi} />
           </div>
@@ -973,6 +992,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             quickFilterText={txSearch}
             initialState={txGridScroll.initialState}
             onStateUpdated={txGridScroll.onStateUpdated}
+            onFilterChanged={txGridFilter.onFilterChanged}
             onColumnMoved={txGridCols.onColumnMoved}
             onColumnResized={txGridCols.onColumnResized}
             columnDefs={txGridCols.colDefs}
@@ -1190,7 +1210,10 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
   ], [deleteMut])
   const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
   const gridScroll = useGridScrollState('security-detail-dividends')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('security-detail-dividends')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   const handleAdd = () => {
     if (!newExDate || !newAmount) return
@@ -1294,6 +1317,12 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
           )}
 
           <div className="flex justify-end gap-2">
+            {gridFilter.hasFilters && (
+              <button onClick={() => gridFilter.clearFilters(gridApi)}
+                className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                ✕ Clear Filters
+              </button>
+            )}
             <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
             <CopyToExcelButton gridApi={gridApi} />
           </div>
@@ -1304,6 +1333,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               rowData={dividends}
               initialState={gridScroll.initialState}
               onStateUpdated={gridScroll.onStateUpdated}
+              onFilterChanged={gridFilter.onFilterChanged}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}

@@ -1412,13 +1412,22 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           so returning to a report picks up where you left off — on any browser, device, or however you access
           Oikos (LAN IP, hostname, or remotely).
         </P>
-        <H3>Rearranging and hiding table columns</H3>
+        <H3>Rearranging, hiding, and filtering table columns</H3>
         <P>
           Drag a column header left or right to reorder it in any data table (Cash Register, Investments,
           Static Data, Market Data, Security Detail, and more). The <b>Columns</b> button next to each table
           opens a checklist to show or hide individual columns. The new order, visibility, and any manual
           column width are remembered the same way as other saved view settings, so they follow you across
           reloads and devices.
+        </P>
+        <P>
+          The small 🔻 icon on a column header opens that column's own filter (e.g. "Contains" for text,
+          "Equals"/"Greater than" for numbers) — separate from a table's top-of-page Search box, and combinable
+          across as many columns at once as you like. Like column order/width, an active column filter is
+          remembered too: it survives clicking through to another page (e.g. a filtered Security Name in Market
+          Data → Securities → its own Security Detail page) and back, instead of silently resetting to the full
+          list. A <b>✕ Clear Filters</b> button appears next to <b>Columns</b> whenever any column filter is
+          active, to drop them all in one click.
         </P>
         <H3>Copying a table to Excel</H3>
         <P>

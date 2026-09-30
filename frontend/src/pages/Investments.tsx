@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -470,7 +470,11 @@ export default function Investments() {
   ], [selectedAccount])
   const cashGridCols = useGridColumnState('investments-cash', cashColDefs)
   const cashGridScroll = useGridScrollState('investments-cash')
-  const { gridApi: cashGridApi, onGridReady: onCashGridReady } = useGridApi(api => api.autoSizeAllColumns())
+  const cashGridFilter = useGridFilterState('investments-cash')
+  const { gridApi: cashGridApi, onGridReady: onCashGridReady } = useGridApi(api => {
+    api.autoSizeAllColumns()
+    if (cashGridFilter.filterModel) api.setFilterModel(cashGridFilter.filterModel)
+  })
 
   const txColDefs = useMemo(() => [
     { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
@@ -837,6 +841,12 @@ export default function Investments() {
                           <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>
                         </>
                       )}
+                      {cashGridFilter.hasFilters && (
+                        <button onClick={() => cashGridFilter.clearFilters(cashGridApi)}
+                          className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                          ✕ Clear Filters
+                        </button>
+                      )}
                       <ColumnsMenu columns={cashGridCols.columns} onToggle={cashGridCols.toggleColumn} />
                       <CopyToExcelButton gridApi={cashGridApi} />
                     </div>
@@ -856,6 +866,7 @@ export default function Investments() {
                       onGridReady={onCashGridReady}
                       initialState={cashGridScroll.initialState}
                       onStateUpdated={cashGridScroll.onStateUpdated}
+                      onFilterChanged={cashGridFilter.onFilterChanged}
                       onColumnMoved={cashGridCols.onColumnMoved}
                       onColumnResized={cashGridCols.onColumnResized}
                       onSortChanged={cashGridCols.onSortChanged}

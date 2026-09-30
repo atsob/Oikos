@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react'
-import { usePersist, useGridColumnState, useGridScrollState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -237,7 +237,10 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
   }, [navigate]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-securities', colDefs)
   const gridScroll = useGridScrollState('market-data-securities')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('market-data-securities')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -253,6 +256,12 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           <span className="text-xs text-slate-400 whitespace-nowrap">{(securities as unknown[]).length} securities</span>
         </div>
         <div className="flex items-center gap-2">
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Security</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
@@ -263,6 +272,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -406,7 +416,10 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('market-data-currencies', colDefs)
   const gridScroll = useGridScrollState('market-data-currencies')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('market-data-currencies')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -422,6 +435,12 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
           <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} currencies</span>
         </div>
         <div className="flex items-center gap-2">
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Currency</Button>
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
@@ -432,6 +451,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }} />
@@ -494,7 +514,10 @@ const FX_PRICES_COLS = [
 function FxPricesTab() {
   const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
   const gridScroll = useGridScrollState('market-data-fx-prices')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('market-data-fx-prices')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -623,6 +646,12 @@ function FxPricesTab() {
                   <Trash2 size={13} /> Delete {selectedDates.length} selected
                 </Button>
               )}
+              {gridFilter.hasFilters && (
+                <button onClick={() => gridFilter.clearFilters(gridApi)}
+                  className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                  ✕ Clear Filters
+                </button>
+              )}
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
               <CopyToExcelButton gridApi={gridApi} />
             </div>
@@ -637,6 +666,7 @@ function FxPricesTab() {
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
               initialState={gridScroll.initialState}
               onStateUpdated={gridScroll.onStateUpdated}
+              onFilterChanged={gridFilter.onFilterChanged}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -731,7 +761,10 @@ const SECURITIES_PRICES_COLS = [
 function SecuritiesPricesTab() {
   const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
   const gridScroll = useGridScrollState('market-data-securities-prices')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('market-data-securities-prices')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -910,6 +943,12 @@ function SecuritiesPricesTab() {
                   <Trash2 size={13} /> Delete {selectedDates.length} selected
                 </Button>
               )}
+              {gridFilter.hasFilters && (
+                <button onClick={() => gridFilter.clearFilters(gridApi)}
+                  className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                  ✕ Clear Filters
+                </button>
+              )}
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
               <CopyToExcelButton gridApi={gridApi} />
             </div>
@@ -924,6 +963,7 @@ function SecuritiesPricesTab() {
               onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
               initialState={gridScroll.initialState}
               onStateUpdated={gridScroll.onStateUpdated}
+              onFilterChanged={gridFilter.onFilterChanged}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}
               columnDefs={gridCols.colDefs}
@@ -1765,7 +1805,10 @@ export default function MarketData() {
   const [search, setSearch] = usePersist('market_data_search', '')
   const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
   const anomalyGridScroll = useGridScrollState('market-data-anomalies')
-  const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi()
+  const anomalyGridFilter = useGridFilterState('market-data-anomalies')
+  const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi(api => {
+    if (anomalyGridFilter.filterModel) api.setFilterModel(anomalyGridFilter.filterModel)
+  })
 
   const { data: anomalies = [], isLoading: anomLoading } = useQuery({
     queryKey: ['price-anomalies'],
@@ -1798,6 +1841,12 @@ export default function MarketData() {
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
                 <div>
                   <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+                    {anomalyGridFilter.hasFilters && (
+                      <button onClick={() => anomalyGridFilter.clearFilters(anomalyGridApi)}
+                        className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+                        ✕ Clear Filters
+                      </button>
+                    )}
                     <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
                     <CopyToExcelButton gridApi={anomalyGridApi} />
                   </div>
@@ -1806,6 +1855,7 @@ export default function MarketData() {
                       defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
                       initialState={anomalyGridScroll.initialState}
                       onStateUpdated={anomalyGridScroll.onStateUpdated}
+                      onFilterChanged={anomalyGridFilter.onFilterChanged}
                       onColumnMoved={anomalyGridCols.onColumnMoved}
                       onColumnResized={anomalyGridCols.onColumnResized} />
                   </div>

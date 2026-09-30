@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { usePersist, useGridColumnState, useGridScrollState, useGridApi, useSettings } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useGridApi, useSettings } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -204,7 +204,10 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-payees', payeeColDefs)
   const gridScroll = useGridScrollState('static-data-payees')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('static-data-payees')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -231,6 +234,12 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
             title="Set every payee's Default Category to whichever category its transactions use most often">
             <Wand2 size={13} /> {autoDefaultRunning ? 'Setting…' : 'Set Default Categories'}
           </Button>
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
         </div>
@@ -244,6 +253,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -451,7 +461,10 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-categories', categoryColDefs)
   const gridScroll = useGridScrollState('static-data-categories')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('static-data-categories')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -473,6 +486,12 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           <Button size="sm" variant="secondary" onClick={() => { setMergeSource(''); setMergeTarget(''); setMergeError(null); setMergeOpen(true) }}>
             <ArrowRightLeft size={13} /> Merge Categories
           </Button>
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
         </div>
@@ -486,6 +505,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -768,7 +788,10 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
   ], [reportingCurrency]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-accounts', accountColDefs)
   const gridScroll = useGridScrollState('static-data-accounts')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('static-data-accounts')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -793,6 +816,12 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
         </div>
@@ -806,6 +835,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -1368,7 +1398,10 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
   ], [reportingCurrency]) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-institutions', institutionColDefs)
   const gridScroll = useGridScrollState('static-data-institutions')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('static-data-institutions')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -1385,6 +1418,12 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
         </div>
@@ -1398,6 +1437,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
@@ -1552,7 +1592,10 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
   ], []) // eslint-disable-line react-hooks/exhaustive-deps
   const gridCols = useGridColumnState('static-data-issuers', issuerColDefs)
   const gridScroll = useGridScrollState('static-data-issuers')
-  const { gridApi, onGridReady } = useGridApi()
+  const gridFilter = useGridFilterState('static-data-issuers')
+  const { gridApi, onGridReady } = useGridApi(api => {
+    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
+  })
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -1569,6 +1612,12 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Issuer</Button>
+          {gridFilter.hasFilters && (
+            <button onClick={() => gridFilter.clearFilters(gridApi)}
+              className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
+              ✕ Clear Filters
+            </button>
+          )}
           <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
           <CopyToExcelButton gridApi={gridApi} />
         </div>
@@ -1582,6 +1631,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
+          onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
           onSortChanged={gridCols.onSortChanged}
