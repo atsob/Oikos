@@ -247,17 +247,25 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
             tax      = float(r.tax      or 0)
             interest = float(r.interest or 0)
             other    = float(r.other    or 0)
-            net = income + expense + tax + interest + other
+            # NET deliberately excludes "other" — reported live: a €67,996.62 pension cash-out
+            # (category type "Investment", landing straight in "other" since it isn't Income/
+            # Expense/Tax/Interest) inflated a single month's "net surplus" to €81,947.72 when
+            # the real income-driven surplus was ~€13,951. "Other" is a reclassification of
+            # money already on the balance sheet — a pension/investment liquidating into cash,
+            # a transfer between your own accounts, funding a brokerage account — not new
+            # income, so it doesn't belong in a savings/surplus figure. Genuine income-statement
+            # cash flow (what "did I save money this month" should mean) is Income/Expense/
+            # Tax/Interest only; "other" is still surfaced, just as a separate, clearly-labeled
+            # note rather than folded into NET.
+            net = income + expense + tax + interest
             # Build a plain-prose explanation that still reconciles to the net figure —
             # a reader comparing income vs. expenses by hand won't match the net whenever
-            # tax/interest/other move money, so any non-trivial component gets named.
+            # tax/interest move money, so any non-trivial component gets named.
             extra_flows = []
             if abs(tax) > 1:
                 extra_flows.append(f"€{abs(tax):,.2f} in tax")
             if abs(interest) > 1:
                 extra_flows.append(f"€{abs(interest):,.2f} in interest")
-            if abs(other) > 1:
-                extra_flows.append(f"€{abs(other):,.2f} in other cash movements (e.g. investment contributions or transfers)")
             lead = f"On €{income:,.2f} of income against €{abs(expense):,.2f} of expenses"
             if extra_flows:
                 lead += ", plus " + ", ".join(extra_flows)
@@ -265,13 +273,20 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
                 net_explanation = f"{lead}, you ended the month with a net surplus of €{net:,.2f}."
             else:
                 net_explanation = f"{lead}, you ended the month with a net shortfall of €{abs(net):,.2f}."
+            if abs(other) > 1:
+                net_explanation += (
+                    f" Separately, €{abs(other):,.2f} moved {'in' if other >= 0 else 'out'} from other "
+                    f"cash activity (e.g. an investment contribution, a transfer, or a pension/investment "
+                    f"cash-out) — not counted in the net surplus above, since it's money moving between "
+                    f"your own accounts rather than new income."
+                )
             blocks.append(
                 f"MONTHLY CASH FLOWS (last 30 days):\n"
                 f"  Income:   €{income:,.2f}\n"
                 f"  Expenses: €{expense:,.2f}  (negative = money out)\n"
                 f"  Tax:      €{tax:,.2f}  (negative = money out, treated as an expense)\n"
                 f"  Interest: €{interest:,.2f}\n"
-                f"  Other:    €{other:,.2f}\n"
+                f"  Other:    €{other:,.2f}  (NOT included in NET below — see explanation)\n"
                 f"  NET:      €{net:,.2f}  — {net_explanation}"
             )
     except Exception as e:
@@ -416,10 +431,12 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     this is displayed as raw plain text, so any markdown syntax would show up literally to the user.
 
     Follow this structure exactly, in 4 short paragraphs:
-    Paragraph 1 – Cash flows: quote the NET line's explanation from the context verbatim as the
-        opening sentence — it already states income, expenses, and any tax/interest/other flows
-        needed to reconcile to the net figure. Do not state your own net figure or your own
-        "income minus expenses" framing; use only the quoted explanation for the net.
+    Paragraph 1 – Cash flows: quote the NET line's explanation from the context verbatim — it
+        already states income, expenses, any tax/interest needed to reconcile to the net figure,
+        and, as a separate trailing sentence when present, any "other" cash movement (transfers,
+        investment contributions, a pension cash-out, etc.) explicitly called out as not part of
+        that net. Do not state your own net figure or your own "income minus expenses" framing;
+        use only the quoted explanation, and never fold "other" into a net/savings figure yourself.
     Paragraph 2 – Top payees: present the TOP 10 PAYEES as a simple numbered list ("1. Name: €X"),
         one per line, largest first. A numbered list is fine here — it is not markdown. Skip this
         paragraph if there is no payee data.
@@ -435,7 +452,47 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     - Never state a net/savings figure that isn't exactly the NET value from the DATA block.
     - Never use placeholders like [X] or (insert value here).
     - Keep the total length under 250 words.
+    - Never copy a DATA block line verbatim (e.g. "NET WORTH SNAPSHOT (as of ...): ...",
+      "PRIOR NET WORTH ...", "CHANGE FROM PRIOR MONTH: ..."). Pull the numbers out of it and write
+      your own sentence instead — the output should be 4 paragraphs of prose only, nothing that
+      looks like a label/colon data line.
 """)
+
+# DATA block line-prefixes the LLM is told never to echo verbatim — kept as a plain
+# string-prefix safety net (strip_echoed_data_lines below) since a local/smaller model
+# doesn't always follow that instruction as reliably as a hosted one does.
+_DATA_LINE_PREFIXES = (
+    "NET WORTH SNAPSHOT", "PRIOR NET WORTH", "CHANGE FROM PRIOR MONTH",
+    "MONTHLY CASH FLOWS", "INVESTMENT P&L", "TOP 10 PAYEES", "NET WORTH:",
+)
+
+
+def _is_echoed_data_line(line: str) -> bool:
+    # A real DATA-block line is always "LABEL:" or "LABEL (...):" verbatim — require that
+    # exact shape (not just a substring match) so an ordinary prose sentence that happens to
+    # start with the same words (e.g. "Monthly cash flows were €40,245.80 in income...")
+    # isn't mistaken for one and stripped too.
+    upper = line.strip().upper()
+    return any(upper.startswith(p + ":") or upper.startswith(p + " (") for p in _DATA_LINE_PREFIXES)
+
+
+def strip_echoed_data_lines(text: str) -> str:
+    """Drop any line the LLM copied verbatim from the DATA block instead of turning into
+    prose, per SYSTEM_PROMPT's instruction not to. A model that ignores that instruction
+    (seen in practice with the local Ollama model this runs against) would otherwise leak
+    raw "LABEL: ..." lines into an otherwise-prose summary."""
+    kept = [line for line in text.split("\n") if not _is_echoed_data_line(line)]
+    # Collapse the blank line(s) a stripped line leaves behind, but keep paragraph breaks.
+    out, blank_run = [], 0
+    for line in kept:
+        if line.strip() == "":
+            blank_run += 1
+            if blank_run > 1:
+                continue
+        else:
+            blank_run = 0
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def generate_summary(llm, context: str) -> str:
@@ -448,9 +505,8 @@ def generate_summary(llm, context: str) -> str:
     )
     try:
         response = llm.invoke(prompt)
-        if hasattr(response, "content"):
-            return response.content.strip()
-        return str(response).strip()
+        text = response.content.strip() if hasattr(response, "content") else str(response).strip()
+        return strip_echoed_data_lines(text)
     except Exception as e:
         return f"[LLM error: {e}]\n\nRaw context:\n{context}"
 

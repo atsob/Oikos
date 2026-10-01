@@ -221,18 +221,27 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
             tax      = float(r.tax      or 0)
             interest = float(r.interest or 0)
             other    = float(r.other    or 0)
-            net       = income + expense + tax + interest + other
-            total_out = abs(expense) + abs(tax) + abs(other if other < 0 else 0)
+            # NET excludes "other" — same reasoning as ai/monthly_summary.py's identical fix:
+            # "other" is a reclassification of existing money (a transfer, an investment
+            # contribution, a pension/investment cash-out — category type outside Income/
+            # Expense/Tax/Interest), not new income, so it doesn't belong in a savings figure.
+            net       = income + expense + tax + interest
+            total_out = abs(expense) + abs(tax)
             if net >= 0:
                 net_explanation = f"You saved €{net:,.2f} this week (income exceeded all outflows)."
             else:
                 net_explanation = (
-                    f"Total outflows (expenses + tax + other) of €{total_out:,.2f} "
+                    f"Total outflows (expenses + tax) of €{total_out:,.2f} "
                     f"exceeded income of €{income:,.2f} by €{abs(net):,.2f}."
+                )
+            if abs(other) > 1:
+                net_explanation += (
+                    f" Separately, €{abs(other):,.2f} moved {'in' if other >= 0 else 'out'} from other "
+                    f"cash activity (e.g. a transfer or investment contribution) — not counted above."
                 )
             blocks.append(
                 f"CASH FLOWS ({week_start} to {period_end}):\n"
-                f"  Income €{income:,.2f} | Expenses €{expense:,.2f} | Tax €{tax:,.2f} | Net €{net:,.2f}\n"
+                f"  Income €{income:,.2f} | Expenses €{expense:,.2f} | Tax €{tax:,.2f} | Other €{other:,.2f} (not in Net) | Net €{net:,.2f}\n"
                 f"  {net_explanation}"
             )
     except Exception as e:
@@ -450,7 +459,40 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     - Only use numbers that appear in the CONTEXT block. Never invent or calculate.
     - Never use placeholders like [X] or (insert value here).
     - Keep the prose section under 200 words (the numbered list is separate from that limit).
+    - Never copy a CONTEXT block line verbatim (e.g. "NET WORTH SNAPSHOT (as of ...): ...",
+      "CASH FLOWS (... to ...): ..."). Pull the numbers out of it and write your own sentence
+      instead — only the final numbered transaction list should look like a plain data line.
 """)
+
+# CONTEXT block line-prefixes the LLM is told never to echo verbatim — kept as a plain
+# string-prefix safety net since a local/smaller model doesn't always follow that
+# instruction as reliably as a hosted one does. Same approach as monthly_summary.py's
+# identical helper; see its comment for the full rationale.
+_DATA_LINE_PREFIXES = (
+    "NET WORTH SNAPSHOT", "NET WORTH:", "CASH FLOWS", "WEEKLY CASH FLOWS",
+    "INVESTMENT P&L", "SPENDING BY CATEGORY", "TOP 5 INDIVIDUAL TRANSACTIONS", "TOP TRANSACTIONS",
+)
+
+
+def _is_echoed_data_line(line: str) -> bool:
+    upper = line.strip().upper()
+    return any(upper.startswith(p + ":") or upper.startswith(p + " (") for p in _DATA_LINE_PREFIXES)
+
+
+def strip_echoed_data_lines(text: str) -> str:
+    """Drop any line the LLM copied verbatim from the CONTEXT block instead of turning into
+    prose. See monthly_summary.py's identical helper for the full rationale."""
+    kept = [line for line in text.split("\n") if not _is_echoed_data_line(line)]
+    out, blank_run = [], 0
+    for line in kept:
+        if line.strip() == "":
+            blank_run += 1
+            if blank_run > 1:
+                continue
+        else:
+            blank_run = 0
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def generate_summary(llm, context: str) -> str:
@@ -463,9 +505,8 @@ def generate_summary(llm, context: str) -> str:
     )
     try:
         response = llm.invoke(prompt)
-        if hasattr(response, "content"):
-            return response.content.strip()
-        return str(response).strip()
+        text = response.content.strip() if hasattr(response, "content") else str(response).strip()
+        return strip_echoed_data_lines(text)
     except Exception as e:
         return f"[LLM error: {e}]\n\nRaw context:\n{context}"
 

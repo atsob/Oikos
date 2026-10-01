@@ -2261,6 +2261,23 @@ function PnlReport() {
     ? Number(accountMap.get(selectedAccount)?.[0]?.accounts_id ?? NaN) || null
     : null
 
+  // Same daily-historical VaR as Reports → Securities Analysis → Risk Metrics (95% confidence,
+  // 3-year/756-trading-day lookback — that tab's own default), reused here as one more Totals
+  // figure rather than a full second risk panel. Portfolio-level always runs (no account_ids
+  // filter); account-level only once a row's been drilled into, scoped to that one account —
+  // the endpoint already supports this account_ids filter, so no backend change was needed.
+  const { data: portfolioVar } = useQuery({
+    queryKey: ['risk-metrics', 756, null, 'all'],
+    queryFn: () => getRiskMetrics(756, null),
+    staleTime: 300_000,
+  })
+  const { data: accountVar } = useQuery({
+    queryKey: ['risk-metrics', 756, null, selectedAccountId],
+    queryFn: () => getRiskMetrics(756, null, selectedAccountId ? [selectedAccountId] : undefined),
+    enabled: selectedAccountId != null,
+    staleTime: 300_000,
+  })
+
   const drillRows = selectedAccount
     ? (accountMap.get(selectedAccount) ?? [])
         .filter(r => showClosedPositions || !isClosedPosition(r))
@@ -2293,7 +2310,7 @@ function PnlReport() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
         <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`}
           subtitleNode={(showPct && totalPnlPct != null) || (totalMkt != null && totalFx != null) ? (
@@ -2314,6 +2331,7 @@ function PnlReport() {
             <span className={`tabular-nums ${totalUnrealPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>({totalUnrealPct >= 0 ? '+' : ''}{totalUnrealPct.toFixed(2)}%)</span>
           ) : undefined} />
         <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed. No cost-basis percentage is shown here — the original cost basis of already-closed positions isn't tracked separately from unrealized P&L." />
+        <KpiCard label="VaR 95% (daily)" value={portfolioVar?.var_95_pct != null ? `${portfolioVar.var_95_pct.toFixed(2)}%  ·  ${fmtEur(portfolioVar.var_95_eur)}` : '—'} color="text-amber-600" tooltip="Value at Risk (same calculation as Securities Analysis → Risk Metrics, 95% confidence, 3-year daily history): on a typical day, there is only a 5% chance of losing more than this amount across the whole portfolio." />
       </div>
       <div className="flex gap-1">
         {PNL_WINDOWS.map(w => (
@@ -2358,6 +2376,9 @@ function PnlReport() {
             {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
             <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
             <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong></span>
+            <span className="tabular-nums text-amber-600" title="Value at Risk (95% confidence, 3-year daily history): on a typical day, there is only a 5% chance of this account losing more than this amount.">
+              VaR 95%: <strong>{accountVar?.var_95_pct != null ? `${accountVar.var_95_pct.toFixed(2)}% · ${fmtEur(accountVar.var_95_eur)}` : '—'}</strong>
+            </span>
           </div>
           <WithCopy scrollKey="pnl-report-main">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">

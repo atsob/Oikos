@@ -753,6 +753,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           only controls whether the Market/FX columns appear in the account and drill-down tables below it.
         </Note>
         <Note>
+          <b>P&amp;L</b>'s KPI row and, once you drill into one account, its "Totals:" row both carry a{' '}
+          <b>VaR 95% (daily)</b> figure — the same Value at Risk calculation as <b>Risk Metrics</b> below (historical
+          daily returns, 95% confidence, 3-year lookback), scoped to the whole portfolio in the KPI row and to just
+          that one account once drilled in. Shown as a % and a EUR amount, e.g. "-0.59% · €912" — on a typical day,
+          there's only a 5% chance of losing more than that.
+        </Note>
+        <Note>
           <b>Benchmark</b>'s "Compare vs" is a set of removable chips, not a single dropdown — add as many market
           indexes and/or other accounts as you like via <b>+ Add comparison…</b>, freely mixing both kinds. Each
           comparison gets its own color-coded line on the chart and its own return % card, all indexed to 100 at
