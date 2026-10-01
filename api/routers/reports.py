@@ -2297,6 +2297,35 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
         long_lots: deque = deque()
         short_lots: deque = deque()
 
+        grp_sorted = grp.sort_values(['date', 'investments_id']).reset_index(drop=True)
+
+        # Saxo (confirmed live, and reportedly automatic on its side) occasionally merges
+        # several open tax lots into one by recording a same-day Sell immediately followed
+        # by a Buy of the identical quantity, both linked to a real Cash Register
+        # transaction with Total_Amount = 0 — no real disposal happened, it's a lot-
+        # consolidation bookkeeping entry, not a trade. Taking it at face value as a real
+        # Sell+Buy would wipe out the position's actual cost basis (the Sell closes it for
+        # €0 proceeds — a fabricated full loss) and open a brand-new zero-cost lot (the
+        # Buy), which then overstates every later sale's taxable gain by drawing on that
+        # phantom zero-cost lot first under FIFO/LIFO. Detected by that same signature —
+        # zero recorded amount on both legs, which this function's own price*qty*FX
+        # fallback (see get_capital_gains_raw's query) never produces on its own, only a
+        # real linked zero-amount transaction does — and skipped entirely: the original
+        # lot(s) stay in the queue completely untouched, preserving both their real cost
+        # basis and their real acquisition date (and so their long/short-term holding
+        # period) for every sale that follows.
+        merge_pair_idx: set = set()
+        for i in range(len(grp_sorted) - 1):
+            r1, r2 = grp_sorted.iloc[i], grp_sorted.iloc[i + 1]
+            a1 = float(r1['amount_eur']) if pd.notna(r1['amount_eur']) else 0.0
+            a2 = float(r2['amount_eur']) if pd.notna(r2['amount_eur']) else 0.0
+            if (r1['action'] == 'Sell' and r2['action'] == 'Buy'
+                    and r1['date'] == r2['date']
+                    and abs(float(r1['quantity']) - float(r2['quantity'])) < 1e-9
+                    and a1 == 0.0 and a2 == 0.0):
+                merge_pair_idx.add(i)
+                merge_pair_idx.add(i + 1)
+
         def make_row(row, date, action, qty, proceeds, cost, first_date):
             days_held = (date - first_date).days if first_date else 0
             results.append({
@@ -2323,7 +2352,9 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                 'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
             })
 
-        for _, row in grp.sort_values(['date', 'investments_id']).iterrows():
+        for idx, row in grp_sorted.iterrows():
+            if idx in merge_pair_idx:
+                continue
             action = row['action']
             qty    = float(row['quantity'])   if pd.notna(row['quantity'])   else 0.0
             amount = float(row['amount_eur']) if pd.notna(row['amount_eur']) else 0.0
@@ -2404,6 +2435,24 @@ def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
         long_qty, long_avg_cost, long_open_date = 0.0, 0.0, None
         short_qty, short_avg_cost, short_open_date = 0.0, 0.0, None
 
+        grp_sorted = grp.sort_values(['date', 'investments_id']).reset_index(drop=True)
+
+        # Same Saxo lot-consolidation signature handled in _compute_lot_gains: a same-day
+        # zero-amount Sell immediately followed by a zero-amount Buy of identical quantity
+        # is a broker-side bookkeeping merge, not a real disposal — skip both legs so the
+        # average cost and open date carry through untouched.
+        merge_pair_idx: set = set()
+        for i in range(len(grp_sorted) - 1):
+            r1, r2 = grp_sorted.iloc[i], grp_sorted.iloc[i + 1]
+            a1 = float(r1['amount_eur']) if pd.notna(r1['amount_eur']) else 0.0
+            a2 = float(r2['amount_eur']) if pd.notna(r2['amount_eur']) else 0.0
+            if (r1['action'] == 'Sell' and r2['action'] == 'Buy'
+                    and r1['date'] == r2['date']
+                    and abs(float(r1['quantity']) - float(r2['quantity'])) < 1e-9
+                    and a1 == 0.0 and a2 == 0.0):
+                merge_pair_idx.add(i)
+                merge_pair_idx.add(i + 1)
+
         def make_row(row, date, action, qty, proceeds, cost, open_date):
             days_held = (date - open_date).days if open_date else 0
             results.append({
@@ -2430,7 +2479,9 @@ def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
                 'gains_tax_code':  row.get('gains_tax_code') if pd.notna(row.get('gains_tax_code')) else None,
             })
 
-        for _, row in grp.sort_values(['date', 'investments_id']).iterrows():
+        for idx, row in grp_sorted.iterrows():
+            if idx in merge_pair_idx:
+                continue
             action = row['action']
             qty    = float(row['quantity'])   if pd.notna(row['quantity'])   else 0.0
             amount = float(row['amount_eur']) if pd.notna(row['amount_eur']) else 0.0

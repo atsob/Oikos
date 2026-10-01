@@ -397,7 +397,26 @@ def update_holdings():
             wac_long_qty, wac_long_avg = 0.0, 0.0
             wac_short_qty, wac_short_avg = 0.0, 0.0
 
-            for row in grp.itertuples():
+            # Saxo lot-consolidation signature (see api/routers/reports.py's
+            # _compute_lot_gains for the fuller explanation): a same-day Sell
+            # immediately followed by a Buy of identical quantity, with no recorded
+            # Total_Amount_AccCur on either leg (a genuine trade always has one, even
+            # a tiny one) — not a real disposal, so both legs are skipped here too,
+            # leaving the real lots' cost basis and acquisition order untouched.
+            rows = list(grp.itertuples())
+            merge_pair_idx: set = set()
+            for i in range(len(rows) - 1):
+                r1, r2 = rows[i], rows[i + 1]
+                if (r1.action == 'Sell' and r2.action == 'Buy'
+                        and r1.date == r2.date
+                        and abs(float(r1.quantity) - float(r2.quantity)) < 1e-9
+                        and pd.isna(r1.total_amount_acccur) and pd.isna(r2.total_amount_acccur)):
+                    merge_pair_idx.add(i)
+                    merge_pair_idx.add(i + 1)
+
+            for idx, row in enumerate(rows):
+                if idx in merge_pair_idx:
+                    continue
                 qty = float(row.quantity) if pd.notna(row.quantity) else 0.0
                 if abs(qty) <= 1e-12:
                     continue
