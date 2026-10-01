@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-01
+
+### Fixed
+- **The Monthly (and Weekly) AI Summary's "Prior Net Worth" could badly understate a past date whenever a Pension account's balance had since changed — e.g. been cashed out** — reported live: September 2026's summary showed Prior Net Worth (as of 2026-08-31) as €626,247, "much more" than that in reality, since it should have still counted a Pension that was only cashed out during September. Root cause: unlike every other account type in `_net_worth_as_of()`'s reconstruction query, the Pension bucket never reversed any activity to get back to the requested date — it read `Accounts_Balance` directly, which is always *today's* current balance regardless of which `as_of_date` was asked for. For the current month-end snapshot this silently happened to be right (today's balance *is* today's balance), which is exactly why the bug went unnoticed until a prior-month comparison crossed a Pension cash-out event. Fixed to reverse Investments `CashIn`/`CashOut`/`IntInc` activity after `as_of_date` — the same approach already used for every other account type's Transactions-based reversal, and the same one the real-time Dashboard's own net-worth endpoint already uses for Pension. Verified directly against the real database: August 31 now correctly reconstructs to €703,457 (not €626,247) — much closer to September 30's €706,469, which makes sense, since cashing out a pension moves money into cash/savings rather than destroying it.
+- **Savings accounts counted as "Cash" in the Monthly/Weekly AI Summary, instead of "Pension & Savings" like everywhere else in the app** (Dashboard's KPIs/charts, Reports → Net Worth, and the real-time Dashboard net-worth endpoint all already group Savings with Pension under that exact label — `api/routers/dashboard.py`'s own comment documents it). The AI summary scripts independently reimplemented this net-worth logic from scratch and simply diverged from that convention. Moved Savings out of the Cash bucket and into the Pension bucket (reconstructed the same way Cash already was, via Transactions reversal, since Savings accounts have no Investments rows) in both `ai/monthly_summary.py` and `ai/weekly_summary.py`, and relabeled the line from "Pension" to "Pension & Savings" to match. Fixed alongside the bug above since both live in the exact same query.
+
 ## 2026-09-30
 
 ### Fixed

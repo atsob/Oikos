@@ -103,7 +103,7 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                 SELECT
                     SUM(CASE
                         WHEN a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin',
-                                                     'Real Estate','Vehicle','Asset','Liability')
+                                                     'Real Estate','Vehicle','Asset','Liability','Savings')
                         THEN (a.Accounts_Balance - COALESCE((
                                 SELECT SUM(t.Total_Amount) FROM Transactions t
                                 WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
@@ -111,9 +111,22 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                         ELSE 0
                     END) AS cash_eur,
 
+                    -- Pension & Savings, grouped together and reconstructed backwards to
+                    -- period_end — same convention and bug fix as ai/monthly_summary.py's
+                    -- identical CTE; see that file's comment for the full rationale.
                     SUM(CASE
-                        WHEN a.Accounts_Type IN ('Pension')
-                        THEN a.Accounts_Balance * COALESCE(fx.FX_Rate, 1)
+                        WHEN a.Accounts_Type = 'Pension'
+                        THEN (a.Accounts_Balance - COALESCE((
+                                SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur
+                                                 WHEN Action IN ('CashOut') THEN -Total_Amount_AccCur
+                                                 ELSE 0 END)
+                                FROM Investments WHERE Accounts_Id = a.Accounts_Id AND Date > %s::date
+                             ), 0)) * COALESCE(fx.FX_Rate, 1)
+                        WHEN a.Accounts_Type = 'Savings'
+                        THEN (a.Accounts_Balance - COALESCE((
+                                SELECT SUM(t.Total_Amount) FROM Transactions t
+                                WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                             ), 0)) * COALESCE(fx.FX_Rate, 1)
                         ELSE 0
                     END) AS pension_eur,
 
@@ -169,7 +182,7 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                 it.investments_eur
             FROM account_totals at
             CROSS JOIN investment_totals it
-        """, (period_end,) * 6)
+        """, (period_end,) * 8)
         if not df.empty:
             r = df.iloc[0]
             total = sum(float(v or 0) for v in r)
@@ -177,7 +190,7 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                 f"NET WORTH SNAPSHOT (as of {period_end}):\n"
                 f"  Cash: €{float(r.cash_eur or 0):,.0f}  "
                 f"Investments: €{float(r.investments_eur or 0):,.0f}  "
-                f"Pension: €{float(r.pension_eur or 0):,.0f}  "
+                f"Pension & Savings: €{float(r.pension_eur or 0):,.0f}  "
                 f"Assets: €{float(r.assets_eur or 0):,.0f}  "
                 f"TOTAL: €{total:,.0f}"
             )

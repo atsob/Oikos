@@ -93,7 +93,7 @@ def _net_worth_as_of(conn, as_of_date: str) -> dict | None:
             SELECT
                 SUM(CASE
                     WHEN a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin',
-                                                 'Real Estate','Vehicle','Asset','Liability')
+                                                 'Real Estate','Vehicle','Asset','Liability','Savings')
                     THEN (a.Accounts_Balance - COALESCE((
                             SELECT SUM(t.Total_Amount) FROM Transactions t
                             WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
@@ -101,9 +101,30 @@ def _net_worth_as_of(conn, as_of_date: str) -> dict | None:
                     ELSE 0
                 END) AS cash_eur,
 
+                -- Pension & Savings, grouped together — same convention as the Dashboard's
+                -- own net-worth endpoint (api/routers/dashboard.py get_net_worth) and Reports'
+                -- Net Worth Breakdown. Both legs are reconstructed backwards to as_of_date
+                -- rather than read from today's Accounts_Balance directly — the previous
+                -- version used today's current Pension balance unconditionally, so a Pension
+                -- account cashed out after as_of_date (e.g. during the month being summarized)
+                -- silently showed as already-zero even for an as-of date from before the
+                -- cash-out happened, understating that historical snapshot's net worth by the
+                -- entire pension value. Pension reverses Investments CashIn/CashOut/IntInc
+                -- activity (its balance moves via Investments rows, not Transactions); Savings
+                -- has no Investments rows, so it reverses Transactions like Cash does.
                 SUM(CASE
-                    WHEN a.Accounts_Type IN ('Pension')
-                    THEN a.Accounts_Balance * COALESCE(fx.FX_Rate, 1)
+                    WHEN a.Accounts_Type = 'Pension'
+                    THEN (a.Accounts_Balance - COALESCE((
+                            SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur
+                                             WHEN Action IN ('CashOut') THEN -Total_Amount_AccCur
+                                             ELSE 0 END)
+                            FROM Investments WHERE Accounts_Id = a.Accounts_Id AND Date > %s::date
+                         ), 0)) * COALESCE(fx.FX_Rate, 1)
+                    WHEN a.Accounts_Type = 'Savings'
+                    THEN (a.Accounts_Balance - COALESCE((
+                            SELECT SUM(t.Total_Amount) FROM Transactions t
+                            WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                         ), 0)) * COALESCE(fx.FX_Rate, 1)
                     ELSE 0
                 END) AS pension_eur,
 
@@ -159,7 +180,7 @@ def _net_worth_as_of(conn, as_of_date: str) -> dict | None:
             it.investments_eur
         FROM account_totals at
         CROSS JOIN investment_totals it
-    """, (as_of_date,) * 6)
+    """, (as_of_date,) * 8)
     if df.empty:
         return None
     r = df.iloc[0]
@@ -188,7 +209,7 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
                 f"NET WORTH SNAPSHOT (as of {month_end}):\n"
                 f"  Cash: €{now_nw['cash']:,.0f}  "
                 f"Investments: €{now_nw['investments']:,.0f}  "
-                f"Pension: €{now_nw['pension']:,.0f}  "
+                f"Pension & Savings: €{now_nw['pension']:,.0f}  "
                 f"Assets: €{now_nw['assets']:,.0f}  "
                 f"TOTAL: €{now_nw['total']:,.0f}"
             )
@@ -406,7 +427,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
         the amount).
     Paragraph 4 – Net worth: state the CHANGE FROM PRIOR MONTH from the context (if present) as
         the opening sentence, then the current TOTAL broken down into its Cash / Investments /
-        Pension / Assets components, all as one flowing sentence, not a list.
+        Pension & Savings / Assets components, all as one flowing sentence, not a list.
 
     Rules:
     - Only use numbers that appear in the DATA block. Never invent, calculate, or estimate a number
