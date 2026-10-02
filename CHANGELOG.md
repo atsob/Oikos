@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-02
+
+### Added
+- **Security Detail → Overview → Security Details panel now shows Sector, above Industry** — already stored on the security and already returned by the same `/market-data/securities` query the panel reads, just never displayed there.
+- **Market Data → Securities search now matches any text field, not just name/ticker/ISIN** — it also searches Sector, Industry, Type, Exchange, Tax Category, Currency, Analyst Rating and Dividend/Coupon Frequency, so e.g. "Consumer Defensive" (20 securities), "athex" (68) or "ETF" (49) now find matches. Done server-side in `get_securities()` (`api/routers/market_data.py`) via one `CONCAT_WS` over those columns. Verified against the real database; the frontend change type-checks but I could not exercise it in a browser (the app requires login).
+
 ## 2026-10-01
 
 ### Added

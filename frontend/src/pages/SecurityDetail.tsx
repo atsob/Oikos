@@ -1983,6 +1983,7 @@ function OverviewTab({ secId, security, securityLoading, onEditDetails }: { secI
         <OverviewRow label="Name" value={String(security.name ?? '—')} />
         <OverviewRow label="Symbol" value={String(security.ticker ?? '—')} />
         <OverviewRow label="Type" value={String(security.type ?? '—')} />
+        <OverviewRow label="Sector" value={String(security.sector ?? '') || '—'} />
         <OverviewRow label="Industry" value={String(security.industry ?? '') || '—'} />
         <OverviewRow label="Market" value={String(security.tv_exchange ?? '') || '—'} />
         <OverviewRow label="Currency" value={curr || '—'} />

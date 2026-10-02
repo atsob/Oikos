@@ -66,9 +66,13 @@ def get_fx_rates(
 
 @router.get("/securities")
 def get_securities(search: Optional[str] = Query(None)):
+    # Matches against every text-like column shown/editable on the Securities tab
+    # (CONCAT_WS skips NULLs), so a term like "Consumer Defensive" or "ATHEX" finds
+    # a security by sector/industry/exchange/etc., not just name or ticker.
     clause = (
-        "AND (LOWER(s.Securities_Name) LIKE %(s)s OR LOWER(s.Ticker) LIKE %(s)s "
-        "OR LOWER(s.ISIN) LIKE %(s)s OR LOWER(s.Yahoo_Ticker) LIKE %(s)s OR LOWER(s.TV_Symbol) LIKE %(s)s)"
+        "AND LOWER(CONCAT_WS(' ', s.Securities_Name, s.Ticker, s.ISIN, s.Yahoo_Ticker, s.TV_Symbol, "
+        "s.TV_Exchange, s.Securities_Type, s.Sector, s.Industry, s.Tax_Category, c.Currencies_ShortName, "
+        "s.Analyst_Rating, s.Dividend_Frequency, s.Coupon_Frequency)) LIKE %(s)s"
     ) if search else ""
     params: dict = {}
     if search:
