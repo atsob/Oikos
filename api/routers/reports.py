@@ -4723,6 +4723,78 @@ def _xirr(cashflows: list, dates: list) -> float:
     return round(r, 6) if -1 < r < 50 else 0.0
 
 
+def _mwr_flow(action: str, account_type: str, amount: float):
+    """Signed external cash flow (investor's view: money put in is negative, money taken out or
+    received is positive) an Investments row represents for the MWR/XIRR calculation — None when
+    the row isn't a flow at all (a zero-amount flow is 0.0, which is different).
+
+    The "portfolio" the MWR measures is the securities held plus Pension balances (that is what
+    get_investable_portfolio_value, the terminal value, counts), so a row only counts when it
+    moves money across that boundary:
+      Pension accounts hold a balance and no securities: CashIn (contribution) is money put in,
+        CashOut (withdrawal) money taken out; IntInc accrues inside the balance, so it is return,
+        not a flow (counting it too double-counted interest the terminal value already holds).
+      Everywhere else the securities are the portfolio and the account's cash balance is not:
+        Buy/MiscExp/ShrIn put money in; Sell/Dividend/IntInc/RtrnCap/ShrOut pay it out. CashIn/
+        CashOut only move cash that is outside the portfolio anyway, and Reinvest turns income
+        into more of the same holding without anything leaving — neither is a flow (Reinvest was
+        counted as a payout while the reinvested shares sat in the terminal value too, and a
+        brokerage deposit was counted as a payout while Pension deposits had the wrong sign)."""
+    amt = abs(amount)
+    if account_type == "Pension":
+        return -amt if action == "CashIn" else (amt if action == "CashOut" else None)
+    if action in ("Buy", "MiscExp", "ShrIn"):
+        return -amt
+    if action in ("Sell", "Dividend", "IntInc", "RtrnCap", "ShrOut"):
+        return amt
+    return None
+
+
+def _investable_value_as_of(as_of, acct_ids) -> float:
+    """Portfolio value in EUR as of a date, for the MWR calculation: securities held (replayed
+    from Investments and priced at the last close/FX on or before the date — the X-Ray
+    compare-date technique, _pit_ctes) plus Pension balances (replayed with the same rule
+    crud.update_pension_balances uses, restricted to rows dated on/before the date). Oikos
+    stores no history of portfolio value, so a past value can only be rebuilt like this. Pass
+    today to get the terminal value — it matches database.queries.get_investable_portfolio_value
+    to the cent. Other Investment accounts are deliberately not counted as balances: their
+    balance is only the mirror image of their own Buy/Sell rows (a savings-fund account shows
+    a negative balance equal to what it holds), so adding it would cancel the holdings; they are
+    treated like brokerage accounts, securities only, as _mwr_flow does."""
+    fx_cte, prices_cte, h_src_cte = _pit_ctes(as_of.isoformat())
+    ids = list(acct_ids) if acct_ids else []
+    hold_clause = _acct_clause(ids, "h.Accounts_Id")
+    acct_clause = _acct_clause(ids, "a.Accounts_Id")
+    with get_db() as conn:
+        row = pd.read_sql(f"""
+            WITH {fx_cte}, {prices_cte}, {h_src_cte},
+            hold AS (
+                SELECT COALESCE(SUM(h.Quantity * p.Close *
+                           CASE WHEN c.Currencies_ShortName = 'EUR' THEN 1 ELSE COALESCE(fx.FX_Rate, 1) END), 0) AS v
+                FROM h_src h
+                JOIN Securities s ON s.Securities_Id = h.Securities_Id
+                JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
+                JOIN prices p ON p.Securities_Id = h.Securities_Id
+                LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+                WHERE h.Quantity <> 0{hold_clause}
+            ),
+            bal AS (
+                SELECT COALESCE(SUM(
+                    COALESCE((SELECT SUM(CASE WHEN t.Action IN ('CashIn','IntInc') THEN t.Total_Amount_AccCur
+                                              WHEN t.Action = 'CashOut' THEN -t.Total_Amount_AccCur ELSE 0 END)
+                              FROM Investments t WHERE t.Accounts_Id = a.Accounts_Id AND t.Date <= %(as_of)s), 0)
+                    * CASE WHEN c.Currencies_ShortName = 'EUR' THEN 1 ELSE COALESCE(fx.FX_Rate, 1) END
+                ), 0) AS v
+                FROM Accounts a
+                JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
+                LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+                WHERE a.Is_Active = TRUE AND a.Accounts_Type = 'Pension'{acct_clause}
+            )
+            SELECT hold.v + bal.v AS total FROM hold, bal
+        """, conn, params={"as_of": as_of.isoformat()})
+    return float(row.iloc[0]["total"] or 0)
+
+
 @router.get("/twr")
 def get_twr(
     lookback_days: int = Query(756),
@@ -4730,13 +4802,16 @@ def get_twr(
 ):
     import numpy as np
     from datetime import date as _date, timedelta
-    from database.queries import get_price_returns, get_portfolio_weights, get_investable_portfolio_value
+    from database.queries import get_price_returns, get_portfolio_weights
 
     acct_ids = tuple(_parse_account_ids(account_ids)) if _parse_account_ids(account_ids) else None
     cf_acct_clause = _acct_clause(list(acct_ids) if acct_ids else [], "i.Accounts_Id")
 
     empty = {
         "twr_window_pct": 0, "twr_ann_pct": 0, "mwr_pct": None,
+        "mwr_window_ann_pct": None, "mwr_window_cum_pct": None, "mwr_window_start_value": None,
+        "mwr_window_from": None, "mwr_window_days": None,
+        "terminal_value": None, "terminal_date": None,
         "trading_days": 0, "date_from": None, "date_to": None,
         "chart": [], "cashflows": [], "insufficient": True,
     }
@@ -4788,6 +4863,7 @@ def get_twr(
             SELECT i.Date::date AS cf_date,
                    i.Action,
                    acc.Accounts_Name AS account_name,
+                   acc.Accounts_Type AS account_type,
                    COALESCE(s.Securities_Name, '') AS security_name,
                    CASE
                      WHEN i.Action IN ('Buy','MiscExp','ShrIn') THEN
@@ -4810,49 +4886,79 @@ def get_twr(
             JOIN Accounts acc ON acc.Accounts_Id=i.Accounts_Id
             LEFT JOIN Securities s ON s.Securities_Id=i.Securities_Id
             WHERE i.Action IN ('Buy','Sell','Dividend','IntInc','Reinvest','RtrnCap','MiscExp','CashIn','CashOut','ShrIn','ShrOut')
+              AND i.Date <= CURRENT_DATE
             {cf_acct_clause}
             ORDER BY i.Date
         """, conn)
 
-    mwr_pct = None
-    if not cf_df.empty:
-        xirr_cfs: list = []
-        xirr_dates: list = []
-        for _, row in cf_df.iterrows():
-            d = row["cf_date"]
-            if hasattr(d, 'date'):
-                d = d.date()
-            amt = _fnum(row["amount_eur"])
-            action = str(row["action"])
-            # Buy/MiscExp/ShrIn = cash out (negative); everything else = cash in (positive)
-            if action in ('Buy', 'MiscExp', 'ShrIn'):
-                xirr_cfs.append(-abs(amt))
-            else:
-                xirr_cfs.append(abs(amt))
-            xirr_dates.append(d)
-        # Terminal cash flow = current portfolio value
-        port_val = float(get_investable_portfolio_value(acct_ids))
-        xirr_cfs.append(port_val)
-        xirr_dates.append(_date.today())
-        if len(xirr_cfs) >= 2 and any(c < 0 for c in xirr_cfs) and any(c > 0 for c in xirr_cfs):
-            r = _xirr(xirr_cfs, xirr_dates)
-            mwr_pct = round(r * 100, 2)
+    today = _date.today()
+    port_val = _investable_value_as_of(today, acct_ids)
 
-    cashflows = []
-    if not cf_df.empty:
-        for _, row in cf_df.iterrows():
-            cashflows.append({
-                "date": str(row["cf_date"])[:10],
-                "action": str(row["action"]),
-                "account": str(row["account_name"]),
-                "security": str(row["security_name"]),
-                "amount_eur": _fnum(row["amount_eur"]),
-            })
+    # Every row that is a real external flow, signed (see _mwr_flow); the same list feeds both
+    # MWR figures and the Cash Flow Detail table.
+    flows: list = []
+    for _, row in cf_df.iterrows():
+        d = row["cf_date"]
+        d = d.date() if hasattr(d, "date") else d
+        cf = _mwr_flow(str(row["action"]), str(row["account_type"]), _fnum(row["amount_eur"]))
+        if cf is not None:
+            flows.append((d, cf, row))
+
+    def _xirr_pct(cfs: list, dts: list):
+        if len(cfs) >= 2 and any(c < 0 for c in cfs) and any(c > 0 for c in cfs):
+            return _xirr(cfs, dts)
+        return None
+
+    # ── MWR / XIRR, all-time ──────────────────────────────────────────────────
+    mwr_pct = None
+    r_all = _xirr_pct([cf for _, cf, _ in flows] + [port_val], [d for d, _, _ in flows] + [today])
+    if r_all is not None:
+        mwr_pct = round(r_all * 100, 2)
+
+    # ── MWR / XIRR over the selected lookback window ──────────────────────────
+    # The portfolio value just before the window's first return day is the opening
+    # "investment"; deposits/withdrawals/income inside the window follow; today's value is
+    # the terminal flow. XIRR is already a yearly rate, so that is the annualised figure; the
+    # cumulative figure restates it as the total return over the window's actual length.
+    mwr_window_ann_pct = mwr_window_cum_pct = mwr_window_start_value = mwr_window_from = None
+    mwr_window_days = None
+    try:
+        w_start = port_returns.index[0]
+        w_start = (w_start.date() if hasattr(w_start, "date") else w_start) - timedelta(days=1)
+        v0 = _investable_value_as_of(w_start, acct_ids)
+        if v0 > 0 and port_val > 0 and (today - w_start).days >= 7:
+            inside = [(d, cf) for d, cf, _ in flows if d > w_start]
+            r = _xirr_pct([-v0] + [cf for _, cf in inside] + [port_val],
+                          [w_start] + [d for d, _ in inside] + [today])
+            if r is not None:
+                mwr_window_days = (today - w_start).days
+                mwr_window_ann_pct = round(r * 100, 2)
+                mwr_window_cum_pct = round(((1 + r) ** (mwr_window_days / 365.25) - 1) * 100, 2)
+                mwr_window_start_value = round(v0, 2)
+                mwr_window_from = w_start.isoformat()
+    except Exception:
+        pass
+
+    cashflows = [{
+        "date": d.isoformat(),
+        "action": str(row["action"]),
+        "account": str(row["account_name"]),
+        "security": str(row["security_name"]),
+        "amount_eur": _fnum(row["amount_eur"]),
+        "cf_eur": round(cf, 2),
+    } for d, cf, row in flows]
 
     return {
         "twr_window_pct": round(twr_total * 100, 2),
         "twr_ann_pct": round(twr_ann * 100, 2),
         "mwr_pct": mwr_pct,
+        "mwr_window_ann_pct": mwr_window_ann_pct,
+        "mwr_window_cum_pct": mwr_window_cum_pct,
+        "mwr_window_start_value": mwr_window_start_value,
+        "mwr_window_from": mwr_window_from,
+        "mwr_window_days": mwr_window_days,
+        "terminal_value": round(port_val, 2),
+        "terminal_date": today.isoformat(),
         "trading_days": n_days,
         "date_from": str(port_returns.index[0])[:10],
         "date_to": str(port_returns.index[-1])[:10],

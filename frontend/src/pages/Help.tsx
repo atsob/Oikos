@@ -750,6 +750,21 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           money-weighted return).
         </P>
         <Note>
+          <b>TWR/MWR</b> measures the selected lookback (3M–10Y) both ways. <b>TWR</b> is the time-weighted return;
+          the <b>MWR (window)</b> card is your money-weighted return over that same window, and <b>MWR / XIRR
+          (Annualised)</b> expresses it as a yearly rate (identical for a 1-year window; for 3M/6M it extrapolates, so
+          read it with caution). The windowed MWR opens with the portfolio's value at the window's start — rebuilt
+          from past trades, prices, FX and pension balances, since Oikos stores no value history — then every
+          deposit, withdrawal and income flow after it, ending at today's value. <b>MWR / XIRR (All-time)</b> still
+          uses every recorded cash flow regardless of the lookback. Only real external flows count: buys, expenses
+          and incoming share transfers put money in; sales, dividends, interest, capital returns and outgoing
+          transfers take it out; for a Pension account (which holds a balance, not securities) a contribution puts
+          money in and a withdrawal takes it out, while its interest is return. Cash moved in and out of a
+          brokerage account, and dividends reinvested into the same holding, are not flows. <b>Cash Flow Detail
+          (MWR inputs)</b> shows exactly these — for the selected window (with the opening and current portfolio
+          value rows) or all time.
+        </Note>
+        <Note>
           <b>P&amp;L</b>'s "P&amp;L (DTD/YTD/etc.)" KPI tile always shows its Market/FX breakdown (e.g. "Mkt: -€160.05
           FX: €61.93") when one is available for the selected window — the <b>Show Market / FX Split</b> checkbox
           only controls whether the Market/FX columns appear in the account and drill-down tables below it.

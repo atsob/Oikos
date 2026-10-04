@@ -2489,6 +2489,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
   const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('twr_lookback', 730)
   const [cfOpen, setCfOpen] = useState(false)
+  const [cfScope, setCfScope] = useState<'window' | 'all'>('window')
 
   const { data, isLoading } = useQuery({
     queryKey: ['twr', lookback, accountIds],
@@ -2498,9 +2499,12 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
 
   type TwrData = {
     twr_window_pct: number; twr_ann_pct: number; mwr_pct: number | null
+    mwr_window_ann_pct: number | null; mwr_window_cum_pct: number | null
+    mwr_window_start_value: number | null; mwr_window_from: string | null; mwr_window_days: number | null
     trading_days: number; date_from: string; date_to: string
     chart: { date: string; twr_cumulative_pct: number }[]
-    cashflows: { date: string; action: string; account: string; security: string; amount_eur: number }[]
+    cashflows: { date: string; action: string; account: string; security: string; amount_eur: number; cf_eur: number }[]
+    terminal_value: number | null; terminal_date: string | null
     insufficient: boolean
   }
   const d = data as TwrData | undefined
@@ -2514,13 +2518,13 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
           <li><strong>TWR (Time-Weighted Return)</strong>: eliminates the effect of <em>when</em> you deposited or withdrew money. It measures the portfolio manager's performance — directly comparable to an index return.</li>
           <li><strong>MWR (Money-Weighted Return / XIRR)</strong>: reflects <em>your actual experience</em> — the return you personally earned given the size and timing of your deposits and withdrawals. If you invested heavily before a downturn, MWR will be lower than TWR.</li>
         </ul>
-        <p>TWR is computed from daily price-based portfolio returns. MWR uses all recorded Buy/Sell/Dividend cash flows plus the current portfolio value.</p>
+        <p>TWR is computed from daily price-based portfolio returns. MWR uses the real external cash flows — money put in (buys, pension contributions) and taken out or received (sales, dividends, withdrawals) — plus the portfolio's value at the end, over the selected window (starting from its value at the window's start) and over all time. Cash Flow Detail below lists exactly those inputs.</p>
       </div>
 
       {/* Lookback slider */}
       <div>
         <label className="block text-xs font-medium text-slate-600 mb-1">
-          <Tooltip text="How many calendar days of price history to use for TWR. MWR always uses all-time cash flows regardless of this setting.">TWR Lookback</Tooltip>
+          <Tooltip text="How many calendar days to measure. Sets the TWR window and the windowed MWR; the all-time MWR card always uses every recorded cash flow regardless of this setting.">TWR Lookback</Tooltip>
         </label>
         <div className="flex gap-2">
           {([91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
@@ -2537,7 +2541,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
       {d && (
         <>
           {/* KPI cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <KpiCard
               label={`TWR (${lookback}-day window)`}
               value={`${d.twr_window_pct >= 0 ? '+' : ''}${d.twr_window_pct.toFixed(2)}%`}
@@ -2549,18 +2553,33 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
               color={d.twr_ann_pct >= 0 ? 'text-green-700' : 'text-red-600'}
               tooltip="TWR scaled to a one-year equivalent compound rate, comparable across periods of different lengths." />
             <KpiCard
+              label="Trading Days Used (TWR)"
+              value={String(d.trading_days)}
+              tooltip="Number of trading days with price data used to compute TWR in the selected lookback window." />
+            <KpiCard
+              label={d.mwr_window_days != null ? `MWR (${d.mwr_window_days}-day window)` : 'MWR (window)'}
+              value={d.mwr_window_cum_pct != null ? `${d.mwr_window_cum_pct >= 0 ? '+' : ''}${d.mwr_window_cum_pct.toFixed(2)}%` : '—'}
+              color={d.mwr_window_cum_pct != null ? (d.mwr_window_cum_pct >= 0 ? 'text-green-700' : 'text-red-600') : ''}
+              tooltip="Total money-weighted return over the selected window — your actual return given the size and timing of deposits, withdrawals and income inside it, restated as a total over the window's length (the TWR card above is the comparable time-weighted figure)." />
+            <KpiCard
+              label="MWR / XIRR (Annualised)"
+              value={d.mwr_window_ann_pct != null ? `${d.mwr_window_ann_pct >= 0 ? '+' : ''}${d.mwr_window_ann_pct.toFixed(2)}%` : '—'}
+              color={d.mwr_window_ann_pct != null ? (d.mwr_window_ann_pct >= 0 ? 'text-green-700' : 'text-red-600') : ''}
+              tooltip="The same windowed money-weighted return expressed as a yearly rate (XIRR). Equal to the window figure for a 1-year window; for shorter windows it extrapolates, so treat 3M/6M with caution." />
+            <KpiCard
               label="MWR / XIRR (All-time)"
               value={d.mwr_pct != null ? `${d.mwr_pct >= 0 ? '+' : ''}${d.mwr_pct.toFixed(2)}%` : '—'}
               color={d.mwr_pct != null ? (d.mwr_pct >= 0 ? 'text-green-700' : 'text-red-600') : ''}
               tooltip="Money-Weighted Return (XIRR) computed from all-time cash flows. Reflects your personal return given the actual size and timing of each deposit and withdrawal." />
-            <KpiCard
-              label="Trading Days Used (TWR)"
-              value={String(d.trading_days)}
-              tooltip="Number of trading days with price data used to compute TWR in the selected lookback window." />
           </div>
 
           {d.trading_days > 0 && d.date_from && (
-            <p className="text-xs text-slate-500">TWR window: <strong>{d.date_from}</strong> → <strong>{d.date_to}</strong>.</p>
+            <p className="text-xs text-slate-500">
+              TWR window: <strong>{d.date_from}</strong> → <strong>{d.date_to}</strong>.
+              {d.mwr_window_from && d.mwr_window_start_value != null && (
+                <> MWR window: opens with the portfolio's value on <strong>{d.mwr_window_from}</strong> (€{d.mwr_window_start_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}, rebuilt from past trades and prices), then every deposit, withdrawal and income flow after it, to today's value.</>
+              )}
+            </p>
           )}
 
           {d.insufficient && (
@@ -2592,58 +2611,80 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
             </div>
           )}
 
-          {/* Cash Flow Detail collapsible */}
-          {d.cashflows.length > 0 && (
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
-              <button onClick={() => setCfOpen(!cfOpen)}
-                className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
-                <span className="text-xs">{cfOpen ? '▼' : '▶'}</span>
-                <span>📋 Cash Flow Detail (MWR inputs)</span>
-              </button>
-              {cfOpen && (
-                <div className="p-3">
-                  <WithCopy>
-                    <div className="overflow-x-auto overflow-y-auto max-h-96">
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                          <th className="px-3 py-2 text-left">Date</th>
-                          <th className="px-3 py-2 text-left">Action</th>
-                          <th className="px-3 py-2 text-left">Account</th>
-                          <th className="px-3 py-2 text-left">Security</th>
-                          <th className="px-3 py-2 text-right">Amount (€)</th>
-                          <th className="px-3 py-2 text-right">CF Sign</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {d.cashflows.map((r, i) => {
-                            const isOut = ['Buy', 'MiscExp'].includes(r.action)
-                            const actionColor = isOut
-                              ? 'bg-red-50 text-red-700'
-                              : ['Sell'].includes(r.action) ? 'bg-green-50 text-green-700'
-                              : ['Dividend', 'IntInc', 'RtrnCap'].includes(r.action) ? 'bg-blue-50 text-blue-700'
-                              : 'bg-slate-100 text-slate-600'
-                            return (
-                              <tr key={i} className="hover:bg-slate-50">
-                                <td className="px-3 py-2 text-slate-500">{r.date}</td>
-                                <td className="px-3 py-2">
-                                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${actionColor}`}>{r.action}</span>
-                                </td>
-                                <td className="px-3 py-2 text-slate-600 text-xs">{r.account}</td>
-                                <td className="px-3 py-2 text-slate-500 text-xs">{r.security || '—'}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Math.abs(r.amount_eur))}</td>
-                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${isOut ? 'text-red-600' : 'text-green-700'}`}>
-                                  {isOut ? '−' : '+'}{fmtEur(Math.abs(r.amount_eur))}
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
+          {/* Cash Flow Detail collapsible — the exact inputs to the MWR (XIRR) of the chosen scope */}
+          {d.cashflows.length > 0 && (() => {
+            const inWindow = cfScope === 'window' && d.mwr_window_from != null && d.mwr_window_start_value != null
+            const flows = inWindow ? d.cashflows.filter(r => r.date > d.mwr_window_from!) : d.cashflows
+            type Row = { key: string; date: string; label: string; account: string; security: string; amount: number | null; cf: number; kind: 'flow' | 'value' }
+            const rows: Row[] = [
+              ...(inWindow ? [{ key: 'open', date: d.mwr_window_from!, label: 'Opening value', account: '—', security: 'Portfolio value at the start of the window', amount: d.mwr_window_start_value, cf: -d.mwr_window_start_value!, kind: 'value' as const }] : []),
+              ...flows.map((r, i) => ({ key: `f${i}`, date: r.date, label: r.action, account: r.account, security: r.security, amount: Math.abs(r.amount_eur), cf: r.cf_eur, kind: 'flow' as const })),
+              ...(d.terminal_value != null && d.terminal_date ? [{ key: 'close', date: d.terminal_date, label: 'Current value', account: '—', security: 'Portfolio value today', amount: d.terminal_value, cf: d.terminal_value, kind: 'value' as const }] : []),
+            ]
+            const putIn = flows.reduce((s2, r) => s2 + (r.cf_eur < 0 ? -r.cf_eur : 0), 0)
+            const takenOut = flows.reduce((s2, r) => s2 + (r.cf_eur > 0 ? r.cf_eur : 0), 0)
+            const feeds = inWindow ? d.mwr_window_ann_pct : d.mwr_pct
+            return (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <button onClick={() => setCfOpen(!cfOpen)}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 text-left">
+                  <span className="text-xs">{cfOpen ? '▼' : '▶'}</span>
+                  <span>📋 Cash Flow Detail (MWR inputs)</span>
+                </button>
+                {cfOpen && (
+                  <div className="p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                      <div className="flex gap-1">
+                        {([['window', d.mwr_window_days != null ? `Selected window (${d.mwr_window_days} d)` : 'Selected window'], ['all', 'All time']] as const).map(([k, lbl]) => (
+                          <button key={k} onClick={() => setCfScope(k)}
+                            className={`px-2 py-1 rounded border ${cfScope === k ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>{lbl}</button>
+                        ))}
+                      </div>
+                      <span>{flows.length.toLocaleString()} flows · money put in <strong>{fmtEur(putIn)}</strong> · taken out or received <strong>{fmtEur(takenOut)}</strong></span>
+                      {feeds != null && <span>→ {inWindow ? 'MWR / XIRR (annualised)' : 'MWR / XIRR (all-time)'} <strong>{feeds >= 0 ? '+' : ''}{feeds.toFixed(2)}%</strong></span>}
+                      {cfScope === 'window' && !inWindow && <span className="text-amber-600">No windowed MWR for this selection — showing all-time flows.</span>}
                     </div>
-                  </WithCopy>
-                </div>
-              )}
-            </div>
-          )}
+                    <WithCopy>
+                      <div className="overflow-x-auto overflow-y-auto max-h-96">
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                            <th className="px-3 py-2 text-left">Date</th>
+                            <th className="px-3 py-2 text-left">Action</th>
+                            <th className="px-3 py-2 text-left">Account</th>
+                            <th className="px-3 py-2 text-left">Security</th>
+                            <th className="px-3 py-2 text-right">Amount (€)</th>
+                            <th className="px-3 py-2 text-right">CF Sign</th>
+                          </tr></thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {rows.map(r => {
+                              const isOut = r.cf < 0
+                              const actionColor = r.kind === 'value' ? 'bg-indigo-50 text-indigo-700'
+                                : isOut ? 'bg-red-50 text-red-700'
+                                : r.label === 'Sell' ? 'bg-green-50 text-green-700'
+                                : ['Dividend', 'IntInc', 'RtrnCap'].includes(r.label) ? 'bg-blue-50 text-blue-700'
+                                : 'bg-slate-100 text-slate-600'
+                              return (
+                                <tr key={r.key} className={`hover:bg-slate-50 ${r.kind === 'value' ? 'bg-slate-50/60 font-medium' : ''}`}>
+                                  <td className="px-3 py-2 text-slate-500">{r.date}</td>
+                                  <td className="px-3 py-2"><span className={`text-xs font-medium px-1.5 py-0.5 rounded ${actionColor}`}>{r.label}</span></td>
+                                  <td className="px-3 py-2 text-slate-600 text-xs">{r.account}</td>
+                                  <td className="px-3 py-2 text-slate-500 text-xs">{r.security || '—'}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{r.amount != null ? fmtEur(r.amount) : '—'}</td>
+                                  <td className={`px-3 py-2 text-right tabular-nums font-medium ${isOut ? 'text-red-600' : 'text-green-700'}`}>
+                                    {isOut ? '−' : '+'}{fmtEur(Math.abs(r.cf))}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </WithCopy>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Interpretation guide */}
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-800">
