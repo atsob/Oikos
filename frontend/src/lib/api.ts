@@ -1056,6 +1056,25 @@ export const getIncomeExpenseFull = (
     category_id: categoryId || undefined,
   }}).then(r => r.data)
 
+// Stress Test (Reports -> Inv. Performance -> Stress Test)
+export const getStressAssumptions = () =>
+  api.get('/reports/stress/assumptions').then(r => r.data)
+
+export const runRateShock = (p: { accountIds?: number[]; shockPp: number; periodMonths: number; assumptions?: unknown }) =>
+  api.post('/reports/stress/rate-shock', {
+    account_ids: p.accountIds?.length ? p.accountIds : undefined,
+    shock_pp: p.shockPp, period_months: p.periodMonths, assumptions: p.assumptions,
+  }).then(r => r.data)
+
+export const runStressReplay = (p: {
+  accountIds?: number[]; scenarios: string[]; assumptions?: unknown
+  custom?: { name: string; start: string; end: string; yield_change_pp: number }
+}) =>
+  api.post('/reports/stress/replay', {
+    account_ids: p.accountIds?.length ? p.accountIds : undefined,
+    scenarios: p.scenarios, custom: p.custom, assumptions: p.assumptions,
+  }).then(r => r.data)
+
 export const getMonteCarlo = (params: {
   yearsAhead?: number; numSims?: number; monthlyContrib?: number; lookbackDays?: number;
   accountIds?: number[]; initialValue?: number; overrideReturnPct?: number; overrideVolPct?: number;

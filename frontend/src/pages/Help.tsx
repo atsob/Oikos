@@ -743,12 +743,30 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>💹 Inv. Performance</H3>
         <P>
-          Ten sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
+          Eleven sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
           <b>Performance</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
           <b>Bond Schedule</b>, <b>Benchmark</b> (compare against any number of market indexes and/or other accounts at once),{' '}
-          <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, and <b>TWR/MWR</b> (time- and
+          <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, <b>Stress Test</b>, and <b>TWR/MWR</b> (time- and
           money-weighted return).
         </P>
+        <Note>
+          <b>Stress Test</b> follows the account preset and has two what-ifs — not forecasts, with every assumption
+          shown and editable. <b>Rate shock</b>: enter a rate change in percentage points and a period in months; it
+          shows the price impact, the income impact over the period, and the total, per account, per asset type and
+          per security. Bonds, T-bills and bond funds move by −duration × the rate change (T-bills use their time to
+          maturity; bond funds their stored duration); stocks and equity funds react by an assumed %-per-point
+          sensitivity by sector (e.g. utilities and real estate fall more than energy; financials gain a little), using
+          a fund's look-through sector weights when known; gold, other commodities and crypto have their own
+          assumptions. Bonds maturing inside the period are rolled at the new rate, which is where income changes.
+          <b>Historical crash replay</b> applies the global financial crisis, the Greek/euro-area debt crisis, Covid,
+          the 2022 rate shock, or a window you define, to what you hold today. A holding that existed then uses its own
+          prices; one that didn't borrows from the index it tracks (S&amp;P 500, Nasdaq 100, Germany 40 for Europe,
+          FTSE ATHEX, gold miners, or a stated blend for world funds), from the median of that sector's stocks, or from
+          similar securities that did exist; bonds without history use duration × an assumed yield change; and as a last
+          resort a rough, editable round-number return. Each row shows which it used, and a coverage bar shows how much of
+          the portfolio rests on each. Returns are in euros at the window's own exchange rates; dividends and sovereign
+          credit events are not modelled.
+        </Note>
         <Note>
           <b>TWR/MWR</b> measures the selected lookback (3M–10Y) both ways. <b>TWR</b> is the time-weighted return;
           the <b>MWR (window)</b> card is your money-weighted return over that same window, and <b>MWR / XIRR

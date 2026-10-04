@@ -39,6 +39,7 @@ import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown, Printer, X 
 import { TxModal, useNoOpRecurring, addPeriod, PERIODICITIES } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
 import { AgGridReact } from 'ag-grid-react'
+import StressTestTab from '@/pages/StressTest'
 import type { ColDef } from 'ag-grid-community'
 
 type Row = Record<string, unknown>
@@ -4705,7 +4706,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
 function InvPerformanceSection() {
   const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
-  const TABS = ['P&L', 'Performance', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR']
+  const TABS = ['P&L', 'Performance', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR']
   const qc = useQueryClient()
   useEffect(() => {
     qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
@@ -4713,7 +4714,7 @@ function InvPerformanceSection() {
     qc.prefetchQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
     qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null], queryFn: () => getDividendsTracker('YTD') })
   }, [])
-  const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'TWR/MWR'].includes(tab)
+  const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR'].includes(tab)
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
@@ -4728,6 +4729,7 @@ function InvPerformanceSection() {
       {tab === 'Risk Metrics'     && <RiskMetricsTab accountIds={presetAccountIds} />}
       {tab === 'Correlation'      && <CorrelationTab accountIds={presetAccountIds} />}
       {tab === 'Monte Carlo'      && <MonteCarloTab accountIds={presetAccountIds} />}
+      {tab === 'Stress Test'      && <StressTestTab accountIds={presetAccountIds} />}
     </div>
   )
 }

@@ -28,6 +28,7 @@ from api.deps import require_auth
 from api.routers import auth as auth_router
 from api.routers import dashboard, register, reports, static_data, market_data
 from api.routers import investments, recurring, ai_router, tools_router, importers_router
+from api.routers import stress
 from api.routers import securities, bank_router, preferences, news
 from config.settings import ENV_CONFIG
 from database.queries import bootstrap_admin_user
@@ -61,6 +62,7 @@ _auth = [Depends(require_auth)]
 app.include_router(dashboard.router,           prefix="/api/dashboard",    tags=["dashboard"],    dependencies=_auth)
 app.include_router(register.router,            prefix="/api/register",     tags=["register"],     dependencies=_auth)
 app.include_router(reports.router,             prefix="/api/reports",      tags=["reports"],      dependencies=_auth)
+app.include_router(stress.router,              prefix="/api/reports/stress", tags=["stress"],     dependencies=_auth)
 app.include_router(static_data.router,         prefix="/api/static-data",  tags=["static-data"],  dependencies=_auth)
 app.include_router(market_data.router,         prefix="/api/market-data",  tags=["market-data"],  dependencies=_auth)
 app.include_router(investments.router,         prefix="/api/investments",  tags=["investments"],  dependencies=_auth)
