@@ -256,6 +256,18 @@ ENDPOINTS = {
         "path": "/api/market-data/shiller-cape/summary", "params": [],
         "description": "Current U.S. Shiller CAPE ratio, valuation zone, and percentile since 1881.",
     },
+    "interest_rates_summary": {
+        "path": "/api/market-data/rates/summary", "params": [],
+        "description": "Per tracked rate series: latest value, last policy change, overnight move vs 30-day average; tracked funds' return vs their rate (default XEON vs €STR); active rate alerts.",
+    },
+    "interest_rates": {
+        "path": "/api/market-data/rates", "params": ["series", "years"],
+        "description": "Rate history. series = comma-separated codes from interest_rate_series (default ESTR, ECB_DFR, SOFR, EFFR, FED_UPPER, FED_LOWER); years = last N years.",
+    },
+    "interest_rate_series": {
+        "path": "/api/market-data/rates/series", "params": [],
+        "description": "Definitions of every tracked rate series: code, name, currency, type, provider, latest date, value count.",
+    },
 }
 
 

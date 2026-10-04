@@ -2657,6 +2657,95 @@ def download_shiller_cape():
         conn.close()
 
 
+def download_interest_rates(codes=None, backfill_from: str = "2022-01-01"):
+    """Download every active, non-manual Rate_Series into Historical_Rates.
+
+    Driven entirely by the series definitions (database/rates.py), so tracking another rate
+    is a new Rate_Series row, not new code. By provider:
+      ECB    Provider_Key is an ECB Data Portal SDMX key ("EST/B.EU000A2X2A25.WT") — keyless CSV.
+      NYFED  Provider_Key is a NY Fed Markets API path ("secured/sofr", "unsecured/effr"),
+             Provider_Field the JSON field to store (default percentRate; targetRateTo /
+             targetRateFrom give the Fed target range). Series sharing a path are fetched once.
+      FRED   Provider_Key is a FRED series id; needs FRED_API_KEY (free at fred.stlouisfed.org).
+             This is the route for other currencies (e.g. JPY, GBP).
+      MANUAL values are typed in on Market Data -> Rates; never downloaded.
+    Each series fetches only from a few days before its latest stored date (an overlap, so a
+    revised print is picked up), or from `backfill_from` the first time. A failure in one source
+    never skips the others. `codes` limits the run to those series.
+    """
+    from datetime import date as _date, timedelta
+    from database.rates import get_series_defs, upsert_rates
+
+    defs = get_series_defs(active_only=True)
+    defs = defs[defs["provider"] != "MANUAL"]
+    if codes:
+        wanted = {c.upper() for c in codes}
+        defs = defs[defs["code"].isin(wanted)]
+    today = _date.today()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    rows, errors = [], []
+
+    def _start(d) -> str:
+        return (d.last_date - timedelta(days=10)).isoformat() if pd.notna(d.last_date) else backfill_from
+
+    def _get(url, params, source):
+        """GET with a few retries — the ECB portal intermittently times out or answers 504."""
+        for attempt in (1, 2, 3):
+            try:
+                resp = requests.get(url, params=params, timeout=90, headers=headers)
+                resp.raise_for_status()
+                return resp
+            except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                retryable = isinstance(e, requests.exceptions.Timeout) or (status is not None and status >= 500)
+                if attempt == 3 or not retryable:
+                    raise
+                time.sleep(3 * attempt)
+
+    # NY Fed: group series by path so a feed shared by several series (EFFR + the Fed target
+    # range) is requested once, from the earliest start any of them needs.
+    nyfed_cache: dict = {}
+    for d in defs.itertuples():
+        try:
+            if d.provider == "ECB":
+                resp = _get(f"https://data-api.ecb.europa.eu/service/data/{d.provider_key}",
+                            {"format": "csvdata", "startPeriod": _start(d)}, "ECB")
+                df = pd.read_csv(io.StringIO(resp.text))
+                for day, val in zip(df["TIME_PERIOD"], df["OBS_VALUE"]):
+                    if pd.notna(val):
+                        rows.append((int(d.id), day, float(val), "ECB Data Portal"))
+
+            elif d.provider == "NYFED":
+                start = _start(d)
+                key = d.provider_key
+                if key not in nyfed_cache or start < nyfed_cache[key][0]:
+                    resp = _get(f"https://markets.newyorkfed.org/api/rates/{key}/search.json",
+                                {"startDate": start, "endDate": today.isoformat()}, "NYFED")
+                    nyfed_cache[key] = (start, resp.json().get("refRates", []))
+                field = d.provider_field or "percentRate"
+                for r in nyfed_cache[key][1]:
+                    if r.get(field) is not None and r["effectiveDate"] >= start:
+                        rows.append((int(d.id), r["effectiveDate"], float(r[field]), "NY Fed"))
+
+            elif d.provider == "FRED":
+                api_key = ENV_CONFIG.get("fred_api_key", "")
+                if not api_key:
+                    raise RuntimeError("FRED_API_KEY is not set (free key: fred.stlouisfed.org/docs/api/api_key.html)")
+                resp = _get("https://api.stlouisfed.org/fred/series/observations",
+                            {"series_id": d.provider_key, "api_key": api_key, "file_type": "json",
+                             "observation_start": _start(d)}, "FRED")
+                for o in resp.json().get("observations", []):
+                    if o.get("value") not in (None, "", "."):    # FRED marks missing days with "."
+                        rows.append((int(d.id), o["date"], float(o["value"]), "FRED"))
+        except Exception as e:
+            logging.error(f"❌ {d.code} download failed: {e}")
+            errors.append(f"{d.code}: {e}")
+
+    written = upsert_rates(rows)
+    logging.info(f"Interest rates: upserted {written} rows ({len(errors)} source error(s)).")
+    return {"rows": written, "errors": errors}
+
+
 # Ticker -> country name, for Siblis Research's free-tier CAPE API. Only tickers
 # that map to a single actual country are included — the free tier's other
 # indices (ACWI, WORLD, EMER, SXXP, the U.S. sector/style indices) are regional

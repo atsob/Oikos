@@ -731,6 +731,128 @@ def download_shiller_cape_endpoint():
     return {"ok": True, "message": f"{result['rows']} monthly rows updated"}
 
 
+# ── Interest rates ──────────────────────────────────────────────────────────────
+# Series definitions (Rate_Series), their history (Historical_Rates) and fund-vs-rate
+# tracking (Rate_Tracking) — see database/rates.py.
+
+@router.get("/rates")
+def get_rates_endpoint(series: Optional[str] = Query(None), years: Optional[int] = Query(None)):
+    """Rate history, optionally limited to comma-separated series codes (see /rates/series)
+    and/or the last N years."""
+    from database.rates import get_rate_series
+    codes = [s.strip().upper() for s in series.split(",") if s.strip()] if series else None
+    return _df(get_rate_series(codes, years))
+
+
+@router.get("/rates/summary")
+def get_rates_summary_endpoint():
+    """Per active series: latest value, last policy change, overnight move vs. 30-day average;
+    per tracked fund: its return vs. the rate; and the currently active alerts."""
+    from database.rates import get_rates_summary
+    result = get_rates_summary()
+    if result is None:
+        raise HTTPException(404, "No interest-rate data yet — use Download Interest Rates on the Downloads tab.")
+    return result
+
+
+@router.get("/rates/series")
+def get_rate_series_defs():
+    """All rate series definitions (active or not) with their latest date and row count."""
+    from database.rates import get_series_defs
+    return _df(get_series_defs())
+
+
+@router.post("/rates/series")
+def upsert_rate_series(data: dict):
+    """Create (no id) or update (id) a rate series definition."""
+    from database.rates import upsert_series
+    try:
+        return {"id": upsert_series(data)}
+    except (ValueError, LookupError) as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        if "unique" in str(e).lower():
+            raise HTTPException(409, f"A rate series with code '{data.get('code')}' already exists.")
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/rates/series/{series_id}")
+def delete_rate_series(series_id: int):
+    """Delete a series, along with its history and any tracking rows that use it."""
+    from database.rates import delete_series
+    if not delete_series(series_id):
+        raise HTTPException(404, "Rate series not found")
+    return {"deleted": series_id}
+
+
+@router.post("/rates/values")
+def add_rate_value(data: dict):
+    """Add or overwrite one value (percent) for a series — how a MANUAL series is fed."""
+    from database.rates import upsert_rates
+    try:
+        series_id, day, rate = int(data["series_id"]), str(data["date"])[:10], float(data["rate"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "series_id, date and rate are required")
+    upsert_rates([(series_id, day, rate, "Manual")])
+    return {"ok": True}
+
+
+@router.delete("/rates/values")
+def delete_rate_value_endpoint(series_id: int = Query(...), date: str = Query(...)):
+    from database.rates import delete_rate_value
+    if not delete_rate_value(series_id, date[:10]):
+        raise HTTPException(404, "No such value")
+    return {"deleted": True}
+
+
+@router.get("/rates/tracking")
+def get_rate_tracking():
+    from database.rates import get_tracking_defs
+    return _df(get_tracking_defs())
+
+
+@router.post("/rates/tracking")
+def upsert_rate_tracking(data: dict):
+    """Track a fund against an overnight rate series: window (days) and alert threshold (pp)."""
+    from database.rates import upsert_tracking
+    try:
+        return {"id": upsert_tracking(data)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/rates/fund-durations")
+def get_rate_fund_durations():
+    """{securities_id: duration in years} for bond funds too long in duration to track against an
+    overnight rate — feeds the warning in Rates -> Configure -> Track a fund."""
+    from database.rates import get_fund_durations
+    return get_fund_durations()
+
+
+@router.delete("/rates/tracking/{tracking_id}")
+def delete_rate_tracking(tracking_id: int):
+    from database.rates import delete_tracking
+    if not delete_tracking(tracking_id):
+        raise HTTPException(404, "Tracking row not found")
+    return {"deleted": tracking_id}
+
+
+@router.post("/download/rates")
+def download_rates_endpoint(series: Optional[str] = Query(None)):
+    """Refresh every active downloadable rate series (or just the comma-separated codes)."""
+    from data.downloaders import download_interest_rates
+    codes = [s.strip() for s in series.split(",") if s.strip()] if series else None
+    result = download_interest_rates(codes)
+    if result["errors"] and not result["rows"]:
+        raise HTTPException(502, "; ".join(result["errors"]))
+    msg = f"{result['rows']} rate rows updated"
+    if result["errors"]:
+        msg += f" ({len(result['errors'])} source(s) failed: {'; '.join(result['errors'])})"
+    return {"ok": True, "message": msg}
+
+
 @router.post("/download/country-cape")
 def download_country_cape_endpoint():
     """Re-download country-level CAPE snapshots from Siblis Research's free-tier API."""

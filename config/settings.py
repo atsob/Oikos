@@ -38,6 +38,8 @@ def get_env_config():
         'persist_dir': os.getenv("PERSIST_DIR", "/app/storage_rag"),
         # Same reasoning as db_password above — no hardcoded fallback key.
         'eodhd_api_key': os.getenv("EODHD_API_KEY", ""),
+        # Optional — only for interest-rate series with provider FRED (e.g. JPY/GBP rates).
+        'fred_api_key': os.getenv("FRED_API_KEY", ""),
         # First login account, bootstrapped once on startup if the Users table is
         # empty — see api/main.py's lifespan hook and database/queries.py's
         # bootstrap_admin_user(). Empty here means no account gets auto-created;

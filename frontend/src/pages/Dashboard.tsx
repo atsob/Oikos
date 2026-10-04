@@ -120,7 +120,7 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
               </div>
             )
           })}
-          <p className="text-xs text-slate-400 pt-1">Based on last 90 days of transactions</p>
+          <p className="text-xs text-slate-400 pt-1">Spending insights use the last 90 days of transactions; rate alerts use ECB / NY Fed data (Market Data → Rates)</p>
         </CardBody>
       )}
     </Card>

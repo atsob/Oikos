@@ -389,6 +389,39 @@ export const getShillerCapeSummary = () =>
 export const downloadShillerCape = () =>
   api.post('/market-data/download/shiller-cape').then(r => r.data)
 
+export const getInterestRates = (series?: string, years?: number) =>
+  api.get('/market-data/rates', { params: { series, years } }).then(r => r.data)
+
+export const getRateSeriesDefs = () =>
+  api.get('/market-data/rates/series').then(r => r.data)
+
+export const saveRateSeries = (data: Record<string, unknown>) =>
+  api.post('/market-data/rates/series', data).then(r => r.data)
+
+export const deleteRateSeries = (id: number) =>
+  api.delete(`/market-data/rates/series/${id}`).then(r => r.data)
+
+export const addRateValue = (data: { series_id: number; date: string; rate: number }) =>
+  api.post('/market-data/rates/values', data).then(r => r.data)
+
+export const getRateFundDurations = () =>
+  api.get('/market-data/rates/fund-durations').then(r => r.data as Record<string, number>)
+
+export const getRateTracking = () =>
+  api.get('/market-data/rates/tracking').then(r => r.data)
+
+export const saveRateTracking = (data: Record<string, unknown>) =>
+  api.post('/market-data/rates/tracking', data).then(r => r.data)
+
+export const deleteRateTracking = (id: number) =>
+  api.delete(`/market-data/rates/tracking/${id}`).then(r => r.data)
+
+export const getInterestRatesSummary = () =>
+  api.get('/market-data/rates/summary').then(r => r.data)
+
+export const downloadInterestRates = () =>
+  api.post('/market-data/download/rates').then(r => r.data)
+
 export const downloadCountryCapeRatios = () =>
   api.post('/market-data/download/country-cape').then(r => r.data)
 

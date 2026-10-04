@@ -7,7 +7,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'Rates', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -1074,6 +1074,9 @@ function DownloadsTab() {
       qc.invalidateQueries({ queryKey: ['shiller-cape'] })
       qc.invalidateQueries({ queryKey: ['shiller-cape-summary'] })
       qc.invalidateQueries({ queryKey: ['country-cape'] })
+      qc.invalidateQueries({ queryKey: ['interest-rates'] })
+      qc.invalidateQueries({ queryKey: ['interest-rates-summary'] })
+      qc.invalidateQueries({ queryKey: ['insights'] })
     } catch (e) {
       setStatus(s => ({ ...s, [key]: 'error' }))
       setMessages(m => ({ ...m, [key]: extractError(e) }))
@@ -1209,6 +1212,14 @@ function DownloadsTab() {
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
           <ActionRow id="shiller-cape" label="Download Shiller CAPE (shillerdata.com)" onClick={() => run('shiller-cape', downloadShillerCape)} />
           <ActionRow id="country-cape" label="Download Country CAPE Ratios (Siblis Research, free tier)" onClick={() => run('country-cape', downloadCountryCapeRatios)} />
+        </div>
+      </div>
+
+      {/* Interest rates */}
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Interest Rates</p>
+        <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+          <ActionRow id="interest-rates" label="Download Interest Rates (€STR, ECB, SOFR, Fed)" onClick={() => run('interest-rates', downloadInterestRates)} />
         </div>
       </div>
 
@@ -1569,6 +1580,432 @@ function CountryCapeSection() {
   )
 }
 
+// ── Rates Tab ─────────────────────────────────────────────────────────────────
+// Everything here is driven by the Rate_Series definitions (database/rates.py), not hard-coded
+// to €STR/SOFR: the cards, the per-currency charts and the Dashboard alerts all follow whatever
+// series are active, so tracking another rate (a JPY one, say) is a new definition under
+// "Configure" below. Values come from the scheduler (every 2 h), the Downloads tab, or — for a
+// MANUAL series — typed in here. Tracked funds (XEON vs €STR by default) are configurable too.
+interface RateSeriesSummary {
+  id: number; code: string; name: string; currency: string | null; rate_type: string; alerts_enabled: boolean
+  latest: { date: string; rate: number; previous: number | null } | null
+  change: { date: string; from: number; to: number; days_ago: number } | null
+  move: { recent: number; average: number; diff: number; as_of: string } | null
+}
+interface RateTrackingSummary {
+  id: number; ticker: string; security_name: string; series_code: string; series_name: string
+  window_days_setting: number; threshold_pp: number; alert: boolean; duration_years: number | null
+  result: { window_days: number; from: string; to: string; security_annualised_pct: number; series_annualised_pct: number; gap_pp: number } | null
+}
+interface RatesSummary { series: RateSeriesSummary[]; tracking: RateTrackingSummary[]; alerts: { type: string; title: string; message: string }[] }
+interface RateSeriesDef {
+  id: number; code: string; name: string; currencies_id: number | null; currency: string | null; rate_type: string
+  provider: string; provider_key: string | null; provider_field: string | null; is_active: boolean; alerts_enabled: boolean
+  sort_order: number; notes: string | null; last_date: string | null; row_count: number
+}
+interface RateTrackingDef {
+  id: number; securities_id: number; ticker: string; security_name: string; rate_series_id: number
+  series_code: string; series_name: string; window_days: number; threshold_pp: number; is_active: boolean; duration_years: number | null
+}
+
+const RATE_TYPES = ['Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other']
+const RATE_PROVIDERS = ['ECB', 'NYFED', 'FRED', 'MANUAL']
+const KEY_HINTS: Record<string, string> = {
+  ECB: 'ECB Data Portal key, e.g. EST/B.EU000A2X2A25.WT',
+  NYFED: 'NY Fed path, e.g. secured/sofr or unsecured/effr',
+  FRED: 'FRED series id, e.g. IRSTCI01JPM156N (needs FRED_API_KEY)',
+  MANUAL: '',
+}
+const SERIES_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6']
+
+const shortName = (n: string) => n.match(/\(([^)]+)\)\s*$/)?.[1] ?? n
+const rateDp = (r: number) => Math.min(3, Math.max(2, (String(r).split('.')[1] ?? '').length))
+
+function RatesTab() {
+  const { isDark } = useTheme()
+  const [years, setYears] = useState<number | undefined>(3)
+  const { data: summary } = useQuery({ queryKey: ['interest-rates-summary'], queryFn: getInterestRatesSummary, retry: false })
+  const { data: raw = [] } = useQuery({ queryKey: ['interest-rates', years], queryFn: () => getInterestRates(undefined, years) })
+  const { data: defs = [] } = useQuery({ queryKey: ['rate-series-defs'], queryFn: getRateSeriesDefs })
+  const s = summary as RatesSummary | undefined
+  const rows = raw as { series: string; date: string; rate: number }[]
+  const defByCode = useMemo(() => new Map((defs as RateSeriesDef[]).map(d => [d.code, d])), [defs])
+
+  const body = (() => {
+    if (!s) {
+      return (
+        <p className="text-sm text-slate-500">
+          No interest-rate data yet — use <span className="font-mono">Download Interest Rates</span> on the Downloads tab to fetch it.
+        </p>
+      )
+    }
+    const lower = new Map(s.series.filter(x => x.rate_type === 'Target Lower' && x.latest).map(x => [x.currency, x]))
+    const cards = s.series.filter(x => x.latest && x.rate_type !== 'Target Lower')
+
+    const card = (key: string, label: string, tip: string, value: React.ReactNode, date: string | undefined, extra: React.ReactNode) => (
+      <div key={key} className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
+        <p className="text-xs text-slate-500 mb-1"><Tooltip text={tip}>{label}</Tooltip></p>
+        <p className="text-2xl font-bold">{value}</p>
+        {date && <p className="text-xs text-slate-400 mt-0.5">{date}</p>}
+        {extra}
+      </div>
+    )
+
+    const groups = new Map<string, RateSeriesSummary[]>()
+    for (const x of s.series) {
+      if (!x.latest) continue
+      const k = x.currency ?? 'Other'
+      groups.set(k, [...(groups.get(k) ?? []), x])
+    }
+    const traceFor = (x: RateSeriesSummary, color: string) => {
+      const pts = rows.filter(r => r.series === x.code)
+      const stepped = x.rate_type !== 'Overnight' && x.rate_type !== 'Other'
+      const dotted = x.rate_type.startsWith('Target')
+      return {
+        x: pts.map(r => r.date), y: pts.map(r => r.rate), name: shortName(x.name), type: 'scatter', mode: 'lines',
+        line: { color, width: dotted ? 1.2 : 1.5, ...(stepped ? { shape: 'hv' } : {}), ...(dotted ? { dash: 'dot' } : {}) },
+      }
+    }
+    const chartLayout = (title: string) => ({
+      height: 300, title: { text: title, font: { size: 13 } }, margin: { t: 40, b: 40, l: 55, r: 20 },
+      yaxis: plotAxis(isDark, { title: '%', ticksuffix: '%', tickformat: '.2f' }), hovermode: 'x unified',
+      legend: { orientation: 'h', y: -0.15 }, ...plotLayout(isDark),
+    })
+
+    return (
+      <>
+        {s.alerts.length > 0 && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+            <p className="text-sm font-semibold text-amber-800">Active rate alerts</p>
+            {s.alerts.map((a, i) => (
+              <div key={i}>
+                <p className="text-sm font-medium text-slate-800">{a.title}</p>
+                <p className="text-xs text-slate-600">{a.message}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-3">
+          {cards.map(x => {
+            const l = x.latest!
+            const lo = x.rate_type === 'Target Upper' ? lower.get(x.currency) : undefined
+            const value = lo?.latest
+              ? `${lo.latest.rate.toFixed(2)}–${l.rate.toFixed(2)}%`
+              : `${l.rate.toFixed(rateDp(l.rate))}%`
+            const label = lo ? x.name.replace(/\s*\(upper bound\)/i, '') : shortName(x.name)
+            let extra: React.ReactNode = null
+            if (x.change) {
+              const recent = x.change.days_ago <= 14
+              extra = <p className={`text-xs mt-1 ${recent ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+                {x.change.to > x.change.from ? 'Raised' : 'Cut'} {x.change.from.toFixed(2)}% → {x.change.to.toFixed(2)}% on {x.change.date}
+              </p>
+            } else if (x.move) {
+              const big = Math.abs(x.move.diff) >= 0.15
+              extra = <p className={`text-xs mt-1 ${big ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+                {x.move.diff >= 0 ? '+' : ''}{x.move.diff.toFixed(2)} pp vs 30-day avg
+              </p>
+            }
+            return card(x.code, label, defByCode.get(x.code)?.notes ?? x.name, value, l.date, extra)
+          })}
+          {s.tracking.map(t => card(`trk-${t.id}`, `${t.ticker} vs ${shortName(t.series_name)}`,
+            `${t.security_name} should return roughly ${t.series_name} minus its fee. Compared over the last ${t.window_days_setting} days, annualised; alerts at ${t.threshold_pp.toFixed(2)} pp or more behind.`,
+            t.result ? `${t.result.gap_pp >= 0 ? '+' : ''}${t.result.gap_pp.toFixed(2)} pp` : '—',
+            t.result ? `${t.result.window_days}-day gap` : 'not enough data',
+            t.result && (
+              <>
+                <p className={`text-xs mt-1 ${t.alert ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+                  {t.ticker} {t.result.security_annualised_pct.toFixed(2)}% · {shortName(t.series_name)} {t.result.series_annualised_pct.toFixed(2)}%
+                </p>
+                {t.duration_years != null && <p className="text-xs mt-1 text-amber-600">⚠ {t.duration_years.toFixed(1)}-yr duration — not comparable</p>}
+              </>
+            )))}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {([['1Y', 1], ['3Y', 3], ['All', undefined]] as [string, number | undefined][]).map(([lbl, y]) => (
+            <button key={lbl} onClick={() => setYears(y)}
+              className={`px-3 py-1 text-xs rounded border font-medium ${years === y ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {[...groups.entries()].map(([ccy, list]) => (
+            <Plot key={ccy} data={list.map((x, i) => traceFor(x, SERIES_COLORS[i % SERIES_COLORS.length]))}
+              layout={chartLayout(ccy)} config={{ displayModeBar: false }} style={{ width: '100%' }} />
+          ))}
+        </div>
+        <p className="text-xs text-slate-400">
+          Alerts (shown on the Dashboard too): a policy-rate change in the last 14 days; an overnight rate 0.15 pp or more away from its 30-day average
+          (unless a policy change in the same currency already explains it); and a tracked fund lagging its rate by more than its own threshold.
+        </p>
+      </>
+    )
+  })()
+
+  return (
+    <div className="p-5 space-y-4">
+      {body}
+      <RatesConfig defs={defs as RateSeriesDef[]} />
+    </div>
+  )
+}
+
+function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const [open, setOpen] = usePersist('rates_config_open', false)
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities(), enabled: open })
+  const { data: tracking = [] } = useQuery({ queryKey: ['rate-tracking'], queryFn: getRateTracking, enabled: open })
+  const { data: durations = {} } = useQuery({ queryKey: ['rate-fund-durations'], queryFn: getRateFundDurations, enabled: open })
+  const [err, setErr] = useState('')
+
+  type SeriesForm = { id?: number; code: string; name: string; currencies_id: string; rate_type: string; provider: string
+    provider_key: string; provider_field: string; sort_order: string; is_active: boolean; alerts_enabled: boolean; notes: string }
+  const blankSeries: SeriesForm = { code: '', name: '', currencies_id: '', rate_type: 'Overnight', provider: 'MANUAL', provider_key: '',
+    provider_field: '', sort_order: '100', is_active: true, alerts_enabled: true, notes: '' }
+  const [sForm, setSForm] = useState<SeriesForm | null>(null)
+  const [valueFor, setValueFor] = useState<RateSeriesDef | null>(null)
+  const [vForm, setVForm] = useState({ date: todayLocal(), rate: '' })
+  type TrackForm = { id?: number; securities_id: string; rate_series_id: string; window_days: string; threshold_pp: string; is_active: boolean }
+  const [tForm, setTForm] = useState<TrackForm | null>(null)
+  // Narrows the fund picker in the "Track a fund" modal; not part of what's saved.
+  const [fundType, setFundType] = useState('')
+  const [fundSearch, setFundSearch] = useState('')
+  const secRows = securities as Record<string, unknown>[]
+  const secTypes = useMemo(() => [...new Set(secRows.map(x => String(x.type ?? '')).filter(Boolean))].sort(), [secRows])
+  const fundOptions = useMemo(() => {
+    const q = fundSearch.trim().toLowerCase()
+    const list = secRows.filter(x =>
+      (!fundType || String(x.type) === fundType) &&
+      (!q || `${x.ticker} ${x.name}`.toLowerCase().includes(q)))
+    // Keep the already-chosen fund selectable even when it falls outside the current filter.
+    const chosen = tForm?.securities_id ? secRows.find(x => String(x.id) === tForm.securities_id) : undefined
+    return chosen && !list.includes(chosen) ? [chosen, ...list] : list
+  }, [secRows, fundType, fundSearch, tForm?.securities_id])
+  const openTrack = (f: TrackForm) => { setFundType(''); setFundSearch(''); setTForm(f) }
+
+  const refresh = () => {
+    for (const k of ['rate-series-defs', 'rate-tracking', 'interest-rates-summary', 'interest-rates', 'insights'])
+      qc.invalidateQueries({ queryKey: [k] })
+  }
+  const run = async (fn: () => Promise<unknown>, done?: () => void) => {
+    setErr('')
+    try { await fn(); refresh(); done?.() } catch (e) { setErr(extractError(e)) }
+  }
+
+  const saveSeries = () => sForm && run(() => saveRateSeries({
+    ...sForm, currencies_id: sForm.currencies_id ? Number(sForm.currencies_id) : null, sort_order: Number(sForm.sort_order) || 100,
+  }), () => setSForm(null))
+  const editSeries = (d: RateSeriesDef) => setSForm({
+    id: d.id, code: d.code, name: d.name, currencies_id: d.currencies_id ? String(d.currencies_id) : '', rate_type: d.rate_type,
+    provider: d.provider, provider_key: d.provider_key ?? '', provider_field: d.provider_field ?? '', sort_order: String(d.sort_order),
+    is_active: d.is_active, alerts_enabled: d.alerts_enabled, notes: d.notes ?? '',
+  })
+  const removeSeries = (d: RateSeriesDef) => {
+    if (window.confirm(`Delete ${d.code} and its ${d.row_count.toLocaleString()} stored values? Any fund tracking against it is removed too.`))
+      run(() => deleteRateSeries(d.id))
+  }
+  const saveValue = () => valueFor && run(
+    () => addRateValue({ series_id: valueFor.id, date: vForm.date, rate: Number(vForm.rate) }), () => { setValueFor(null); setVForm({ date: todayLocal(), rate: '' }) })
+  const saveTrack = () => tForm && run(() => saveRateTracking({
+    id: tForm.id, securities_id: Number(tForm.securities_id), rate_series_id: Number(tForm.rate_series_id),
+    window_days: Number(tForm.window_days), threshold_pp: Number(tForm.threshold_pp), is_active: tForm.is_active,
+  }), () => setTForm(null))
+
+  const th = 'px-2 py-1.5 text-left text-xs font-medium text-slate-500'
+  const td = 'px-2 py-1.5 text-xs text-slate-700'
+  const sel = 'w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm'
+  const overnight = defs.filter(d => d.rate_type === 'Overnight' && d.is_active)
+
+  return (
+    <div className="border-t border-slate-200 pt-4">
+      <button className="text-sm font-medium text-slate-600 hover:text-slate-800" onClick={() => setOpen(!open)}>
+        {open ? '▾' : '▸'} Configure rate series and tracked funds
+      </button>
+      {open && (
+        <div className="mt-3 space-y-6">
+          {err && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-1.5">{err}</p>}
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-slate-700">Rate series</p>
+              <Button size="sm" variant="secondary" onClick={() => setSForm(blankSeries)}><Plus size={13} /> Add series</Button>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full">
+                <thead className="bg-slate-50"><tr>
+                  <th className={th}>Code</th><th className={th}>Name</th><th className={th}>Ccy</th><th className={th}>Type</th>
+                  <th className={th}>Provider</th><th className={th}>Key</th><th className={th}>Latest</th><th className={th}>Values</th>
+                  <th className={th}>Active</th><th className={th}>Alerts</th><th className={th}></th>
+                </tr></thead>
+                <tbody>
+                  {defs.map(d => (
+                    <tr key={d.id} className="border-t border-slate-100">
+                      <td className={`${td} font-mono`}>{d.code}</td><td className={td}>{d.name}</td><td className={td}>{d.currency ?? '—'}</td>
+                      <td className={td}>{d.rate_type}</td><td className={td}>{d.provider}</td>
+                      <td className={`${td} font-mono max-w-[220px] truncate`} title={`${d.provider_key ?? ''} ${d.provider_field ?? ''}`}>{d.provider_key ?? '—'}{d.provider_field ? ` · ${d.provider_field}` : ''}</td>
+                      <td className={td}>{d.last_date ? String(d.last_date).slice(0, 10) : '—'}</td><td className={td}>{d.row_count.toLocaleString()}</td>
+                      <td className={td}>{d.is_active ? 'Yes' : 'No'}</td><td className={td}>{d.alerts_enabled ? 'Yes' : 'No'}</td>
+                      <td className={`${td} whitespace-nowrap`}>
+                        {d.provider === 'MANUAL' && <button className="text-blue-600 hover:underline mr-2" onClick={() => setValueFor(d)}>+ value</button>}
+                        <button onClick={() => editSeries(d)} className="text-blue-500 hover:text-blue-700 p-1" title="Edit"><Pencil size={13} /></button>
+                        <button onClick={() => removeSeries(d)} className="text-red-400 hover:text-red-600 p-1" title="Delete"><Trash2 size={13} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              To follow another rate — in any currency — add a series: ECB (an ECB Data Portal key), NYFED (a NY Fed Markets API path), FRED (a series id; needs a free
+              FRED_API_KEY in the server environment — the route for JPY, GBP and others) or MANUAL (type values in with “+ value”). Set the type to Policy
+              or Target Upper for a rate that changes at meetings (raises a change alert), Overnight for a daily market rate (raises a move alert).
+            </p>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-slate-700">Tracked funds</p>
+              <Button size="sm" variant="secondary" disabled={!overnight.length}
+                onClick={() => openTrack({ securities_id: '', rate_series_id: String(overnight[0]?.id ?? ''), window_days: '90', threshold_pp: '0.25', is_active: true })}>
+                <Plus size={13} /> Track a fund
+              </Button>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full">
+                <thead className="bg-slate-50"><tr>
+                  <th className={th}>Fund</th><th className={th}>Compared with</th><th className={th}>Window (days)</th><th className={th}>Alert at (pp behind)</th><th className={th}>Active</th><th className={th}></th>
+                </tr></thead>
+                <tbody>
+                  {(tracking as RateTrackingDef[]).length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-slate-400">No funds tracked.</td></tr>}
+                  {(tracking as RateTrackingDef[]).map(t => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className={td}>
+                        <button onClick={() => navigate(`/securities/${t.securities_id}`)} className="text-blue-600 hover:underline text-left">
+                          <span className="font-mono">{t.ticker}</span> {t.security_name}
+                        </button>
+                        {t.duration_years != null && (
+                          <span className="ml-2 text-amber-600" title={`Duration ${t.duration_years.toFixed(1)} years — this bond fund moves with bond yields, not an overnight rate, so the comparison isn't meaningful.`}>⚠ bond fund</span>
+                        )}
+                      </td>
+                      <td className={td}>{t.series_name}</td><td className={td}>{t.window_days}</td><td className={td}>{t.threshold_pp.toFixed(2)}</td>
+                      <td className={td}>{t.is_active ? 'Yes' : 'No'}</td>
+                      <td className={`${td} whitespace-nowrap`}>
+                        <button onClick={() => openTrack({ id: t.id, securities_id: String(t.securities_id), rate_series_id: String(t.rate_series_id), window_days: String(t.window_days), threshold_pp: String(t.threshold_pp), is_active: t.is_active })}
+                          className="text-blue-500 hover:text-blue-700 p-1" title="Edit"><Pencil size={13} /></button>
+                        <button onClick={() => run(() => deleteRateTracking(t.id))} className="text-red-400 hover:text-red-600 p-1" title="Remove"><Trash2 size={13} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              A fund that should track an overnight rate (a money-market or overnight-swap ETF) is compared with that rate compounded over the same window, annualised.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {sForm && (
+        <Modal title={sForm.id ? `Edit rate series — ${sForm.code}` : 'New rate series'} onClose={() => setSForm(null)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setSForm(null)}>Cancel</Button>
+            <Button onClick={saveSeries} disabled={!sForm.code.trim() || !sForm.name.trim() || (sForm.provider !== 'MANUAL' && !sForm.provider_key.trim())}><Save size={14} /> Save</Button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Code"><Input value={sForm.code} onChange={e => setSForm({ ...sForm, code: e.target.value.toUpperCase() })} placeholder="e.g. SONIA" /></Field>
+            <Field label="Currency">
+              <select className={sel} value={sForm.currencies_id} onChange={e => setSForm({ ...sForm, currencies_id: e.target.value })}>
+                <option value="">—</option>
+                {(currencies as Record<string, unknown>[]).map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Name"><Input value={sForm.name} onChange={e => setSForm({ ...sForm, name: e.target.value })} placeholder="e.g. Sterling overnight index average (SONIA)" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Type">
+              <select className={sel} value={sForm.rate_type} onChange={e => setSForm({ ...sForm, rate_type: e.target.value })}>
+                {RATE_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="Provider">
+              <select className={sel} value={sForm.provider} onChange={e => setSForm({ ...sForm, provider: e.target.value })}>
+                {RATE_PROVIDERS.map(p => <option key={p}>{p}</option>)}
+              </select>
+            </Field>
+          </div>
+          {sForm.provider !== 'MANUAL' && (
+            <Field label="Provider key"><Input value={sForm.provider_key} onChange={e => setSForm({ ...sForm, provider_key: e.target.value })} placeholder={KEY_HINTS[sForm.provider]} /></Field>
+          )}
+          {sForm.provider === 'NYFED' && (
+            <Field label="NY Fed field (blank = percentRate)"><Input value={sForm.provider_field} onChange={e => setSForm({ ...sForm, provider_field: e.target.value })} placeholder="percentRate, targetRateTo, targetRateFrom" /></Field>
+          )}
+          <div className="grid grid-cols-3 gap-3 items-end">
+            <Field label="Sort order"><Input value={sForm.sort_order} onChange={e => setSForm({ ...sForm, sort_order: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.is_active} onChange={e => setSForm({ ...sForm, is_active: e.target.checked })} /> Active</label>
+            <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.alerts_enabled} onChange={e => setSForm({ ...sForm, alerts_enabled: e.target.checked })} /> Alerts</label>
+          </div>
+          <Field label="Notes"><Input value={sForm.notes} onChange={e => setSForm({ ...sForm, notes: e.target.value })} /></Field>
+        </Modal>
+      )}
+
+      {valueFor && (
+        <Modal title={`Add value — ${valueFor.code}`} onClose={() => setValueFor(null)}
+          footer={<><Button variant="secondary" onClick={() => setValueFor(null)}>Cancel</Button>
+            <Button onClick={saveValue} disabled={!vForm.date || vForm.rate === '' || Number.isNaN(Number(vForm.rate))}><Save size={14} /> Save</Button></>}>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Date"><Input type="date" value={vForm.date} onChange={e => setVForm({ ...vForm, date: e.target.value })} /></Field>
+            <Field label="Rate (%)"><Input value={vForm.rate} onChange={e => setVForm({ ...vForm, rate: e.target.value })} placeholder="e.g. 0.75" /></Field>
+          </div>
+          <p className="text-xs text-slate-400">Saving a date that already has a value overwrites it.</p>
+        </Modal>
+      )}
+
+      {tForm && (
+        <Modal title="Track a fund against a rate" onClose={() => setTForm(null)}
+          footer={<><Button variant="secondary" onClick={() => setTForm(null)}>Cancel</Button>
+            <Button onClick={saveTrack} disabled={!tForm.securities_id || !tForm.rate_series_id || Number(tForm.window_days) < 7}><Save size={14} /> Save</Button></>}>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Show only">
+              <select className={sel} value={fundType} onChange={e => setFundType(e.target.value)}>
+                <option value="">All types</option>
+                {secTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field label="Search"><Input value={fundSearch} onChange={e => setFundSearch(e.target.value)} placeholder="ticker or name" /></Field>
+          </div>
+          <Field label={`Fund (${fundOptions.length} shown)`}>
+            <select className={sel} value={tForm.securities_id} onChange={e => setTForm({ ...tForm, securities_id: e.target.value })}>
+              <option value="">— choose a security —</option>
+              {fundOptions.map(x => <option key={String(x.id)} value={String(x.id)}>{String(x.ticker)} — {String(x.name)} ({String(x.type)}){durations[String(x.id)] ? ' ⚠' : ''}</option>)}
+            </select>
+          </Field>
+          {tForm.securities_id && durations[tForm.securities_id] != null && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              ⚠ This is a bond fund with a {durations[tForm.securities_id].toFixed(1)}-year duration, so its price moves with bond yields rather than an overnight rate — comparing it with one isn't meaningful and will likely raise a false alert. This check suits cash-like funds (money-market or overnight-swap ETFs, e.g. XEON).
+            </p>
+          )}
+          <Field label="Compare with (overnight rate)">
+            <select className={sel} value={tForm.rate_series_id} onChange={e => setTForm({ ...tForm, rate_series_id: e.target.value })}>
+              {overnight.map(d => <option key={d.id} value={String(d.id)}>{d.name}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-3 gap-3 items-end">
+            <Field label="Window (days, min 7)"><Input value={tForm.window_days} onChange={e => setTForm({ ...tForm, window_days: e.target.value })} /></Field>
+            <Field label="Alert at (pp behind)"><Input value={tForm.threshold_pp} onChange={e => setTForm({ ...tForm, threshold_pp: e.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={tForm.is_active} onChange={e => setTForm({ ...tForm, is_active: e.target.checked })} /> Active</label>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 function CapeRatiosTab() {
   return (
     <div>
@@ -1864,6 +2301,7 @@ export default function MarketData() {
             )}
             {tab === 'Watchlist' && <WatchlistTab />}
             {tab === 'CAPE Ratios' && <CapeRatiosTab />}
+            {tab === 'Rates' && <RatesTab />}
             {tab === 'Alerts' && <AlertsTab />}
           </CardBody>
         </Card>

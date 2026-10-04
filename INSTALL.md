@@ -349,6 +349,7 @@ marked; everything else has a working default or is an optional integration.
 | `OLLAMA_IP` / `OLLAMA_PORT` / `OLLAMA_MODEL` | | Local LLM for AI summaries/chat — used when `AI_PROVIDER=ollama` (default), and always for RAG chat's embedding model regardless of `AI_PROVIDER` |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | | Hosted Claude for AI summaries/chat — used when `AI_PROVIDER=anthropic`; get a key at [console.anthropic.com](https://console.anthropic.com) |
 | `EODHD_API_KEY` | | Market data provider key — get one at [eodhd.com](https://eodhd.com); optional, price/dividend downloads just won't work without it |
+| `FRED_API_KEY` | | Free key from [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html); optional — only for Market Data → Rates series that use the FRED provider (e.g. JPY/GBP rates). The built-in €STR, ECB, SOFR and Fed series need no key |
 | `GOCARDLESS_SECRET_ID` / `GOCARDLESS_SECRET_KEY` | | Pre-fills Importers → GoCardless (PSD2 open banking); optional, can be entered manually per session instead |
 | `SALTEDGE_APP_ID` / `SALTEDGE_SECRET` | | Pre-fills Importers → Salt Edge; same deal as GoCardless above |
 | `BACKUP_DIR` | | Host path for scheduled DB backups, bind-mounted into the container (default `./database_backups`, auto-created) |

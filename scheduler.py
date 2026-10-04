@@ -11,6 +11,8 @@ Jobs
 • Securities info   : once per calendar day (at startup).
 • News fetch        : every NEWS_FETCH_INTERVAL_MINUTES (24 × 7).
                       Held/watchlisted securities, institutions, and opted-in payees.
+• Interest rates    : every INTEREST_RATES_INTERVAL_MINUTES (24 × 7).
+                      €STR / ECB deposit rate (ECB), SOFR / EFFR / Fed target (NY Fed).
 """
 
 import warnings
@@ -50,6 +52,7 @@ from data.downloaders import (
     download_securities_fundamentals,
     download_shiller_cape,
     download_country_cape_ratios,
+    download_interest_rates,
 )
 from ai.update_vector import update_all_embeddings
 from database.backup import DatabaseBackup
@@ -100,6 +103,7 @@ SHILLER_CAPE_HOUR        = 7
 SHILLER_CAPE_MINUTE      = 30
 SIGNAL_REFRESH_INTERVAL_MINUTES = 30  # Every 30 min, 24×7
 NEWS_FETCH_INTERVAL_MINUTES = 240     # Every 4 hours, 24×7
+INTEREST_RATES_INTERVAL_MINUTES = 120 # Every 2 hours, 24×7 — €STR/SOFR publish once a morning, so this catches them promptly
 
 # Tick interval — the scheduler wakes up this often to check all jobs.
 TICK_SECONDS = 60
@@ -478,6 +482,21 @@ def _news_fetch_job():
         _record_job("news_fetch", "error", str(e))
 
 
+def _interest_rates_job():
+    """Refresh €STR / ECB deposit rate (ECB) and SOFR / EFFR / Fed target range (NY Fed).
+    The Dashboard's rate alerts are computed live from what this stores."""
+    logging.info("Running interest rates refresh…")
+    try:
+        result = download_interest_rates()
+        if result["errors"]:
+            _record_job("interest_rates", "error", "; ".join(result["errors"]))
+        else:
+            _record_job("interest_rates", "success", f"{result['rows']} rows updated")
+    except Exception as e:
+        logging.error(f"Interest rates refresh failed: {e}", exc_info=True)
+        _record_job("interest_rates", "error", str(e))
+
+
 def _morning_maintenance_job():
     """VACUUM ANALYZE the database, then refresh all embeddings."""
     errors = []
@@ -584,6 +603,9 @@ if __name__ == "__main__":
     # News fetch: first run deferred to tick loop
     _last_news_fetch: datetime = datetime.min
 
+    # Interest rates: first run deferred to tick loop
+    _last_interest_rates: datetime = datetime.min
+
     # Morning maintenance: skip if already past the scheduled window today
     _last_maintenance_date: date = date.min
     _now_startup = datetime.now()
@@ -679,3 +701,9 @@ if __name__ == "__main__":
         if minutes_since_news >= _parse_interval(sc.get('news_fetch', ''), NEWS_FETCH_INTERVAL_MINUTES):
             _news_fetch_job()
             _last_news_fetch = now
+
+        # ── Interest rates (€STR, ECB, Fed, SOFR): every N minutes ────────────
+        minutes_since_rates = (now - _last_interest_rates).total_seconds() / 60
+        if minutes_since_rates >= _parse_interval(sc.get('interest_rates', ''), INTEREST_RATES_INTERVAL_MINUTES):
+            _interest_rates_job()
+            _last_interest_rates = now

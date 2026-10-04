@@ -698,6 +698,69 @@ def _run_startup_migrations():
                Last_Updated  TIMESTAMPTZ,
                Fetch_Error   TEXT
            )""",
+        # Interest rates (Market Data -> Rates; see database/rates.py): Rate_Series holds each
+        # rate's definition, Historical_Rates its daily values (like Securities / Historical_Prices),
+        # Rate_Tracking which fund to compare against which overnight rate. Same DDL as Oikos.sql,
+        # which a brand-new install gets first; this covers existing installs. The seed below runs
+        # after _seed_reference_data on a fresh install too, so a new database starts with these series.
+        """CREATE TABLE IF NOT EXISTS Rate_Series (
+               Rate_Series_Id  SERIAL PRIMARY KEY,
+               Code            VARCHAR(30)  UNIQUE NOT NULL,
+               Name            VARCHAR(100) NOT NULL,
+               Currencies_Id   INTEGER REFERENCES Currencies(Currencies_Id),
+               Rate_Type       VARCHAR(20)  NOT NULL DEFAULT 'Overnight'
+                               CHECK (Rate_Type IN ('Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other')),
+               Provider        VARCHAR(20)  NOT NULL DEFAULT 'MANUAL'
+                               CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'MANUAL')),
+               Provider_Key    VARCHAR(200),
+               Provider_Field  VARCHAR(50),
+               Is_Active       BOOLEAN NOT NULL DEFAULT TRUE,
+               Alerts_Enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+               Sort_Order      INTEGER NOT NULL DEFAULT 100,
+               Notes           TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS Historical_Rates (
+               Rate_Series_Id  INTEGER NOT NULL REFERENCES Rate_Series(Rate_Series_Id) ON DELETE CASCADE,
+               Date            DATE NOT NULL,
+               Rate_Pct        NUMERIC(10, 5) NOT NULL,
+               Source          VARCHAR(50),
+               Downloaded_At   TIMESTAMPTZ,
+               PRIMARY KEY (Rate_Series_Id, Date)
+           )""",
+        "CREATE INDEX IF NOT EXISTS idx_rates_series_date ON Historical_Rates(Rate_Series_Id, Date DESC)",
+        """CREATE TABLE IF NOT EXISTS Rate_Tracking (
+               Rate_Tracking_Id    SERIAL PRIMARY KEY,
+               Securities_Id       INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Rate_Series_Id      INTEGER NOT NULL REFERENCES Rate_Series(Rate_Series_Id) ON DELETE CASCADE,
+               Window_Days         INTEGER NOT NULL DEFAULT 90 CHECK (Window_Days >= 7),
+               Alert_Threshold_PP  NUMERIC(5, 2) NOT NULL DEFAULT 0.25,
+               Is_Active           BOOLEAN NOT NULL DEFAULT TRUE,
+               UNIQUE (Securities_Id, Rate_Series_Id)
+           )""",
+        # Default series. ON CONFLICT only fills a missing currency, so it never overwrites an edit
+        # (rename, deactivate, re-key) made from the UI.
+        """INSERT INTO Rate_Series (Code, Name, Currencies_Id, Rate_Type, Provider, Provider_Key, Provider_Field, Sort_Order, Notes)
+           SELECT v.code, v.name, c.Currencies_Id, v.rate_type, v.provider, v.pkey, v.pfield, v.ord, v.notes
+           FROM (VALUES
+               ('ESTR',      'Euro short-term rate (€STR)',     'EUR', 'Overnight',    'ECB',   'EST/B.EU000A2X2A25.WT',      NULL::text,       10, 'ECB overnight unsecured benchmark, published each TARGET business day.'),
+               ('ECB_DFR',   'ECB deposit rate',                'EUR', 'Policy',       'ECB',   'FM/D.U2.EUR.4F.KR.DFR.LEV',  NULL::text,       20, 'ECB deposit facility rate — the euro policy rate.'),
+               ('SOFR',      'Secured overnight financing rate (SOFR)', 'USD', 'Overnight', 'NYFED', 'secured/sofr',        'percentRate',    30, 'U.S. dollar counterpart of €STR, based on overnight Treasury repo.'),
+               ('EFFR',      'Effective federal funds rate (EFFR)',     'USD', 'Overnight', 'NYFED', 'unsecured/effr',     'percentRate',    40, 'Volume-weighted median of overnight unsecured interbank lending.'),
+               ('FED_UPPER', 'Fed funds target (upper bound)',  'USD', 'Target Upper', 'NYFED', 'unsecured/effr',            'targetRateTo',   50, 'FOMC target range, from the targetRateTo field of the NY Fed EFFR feed.'),
+               ('FED_LOWER', 'Fed funds target (lower bound)',  'USD', 'Target Lower', 'NYFED', 'unsecured/effr',            'targetRateFrom', 60, 'FOMC target range, from the targetRateFrom field of the NY Fed EFFR feed.')
+           ) AS v(code, name, ccy, rate_type, provider, pkey, pfield, ord, notes)
+           LEFT JOIN Currencies c ON c.Currencies_ShortName = v.ccy
+           ON CONFLICT (Code) DO UPDATE
+               SET Currencies_Id = COALESCE(Rate_Series.Currencies_Id, EXCLUDED.Currencies_Id)""",
+        # Default tracking pair, XEON vs €STR. Only before any rate has ever been downloaded (and
+        # while nothing is configured), so removing it later in the UI sticks.
+        """INSERT INTO Rate_Tracking (Securities_Id, Rate_Series_Id)
+           SELECT s.Securities_Id, r.Rate_Series_Id
+           FROM Securities s, Rate_Series r
+           WHERE s.Ticker = 'XEON.DE' AND r.Code = 'ESTR'
+             AND NOT EXISTS (SELECT 1 FROM Rate_Tracking)
+             AND NOT EXISTS (SELECT 1 FROM Historical_Rates)
+           ON CONFLICT DO NOTHING""",
     ]
     try:
         conn = psycopg2.connect(**DB_CONFIG)

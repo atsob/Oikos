@@ -762,6 +762,50 @@ CREATE TABLE Historical_FX (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fxrate_id       ON Historical_FX(Currencies_Id_1, Currencies_Id_2, Date);
 CREATE        INDEX IF NOT EXISTS idx_fx_currency_date ON Historical_FX(Currencies_Id_1, Date DESC);
 
+-- Interest rates (€STR, SOFR, ECB deposit rate, Fed target range, ...), normalised like
+-- Securities/Historical_Prices: Rate_Series holds each rate's definition, Historical_Rates its
+-- daily values. Another rate (e.g. a JPY one) is just a new Rate_Series row — see
+-- database/rates.py and data/downloaders.py::download_interest_rates(). The default series are
+-- seeded by database/connection.py's startup migrations, which also run on a fresh install.
+CREATE TABLE IF NOT EXISTS Rate_Series (
+    Rate_Series_Id  SERIAL PRIMARY KEY,
+    Code            VARCHAR(30)  UNIQUE NOT NULL,                  -- ESTR, SOFR, ECB_DFR ...
+    Name            VARCHAR(100) NOT NULL,
+    Currencies_Id   INTEGER REFERENCES Currencies(Currencies_Id),
+    Rate_Type       VARCHAR(20)  NOT NULL DEFAULT 'Overnight'
+                    CHECK (Rate_Type IN ('Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other')),
+    Provider        VARCHAR(20)  NOT NULL DEFAULT 'MANUAL'
+                    CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'MANUAL')),
+    Provider_Key    VARCHAR(200),                                  -- ECB series key / NY Fed path / FRED series id
+    Provider_Field  VARCHAR(50),                                   -- NY Fed JSON field (default percentRate)
+    Is_Active       BOOLEAN NOT NULL DEFAULT TRUE,
+    Alerts_Enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+    Sort_Order      INTEGER NOT NULL DEFAULT 100,
+    Notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS Historical_Rates (
+    Rate_Series_Id  INTEGER NOT NULL REFERENCES Rate_Series(Rate_Series_Id) ON DELETE CASCADE,
+    Date            DATE NOT NULL,
+    Rate_Pct        NUMERIC(10, 5) NOT NULL,                       -- percent, e.g. 2.44200 = 2.442%
+    Source          VARCHAR(50),
+    Downloaded_At   TIMESTAMPTZ,
+    PRIMARY KEY (Rate_Series_Id, Date)
+);
+CREATE INDEX IF NOT EXISTS idx_rates_series_date ON Historical_Rates(Rate_Series_Id, Date DESC);
+
+-- Which fund to compare against which overnight rate series (e.g. XEON vs €STR): a fund that
+-- should track a rate is flagged when it lags it by more than Alert_Threshold_PP over Window_Days.
+CREATE TABLE IF NOT EXISTS Rate_Tracking (
+    Rate_Tracking_Id    SERIAL PRIMARY KEY,
+    Securities_Id       INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Rate_Series_Id      INTEGER NOT NULL REFERENCES Rate_Series(Rate_Series_Id) ON DELETE CASCADE,
+    Window_Days         INTEGER NOT NULL DEFAULT 90 CHECK (Window_Days >= 7),
+    Alert_Threshold_PP  NUMERIC(5, 2) NOT NULL DEFAULT 0.25,
+    Is_Active           BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE (Securities_Id, Rate_Series_Id)
+);
+
 
 -- =============================================================================
 -- TRANSFER ISSUES  (audit log for unmatched / problematic transfers)

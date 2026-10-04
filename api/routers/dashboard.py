@@ -771,4 +771,10 @@ def get_insights():
                         "message": f"Savings rate in {month_lbl} was only {latest:.1f}% (EUR {income:,.0f} income, EUR {expenses:,.0f} expenses)."})
         except Exception:
             pass
+    # ECB / Fed policy-rate changes, €STR/SOFR moves and XEON tracking — see database/rates.py.
+    try:
+        from database.rates import get_rate_alerts
+        insights.extend(get_rate_alerts())
+    except Exception:
+        pass
     return insights

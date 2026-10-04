@@ -1061,7 +1061,33 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in nine tabs: Currencies, Securities, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <Note>
+          The <b>Securities</b> search box matches any text field — name, ticker, ISIN, Yahoo/TradingView symbols,
+          exchange, type, sector, industry, tax category, currency, analyst rating and dividend/coupon frequency —
+          so "Consumer Defensive" or "ATHEX" finds securities by sector or exchange, not just by name.
+        </Note>
+        <Note>
+          <b>Rates</b> tracks interest rates — out of the box €STR and the ECB deposit rate (ECB Data Portal) and SOFR,
+          EFFR and the Fed target range (NY Fed): current values, the last policy change, and one chart per currency.
+          It refreshes every 2 hours (Tools → Scheduled Tasks → <b>Interest Rates</b>) or on demand from the Downloads
+          tab. The same data raises <b>Dashboard insights</b> prompting a portfolio review: a policy-rate change in the
+          last 14 days; an overnight rate 0.15 pp or more away from its 30-day average (unless a policy change in the
+          same currency already explains it); and a <b>tracked fund lagging its rate</b>. Active alerts are also listed
+          at the top of the tab.
+        </Note>
+        <Note>
+          <b>Rates → Configure</b> makes all of this editable. <b>Rate series</b> are definitions, like securities — add
+          one to follow another rate in any currency: <b>ECB</b> (an ECB Data Portal key), <b>NYFED</b> (a NY Fed Markets
+          API path, optionally a field such as targetRateTo), <b>FRED</b> (a series id — the route for JPY, GBP and
+          others; needs a free FRED_API_KEY in the server environment) or <b>MANUAL</b> (type values in with <b>+ value</b>).
+          Set a series' type to <b>Policy</b> or <b>Target Upper</b> for a rate that changes at meetings (raises a change
+          alert) or <b>Overnight</b> for a daily market rate (raises a move alert); untick <b>Alerts</b> to silence one.
+          <b>Tracked funds</b> compares a fund with an overnight rate compounded over the same window, annualised —
+          XEON vs €STR (90 days, alert at 0.25 pp behind) is the default, but any fund can be tracked against any
+          overnight series, e.g. another money-market ETF vs SOFR, each with its own window and threshold. A fund's name links to its Security Detail, and the fund picker can be narrowed by type (Stock, ETF, Bond, Market Index, …) and a ticker/name search. This check is for cash-like funds: a bond fund with a duration over 1 year moves with bond yields, not an overnight rate, so it is flagged ⚠ and its alert says the comparison isn't meaningful. A healthy
+          fund trails its rate only by its fee (~0.02 pp for XEON); a bigger gap points to a stale price or a tracking problem.
+        </Note>
         <Note>
           Editing an existing Security or Currency has a <b>Duplicate</b> button next to Delete, copying every
           field into a new, unsaved record. Double-clicking a row on <b>Watchlist</b> or <b>Alerts</b> opens that

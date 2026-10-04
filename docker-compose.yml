@@ -38,6 +38,7 @@ services:
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
+      - FRED_API_KEY=${FRED_API_KEY:-}
       # First-login account, created once if the Users table is empty — see .env.example.
       - ADMIN_USERNAME=${ADMIN_USERNAME:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
@@ -92,6 +93,7 @@ services:
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
+      - FRED_API_KEY=${FRED_API_KEY:-}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
