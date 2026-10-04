@@ -2565,6 +2565,10 @@ const SECTOR_WEIGHTING_BUCKETS: [string, string][] = [
   ['communication_services', 'Communication Services'], ['consumer_cyclical', 'Consumer Cyclical'],
   ['consumer_defensive', 'Consumer Defensive'], ['energy', 'Energy'], ['basic_materials', 'Basic Materials'],
   ['utilities', 'Utilities'],
+  // Bond-fund sectors (issuer type) — a bond fund has no equity-style sector split, so these
+  // stand in for it. The Sector Weighting report shows them as their own slices.
+  ['government', 'Government'], ['government_related', 'Government Related'], ['corporate', 'Corporate'],
+  ['securitized', 'Securitized'], ['cash', 'Cash'], ['other', 'Other'],
 ]
 const BOND_RATING_BUCKETS: [string, string][] = [
   ['aaa', 'AAA'], ['aa', 'AA'], ['a', 'A'], ['bbb', 'BBB'], ['bb', 'BB'], ['b', 'B'],

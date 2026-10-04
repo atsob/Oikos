@@ -661,7 +661,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "Uncovered Fund Exposure" only means "genuinely no usable data": a fund with an Asset Class Override set
           (see below) uses it for its sector bucket too, and a bond-dominant fund — Yahoo doesn't provide sector
           weightings for bond funds at all, it's an equity-fund concept — lands in a distinct
-          "Bonds (No Sector Data)" bucket instead. <b>Bond Quality</b> has the same kind of fallback: its
+          "Bonds (No Sector Data)" bucket instead — unless you enter that fund's Sector Weightings by hand on its
+          Composition tab as issuer-type slices (Government, Government Related, Corporate, Securitized, Cash,
+          Other), in which case those slices appear here instead. <b>Bond Quality</b> has the same kind of fallback: its
           "Uncovered Fund Bond Exposure" bucket only holds funds that actually hold bonds but lack a ratings
           breakdown — a fund already known to hold no bonds at all (an Asset Class Override, or a 0% bond
           allocation from Yahoo, e.g. a physical commodity ETC) is excluded rather than having its whole value

@@ -314,6 +314,8 @@ SECTOR_WEIGHTING_BUCKETS = [
     "realestate", "technology", "healthcare", "financial_services", "industrials",
     "communication_services", "consumer_cyclical", "consumer_defensive", "energy",
     "basic_materials", "utilities",
+    # Bond-fund sectors (issuer type) — see the Composition tab's Sector Weightings editor.
+    "government", "government_related", "corporate", "securitized", "cash", "other",
 ]
 BOND_RATING_BUCKETS = ["aaa", "aa", "a", "bbb", "bb", "b", "below_b", "us_government", "other"]
 
