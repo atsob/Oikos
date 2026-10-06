@@ -4199,11 +4199,11 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const candidateTypes = baseSecuritiesId ? ['Market Index', 'ETF'] : ['Market Index']
-  const { data: candidates = [] } = useQuery({
+  const { data: candidates = [], isSuccess: candidatesLoaded } = useQuery({
     queryKey: ['benchmark-candidates', candidateTypes, baseSecuritiesId],
     queryFn: () => getBenchmarkCandidates(candidateTypes, baseSecuritiesId),
   })
-  const { data: allAccounts = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
+  const { data: allAccounts = [], isSuccess: accountsLoaded } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
   const [targets, setTargets] = usePersist<BenchmarkTarget[]>(`${keyPrefix}_targets`, [])
   const [lookback, setLookback] = usePersist(`${keyPrefix}_lookback`, 365)
   const [ytd, setYtd] = usePersist(`${keyPrefix}_ytd`, defaultYtd)
@@ -4222,6 +4222,18 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const effectiveTargets: BenchmarkTarget[] = targets.length > 0
     ? targets
     : (cands[0] ? [{ type: 'index', id: Number(cands[0].id) }] : [])
+
+  // Drop saved comparisons that no longer resolve — a security deleted, retyped away
+  // from Market Index/ETF, or left without enough price history, or an account since
+  // deleted/deactivated. Otherwise they linger as a bare "Security 317" / "Account 12"
+  // chip that plots nothing. Waits for both lists to load so a slow fetch never prunes.
+  useEffect(() => {
+    if (!candidatesLoaded || !accountsLoaded || targets.length === 0) return
+    const valid = targets.filter(t => t.type === 'account'
+      ? otherAccounts.some(a => a.id === t.id)
+      : cands.some(c => Number(c.id) === t.id))
+    if (valid.length !== targets.length) setTargets(valid)
+  }, [candidatesLoaded, accountsLoaded, targets, cands, otherAccounts, setTargets])
 
   const labelFor = (t: BenchmarkTarget) => t.type === 'account'
     ? (otherAccounts.find(a => a.id === t.id)?.name ?? `Account ${t.id}`)
