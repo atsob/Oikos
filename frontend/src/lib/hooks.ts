@@ -247,7 +247,11 @@ export function useGridScrollState(key: string) {
   // ag-Grid's React wrapper treats a changed `initialState` object as "apply this grid
   // state now," so that recompute was re-applying stale state mid-interaction, closing
   // whatever column filter popup the user had open after their very first keystroke.
-  const [initialState] = useState<GridState | undefined>(() => state ? { scroll: state } : undefined)
+  //
+  // Only the vertical offset is restored: a remembered horizontal offset opened wide
+  // grids (Market Data → Securities) scrolled sideways, cutting off the Name column,
+  // with nothing to say why. Every grid now opens at its left edge.
+  const [initialState] = useState<GridState | undefined>(() => state ? { scroll: { top: state.top, left: 0 } } : undefined)
 
   return { initialState, onStateUpdated } as const
 }
