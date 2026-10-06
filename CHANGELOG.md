@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-06
+
+### Fixed
+- **Benchmark tabs no longer keep a bare "Security 317" / "Account 12" chip for a comparison that no longer exists.** A saved comparison is stored by id, and its label is looked up in the current list of benchmark candidates (Market Indexes, plus ETFs on Security Detail, with at least 30 price days) or active investment accounts. A security that was deleted, changed to another type, or left with too little price history, or an account deleted or deactivated, dropped out of that list, so the chip showed only the raw id and plotted nothing. `BenchmarkTab` (`frontend/src/pages/Reports.tsx`) now removes such comparisons from the saved selection once both lists have loaded. Each Benchmark tab (Inv. Performance → Benchmark, each account's P&L drill-down, each Security Detail) keeps its own selection, so each one is cleaned the next time it is opened. The frontend type-checks; not exercised in a browser (login required).
+
 ## 2026-10-02
 
 ### Added
