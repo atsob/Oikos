@@ -1065,12 +1065,10 @@ def get_pnl(
             FROM Investments i
             JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
             JOIN Securities s ON i.Securities_Id = s.Securities_Id
-            LEFT JOIN Historical_FX hfx
-                   ON hfx.Currencies_Id_1 = a.Currencies_Id
-                  AND hfx.Date = i.Date
-            LEFT JOIN Historical_FX hfx_sec
-                   ON hfx_sec.Currencies_Id_1 = s.Currencies_Id
-                  AND hfx_sec.Date = i.Date
+            -- FX on the trade date, or the last stored rate before it (weekends/holidays have no
+            -- rate of their own; an exact-date join used to fall back to a rate of 1 there).
+            LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id AND Date <= i.Date ORDER BY Date DESC LIMIT 1) hfx ON TRUE
+            LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = s.Currencies_Id AND Date <= i.Date ORDER BY Date DESC LIMIT 1) hfx_sec ON TRUE
             LEFT JOIN LATERAL (
                 SELECT hp.Close
                 FROM Historical_Prices hp
@@ -1127,9 +1125,9 @@ def get_pnl(
                          THEN i.Total_Amount_AccCur * COALESCE(hfx.FX_Rate, 1) ELSE 0 END) AS direct_cashin_eur
             FROM Investments i
             JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
-            LEFT JOIN Historical_FX hfx
-                   ON hfx.Currencies_Id_1 = a.Currencies_Id
-                  AND hfx.Date = i.Date
+            -- FX on the trade date, or the last stored rate before it (weekends/holidays have no
+            -- rate of their own; an exact-date join used to fall back to a rate of 1 there).
+            LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id AND Date <= i.Date ORDER BY Date DESC LIMIT 1) hfx ON TRUE
             WHERE i.Securities_Id IS NULL
               AND i.Date <= (SELECT today FROM periods)
             GROUP BY i.Accounts_Id
@@ -1145,9 +1143,7 @@ def get_pnl(
                    AND t.Accounts_Id_Target = a.Accounts_Id
                    AND t.Total_Amount < 0
                    AND t.Date <= (SELECT today FROM periods)
-            LEFT JOIN Historical_FX fxl
-                   ON fxl.Currencies_Id_1 = al.Currencies_Id
-                  AND fxl.Date = t.Date
+            LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = al.Currencies_Id AND Date <= t.Date ORDER BY Date DESC LIMIT 1) fxl ON TRUE
             GROUP BY a.Accounts_Id
         )
         SELECT
@@ -1346,8 +1342,9 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
         FROM Investments i
         JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
         JOIN Securities s ON i.Securities_Id = s.Securities_Id
-        LEFT JOIN Historical_FX hfx     ON hfx.Currencies_Id_1     = a.Currencies_Id AND hfx.Date     = i.Date
-        LEFT JOIN Historical_FX hfx_sec ON hfx_sec.Currencies_Id_1 = s.Currencies_Id AND hfx_sec.Date = i.Date
+        -- Rate on the trade date, or the last one before it — see get_pnl's cash_flows.
+        LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = a.Currencies_Id AND Date <= i.Date ORDER BY Date DESC LIMIT 1) hfx ON TRUE
+        LEFT JOIN LATERAL (SELECT FX_Rate FROM Historical_FX WHERE Currencies_Id_1 = s.Currencies_Id AND Date <= i.Date ORDER BY Date DESC LIMIT 1) hfx_sec ON TRUE
         LEFT JOIN LATERAL (
             SELECT hp.Close FROM Historical_Prices hp
             WHERE hp.Securities_Id = i.Securities_Id AND hp.Date <= i.Date
