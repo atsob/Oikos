@@ -244,6 +244,22 @@ ENDPOINTS = {
         "path": "/api/market-data/fx-rates", "params": ["currency_id", "from_date"],
         "description": "Historical daily FX rates vs EUR, from_date onward (default 2020-01-01); currency_id optionally filters to one currency (get ids from the securities/accounts data), otherwise returns every tracked currency.",
     },
+    "currencies": {
+        "path": "/api/market-data/currencies", "params": [],
+        "description": "Every currency: id, code, name, latest stored rate vs EUR and its date. Use its id for currency_detail/currency_history.",
+    },
+    "currency_detail": {
+        "path": "/api/market-data/currencies/{currency_id}/detail", "params": ["quote"],
+        "description": "One currency (put its id in the path): rate in the quote currency (default EUR; pass the reporting currency code) with 1D/1M/YTD/1Y change, your exposure to it (accounts + securities, EUR), its share of total exposure, interest-rate series, and the FX effect on cash balances (1D/YTD).",
+    },
+    "currency_history": {
+        "path": "/api/market-data/currencies/{currency_id}/history", "params": ["quote", "from_date"],
+        "description": "Rate history of one currency (id in the path) expressed in the quote currency, converted through the stored EUR rates.",
+    },
+    "fx_exposure": {
+        "path": "/api/reports/fx-exposure", "params": ["account_ids"],
+        "description": "Exposure per currency: native amount, EUR amount and the EUR impact of a 5% FX move.",
+    },
     "cash_flow_forecast": {
         "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids"],
         "description": "Forward-looking scheduled/recurring/dividend/interest cash flow projection.",
