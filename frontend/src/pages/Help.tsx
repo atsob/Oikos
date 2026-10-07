@@ -743,12 +743,24 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>💹 Inv. Performance</H3>
         <P>
-          Eleven sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
-          <b>Performance</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
+          Twelve sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
+          <b>Performance</b>, <b>Best / Worst Days</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
           <b>Bond Schedule</b>, <b>Benchmark</b> (compare against any number of market indexes and/or other accounts at once),{' '}
           <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, <b>Stress Test</b>, and <b>TWR/MWR</b> (time- and
           money-weighted return).
         </P>
+        <Note>
+          <b>Best / Worst Days</b> (next to Performance) picks one investment account (or all of them — inactive accounts are hidden unless <b>Show inactive</b> is ticked) and a calendar year and lists the best
+          and worst trading days — four tables: worst by loss in €, worst by loss in %, best by gain in €, best by gain in %
+          — with how many days each table shows (default 10, up to 100) and the positions that moved the account most on
+          each day. A day's P&amp;L is the change in the account's market value at the close, after removing money put in or
+          taken out that day; the % is that P&amp;L over the previous close's value plus that day's purchases. Holdings are
+          rebuilt from your transactions and priced from Market Data's history (trades count at the price actually paid
+          or received, transfers between accounts at the day's close, splits neutralised). Dividends and interest are not
+          part of it. The € and % rankings differ because the account's size changes through the year. Days where a trade
+          was at a price far from the stored close — a sign the price history carries an adjustment the ledger lacks —
+          are left out and listed under the tables.
+        </Note>
         <Note>
           <b>Stress Test</b> follows the account preset and has two what-ifs — not forecasts, with every assumption
           shown and editable. <b>Rate shock</b>: enter a rate change in percentage points and a period in months; it

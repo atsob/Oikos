@@ -40,6 +40,7 @@ import { TxModal, useNoOpRecurring, addPeriod, PERIODICITIES } from '@/component
 import type { TxForm, SplitRow } from '@/components/TxModal'
 import { AgGridReact } from 'ag-grid-react'
 import StressTestTab from '@/pages/StressTest'
+import DayExtremesTab from '@/pages/DayExtremes'
 import type { ColDef } from 'ag-grid-community'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
@@ -4721,7 +4722,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
 function InvPerformanceSection() {
   const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
-  const TABS = ['P&L', 'Performance', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR']
+  const TABS = ['P&L', 'Performance', 'Best / Worst Days', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR']
   const qc = useQueryClient()
   useEffect(() => {
     qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
@@ -4745,6 +4746,7 @@ function InvPerformanceSection() {
       {tab === 'Correlation'      && <CorrelationTab accountIds={presetAccountIds} />}
       {tab === 'Monte Carlo'      && <MonteCarloTab accountIds={presetAccountIds} />}
       {tab === 'Stress Test'      && <StressTestTab accountIds={presetAccountIds} />}
+      {tab === 'Best / Worst Days' && <DayExtremesTab />}
     </div>
   )
 }
