@@ -1178,6 +1178,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "warm up" first.
         </Note>
         <Note>
+          The <b>Prices</b> tab is also where a security's stored prices are maintained: its table (search, filters,
+          Columns, Copy to Excel) can delete any selected rows in one go; <b>Import from File</b> loads a
+          tab-separated TXT/CSV/TSV price file (the <b>Date</b> header row is found automatically), skipping or
+          overwriting dates that already exist; and <b>Manual Entry</b> saves (upserts) or deletes the close price
+          for any single date. This replaces the former Market Data → Securities Prices tab.
+        </Note>
+        <Note>
           <b>Fair Value (Est.)</b> is Oikos's own approximation of the "reversion to historical trading multiple"
           idea behind services like GuruFocus's GF Value — not a reproduction of any such service's actual,
           undisclosed formula, and not fetched from one. It's this security's own historical median P/E (computed
