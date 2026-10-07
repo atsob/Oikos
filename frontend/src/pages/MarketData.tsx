@@ -13,6 +13,7 @@ import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
+import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const extractError = (e: unknown) =>
@@ -208,7 +209,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'coupon_frequency', headerName: 'Coupon Frequency', width: 130, hide: true },
     { field: 'face_value', headerName: 'Face Value', width: 100, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 2) : '' },
     { field: 'type', headerName: 'Type', width: 110 },
-    { field: 'currency', headerName: 'Ccy', width: 65 },
+    { field: 'currency', headerName: 'Ccy', width: 65, cellRenderer: CurrencyCell },
     { field: 'latest_price', headerName: 'Last Price', width: 110, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
     { field: 'price_date', headerName: 'Price Date', width: 100, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
     { field: 'dividend_yield', headerName: 'Div Yield', width: 90, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtPct(Number(p.value), 2) : '' },
@@ -792,7 +793,7 @@ function WatchlistTab() {
                   {Boolean(row.already_held) && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">held</span>}
                 </td>
                 <td className="px-3 py-2 text-slate-500 text-xs">{String(row.securities_type ?? '—')}</td>
-                <td className="px-3 py-2 text-slate-500 text-xs">{String(row.currency ?? '—')}</td>
+                <td className="px-3 py-2 text-slate-500 text-xs"><CurrencyLink code={row.currency} /></td>
                 <td className="px-3 py-2 text-right tabular-nums">{row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.target_price != null ? fmtNum(Number(row.target_price), 4) : '—'}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-600">{row.stop_loss != null ? fmtNum(Number(row.stop_loss), 4) : '—'}</td>
@@ -1174,8 +1175,11 @@ function RatesTab() {
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {[...groups.entries()].map(([ccy, list]) => (
-            <Plot key={ccy} data={list.map((x, i) => traceFor(x, SERIES_COLORS[i % SERIES_COLORS.length]))}
-              layout={chartLayout(ccy)} config={{ displayModeBar: false }} style={{ width: '100%' }} />
+            <div key={ccy}>
+              <p className="text-sm font-semibold"><CurrencyLink code={ccy} /></p>
+              <Plot data={list.map((x, i) => traceFor(x, SERIES_COLORS[i % SERIES_COLORS.length]))}
+                layout={chartLayout('')} config={{ displayModeBar: false }} style={{ width: '100%' }} />
+            </div>
           ))}
         </div>
         <p className="text-xs text-slate-400">
@@ -1286,7 +1290,7 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
                 <tbody>
                   {defs.map(d => (
                     <tr key={d.id} className="border-t border-slate-100">
-                      <td className={`${td} font-mono`}>{d.code}</td><td className={td}>{d.name}</td><td className={td}>{d.currency ?? '—'}</td>
+                      <td className={`${td} font-mono`}>{d.code}</td><td className={td}>{d.name}</td><td className={td}><CurrencyLink code={d.currency} /></td>
                       <td className={td}>{d.rate_type}</td><td className={td}>{d.provider}</td>
                       <td className={`${td} font-mono max-w-[220px] truncate`} title={`${d.provider_key ?? ''} ${d.provider_field ?? ''}`}>{d.provider_key ?? '—'}{d.provider_field ? ` · ${d.provider_field}` : ''}</td>
                       <td className={td}>{d.last_date ? String(d.last_date).slice(0, 10) : '—'}</td><td className={td}>{d.row_count.toLocaleString()}</td>

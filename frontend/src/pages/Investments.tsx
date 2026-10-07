@@ -19,6 +19,7 @@ import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInv
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
+import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'total_seccur', headerName: 'Total (sec)', width: 120, type: 'numericColumn', valueFormatter: p => p.value != null ? fmtCur(Number(p.value), p.data?.currency) : '—' },
   { field: 'total', headerName: 'Total (acc)', width: 120, type: 'numericColumn', valueFormatter: p => fmtCur(Number(p.value), p.data?.account_currency), cellStyle: { fontWeight: 600 } },
   { field: 'fx_rate', headerName: 'FX', width: 80, type: 'numericColumn', valueFormatter: p => p.value ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'currency', headerName: 'Curr', width: 65 },
+  { field: 'currency', headerName: 'Curr', width: 65, cellRenderer: CurrencyCell },
   { field: 'instrument_type', headerName: 'Instrument', width: 110 },
   { field: 'account', headerName: 'Account', flex: 1, minWidth: 130 },
   { field: 'cash_account', headerName: 'Cash Account', flex: 1, minWidth: 120,
@@ -268,7 +269,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.simple_avg_price, row.currency)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.fifo_avg_price, row.currency)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-slate-600">{fmtP(row.last_price, row.currency)}</td>
-                  <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.currency)}</td>
+                  <td className="py-1.5 pr-3 text-slate-500 text-xs"><CurrencyLink code={row.currency} /></td>
                   <td className="py-1.5 pr-3 text-right tabular-nums font-semibold">{fmtEur(Number(row.value_eur ?? 0))}</td>
                   <td className={`py-1.5 pr-3 text-right tabular-nums font-semibold ${gl >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(gl)}</td>
                   <td className={`py-1.5 pr-3 text-right tabular-nums ${glPct == null ? 'text-slate-400' : glPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>
