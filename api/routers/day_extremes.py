@@ -1,8 +1,8 @@
 """Best and worst days (Reports -> Inv. Performance -> Best / Worst Days).
 
 For one investment account (or all of them) and one calendar year: the N best and N worst
-trading days, ranked both by profit/loss in EUR and by profit/loss in %, with the positions that
-moved the account most on each day.
+trading days — or calendar weeks, or calendar months — ranked both by profit/loss in EUR and by
+profit/loss in %, with the positions that moved the account most in each period.
 
 How a day is measured — price P&L only, rebuilt from the Investments ledger and Historical_Prices:
     P&L(day)  = value at the day's close  -  value at the previous close  -  net money put in that day
@@ -12,6 +12,12 @@ A purchase or sale is taken at what was actually paid or received, so a fill awa
 close counts toward that day. Dividends and interest do not change market value and are left out.
 Transfers of shares between accounts are valued at the day's close, so they are neither a gain nor
 a loss; splits are neutralised by restating prices in the unit count of each date.
+
+A week (Mon-Sun) or a month is the same measure over the whole period: its P&L is the sum of its
+days' P&L (= value at the period's last close - value at the previous period's last close - net
+money put in during it), and its base is the previous period's closing value plus everything
+bought during the period. A period that contains a day left out for a price mismatch (see
+MISMATCH_RATIO) is left out whole.
 """
 from __future__ import annotations
 
@@ -35,6 +41,7 @@ WARMUP_DAYS = 45          # price/FX history needed before the year starts to fi
 # history and the ledger disagree about the unit — typically the history was adjusted for a later
 # corporate action (an exchange/merger) that isn't recorded as a split here. The day is left out.
 MISMATCH_RATIO = 2.0
+PERIODS = {"day": "day", "week": "week", "month": "month"}
 
 
 def _num(v):
@@ -60,12 +67,16 @@ def get_day_extremes(
     year: Optional[int] = Query(None),
     n: int = Query(10),
     min_base: float = Query(100.0),
+    period: str = Query("day"),
 ):
-    """The `n` best and worst days of `year` for one account (or all investment accounts when
-    account_id is omitted). Days whose base (see module docstring) is under `min_base` EUR are
-    ignored — a near-empty account would otherwise produce absurd percentages."""
+    """The `n` best and worst days (`period` = day), weeks (week) or months (month) of `year` for
+    one account (or all investment accounts when account_id is omitted). Periods whose base (see
+    module docstring) is under `min_base` EUR are ignored — a near-empty account would otherwise
+    produce absurd percentages."""
     today = date.today()
     year = year or today.year
+    if period not in PERIODS:
+        raise HTTPException(400, "period must be day, week or month")
     if not 1 <= n <= 100:
         raise HTTPException(400, "n must be between 1 and 100")
     start, end = date(year, 1, 1), min(date(year, 12, 31), today)
@@ -91,7 +102,7 @@ def get_day_extremes(
             ORDER BY i.Date, i.Investments_Id
         """, conn, params={**params, "acts": list(BUY_SIDE + SELL_SIDE)})
         if tx.empty:
-            return _empty(name, year, n)
+            return _empty(name, year, n, period)
         tx["date"] = pd.to_datetime(tx["date"])
         sec_ids = sorted(int(x) for x in tx["sid"].unique())
         sec = pd.read_sql("""
@@ -126,7 +137,7 @@ def get_day_extremes(
     eur_id = int(eur.iloc[0, 0]) if not eur.empty else None
 
     if px.empty:
-        return _empty(name, year, n)
+        return _empty(name, year, n, period)
     px["date"] = pd.to_datetime(px["date"])
     days = pd.DatetimeIndex(sorted(px["date"].unique()))
     if not px_seed.empty:
@@ -134,7 +145,7 @@ def get_day_extremes(
         px = pd.concat([px_seed, px], ignore_index=True)
     prev_days = days[days < pd.Timestamp(start)]
     if len(prev_days) == 0:
-        return _empty(name, year, n)                      # no previous close to measure the first day against
+        return _empty(name, year, n, period)                      # no previous close to measure the first day against
     days = days[days >= prev_days[-1]]                    # previous close + the whole year
 
     # Carry each price forward from its own last quote — including one from before the window and
@@ -214,49 +225,113 @@ def get_day_extremes(
         else:
             flow.at[d, sid] -= amt
 
-    pnl = value.diff() - flow                              # per security per day
-    pnl = pnl.iloc[1:]
-    total = pnl.sum(axis=1)
-    base = value.shift(1).sum(axis=1).iloc[1:] + buys.iloc[1:]
-    pct = (total / base.where(base >= min_base)) * 100.0
-    frame = pd.DataFrame({"pnl": total, "pct": pct, "base": base}).dropna(subset=["pct"])
-    frame = frame[frame.index >= pd.Timestamp(start)]
-    excluded = [{"date": d.date().isoformat(), "securities": sorted(set(t))}
-                for d, t in sorted(suspect.items()) if d in frame.index]
-    frame = frame.drop(index=[pd.Timestamp(e["date"]) for e in excluded])
-    if frame.empty:
-        return _empty(name, year, n)
+    pnl = (value.diff() - flow).iloc[1:]                   # per security per day
+    daily = pd.DataFrame({
+        "pnl": pnl.sum(axis=1),
+        "prev": value.shift(1).sum(axis=1).iloc[1:],       # what was held at the previous close
+        "buys": buys.iloc[1:],
+    })
+    daily = daily[daily.index >= pd.Timestamp(start)]
+    pnl = pnl.loc[daily.index]
+    if daily.empty:
+        return _empty(name, year, n, period)
 
-    def contributors(d, worst: bool) -> list:
-        row = pnl.loc[d]
+    idx = daily.index
+    if period == "day":
+        key = idx
+    elif period == "week":
+        key = idx - pd.to_timedelta(idx.weekday, unit="D")            # the week's Monday
+    else:
+        key = idx.to_period("M").to_timestamp()                       # the month's first day
+    key = pd.DatetimeIndex(key)
+
+    g = daily.groupby(key)
+    frame = pd.DataFrame({
+        "pnl": g["pnl"].sum(),
+        "base": g["prev"].first() + g["buys"].sum(),       # opening value + everything bought during it
+        "first": pd.Series(idx, index=idx).groupby(key).min(),
+        "last": pd.Series(idx, index=idx).groupby(key).max(),
+        "days": g["pnl"].count(),
+    })
+    frame["pct"] = frame["pnl"] / frame["base"].where(frame["base"] >= min_base) * 100.0
+    frame = frame.dropna(subset=["pct"])
+    by_sec = pnl.groupby(key).sum()                        # per security per period
+
+    def label(k, r) -> str:
+        if period == "day":
+            return k.date().isoformat()
+        if period == "month":
+            return k.strftime("%b %Y")
+        a, b = r["first"], r["last"]
+        wk = b.isocalendar()
+        span = f"{a.day}\u2013{b.day} {b.strftime('%b')}" if a.month == b.month else f"{a.day} {a.strftime('%b')} \u2013 {b.day} {b.strftime('%b')}"
+        return f"{wk.year}-W{wk.week:02d} \u00b7 {span}"
+
+    suspect_keys: dict = {}
+    for d, t in suspect.items():
+        if d >= pd.Timestamp(start):
+            k = d if period == "day" else (d - pd.Timedelta(days=d.weekday()) if period == "week" else d.to_period("M").to_timestamp())
+            suspect_keys.setdefault(k, []).append((d, t))
+    excluded = []
+    for k, items in sorted(suspect_keys.items()):
+        if k in frame.index:
+            excluded.append({
+                "label": label(k, frame.loc[k]), "date": min(d for d, _ in items).date().isoformat(),
+                "dates": sorted({d.date().isoformat() for d, _ in items}),
+                "securities": sorted({x for _, t in items for x in t}),
+            })
+    frame = frame.drop(index=[k for k in suspect_keys if k in frame.index])
+    if frame.empty:
+        return _empty(name, year, n, period)
+
+    def contributors(k, worst: bool) -> list:
+        row = by_sec.loc[k]
         row = row[row.abs() > 0.005].sort_values(ascending=worst)
         return [{"ticker": sec.loc[int(s), "ticker"], "name": sec.loc[int(s), "name"], "pnl": round(float(v), 2)}
                 for s, v in row.head(3).items() if (v < 0) == worst]
 
     def pick(col: str, worst: bool) -> list:
         sel = frame.sort_values(col, ascending=worst).head(n)
-        return [{
-            "date": d.date().isoformat(), "weekday": d.strftime("%a"),
-            "pnl": round(float(r.pnl), 2), "pct": round(float(r.pct), 2), "base": round(float(r.base), 2),
-            "contributors": contributors(d, worst),
-        } for d, r in sel.iterrows()]
+        out = []
+        for k, r in sel.iterrows():
+            nat_end = k if period == "day" else (k + pd.Timedelta(days=6) if period == "week" else (k + pd.offsets.MonthEnd(0)))
+            out.append({
+                "label": label(k, r), "date": r["first"].date().isoformat(), "end": r["last"].date().isoformat(),
+                "weekday": r["first"].strftime("%a") if period == "day" else "",
+                "days": int(r["days"]), "partial": period != "day" and nat_end.date() >= today,
+                "pnl": round(float(r.pnl), 2), "pct": round(float(r.pct), 2), "base": round(float(r.base), 2),
+                "contributors": contributors(k, worst),
+            })
+        return out
+
+    unit = {"day": "day", "week": "week", "month": "month"}[period]
+    per_txt = {"day": "that day's", "week": "that week's", "month": "that month's"}[period]
+    notes = [
+        "Price P&L only: " + ("each day's change" if period == "day" else f"each {unit}'s change") + " in the account's market value (at closing prices), after removing the money put in or taken out"
+        + (" that day" if period == "day" else f" during the {unit}") + ". Dividends and interest are not part of it.",
+        f"% = {per_txt} P&L ÷ ("
+        + ("the previous close's value + purchases made that day" if period == "day"
+           else f"the value at the previous {unit}'s last close + everything bought during the {unit}") + ").",
+        "Holdings are rebuilt from your transactions and priced from Market Data's price history, converted to EUR at that day's exchange rate; a trade counts at the price actually paid or received, share transfers between accounts at the day's close, and splits are neutralised.",
+        f"{unit.capitalize()}s where that base was under €{min_base:,.0f} are ignored, so a nearly empty account can't produce absurd percentages.",
+        f"A {unit} is also left out (and listed below the tables) when it contains a day on which a trade was at a price more than twice, or less than half, the stored close — a sign the price history was adjusted for a corporate action that isn't recorded as a split, which would make the P&L meaningless.",
+    ]
+    if period != "day":
+        notes.insert(2, "Weeks are calendar weeks (Monday to Sunday) counted only for the days that fall in the chosen year, so the first and last week of a year may be short; the current week or month is marked \u201cso far\u201d." if period == "week"
+                     else "Months are calendar months; the current month is marked \u201cso far\u201d.")
 
     return {
-        "account": name, "account_id": account_id, "year": year, "n": n, "min_base": min_base,
-        "trading_days": int(len(frame)), "up_days": int((frame["pnl"] > 0).sum()), "down_days": int((frame["pnl"] < 0).sum()),
-        "total_pnl": round(float(frame["pnl"].sum()), 2), "excluded_days": excluded,
+        "account": name, "account_id": account_id, "year": year, "n": n, "min_base": min_base, "period": period,
+        "periods": int(len(frame)), "up_periods": int((frame["pnl"] > 0).sum()), "down_periods": int((frame["pnl"] < 0).sum()),
+        "trading_days": int(frame["days"].sum()),
+        "total_pnl": round(float(frame["pnl"].sum()), 2), "excluded": excluded,
         "worst_eur": pick("pnl", True), "worst_pct": pick("pct", True),
         "best_eur": pick("pnl", False), "best_pct": pick("pct", False),
-        "notes": [
-            "Price P&L only: each day's change in the account's market value (at closing prices), after removing the money put in or taken out that day. Dividends and interest are not part of it.",
-            "% = that day's P&L ÷ (the previous close's value + purchases made that day).",
-            "Holdings are rebuilt from your transactions and priced from Market Data's price history, converted to EUR at that day's exchange rate; a trade counts at the price actually paid or received, share transfers between accounts at the day's close, and splits are neutralised.",
-            f"Days where that base was under €{min_base:,.0f} are ignored, so a nearly empty account can't produce absurd percentages.",
-            "A day is also left out (and listed below the tables) when a trade that day was at a price more than twice, or less than half, the stored close — a sign the price history was adjusted for a corporate action that isn't recorded as a split, which would make the day's P&L meaningless.",
-        ],
+        "notes": notes,
     }
 
 
-def _empty(name: str, year: int, n: int) -> dict:
-    return {"account": name, "year": year, "n": n, "trading_days": 0, "up_days": 0, "down_days": 0, "total_pnl": 0.0,
-            "worst_eur": [], "worst_pct": [], "best_eur": [], "best_pct": [], "notes": [], "excluded_days": []}
+def _empty(name: str, year: int, n: int, period: str = "day") -> dict:
+    return {"account": name, "year": year, "n": n, "period": period, "periods": 0, "up_periods": 0, "down_periods": 0,
+            "trading_days": 0, "total_pnl": 0.0,
+            "worst_eur": [], "worst_pct": [], "best_eur": [], "best_pct": [], "notes": [], "excluded": []}

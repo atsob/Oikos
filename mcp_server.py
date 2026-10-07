@@ -285,8 +285,8 @@ ENDPOINTS = {
         "description": "Rate history. series = comma-separated codes from interest_rate_series (default ESTR, ECB_DFR, SOFR, EFFR, FED_UPPER, FED_LOWER); years = last N years.",
     },
     "day_extremes": {
-        "path": "/api/reports/day-extremes", "params": ["account_id", "year", "n", "min_base"],
-        "description": "Best and worst trading days of a calendar year for one investment account (omit account_id for all), by P&L in EUR and in %, with the main movers each day. n defaults to 10.",
+        "path": "/api/reports/day-extremes", "params": ["account_id", "year", "n", "min_base", "period"],
+        "description": "Best and worst trading days, weeks or months of a calendar year for one investment account (omit account_id for all), by P&L in EUR and in %, with the main movers of each. period = day (default) | week | month; n defaults to 10.",
     },
     "interest_rate_series": {
         "path": "/api/market-data/rates/series", "params": [],

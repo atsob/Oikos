@@ -137,7 +137,7 @@ function MarketValuationPanel() {
   const { data: summary } = useQuery({
     queryKey: ['shiller-cape-summary'], queryFn: getShillerCapeSummary, retry: false, staleTime: 60 * 60 * 1000,
   })
-  const s = summary as { date: string; cape_ratio: number; percentile: number; median: number } | undefined
+  const s = summary as { date: string; cape_ratio: number; prev_date?: string | null; prev_cape_ratio?: number | null; percentile: number; median: number } | undefined
   if (!s) return null
 
   const zone = s.percentile >= 90 ? { label: 'Historically Expensive', cls: 'text-red-600' }
@@ -153,6 +153,17 @@ function MarketValuationPanel() {
             <span className="text-sm text-slate-500">U.S. Shiller CAPE</span>
           </Tooltip>
           <span className="text-lg font-bold">{s.cape_ratio.toFixed(1)}×</span>
+          {s.prev_cape_ratio != null && s.prev_cape_ratio !== s.cape_ratio && (() => {
+            const up = s.cape_ratio > s.prev_cape_ratio
+            const chg = s.cape_ratio - s.prev_cape_ratio
+            return (
+              <Tooltip text={`${up ? 'Up' : 'Down'} ${Math.abs(chg).toFixed(2)}× (${chg >= 0 ? '+' : '−'}${Math.abs(chg / s.prev_cape_ratio * 100).toFixed(1)}%) from ${s.prev_cape_ratio.toFixed(2)}× in ${String(s.prev_date).slice(0, 7)}, the previous monthly reading.`}>
+                <span className={`text-xs font-medium ${up ? 'text-green-700' : 'text-red-600'}`}>
+                  {up ? '▲' : '▼'} {up ? '+' : '−'}{Math.abs(chg).toFixed(1)} <span className="text-slate-400 font-normal">from {s.prev_cape_ratio.toFixed(1)}×</span>
+                </span>
+              </Tooltip>
+            )
+          })()}
           <span className={`text-xs font-medium ${zone.cls}`}>{zone.label}</span>
           <span className="text-xs text-slate-400">({s.percentile.toFixed(0)}th pctile since 1881)</span>
         </div>

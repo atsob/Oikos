@@ -194,7 +194,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <Note>
           The <b>Market Valuation</b> tile (between Insights and Securities Alerts) shows the current U.S. Shiller
-          CAPE ratio, its valuation zone, and percentile since 1881 — auto-imported monthly, not tied to your own
+          CAPE ratio with a red ▼ / green ▲ and the previous month's reading beside it, its valuation zone, and
+          percentile since 1881 — auto-imported monthly, not tied to your own
           holdings. It's context, not a trading signal, and links to Market Data → CAPE Ratios for the full history
           and country-level ratios. Stays hidden until the first import has run.
         </Note>
@@ -751,15 +752,19 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </P>
         <Note>
           <b>Best / Worst Days</b> (next to Performance) picks one investment account (or all of them — inactive accounts are hidden unless <b>Show inactive</b> is ticked) and a calendar year and lists the best
-          and worst trading days — four tables: worst by loss in €, worst by loss in %, best by gain in €, best by gain in %
-          — with how many days each table shows (default 10, up to 100) and the positions that moved the account most on
-          each day. A day's P&amp;L is the change in the account's market value at the close, after removing money put in or
-          taken out that day; the % is that P&amp;L over the previous close's value plus that day's purchases. Holdings are
+          and worst <b>days, weeks or months</b> (the <b>Period</b> switch) — four tables: worst by loss in €, worst by loss in %,
+          best by gain in €, best by gain in % — with how many each table shows (default 10, up to 100) and the positions that
+          moved the account most in each. A day's P&amp;L is the change in the account's market value at the close, after removing
+          money put in or taken out that day; the % is that P&amp;L over the previous close's value plus that day's purchases. A week
+          (Monday–Sunday, only the days in the chosen year) or a month is the same over the whole period: its P&amp;L is the change
+          from the previous period's last close, and its base is that closing value plus everything bought during the period. Holdings are
           rebuilt from your transactions and priced from Market Data's history (trades count at the price actually paid
           or received, transfers between accounts at the day's close, splits neutralised). Dividends and interest are not
           part of it. The € and % rankings differ because the account's size changes through the year. Days where a trade
           was at a price far from the stored close — a sign the price history carries an adjustment the ledger lacks —
-          are left out and listed under the tables.
+          are left out (a week or month containing such a day is left out whole) and listed under the tables. The
+          <b> Price P&amp;L</b> card is the sum of the P&amp;L of the periods measured: price moves only, so it is not the
+          account's full return (dividends, interest and fees are not in it), and periods that are left out are not in it either.
         </Note>
         <Note>
           <b>Stress Test</b> follows the account preset and has two what-ifs — not forecasts, with every assumption
@@ -1174,7 +1179,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>CAPE Ratios</b> shows the U.S. Shiller CAPE (cyclically adjusted P/E — S&amp;P 500 price over 10
-          years of inflation-adjusted earnings) as a full 1871–present chart plus its current value, valuation
+          years of inflation-adjusted earnings) as a full 1871–present chart (switch it to <b>1Y, 3Y, 5Y, 10Y</b> or <b>All Time</b>
+          with the buttons above it; the dotted line stays the long-run median) plus its current value, valuation
           zone, and percentile since 1881 — the same figures as the Dashboard's Market Valuation tile, which links
           straight here. Below it, a <b>Country CAPE Ratios</b> table: 10 countries (US excluded — Shiller_Cape
           above already covers it with far longer history) auto-import from Siblis Research's free API; anything

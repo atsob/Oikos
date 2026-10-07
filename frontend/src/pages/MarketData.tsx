@@ -832,6 +832,14 @@ function ShillerCapeSection() {
   const { data: series = [] } = useQuery({ queryKey: ['shiller-cape'], queryFn: () => getShillerCape() })
   const rows = series as { date: string; cape_ratio: number }[]
   const s = summary as { date: string; cape_ratio: number; percentile: number; median: number; min: number; max: number; months: number } | undefined
+  const [range, setRange] = usePersist<'1Y' | '3Y' | '5Y' | '10Y' | 'All'>('cape_range', 'All')
+  const shown = useMemo(() => {
+    const years = range === 'All' ? 0 : parseInt(range)
+    if (!years || rows.length === 0) return rows
+    const last = new Date(rows[rows.length - 1].date)
+    const cutoff = new Date(last.getFullYear() - years, last.getMonth(), last.getDate()).toISOString().slice(0, 10)
+    return rows.filter(r => String(r.date).slice(0, 10) >= cutoff)
+  }, [rows, range])
 
   const zone = (pctile: number) => pctile >= 90 ? { label: 'Historically Expensive', cls: 'text-red-600' }
     : pctile >= 60 ? { label: 'Above Average', cls: 'text-amber-600' }
@@ -872,8 +880,18 @@ function ShillerCapeSection() {
         A high CAPE describes the next decade's starting valuation base rate — it has never reliably timed a correction, so treat it as long-horizon context, not a trading signal.
       </p>
       {rows.length > 0 && (
+        <div className="flex items-center gap-1">
+          {(['1Y', '3Y', '5Y', '10Y', 'All'] as const).map(r => (
+            <button key={r} type="button" onClick={() => setRange(r)}
+              className={`px-2.5 py-1 text-xs rounded border ${range === r ? 'bg-slate-700 border-slate-700 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {r === 'All' ? 'All Time' : r}
+            </button>
+          ))}
+        </div>
+      )}
+      {rows.length > 0 && (
         <Plot
-          data={[{ x: rows.map(r => r.date), y: rows.map(r => r.cape_ratio), type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 1.5 }, name: 'CAPE' }]}
+          data={[{ x: shown.map(r => r.date), y: shown.map(r => r.cape_ratio), type: 'scatter', mode: 'lines', line: { color: '#3b82f6', width: 1.5 }, name: 'CAPE' }]}
           layout={{ height: 340, yaxis: { title: 'CAPE Ratio' }, xaxis: { title: '' }, margin: { t: 20, b: 40, l: 60, r: 20 }, shapes: [
             { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: s.median, y1: s.median, line: { color: '#94a3b8', width: 1, dash: 'dot' } },
           ], ...plotLayout(isDark) }}

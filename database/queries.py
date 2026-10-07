@@ -4615,9 +4615,12 @@ def get_shiller_cape_summary():
         return None
     latest = df.iloc[-1]
     pctile = float((df["cape_ratio"] < latest["cape_ratio"]).mean() * 100)
+    prev = df.iloc[-2] if len(df) > 1 else None             # the previous monthly reading
     return {
         "date": str(latest["date"]),
         "cape_ratio": float(latest["cape_ratio"]),
+        "prev_date": str(prev["date"]) if prev is not None else None,
+        "prev_cape_ratio": float(prev["cape_ratio"]) if prev is not None else None,
         "percentile": round(pctile, 1),
         "median": float(df["cape_ratio"].median()),
         "min": float(df["cape_ratio"].min()),

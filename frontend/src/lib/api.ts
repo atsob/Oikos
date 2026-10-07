@@ -1099,8 +1099,8 @@ export const getIncomeExpenseFull = (
 export const getDayExtremeYears = (accountId?: number) =>
   api.get('/reports/day-extremes/years', { params: { account_id: accountId } }).then(r => r.data as number[])
 
-export const getDayExtremes = (p: { accountId?: number; year: number; n: number }) =>
-  api.get('/reports/day-extremes', { params: { account_id: p.accountId, year: p.year, n: p.n } }).then(r => r.data)
+export const getDayExtremes = (p: { accountId?: number; year: number; n: number; period?: 'day' | 'week' | 'month' }) =>
+  api.get('/reports/day-extremes', { params: { account_id: p.accountId, year: p.year, n: p.n, period: p.period } }).then(r => r.data)
 
 // Stress Test (Reports -> Inv. Performance -> Stress Test)
 export const getStressAssumptions = () =>
