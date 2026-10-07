@@ -256,6 +256,10 @@ ENDPOINTS = {
         "path": "/api/market-data/currencies/{currency_id}/history", "params": ["quote", "from_date"],
         "description": "Rate history of one currency (id in the path) expressed in the quote currency, converted through the stored EUR rates.",
     },
+    "currency_fx_effect": {
+        "path": "/api/market-data/currencies/{currency_id}/fx-effect", "params": ["period"],
+        "description": "Currency effect on P&L for one currency (id in the path) over period DTD/WTD/MTD/QTD/YTD/1Y/3Y/5Y/All (default YTD): per account/security quoted in it, realized and unrealized P&L each split into market and FX, plus income; and the FX effect on cash balances.",
+    },
     "fx_exposure": {
         "path": "/api/reports/fx-exposure", "params": ["account_ids"],
         "description": "Exposure per currency: native amount, EUR amount and the EUR impact of a 5% FX move.",
