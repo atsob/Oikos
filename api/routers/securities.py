@@ -121,13 +121,16 @@ def get_security_fund_composition(sec_id: int):
         # a link to its page instead of the free-text Holding_Name column — editing the
         # name of a security you already track belongs on that security's own page, not
         # duplicated here where it could drift out of sync with it.
+        # Ordered by weight, not Rank: Rank only keeps Yahoo's rows and the manual ones (stored at
+        # Rank >= 100 so they never collide) apart, so a manual row heavier than a Yahoo one would
+        # otherwise sit below it.
         holdings_df = pd.read_sql("""
             SELECT fth.Fund_Holding_Id AS id, fth.Rank AS rank, fth.Symbol AS symbol, fth.Holding_Name AS holding_name,
                    fth.Weight_Pct AS weight_pct, fth.Source AS source,
                    sec2.Securities_Id AS matched_securities_id, sec2.Securities_Name AS matched_name
             FROM Fund_Top_Holdings fth
             LEFT JOIN Securities sec2 ON sec2.Yahoo_Ticker = fth.Symbol
-            WHERE fth.Securities_Id = %(sid)s ORDER BY fth.Rank
+            WHERE fth.Securities_Id = %(sid)s ORDER BY fth.Weight_Pct DESC, fth.Rank
         """, conn, params={"sid": sec_id})
     comp_records = _df(comp_df)
     return {
@@ -169,14 +172,22 @@ def get_security_fund_membership(sec_id: int):
                 LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = s.Currencies_Id
                 WHERE h.Quantity > 0
                 GROUP BY h.Securities_Id
+            ),
+            -- The stored Rank only keeps Yahoo's rows and manual ones (Rank >= 100) apart; what a
+            -- reader means by "#8" is the place by weight within that fund's whole list.
+            position AS (
+                SELECT Fund_Holding_Id,
+                       ROW_NUMBER() OVER (PARTITION BY Securities_Id ORDER BY Weight_Pct DESC, Rank) AS pos
+                FROM Fund_Top_Holdings
             )
             SELECT fund.Securities_Id AS fund_securities_id, fund.Securities_Name AS fund_name,
-                   fund.Ticker AS fund_ticker, fth.Rank AS rank, fth.Weight_Pct AS weight_pct,
+                   fund.Ticker AS fund_ticker, pos.pos AS rank, fth.Weight_Pct AS weight_pct,
                    ROUND(fv.value_eur::numeric, 2) AS fund_value_eur,
                    ROUND((COALESCE(fv.value_eur, 0) * fth.Weight_Pct)::numeric, 2) AS related_value_eur
             FROM Securities sec
             JOIN Fund_Top_Holdings fth ON fth.Symbol = sec.Yahoo_Ticker
             JOIN Securities fund ON fund.Securities_Id = fth.Securities_Id
+            JOIN position pos ON pos.Fund_Holding_Id = fth.Fund_Holding_Id
             LEFT JOIN fund_value fv ON fv.Securities_Id = fund.Securities_Id
             WHERE sec.Securities_Id = %(sid)s
               AND sec.Yahoo_Ticker IS NOT NULL AND sec.Yahoo_Ticker <> ''
