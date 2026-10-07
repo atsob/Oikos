@@ -785,7 +785,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           <b>P&amp;L</b>'s "P&amp;L (DTD/YTD/etc.)" KPI tile always shows its Market/FX breakdown (e.g. "Mkt: -€160.05
           FX: €61.93") when one is available for the selected window — the <b>Show Market / FX Split</b> checkbox
-          only controls whether the Market/FX columns appear in the account and drill-down tables below it.
+          only controls whether the Market/FX columns appear in the account and drill-down tables below it. The
+          breakdown sits on its own line below the P&amp;L %. <b>Market</b> is the window's gain in each security's
+          own currency (its value change minus the money put in or taken out, all in that currency), converted at
+          today's rate; <b>FX</b> is the rest of the P&amp;L, so Market + FX always equals the P&amp;L figure itself.
         </Note>
         <Note>
           <b>P&amp;L</b>'s KPI row and, once you drill into one account, its "Totals:" row both carry a{' '}
