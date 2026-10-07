@@ -12,8 +12,8 @@ import {
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getFxRates, getPnl, addFxRate, deleteFxRate, importFxFromFile } from '@/lib/api'
-import type { CurrencyDetail as CurrencyDetailData } from '@/lib/api'
+import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
+import type { CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosition } from '@/lib/api'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { CurrencyLink } from '@/components/CurrencyLink'
@@ -532,32 +532,40 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
 }
 
 // ── FX Effect ────────────────────────────────────────────────────────────────
-// How much of your P&L came from this currency moving rather than from prices.
-// Securities: the per-security Market / FX split of the P&L report (Reports → Inv.
-// Performance → P&L, "Show Market / FX Split"), DTD and YTD — the same figures, filtered
-// to positions quoted in this currency. Cash: today's balance revalued at the rate change
-// over the same window (an estimate: it assumes the balance didn't change in between).
-// Both are measured against the storage base, as the P&L report is.
+// How much of your P&L came from this currency moving rather than from prices, over a
+// chosen period. Per account/security quoted in the currency: realized (units sold in the
+// period) and unrealized (units still held) P&L, each split into a market part (the price
+// move in the currency) and an FX part (the currency's move against EUR), plus income —
+// computed by GET /market-data/currencies/{id}/fx-effect (database/fx_effect.py). Cash: the
+// currency's balances today revalued at the rate change over the period (an estimate).
+
+type FxFilter = 'all' | 'open' | 'closed'
 
 function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
   const navigate = useNavigate()
   const [{ reportingCurrency: rc }] = useSettings()
-  const { data: pnlData = [], isLoading } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
-  const rows = useMemo(() => (pnlData as Record<string, unknown>[])
-    .filter(r => String(r.currency ?? '').trim() === detail.code)
-    .map(r => ({
-      securities_id: Number(r.securities_id), name: String(r.securities_name ?? ''),
-      accounts_id: Number(r.accounts_id), account: String(r.accounts_name ?? ''),
-      dtd_mkt: Number(r.pnl_dtd_market_eur ?? 0), dtd_fx: Number(r.pnl_dtd_fx_eur ?? 0),
-      ytd_mkt: Number(r.pnl_ytd_market_eur ?? 0), ytd_fx: Number(r.pnl_ytd_fx_eur ?? 0),
-    }))
-    .filter(r => r.dtd_mkt || r.dtd_fx || r.ytd_mkt || r.ytd_fx)
-    .sort((a, b) => Math.abs(b.ytd_fx) - Math.abs(a.ytd_fx)), [pnlData, detail.code])
-  const sum = (k: 'dtd_mkt' | 'dtd_fx' | 'ytd_mkt' | 'ytd_fx') => rows.reduce((s, r) => s + r[k], 0)
-  const cash = detail.cash_fx_effect
-  const total = (sec: number, c: number | null) => sec + (c ?? 0)
-  const th = 'px-3 py-2 text-xs font-medium text-slate-500 uppercase tracking-wide'
-  const cell = (v: number) => <td className={`px-3 py-2 text-right tabular-nums ${v > 0 ? 'text-green-700' : v < 0 ? 'text-red-600' : 'text-slate-400'}`}>{fmtEur(v)}</td>
+  const [period, setPeriod] = usePersist<FxEffectPeriod>('cur_fx_effect_period', 'YTD')
+  const [filter, setFilter] = usePersist<FxFilter>('cur_fx_effect_filter', 'all')
+  const { data, isLoading } = useQuery({
+    queryKey: ['currency-fx-effect', detail.id, period],
+    queryFn: () => getCurrencyFxEffect(detail.id, period),
+    enabled: !detail.is_storage_base,
+  })
+  const positions = data?.positions ?? []
+  const rows = positions.filter(p => filter === 'all' || p.status === filter)
+  type Key = 'realized_market' | 'realized_fx' | 'unrealized_market' | 'unrealized_fx' | 'income'
+  const sum = (list: FxEffectPosition[], k: Key) => list.reduce((s, r) => s + r[k], 0)
+  const cash = data?.cash_fx ?? null
+  const realizedFx = sum(positions, 'realized_fx')
+  const unrealizedFx = sum(positions, 'unrealized_fx')
+  const fxTotal = realizedFx + unrealizedFx + (cash ?? 0)
+  const market = sum(positions, 'realized_market') + sum(positions, 'unrealized_market')
+  const th = 'px-3 py-2 text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap'
+  const cell = (v: number, bold = false) => (
+    <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${bold ? 'font-semibold ' : ''}${v > 0.005 ? 'text-green-700' : v < -0.005 ? 'text-red-600' : 'text-slate-400'}`}>{fmtEur(v)}</td>
+  )
+  const total = (r: FxEffectPosition) => r.realized_market + r.realized_fx + r.unrealized_market + r.unrealized_fx + r.income
+  const anyFromCost = rows.some(r => r.from_cost)
 
   if (detail.is_storage_base) {
     return (
@@ -567,69 +575,110 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
       </p>
     )
   }
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
     <div className="p-4 space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {([['Today (DTD)', sum('dtd_fx'), cash['1D']], ['Year to date', sum('ytd_fx'), cash.YTD]] as const).map(([lbl, sec, c]) => {
-          const t = total(sec, c)
-          return <StatCard key={lbl} label={`FX effect — ${lbl}`} value={fmtEur(t)} color={signColor(t)}
-            subs={[{ text: `Securities ${fmtEur(sec)}` }, { text: `Cash ${c != null ? fmtEur(c) : '— (no rate history)'}` }]} />
-        })}
-        <StatCard label="Market effect — DTD" value={fmtEur(sum('dtd_mkt'))} color={signColor(sum('dtd_mkt'))} sub={`price moves in ${detail.code}`} />
-        <StatCard label="Market effect — YTD" value={fmtEur(sum('ytd_mkt'))} color={signColor(sum('ytd_mkt'))} sub={`price moves in ${detail.code}`} />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1">
+          {FX_EFFECT_PERIODS.map(p => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${period === p ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+        {data && <span className="text-xs text-slate-400">{data.start ? `since the close of ${data.start}` : 'since each position was opened'}</span>}
       </div>
-      <p className="text-xs text-slate-500">
-        Securities use the P&amp;L report's Market / FX split (Reports → Inv. Performance → P&amp;L → Show Market / FX Split): the FX part is
-        the value change caused by {detail.code} moving against {detail.storage_base}, the market part the price change in {detail.code}.
-        Cash is today's {detail.code} balance revalued at the same rate change — an estimate that assumes the balance stayed the same.
-        Amounts are shown in {rc}.
-      </p>
 
-      <div>
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Securities quoted in {detail.code}</p>
-        {rows.length === 0 ? <p className="text-sm text-slate-400">No P&amp;L this year from securities quoted in {detail.code}.</p> : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 border-b border-slate-200">
-                <th className={`${th} text-left`}>Security</th>
-                <th className={`${th} text-left`}>Account</th>
-                <th className={`${th} text-right`}>DTD Market</th>
-                <th className={`${th} text-right`}>DTD FX</th>
-                <th className={`${th} text-right`}>YTD Market</th>
-                <th className={`${th} text-right`}>YTD FX</th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map(r => (
-                  <tr key={`${r.securities_id}-${r.accounts_id}`} className="hover:bg-slate-50">
-                    <td className="px-3 py-2">
-                      <button onClick={() => navigate(`/securities/${r.securities_id}`)} className="text-blue-600 hover:underline text-left">{r.name}</button>
-                    </td>
-                    <td className="px-3 py-2 text-slate-500">{r.account}</td>
-                    {cell(r.dtd_mkt)}{cell(r.dtd_fx)}{cell(r.ytd_mkt)}{cell(r.ytd_fx)}
-                  </tr>
-                ))}
-                <tr className="font-semibold bg-slate-50">
-                  <td className="px-3 py-2" colSpan={2}>Total</td>
-                  {cell(sum('dtd_mkt'))}{cell(sum('dtd_fx'))}{cell(sum('ytd_mkt'))}{cell(sum('ytd_fx'))}
-                </tr>
-              </tbody>
-            </table>
+      {isLoading || !data ? <div className="flex justify-center py-12"><Spinner /></div> : (<>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <StatCard label={`FX effect — ${period}`} value={fmtEur(fxTotal)} color={signColor(fxTotal)}
+            subs={[{ text: `Securities ${fmtEur(realizedFx + unrealizedFx)}` }, { text: `Cash ${cash != null ? fmtEur(cash) : '—'}` }]} />
+          <StatCard label="Realized FX" value={fmtEur(realizedFx)} color={signColor(realizedFx)} sub="on units sold in the period" />
+          <StatCard label="Unrealized FX" value={fmtEur(unrealizedFx)} color={signColor(unrealizedFx)} sub="on units still held" />
+          <StatCard label="Market effect" value={fmtEur(market)} color={signColor(market)}
+            sub={`price moves in ${detail.code} (realized + unrealized)`} />
+          <StatCard label="Income" value={fmtEur(sum(positions, 'income'))} sub="dividends & interest received" />
+        </div>
+        <p className="text-xs text-slate-500">
+          Per position, average cost is carried in {detail.code} and in {detail.storage_base}, starting from the position's value at the start of
+          the period (for All, from its real cost). <b>Realized</b> covers units sold in the period: proceeds minus average cost. <b>Unrealized</b>{' '}
+          covers units still held: today's value minus remaining cost. The <b>market</b> part is the gain in {detail.code} converted at the rate
+          of the day; the <b>FX</b> part is the rest — the effect of {detail.code} moving against {detail.storage_base}. Transfers between accounts
+          move units at cost without realizing a gain; splits only change the unit count. Cash is today's {detail.code} balance revalued at the
+          rate change over the period, an estimate that assumes the balance stayed the same (none for All). Amounts are shown in {rc}.
+        </p>
+
+        <div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities quoted in {detail.code}</p>
+            <div className="flex gap-1">
+              {([['all', 'All'], ['open', 'Open'], ['closed', 'Closed']] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setFilter(k)}
+                  className={`px-2.5 py-1 rounded text-xs font-medium ${filter === k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {lbl} ({k === 'all' ? positions.length : positions.filter(p => p.status === k).length})
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
+          {rows.length === 0 ? <p className="text-sm text-slate-400">No {filter === 'all' ? '' : `${filter} `}positions in {detail.code} with P&amp;L in this period.</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className={`${th} text-left`} rowSpan={2}>Security</th>
+                    <th className={`${th} text-left`} rowSpan={2}>Account</th>
+                    <th className={`${th} text-left`} rowSpan={2}>Status</th>
+                    <th className={`${th} text-center border-l border-slate-200`} colSpan={2}>Realized</th>
+                    <th className={`${th} text-center border-l border-slate-200`} colSpan={2}>Unrealized</th>
+                    <th className={`${th} text-right border-l border-slate-200`} rowSpan={2}>Income</th>
+                    <th className={`${th} text-right`} rowSpan={2}>Total</th>
+                  </tr>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className={`${th} text-right border-l border-slate-200`}>Market</th>
+                    <th className={`${th} text-right`}>FX</th>
+                    <th className={`${th} text-right border-l border-slate-200`}>Market</th>
+                    <th className={`${th} text-right`}>FX</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map(r => (
+                    <tr key={`${r.securities_id}-${r.accounts_id}`} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <button onClick={() => navigate(`/securities/${r.securities_id}`)} className="text-blue-600 hover:underline text-left">{r.name}</button>
+                        {r.from_cost && <Tooltip text="No price or rate at the start of the period, so this position is measured from its real cost instead."><span className="ml-1 text-amber-600">*</span></Tooltip>}
+                      </td>
+                      <td className="px-3 py-2 text-slate-500"><AccountLink id={r.accounts_id} name={r.account} type={r.account_type} /></td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${r.status === 'open' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {r.status === 'open' ? 'Open' : 'Closed'}
+                        </span>
+                      </td>
+                      {cell(r.realized_market)}{cell(r.realized_fx)}{cell(r.unrealized_market)}{cell(r.unrealized_fx)}{cell(r.income)}{cell(total(r), true)}
+                    </tr>
+                  ))}
+                  <tr className="font-semibold bg-slate-50">
+                    <td className="px-3 py-2" colSpan={3}>Total</td>
+                    {cell(sum(rows, 'realized_market'), true)}{cell(sum(rows, 'realized_fx'), true)}{cell(sum(rows, 'unrealized_market'), true)}
+                    {cell(sum(rows, 'unrealized_fx'), true)}{cell(sum(rows, 'income'), true)}{cell(rows.reduce((s, r) => s + total(r), 0), true)}
+                  </tr>
+                </tbody>
+              </table>
+              {anyFromCost && <p className="text-xs text-amber-600 mt-1">* No price or rate at the start of the period — measured from real cost.</p>}
+            </div>
+          )}
+        </div>
 
-      <div>
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Cash in {detail.code}</p>
-        <table className="text-sm">
-          <tbody>
-            <tr className="border-b border-slate-100"><td className="py-1.5 pr-6">Balance today</td><td className="py-1.5 text-right tabular-nums">{fmtNum(detail.exposure.cash_native, 2)} {detail.code}</td></tr>
-            <tr className="border-b border-slate-100"><td className="py-1.5 pr-6">FX effect today (DTD)</td><td className={`py-1.5 text-right tabular-nums ${signColor(cash['1D'])}`}>{cash['1D'] != null ? fmtEur(cash['1D']) : '—'}</td></tr>
-            <tr><td className="py-1.5 pr-6">FX effect year to date</td><td className={`py-1.5 text-right tabular-nums ${signColor(cash.YTD)}`}>{cash.YTD != null ? fmtEur(cash.YTD) : '—'}</td></tr>
-          </tbody>
-        </table>
-      </div>
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Cash in {detail.code}</p>
+          <table className="text-sm">
+            <tbody>
+              <tr className="border-b border-slate-100"><td className="py-1.5 pr-6">Balance today</td><td className="py-1.5 text-right tabular-nums">{fmtNum(data.cash_balance, 2)} {detail.code}</td></tr>
+              <tr><td className="py-1.5 pr-6">FX effect — {period}</td><td className={`py-1.5 text-right tabular-nums ${signColor(cash)}`}>{cash != null ? fmtEur(cash) : '—'}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </>)}
     </div>
   )
 }

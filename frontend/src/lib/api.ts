@@ -362,6 +362,18 @@ export const getCurrencyHistory = (currencyId: number, quote?: string, fromDate 
   api.get(`/market-data/currencies/${currencyId}/history`, { params: { quote, from_date: fromDate } })
     .then(r => r.data as { date: string; rate: number }[])
 
+export const FX_EFFECT_PERIODS = ['DTD', 'WTD', 'MTD', 'QTD', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
+export type FxEffectPeriod = typeof FX_EFFECT_PERIODS[number]
+export type FxEffectPosition = {
+  accounts_id: number; account: string; account_type: string; securities_id: number; name: string; ticker: string | null
+  status: 'open' | 'closed'; quantity: number; value_eur: number
+  realized_market: number; realized_fx: number; unrealized_market: number; unrealized_fx: number; income: number
+  from_cost: boolean
+}
+export const getCurrencyFxEffect = (currencyId: number, period: FxEffectPeriod) =>
+  api.get(`/market-data/currencies/${currencyId}/fx-effect`, { params: { period } })
+    .then(r => r.data as { period: string; start: string | null; positions: FxEffectPosition[]; cash_balance: number; cash_fx: number | null })
+
 export type CurrencyDetail = {
   id: number; code: string; name: string
   storage_base: string; is_storage_base: boolean; quote: string; is_quote: boolean

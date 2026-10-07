@@ -126,6 +126,38 @@ def get_currency_history(cid: int, quote: Optional[str] = Query(None), from_date
     return [{"date": str(d), "rate": round(float(v), 10)} for d, v in series.items()]
 
 
+@router.get("/currencies/{cid}/fx-effect")
+def get_currency_fx_effect(cid: int, period: str = Query("YTD")):
+    """Currency effect on P&L over a period (DTD, WTD, MTD, QTD, YTD, 1Y, 3Y, 5Y, All).
+
+    Securities quoted in the currency: per account/security, realized and unrealized
+    P&L each split into market and FX parts, plus income — see database/fx_effect.py
+    for the method. Cash: today's active cash-side balances in the currency revalued
+    at the rate change over the period (an estimate assuming the balance didn't
+    change; none for "All", which has no starting rate). All amounts in EUR, the
+    storage base the split is measured against."""
+    from database import fx_effect
+    if period not in fx_effect.PERIODS:
+        raise HTTPException(400, f"period must be one of {', '.join(fx_effect.PERIODS)}")
+    today = date.today()
+    with get_db() as conn:
+        result = fx_effect.compute(conn, cid, period, today)
+        base_id = _storage_base_id(conn)
+        stored = _stored_rates(conn, cid) if cid != base_id else pd.Series(dtype=float)
+        cash = pd.read_sql("""
+            SELECT COALESCE(SUM(Accounts_Balance), 0)::float AS bal FROM Accounts
+            WHERE Is_Active = TRUE AND Accounts_Type NOT IN ('Brokerage','Margin') AND Currencies_Id = %(cid)s
+        """, conn, params={"cid": cid})
+    balance = float(cash["bal"].iloc[0])
+    start = fx_effect.period_start(period, today)
+    cash_fx = 0.0 if cid == base_id else None
+    if cid != base_id and not stored.empty and start is not None:
+        before = stored[[d <= start for d in stored.index]]
+        if not before.empty:
+            cash_fx = round(balance * (float(stored.iloc[-1]) - float(before.iloc[-1])), 2)
+    return {**result, "cash_balance": round(balance, 2), "cash_fx": cash_fx}
+
+
 @router.get("/currencies/{cid}/detail")
 def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
     """Everything Currency Detail's Overview/Exposure/FX Effect tabs show for one currency.
