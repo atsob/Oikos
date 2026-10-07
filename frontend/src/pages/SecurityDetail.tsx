@@ -198,7 +198,7 @@ function PricesTab({ secId }: { secId: number }) {
 
   const addMut = useMutation({
     mutationFn: addPrice,
-    onSuccess: () => { setMsg('Saved.'); qc.invalidateQueries({ queryKey: ['price-history', secId] }); setEntryValue('') },
+    onSuccess: () => { setMsg('Saved.'); qc.invalidateQueries({ queryKey: ['price-history', secId] }); qc.invalidateQueries({ queryKey: ['securities'] }); setEntryValue('') },
     onError: (e: Error) => setMsg(`Error: ${e.message}`),
   })
   const delMut = useMutation({
