@@ -353,6 +353,25 @@ export const getPriceHistory = (securityId: number, fromDate = '2020-01-01') =>
 export const getPriceAnomalies = (thresholdPct = 100) =>
   api.get('/market-data/price-anomalies', { params: { threshold_pct: thresholdPct } }).then(r => r.data)
 
+export const getCurrencyDetail = (currencyId: number) =>
+  api.get(`/market-data/currencies/${currencyId}/detail`).then(r => r.data as CurrencyDetail)
+
+export type CurrencyDetail = {
+  id: number; code: string; name: string; is_base: boolean
+  latest_rate: number | null; rate_date: string | null; price_records: number
+  changes: Partial<Record<'1D' | '1M' | 'YTD' | '1Y', number | null>>
+  interest_rates: { id: number; code: string; name: string; rate_type: string; date: string | null; rate_pct: number | null }[]
+  exposure: {
+    cash_native: number; cash_eur: number; securities_native: number; securities_eur: number
+    total_native: number; total_eur: number; share_pct: number | null; sensitivity_5pct_eur: number
+  }
+  accounts: { id: number; name: string; type: string; balance: number; balance_eur: number }[]
+  holdings: {
+    securities_id: number; name: string; ticker: string | null; type: string; accounts_id: number; account: string; account_type: string
+    quantity: number; price: number | null; value: number; value_eur: number
+  }[]
+}
+
 export const getFxRates = (currencyId?: number, fromDate = '2020-01-01') =>
   api.get('/market-data/fx-rates', { params: { currency_id: currencyId, from_date: fromDate } }).then(r => r.data)
 

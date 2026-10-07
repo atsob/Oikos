@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, List
 from pydantic import BaseModel
 import math
+from datetime import date, timedelta
 import pandas as pd
 from database.connection import get_db
 
@@ -60,6 +61,131 @@ def get_fx_rates(
             ORDER BY hfx.Date ASC, c.Currencies_ShortName ASC
         """, conn, params=params)
     return _df(df)
+
+
+@router.get("/currencies/{cid}/detail")
+def get_currency_detail(cid: int):
+    """Everything Currency Detail's Overview/Exposure tabs show for one currency: its
+    latest rate vs EUR and how that rate moved (1D/1M/YTD/1Y), the interest-rate series
+    defined for it, and your exposure to it — cash-side accounts and held securities
+    quoted in it. Exposure uses the same definition as Reports → Inv. Portfolio → FX
+    Exposure (active non-Brokerage/Margin account balances + holdings at the latest
+    close), so the totals and the % share agree with that report."""
+    with get_db() as conn:
+        cur = pd.read_sql("""
+            SELECT Currencies_Id AS id, Currencies_ShortName AS code, Currencies_Name AS name
+            FROM Currencies WHERE Currencies_Id = %(cid)s
+        """, conn, params={"cid": cid})
+        if cur.empty:
+            raise HTTPException(404, "Currency not found")
+        fx = pd.read_sql("""
+            SELECT Date AS date, FX_Rate::float AS rate FROM Historical_FX
+            WHERE Currencies_Id_1 = %(cid)s ORDER BY Date
+        """, conn, params={"cid": cid})
+        rates = pd.read_sql("""
+            SELECT r.Rate_Series_Id AS id, r.Code AS code, r.Name AS name, r.Rate_Type AS rate_type,
+                   h.Date::text AS date, h.Rate_Pct::float AS rate_pct
+            FROM Rate_Series r
+            LEFT JOIN LATERAL (
+                SELECT Date, Rate_Pct FROM Historical_Rates
+                WHERE Rate_Series_Id = r.Rate_Series_Id ORDER BY Date DESC LIMIT 1
+            ) h ON TRUE
+            WHERE r.Currencies_Id = %(cid)s AND r.Is_Active
+            ORDER BY r.Sort_Order, r.Code
+        """, conn, params={"cid": cid})
+        accounts = pd.read_sql("""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC)
+            SELECT a.Accounts_Id AS id, a.Accounts_Name AS name, a.Accounts_Type::text AS type,
+                   a.Accounts_Balance::float AS balance,
+                   (a.Accounts_Balance * COALESCE(fx.FX_Rate, 1))::float AS balance_eur
+            FROM Accounts a LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+            WHERE a.Is_Active = TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin')
+              AND a.Currencies_Id = %(cid)s AND a.Accounts_Balance <> 0
+            ORDER BY ABS(a.Accounts_Balance) DESC
+        """, conn, params={"cid": cid})
+        holdings = pd.read_sql("""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+            prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                       FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+            SELECT s.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+                   s.Securities_Type::text AS type, a.Accounts_Id AS accounts_id, a.Accounts_Name AS account,
+                   a.Accounts_Type::text AS account_type,
+                   h.Quantity::float AS quantity, p.Close::float AS price,
+                   (h.Quantity * COALESCE(p.Close, 0))::float AS value,
+                   (h.Quantity * COALESCE(p.Close, 0) * COALESCE(fx.FX_Rate, 1))::float AS value_eur
+            FROM Holdings h
+            JOIN Securities s ON s.Securities_Id = h.Securities_Id
+            JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
+            LEFT JOIN prices p ON p.Securities_Id = h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+            WHERE h.Quantity > 0 AND s.Currencies_Id = %(cid)s
+            ORDER BY value_eur DESC NULLS LAST
+        """, conn, params={"cid": cid})
+        # Denominator for "% of total": the same exposure summed over every currency.
+        total = pd.read_sql("""
+            WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
+                        FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
+            prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
+                       FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
+            SELECT COALESCE((SELECT SUM(a.Accounts_Balance * COALESCE(fx.FX_Rate, 1))
+                             FROM Accounts a LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
+                             WHERE a.Is_Active = TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin')), 0)
+                 + COALESCE((SELECT SUM(h.Quantity * COALESCE(p.Close, 0) * COALESCE(fx.FX_Rate, 1))
+                             FROM Holdings h JOIN Securities s ON s.Securities_Id = h.Securities_Id
+                             LEFT JOIN prices p ON p.Securities_Id = h.Securities_Id
+                             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+                             WHERE h.Quantity > 0), 0) AS total_eur
+        """, conn)
+
+    if not fx.empty:
+        fx["date"] = pd.to_datetime(fx["date"]).dt.date
+
+    def rate_on_or_before(d) -> Optional[float]:
+        before = fx[fx["date"] <= d]
+        return float(before["rate"].iloc[-1]) if not before.empty else None
+
+    latest_rate = latest_date = None
+    changes: dict = {}
+    if not fx.empty:
+        latest_rate = float(fx["rate"].iloc[-1])
+        last = fx["date"].iloc[-1]
+        latest_date = str(last)
+        prev = float(fx["rate"].iloc[-2]) if len(fx) > 1 else None
+        # YTD measures from the last rate of the previous year (the year-end close).
+        refs = {
+            "1D": prev,
+            "1M": rate_on_or_before(last - timedelta(days=30)),
+            "YTD": rate_on_or_before(date(last.year, 1, 1) - timedelta(days=1)),
+            "1Y": rate_on_or_before(last - timedelta(days=365)),
+        }
+        changes = {k: (round((latest_rate / v - 1) * 100, 4) if v else None) for k, v in refs.items()}
+
+    cash_eur = float(accounts["balance_eur"].sum()) if not accounts.empty else 0.0
+    cash_native = float(accounts["balance"].sum()) if not accounts.empty else 0.0
+    sec_eur = float(holdings["value_eur"].sum()) if not holdings.empty else 0.0
+    sec_native = float(holdings["value"].sum()) if not holdings.empty else 0.0
+    total_eur = float(total["total_eur"].iloc[0] or 0)
+    exposure_eur = cash_eur + sec_eur
+    return {
+        **_df(cur)[0],
+        "is_base": cur["code"].iloc[0].strip().upper() == "EUR",
+        "latest_rate": latest_rate,
+        "rate_date": latest_date,
+        "price_records": len(fx),
+        "changes": changes,
+        "interest_rates": _df(rates),
+        "exposure": {
+            "cash_native": round(cash_native, 2), "cash_eur": round(cash_eur, 2),
+            "securities_native": round(sec_native, 2), "securities_eur": round(sec_eur, 2),
+            "total_native": round(cash_native + sec_native, 2), "total_eur": round(exposure_eur, 2),
+            "share_pct": round(exposure_eur / total_eur * 100, 2) if total_eur else None,
+            "sensitivity_5pct_eur": round(exposure_eur * 0.05, 2),
+        },
+        "accounts": _df(accounts),
+        "holdings": _df(holdings),
+    }
 
 
 # ── Securities ────────────────────────────────────────────────────────────────

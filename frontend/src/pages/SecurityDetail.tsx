@@ -36,33 +36,9 @@ import { NewsList } from '@/pages/News'
 import { BenchmarkTab } from '@/pages/Reports'
 import type { NewsItem } from '@/pages/News'
 import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
+import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
+import { PeriodSelector } from '@/components/PeriodSelector'
 
-// ── Shared period helper (mirrors MarketData) ─────────────────────────────────
-const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
-type ChartPeriod = typeof CHART_PERIODS[number]
-
-function periodToFromDate(p: ChartPeriod): string {
-  const now = new Date()
-  if (p === 'All') return '1900-01-01'
-  if (p === 'YTD') return `${now.getFullYear()}-01-01`
-  const months: Record<string, number> = { '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 }
-  const d = new Date(now)
-  d.setMonth(d.getMonth() - months[p])
-  return toLocalISODate(d)
-}
-
-function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p: ChartPeriod) => void }) {
-  return (
-    <div className="flex gap-1">
-      {CHART_PERIODS.map(p => (
-        <button key={p} onClick={() => onChange(p)}
-          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${value === p ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-          {p}
-        </button>
-      ))}
-    </div>
-  )
-}
 
 function fmt(n: unknown, dec = 4) { return fmtNum(n != null ? Number(n) : null, dec) }
 function fmtPctLocal(n: unknown, dec = 2) {
