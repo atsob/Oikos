@@ -789,6 +789,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           breakdown sits on its own line below the P&amp;L %. <b>Market</b> is the window's gain in each security's
           own currency (its value change minus the money put in or taken out, all in that currency), converted at
           today's rate; <b>FX</b> is the rest of the P&amp;L, so Market + FX always equals the P&amp;L figure itself.
+          Each trade, dividend or transfer is converted to EUR at the FX rate of its date — or, on a day with no
+          stored rate (a weekend or holiday), at the last rate before it. For a position sold during the window, the
+          market part here is converted at today's rate, while Currency Detail → FX Effect uses the sale day's rate, so
+          the two can split such a position slightly differently (the P&amp;L is the same).
         </Note>
         <Note>
           <b>P&amp;L</b>'s KPI row and, once you drill into one account, its "Totals:" row both carry a{' '}
@@ -1506,7 +1510,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>Theme</H3>
         <P>Light / System / Dark, switchable at the bottom of the sidebar.</P>
         <H3>Currency</H3>
-        <P>All figures are converted to a single reporting currency (EUR by default) using historical FX rates as of each date, so historical comparisons stay meaningful even if you hold multi-currency accounts.</P>
+        <P>All figures are converted to a single reporting currency (EUR by default) using historical FX rates as of each date (the last stored rate before it on a day without one), so historical comparisons stay meaningful even if you hold multi-currency accounts.</P>
         <H3>Persisted filters</H3>
         <P>
           Most report filters (date range, grouping, account selection, tab choice) are remembered server-side,
