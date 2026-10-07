@@ -1110,10 +1110,15 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           having no stored rates of its own, has no Prices tab. <b>Exposure</b> lists the active accounts holding the
           currency and the securities quoted in it, linking to each — the same definition as the FX Exposure report
           (cash in Brokerage/Margin accounts isn't counted), but always over all accounts. <b>FX Effect</b> shows how
-          much of your P&amp;L came from the currency moving: for securities quoted in it, the DTD and YTD Market / FX
-          split of the P&amp;L report (Inv. Performance → P&amp;L → Show Market / FX Split), and for cash in it, today's
-          balance revalued at the rate change (an estimate assuming the balance didn't change). Both are measured
-          against EUR, as the P&amp;L report is.
+          much of your P&amp;L came from the currency moving, over a period you choose (DTD, WTD, MTD, QTD, YTD, 1Y,
+          3Y, 5Y, All). For each account/security quoted in the currency it splits the P&amp;L into <b>realized</b>{' '}
+          (units sold in the period) and <b>unrealized</b> (units still held), each into a <b>market</b> part (the price
+          move in the currency) and an <b>FX</b> part (the currency's move against EUR), plus income — with an
+          Open / Closed filter. Average cost is carried per position in the currency and in EUR, starting from the
+          position's value at the start of the period (for All, its real cost); transfers between accounts move units
+          at cost and splits only change the unit count. A position held at the start but with no price or rate that
+          early is measured from its real cost and marked *. Cash in the currency is today's balance revalued at the
+          rate change over the period (an estimate assuming the balance didn't change).
         </Note>
         <Note>
           The <b>Securities</b> search box matches any text field — name, ticker, ISIN, Yahoo/TradingView symbols,
