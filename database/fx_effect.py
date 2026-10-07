@@ -128,6 +128,29 @@ def compute(conn, cid: int, period: str, today: Optional[date] = None) -> dict:
         return {"period": period, "start": str(start) if start else None, "positions": []}
     txns["date"] = pd.to_datetime(txns["date"]).dt.date
 
+    # Saxo occasionally merges several open tax lots into one by booking a same-day Sell
+    # immediately followed by a Buy of the identical quantity, with no amount recorded on
+    # either leg (see crud.update_holdings / reports._compute_lot_gains). That is a
+    # bookkeeping merge, not a trade: counting it would invent a realised gain and a fresh
+    # cost basis, so both legs are dropped here as everywhere else.
+    drop = set()
+    for _, g in txns.groupby(["accounts_id", "securities_id"], sort=False):
+        rows = list(g.itertuples(index=False))
+        for a, b in zip(rows, rows[1:]):
+            if (a.action == "Sell" and b.action == "Buy" and a.date == b.date
+                    and abs((a.qty or 0) - (b.qty or 0)) < 1e-9
+                    and pd.isna(a.amt_acc) and pd.isna(a.amt_sec) and pd.isna(b.amt_acc) and pd.isna(b.amt_sec)):
+                drop.update((a.iid, b.iid))
+    if drop:
+        txns = txns[~txns["iid"].isin(drop)]
+        if txns.empty:
+            return {"period": period, "start": str(start) if start else None, "positions": []}
+
+    # NULL numbers arrive as NaN, which is truthy and survives `or 0` — it then poisons every
+    # sum it touches and the response cannot be serialised as JSON. Make them real Nones.
+    for col in ("qty", "price", "commission", "amt_acc", "amt_sec", "booked_fx"):
+        txns[col] = txns[col].astype(object).where(txns[col].notna(), None)
+
     sec_ids = sorted(int(x) for x in txns["securities_id"].unique())
     cur_ids = sorted({int(cid)} | {int(x) for x in txns["acc_cur"].unique()})
     prices = _series(pd.read_sql(

@@ -635,12 +635,17 @@ export function ColumnsMenu({ columns, onToggle }: {
 // text, which Excel/Sheets paste back into cells/columns rather than one text blob.
 // For a grid using an infinite/server-side row model, this only copies whichever
 // rows have been scrolled into view and loaded client-side, not the full server dataset.
-export function CopyToExcelButton({ gridApi }: { gridApi: GridApi | null }) {
+export function CopyToExcelButton({ gridApi, getRows }: {
+  gridApi?: GridApi | null
+  // For a table that isn't an ag-Grid: the rows to copy, already formatted the way the page shows them.
+  getRows?: () => (string | number | null | undefined)[][]
+}) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
 
   const handleCopy = async () => {
-    if (!gridApi) return
-    const tsv = gridApi.getDataAsCsv({ columnSeparator: '\t' })
+    const tsv = getRows
+      ? getRows().map(r => r.map(c => String(c ?? '').replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n')
+      : gridApi?.getDataAsCsv({ columnSeparator: '\t' })
     if (!tsv) return
     try {
       await navigator.clipboard.writeText(tsv)
@@ -652,7 +657,7 @@ export function CopyToExcelButton({ gridApi }: { gridApi: GridApi | null }) {
   }
 
   return (
-    <button onClick={handleCopy} disabled={!gridApi}
+    <button onClick={handleCopy} disabled={!getRows && !gridApi}
       className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed">
       {status === 'copied' ? <><Check size={13} /> Copied</>
         : status === 'failed' ? <><X size={13} /> Copy failed</>

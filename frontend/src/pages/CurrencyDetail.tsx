@@ -10,7 +10,8 @@ import { ArrowLeft, Plus, Trash2, Search } from 'lucide-react'
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, AccountLink, Tooltip,
 } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal } from '@/lib/utils'
+import { plotLayout, plotAxis, fmt, fmtNum, fmtPct, fmtEur, todayLocal } from '@/lib/utils'
+import { getReportingFx } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
 import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
 import type { CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosition } from '@/lib/api'
@@ -442,6 +443,17 @@ function PricesTab({ curId, code, base }: { curId: number; code: string; base: s
   )
 }
 
+// ── Copy to Excel ────────────────────────────────────────────────────────────
+// Amounts come from the API in the storage base (EUR); the screen shows them in the reporting
+// currency (fmtEur). Copies use the same conversion and the same separators, minus the symbol,
+// so a pasted column is plain numbers.
+const rcNum = (v: number | null | undefined) => {
+  if (v == null) return ''
+  const { rate } = getReportingFx()
+  return fmt(rate === 0 ? 0 : Number(v) / rate, 2)
+}
+const nativeNum = (v: number | null | undefined, d = 2) => v == null ? '' : fmtNum(v, d)
+
 // ── Exposure ─────────────────────────────────────────────────────────────────
 
 function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
@@ -458,9 +470,17 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
       </p>
 
       <div>
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Accounts in {code}</p>
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Accounts in {code}</p>
+          {accounts.length > 0 && <CopyToExcelButton getRows={() => [
+              ['Account', 'Type', `Balance (${code})`, `Balance (${rc})`],
+              ...accounts.map(a => [a.name, a.type, nativeNum(a.balance), rcNum(a.balance_eur)]),
+              ['Total', '', nativeNum(ex.cash_native), rcNum(ex.cash_eur)],
+            ]} />}
+        </div>
         {accounts.length === 0 ? <p className="text-sm text-slate-400">No active account with a {code} balance.</p> : (
-          <div className="overflow-x-auto">
+          <div className="space-y-2">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 border-b border-slate-200">
                 <th className={`${th} text-left`}>Account</th>
@@ -484,14 +504,23 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>
 
       <div>
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Securities quoted in {code}</p>
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities quoted in {code}</p>
+          {holdings.length > 0 && <CopyToExcelButton getRows={() => [
+              ['Security', 'Ticker', 'Type', 'Account', 'Quantity', `Price (${code})`, `Value (${code})`, `Value (${rc})`],
+              ...holdings.map(h => [h.name, h.ticker ?? '', h.type, h.account, nativeNum(h.quantity, 4), nativeNum(h.price, 4), nativeNum(h.value), rcNum(h.value_eur)]),
+              ['Total', '', '', '', '', '', nativeNum(ex.securities_native), rcNum(ex.securities_eur)],
+            ]} />}
+        </div>
         {holdings.length === 0 ? <p className="text-sm text-slate-400">No held security is quoted in {code}.</p> : (
-          <div className="overflow-x-auto">
+          <div className="space-y-2">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-slate-50 border-b border-slate-200">
                 <th className={`${th} text-left`}>Security</th>
@@ -524,6 +553,7 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>
@@ -546,7 +576,7 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
   const [{ reportingCurrency: rc }] = useSettings()
   const [period, setPeriod] = usePersist<FxEffectPeriod>('cur_fx_effect_period', 'YTD')
   const [filter, setFilter] = usePersist<FxFilter>('cur_fx_effect_filter', 'all')
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['currency-fx-effect', detail.id, period],
     queryFn: () => getCurrencyFxEffect(detail.id, period),
     enabled: !detail.is_storage_base,
@@ -590,7 +620,9 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
         {data && <span className="text-xs text-slate-400">{data.start ? `since the close of ${data.start}` : 'since each position was opened'}</span>}
       </div>
 
-      {isLoading || !data ? <div className="flex justify-center py-12"><Spinner /></div> : (<>
+      {error ? (
+        <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">Couldn't load the FX effect: {(error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ?? (error as Error).message}</p>
+      ) : isLoading || !data ? <div className="flex justify-center py-12"><Spinner /></div> : (<>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <StatCard label={`FX effect — ${period}`} value={fmtEur(fxTotal)} color={signColor(fxTotal)}
             subs={[{ text: `Securities ${fmtEur(realizedFx + unrealizedFx)}` }, { text: `Cash ${cash != null ? fmtEur(cash) : '—'}` }]} />
@@ -619,10 +651,23 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
                   {lbl} ({k === 'all' ? positions.length : positions.filter(p => p.status === k).length})
                 </button>
               ))}
+              <span className="w-2" />
+              <CopyToExcelButton getRows={() => [
+                ['Security', 'Account', 'Status', 'Realized — Market', 'Realized — FX', 'Unrealized — Market', 'Unrealized — FX', 'Income', 'Total'],
+                ...rows.map(r => [r.name + (r.from_cost ? ' *' : ''), r.account, r.status === 'open' ? 'Open' : 'Closed',
+                  rcNum(r.realized_market), rcNum(r.realized_fx), rcNum(r.unrealized_market), rcNum(r.unrealized_fx), rcNum(r.income), rcNum(total(r))]),
+                ['Total', '', '', rcNum(sum(rows, 'realized_market')), rcNum(sum(rows, 'realized_fx')), rcNum(sum(rows, 'unrealized_market')),
+                  rcNum(sum(rows, 'unrealized_fx')), rcNum(sum(rows, 'income')), rcNum(rows.reduce((s2, r) => s2 + total(r), 0))],
+                [],
+                [`Cash in ${detail.code}`],
+                ['Balance today', `${nativeNum(data.cash_balance)} ${detail.code}`],
+                [`FX effect — ${period}`, cash != null ? rcNum(cash) : ''],
+              ]} />
             </div>
           </div>
           {rows.length === 0 ? <p className="text-sm text-slate-400">No {filter === 'all' ? '' : `${filter} `}positions in {detail.code} with P&amp;L in this period.</p> : (
-            <div className="overflow-x-auto">
+            <div className="space-y-2">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50">
@@ -664,6 +709,7 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
                   </tr>
                 </tbody>
               </table>
+              </div>
               {anyFromCost && <p className="text-xs text-amber-600 mt-1">* No price or rate at the start of the period — measured from real cost.</p>}
             </div>
           )}
