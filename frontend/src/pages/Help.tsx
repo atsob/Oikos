@@ -1096,7 +1096,19 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in nine tabs: Currencies, Securities, Rates, FX Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <P>Reference and price data, in eight tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <Note>
+          Clicking a currency's name on the <b>Currencies</b> tab (or a currency code in Reports → Inv. Portfolio →{' '}
+          <b>FX Exposure</b>) opens its <b>Currency Detail</b> page, with a selector to switch currency. <b>Overview</b>{' '}
+          shows the rate vs EUR (and its inverse) with its 1D / 1M / YTD / 1Y change, your exposure to the currency in
+          that currency and in EUR, its share of your exposure across all currencies, the effect of a 5% move, the
+          interest-rate series defined for it under Rates, and a rate chart. <b>Prices</b> holds the currency's stored
+          rates (EUR per 1 unit): chart, table with multi-row delete, <b>Import from File</b> and <b>Manual Entry</b> —
+          this replaces the former Market Data → FX Prices tab. <b>Exposure</b> lists the active accounts holding the
+          currency and the securities quoted in it, linking to each. Exposure uses the same definition as the FX
+          Exposure report (cash in Brokerage/Margin accounts isn't counted) but always covers all accounts, not the
+          selected account preset. The euro, as the base currency, has no Prices tab.
+        </Note>
         <Note>
           The <b>Securities</b> search box matches any text field — name, ticker, ISIN, Yahoo/TradingView symbols,
           exchange, type, sector, industry, tax category, currency, analyst rating and dividend/coupon frequency —

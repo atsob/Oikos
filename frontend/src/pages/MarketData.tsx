@@ -7,9 +7,9 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getFxRates, getPriceAnomalies, refreshFx, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
+import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
-import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
 import { SecurityFormFields, EMPTY_SECURITY_FORM } from '@/components/SecurityForm'
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'Rates', 'FX Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'Rates', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -335,6 +335,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
 // ── Currencies CRUD tab ───────────────────────────────────────────────────────
 function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -398,7 +399,13 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
   const colDefs = useMemo(() => {
     const cols: ColDef[] = [
       { field: 'code', headerName: 'Code', width: 90, cellStyle: { fontFamily: 'monospace', fontWeight: 600 } },
-      { field: 'name', headerName: 'Currency', flex: 2 },
+      {
+        field: 'name', headerName: 'Currency', flex: 2,
+        cellRenderer: (p: { data: Record<string, unknown>; value: unknown }) => (
+          <button onClick={() => navigate(`/currencies/${p.data.id}`)}
+            className="text-blue-600 hover:underline text-left">{String(p.value ?? '')}</button>
+        ),
+      },
       { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
       { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
       { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
@@ -473,275 +480,6 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
       )}
-    </div>
-  )
-}
-
-// ── Shared period helper ──────────────────────────────────────────────────────
-const CHART_PERIODS = ['3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'All'] as const
-type ChartPeriod = typeof CHART_PERIODS[number]
-
-function periodToFromDate(p: ChartPeriod): string {
-  const now = new Date()
-  if (p === 'All') return '1900-01-01'
-  if (p === 'YTD') return `${now.getFullYear()}-01-01`
-  const months: Record<string, number> = { '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 }
-  const d = new Date(now)
-  d.setMonth(d.getMonth() - months[p])
-  return toLocalISODate(d)
-}
-
-function PeriodSelector({ value, onChange }: { value: ChartPeriod; onChange: (p: ChartPeriod) => void }) {
-  return (
-    <div className="flex gap-1">
-      {CHART_PERIODS.map(p => (
-        <button key={p} onClick={() => onChange(p)}
-          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${value === p ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-          {p}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// ── FX Prices tab: history chart + manual entry ───────────────────────────────
-const FX_PRICES_COLS = [
-  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-  { field: 'date', headerName: 'Date', width: 130, sort: 'desc' as const },
-  { field: 'rate', headerName: 'Rate vs EUR', flex: 1, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 6) : '' },
-]
-
-function FxPricesTab() {
-  const gridCols = useGridColumnState('market-data-fx-prices', FX_PRICES_COLS)
-  const gridScroll = useGridScrollState('market-data-fx-prices')
-  const gridFilter = useGridFilterState('market-data-fx-prices')
-  const { gridApi, onGridReady } = useGridApi(api => {
-    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
-  })
-  const { isDark } = useTheme()
-  const qc = useQueryClient()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const [curId, setCurId] = useState<number | null>(null)
-  const [period, setPeriod] = useState<ChartPeriod>('All')
-  const fromDate = periodToFromDate(period)
-  const [fxSearch, setFxSearch] = useState('')
-  const [selectedDates, setSelectedDates] = useState<string[]>([])
-  const [action, setAction] = useState<'save' | 'delete'>('save')
-  const [entryDate, setEntryDate] = useState(todayLocal())
-  const [entryValue, setEntryValue] = useState('')
-  const [msg, setMsg] = useState<string | null>(null)
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importConflict, setImportConflict] = useState<'skip' | 'overwrite'>('skip')
-  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
-  const { data: history = [], isLoading } = useQuery({
-    queryKey: ['fx-history', curId, fromDate],
-    queryFn: () => getFxRates(curId!, fromDate),
-    enabled: !!curId,
-    refetchInterval: liveRefetchMs,
-  })
-
-  const rows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
-
-  const importMut = useMutation({
-    mutationFn: () => importFxFromFile(importFile!, curId!, importConflict),
-    onSuccess: (d) => {
-      setImportMsg({ ok: true, text: `Imported ${d.inserted} row(s) — ${d.skipped} skipped (${d.total_rows} total in file).` })
-      qc.invalidateQueries({ queryKey: ['fx-history'] })
-      qc.invalidateQueries({ queryKey: ['currencies'] })
-    },
-    onError: (e: { response?: { data?: { detail?: unknown } } }) => {
-      const d = e.response?.data?.detail
-      const text = Array.isArray(d) ? (d as { msg?: string }[]).map(x => x.msg ?? String(x)).join('; ') : (typeof d === 'string' ? d : 'Import failed')
-      setImportMsg({ ok: false, text })
-    },
-  })
-
-  const addFxMut = useMutation({
-    mutationFn: addFxRate,
-    onSuccess: () => { setMsg('FX rate saved.'); qc.invalidateQueries({ queryKey: ['fx-history'] }); qc.invalidateQueries({ queryKey: ['currencies'] }); setEntryValue('') },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
-  })
-  const delFxMut = useMutation({
-    mutationFn: ({ cid, d }: { cid: number; d: string }) => deleteFxRate(cid, d),
-    onSuccess: () => { setMsg('FX rate deleted.'); qc.invalidateQueries({ queryKey: ['fx-history'] }) },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
-  })
-
-  const handleSubmit = () => {
-    if (!curId || !entryDate) return
-    setMsg(null)
-    if (action === 'delete') delFxMut.mutate({ cid: curId, d: entryDate })
-    else { if (!entryValue) return; addFxMut.mutate({ currency_id: curId, date: entryDate, rate: Number(entryValue) }) }
-  }
-
-  const deleteSelected = async () => {
-    if (!curId) return
-    const dates = [...selectedDates]
-    setMsg(null)
-    for (const d of dates) await deleteFxRate(curId, d)
-    setSelectedDates([])
-    qc.invalidateQueries({ queryKey: ['fx-history'] })
-    setMsg(`Deleted ${dates.length} record(s).`)
-  }
-
-  const isPending = addFxMut.isPending || delFxMut.isPending
-
-  return (
-    <div className="p-4 space-y-5">
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <label className="text-xs font-medium text-slate-500 block mb-1">Currency</label>
-          <select className="w-64 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            value={curId ?? ''} onChange={e => { setCurId(Number(e.target.value) || null); setMsg(null); setSelectedDates([]) }}>
-            <option value="">— Select currency —</option>
-            {(currencies as Record<string,unknown>[]).map(c => (
-              <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-slate-500 block mb-1">Period</label>
-          <div className="flex items-center gap-3">
-            <PeriodSelector value={period} onChange={setPeriod} />
-            {(() => {
-              const h = history as Record<string,unknown>[]
-              if (h.length < 2) return null
-              const first = Number(h[0].rate), last = Number(h[h.length - 1].rate)
-              if (!first) return null
-              const pct = ((last - first) / first) * 100
-              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{fmtPct(pct, 2)}</span>
-            })()}
-          </div>
-        </div>
-      </div>
-
-      {!curId ? (
-        <p className="text-sm text-slate-400">Select a currency to view FX rate history</p>
-      ) : isLoading ? (
-        <div className="flex justify-center py-12"><Spinner /></div>
-      ) : (
-        <div className="space-y-4">
-          <Plot
-            data={[{
-              x: (history as Record<string,unknown>[]).map(r => r.date),
-              y: (history as Record<string,unknown>[]).map(r => r.rate),
-              type: 'scatter', mode: 'lines',
-              line: { color: '#10b981', width: 1.5 },
-              name: 'FX Rate vs EUR',
-            }]}
-            layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f' }), hovermode: 'x unified', ...plotLayout(isDark) }}
-            config={{ displayModeBar: true, responsive: true }}
-            style={{ width: '100%' }}
-          />
-          <div className="flex items-center justify-between gap-3 mb-1">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={fxSearch} onChange={e => setFxSearch(e.target.value)} />
-            </div>
-            <div className="flex items-center gap-2">
-              {selectedDates.length > 0 && (
-                <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
-                  <Trash2 size={13} /> Delete {selectedDates.length} selected
-                </Button>
-              )}
-              {gridFilter.hasFilters && (
-                <button onClick={() => gridFilter.clearFilters(gridApi)}
-                  className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
-                  ✕ Clear Filters
-                </button>
-              )}
-              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
-              <CopyToExcelButton gridApi={gridApi} />
-            </div>
-          </div>
-          <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
-            <AgGridReact
-              theme="legacy"
-              onGridReady={onGridReady}
-              rowData={rows}
-              quickFilterText={fxSearch}
-              rowSelection="multiple"
-              onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
-              initialState={gridScroll.initialState}
-              onStateUpdated={gridScroll.onStateUpdated}
-              onFilterChanged={gridFilter.onFilterChanged}
-              onColumnMoved={gridCols.onColumnMoved}
-              onColumnResized={gridCols.onColumnResized}
-              columnDefs={gridCols.colDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="border-t border-slate-200 pt-4">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Import from File</p>
-        <p className="text-xs text-slate-500 mb-3">
-          Upload a tab-separated <code className="bg-slate-100 px-1 rounded">.txt</code> / <code className="bg-slate-100 px-1 rounded">.csv</code> / <code className="bg-slate-100 px-1 rounded">.tsv</code> file.
-          Expected columns: <code className="bg-slate-100 px-1 rounded">Date</code> and <code className="bg-slate-100 px-1 rounded">Rate</code> (or Close). Select a currency above first.
-        </p>
-        <div className="flex flex-wrap gap-4 items-end">
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">File</label>
-            <label className="cursor-pointer flex items-center gap-2">
-              <span className="px-3 py-1.5 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 transition-colors">⬆ Choose file</span>
-              <span className="text-xs text-slate-500">{importFile ? importFile.name : 'TXT, CSV, TSV'}</span>
-              <input type="file" accept=".txt,.csv,.tsv" className="hidden"
-                onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportMsg(null) }} />
-            </label>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">If date exists</label>
-            <div className="flex gap-3">
-              {(['skip', 'overwrite'] as const).map(v => (
-                <label key={v} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input type="radio" name="fxImportConflict" value={v} checked={importConflict === v} onChange={() => setImportConflict(v)} />
-                  {v === 'skip' ? 'Skip' : 'Overwrite'}
-                </label>
-              ))}
-            </div>
-          </div>
-          <Button variant="primary" disabled={!importFile || !curId || importMut.isPending}
-            onClick={() => { setImportMsg(null); importMut.mutate() }}>
-            {importMut.isPending ? <><Spinner size={12} /> Importing…</> : '📂 Import'}
-          </Button>
-          {importMsg && (
-            <span className={`text-xs px-3 py-1.5 rounded ${importMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-              {importMsg.text}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="border-t border-slate-200 pt-4">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Manual Entry</p>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex gap-1">
-            {(['save', 'delete'] as const).map(a => (
-              <button key={a} onClick={() => { setAction(a); setMsg(null) }}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${action === a ? (a === 'delete' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white') : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                {a === 'save' ? 'Save / Upsert' : 'Delete Record'}
-              </button>
-            ))}
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Date</label>
-            <Input type="date" className="w-36" value={entryDate} onChange={e => setEntryDate(e.target.value)} />
-          </div>
-          {action === 'save' && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Rate vs EUR</label>
-              <Input type="number" step="any" className="w-32" value={entryValue} onChange={e => setEntryValue(e.target.value)} placeholder="0.0000" />
-            </div>
-          )}
-          <Button onClick={handleSubmit} disabled={isPending || !curId} variant={action === 'delete' ? 'destructive' : 'primary'}>
-            {action === 'delete' ? <><Trash2 size={14} /> Delete</> : <><Plus size={14} /> Save</>}
-          </Button>
-          {msg && <span className={`text-xs px-3 py-1.5 rounded ${msg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{msg}</span>}
-        </div>
-      </div>
     </div>
   )
 }
@@ -1925,8 +1663,8 @@ function AlertsTab() {
 export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [savedTab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
-  // A tab saved before it was removed (e.g. the old Securities Prices tab, now only
-  // on each Security Detail → Prices) would otherwise open a blank page.
+  // A tab saved before it was removed (e.g. the old Securities Prices / FX Prices tabs,
+  // now on each Security Detail / Currency Detail → Prices) would otherwise open a blank page.
   const tab = TABS.includes(savedTab) ? savedTab : 'Currencies'
   // Deep-link support: "?tab=CAPE Ratios" (used by Dashboard's Market Valuation
   // tile) switches to that tab even when a different one was last persisted —
@@ -1977,7 +1715,6 @@ export default function MarketData() {
           <CardBody className="p-0">
             {tab === 'Currencies' && <CurrenciesTab search={search} onSearchChange={setSearch} />}
             {tab === 'Securities' && <SecuritiesTab search={search} onSearchChange={setSearch} />}
-            {tab === 'FX Prices' && <FxPricesTab />}
             {tab === 'Downloads' && <DownloadsTab />}
             {tab === 'Anomalies' && (
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (

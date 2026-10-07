@@ -38,6 +38,7 @@ import AIAssistant from '@/pages/AIAssistant'
 import Recurring from '@/pages/Recurring'
 import Investments from '@/pages/Investments'
 import SecurityDetail from '@/pages/SecurityDetail'
+import CurrencyDetail from '@/pages/CurrencyDetail'
 import Help from '@/pages/Help'
 import Releases from '@/pages/Releases'
 
@@ -78,6 +79,7 @@ export default function App() {
               <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
               <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
               <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
+              <Route path="currencies/:id" element={<ErrorBoundary><CurrencyDetail /></ErrorBoundary>} />
               <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
               <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
               <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />

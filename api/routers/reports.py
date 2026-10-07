@@ -3801,7 +3801,7 @@ def get_fx_exposure(account_ids: Optional[str] = Query(None)):
         UNION ALL SELECT Currencies_Id, native_exposure FROM inv_exp
     ),
     aggregated AS (SELECT Currencies_Id, SUM(native_exposure) AS native_exposure FROM combined GROUP BY Currencies_Id)
-    SELECT c.Currencies_ShortName AS currency,
+    SELECT c.Currencies_ShortName AS currency, a.Currencies_Id AS currencies_id,
            ROUND(a.native_exposure::numeric,2) AS native_exposure,
            ROUND((a.native_exposure * COALESCE(fx.FX_Rate,1))::numeric,2) AS eur_exposure,
            ROUND((a.native_exposure * COALESCE(fx.FX_Rate,1) * 0.05)::numeric,2) AS sensitivity_5pct_eur

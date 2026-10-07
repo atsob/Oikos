@@ -747,6 +747,7 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
 
 function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
+  const navigate = useNavigate()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
@@ -772,7 +773,11 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
           <tbody>
             {fxSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 font-mono font-medium">{String(r.currency)}</td>
+                <td className="px-2 py-1.5 font-mono font-medium">
+                  {r.currencies_id != null
+                    ? <button onClick={() => navigate(`/currencies/${r.currencies_id}`)} className="text-blue-600 hover:underline">{String(r.currency)}</button>
+                    : String(r.currency)}
+                </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.native_exposure), 2)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.eur_exposure))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-amber-600">{fmtEur(Number(r.sensitivity_5pct_eur))}</td>
