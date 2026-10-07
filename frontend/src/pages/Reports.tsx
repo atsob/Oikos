@@ -2318,15 +2318,15 @@ function PnlReport() {
         <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
         <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`}
           subtitleNode={(showPct && totalPnlPct != null) || (totalMkt != null && totalFx != null) ? (
-            <span className="flex gap-2 tabular-nums flex-wrap">
+            <span className="flex flex-col gap-0.5 tabular-nums">
               {showPct && totalPnlPct != null && (
                 <span className={totalPnlPct >= 0 ? 'text-green-700' : 'text-red-600'}>({totalPnlPct >= 0 ? '+' : ''}{totalPnlPct.toFixed(2)}%)</span>
               )}
               {totalMkt != null && totalFx != null && (
-                <>
+                <span className="flex gap-2 flex-wrap">
                   <span>Mkt: <span className={totalMkt >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalMkt)}</span></span>
                   <span>FX: <span className={totalFx >= 0 ? 'text-green-700' : 'text-red-600'}>{fmtEur(totalFx)}</span></span>
-                </>
+                </span>
               )}
             </span>
           ) : undefined} />

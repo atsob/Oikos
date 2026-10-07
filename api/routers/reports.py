@@ -995,6 +995,13 @@ def get_pnl(
                     (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn') THEN COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close + COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
                           WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut') THEN -COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close - COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
                           ELSE 0 END) ELSE 0 END) AS cf_dtd_eur,
+                -- Same flows in the security's own currency (Total_Amount_AccCur is in the
+                -- account's currency, cf_dtd_eur in EUR): the Market part of the Market / FX
+                -- split below is a local-currency gain, so its flows must be local too.
+                SUM(CASE WHEN i.Date > (SELECT dtd_start FROM periods) THEN
+                    (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn') THEN COALESCE(NULLIF(i.Total_Amount_SecCur, 0), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END, NULLIF(i.Total_Amount_AccCur, 0) / NULLIF(i.FX_Rate, 0), i.Quantity * hist_price.Close + COALESCE(i.Commission, 0))
+                          WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut') THEN -COALESCE(NULLIF(i.Total_Amount_SecCur, 0), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0) END, NULLIF(i.Total_Amount_AccCur, 0) / NULLIF(i.FX_Rate, 0), i.Quantity * hist_price.Close - COALESCE(i.Commission, 0))
+                          ELSE 0 END) ELSE 0 END) AS cf_dtd_sec,
                 SUM(CASE WHEN i.Date > (SELECT wtd_start FROM periods) THEN
                     (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn') THEN COALESCE(NULLIF(i.Total_Amount_AccCur, 0), i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0))
                           WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut') THEN -COALESCE(NULLIF(i.Total_Amount_AccCur, 0), i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0))
@@ -1027,6 +1034,13 @@ def get_pnl(
                     (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn') THEN COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close + COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
                           WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut') THEN -COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close - COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
                           ELSE 0 END) ELSE 0 END) AS cf_ytd_eur,
+                -- Same flows in the security's own currency (Total_Amount_AccCur is in the
+                -- account's currency, cf_ytd_eur in EUR): the Market part of the Market / FX
+                -- split below is a local-currency gain, so its flows must be local too.
+                SUM(CASE WHEN i.Date > (SELECT ytd_start FROM periods) THEN
+                    (CASE WHEN i.Action IN ('Buy', 'MiscExp', 'ShrIn') THEN COALESCE(NULLIF(i.Total_Amount_SecCur, 0), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END, NULLIF(i.Total_Amount_AccCur, 0) / NULLIF(i.FX_Rate, 0), i.Quantity * hist_price.Close + COALESCE(i.Commission, 0))
+                          WHEN i.Action IN ('Sell', 'Dividend', 'IntInc', 'Reinvest', 'RtrnCap', 'ShrOut') THEN -COALESCE(NULLIF(i.Total_Amount_SecCur, 0), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share - COALESCE(i.Commission, 0) END, NULLIF(i.Total_Amount_AccCur, 0) / NULLIF(i.FX_Rate, 0), i.Quantity * hist_price.Close - COALESCE(i.Commission, 0))
+                          ELSE 0 END) ELSE 0 END) AS cf_ytd_sec,
                 SUM(CASE WHEN i.Date > (SELECT ytd_start FROM periods) THEN
                     CASE WHEN i.Action IN ('Buy', 'CashOut', 'MiscExp', 'ShrIn')
                             THEN COALESCE(NULLIF(i.Total_Amount_AccCur, 0) * COALESCE(hfx.FX_Rate, 1), NULLIF(i.Total_Amount_SecCur, 0) * COALESCE(hfx_sec.FX_Rate, 1), CASE WHEN i.Price_Per_Share > 0 THEN i.Quantity * i.Price_Per_Share + COALESCE(i.Commission, 0) END * COALESCE(hfx_sec.FX_Rate, 1), (i.Quantity * hist_price.Close + COALESCE(i.Commission, 0)) * COALESCE(hfx_sec.FX_Rate, 1))
@@ -1144,8 +1158,10 @@ def get_pnl(
             pf.price_today,
             c.Currencies_ShortName AS currency,
             (pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) as current_value_eur,
-            ((pf.qty_today * pf.price_today) - (pf.qty_dtd * pf.price_dtd) - COALESCE(cf.cf_dtd, 0)) * COALESCE(pf.fx_today, 1) as pnl_dtd_market_eur,
-            (pf.qty_dtd * pf.price_dtd) * (COALESCE(pf.fx_today, 1) - COALESCE(pf.fx_dtd, 1)) as pnl_dtd_fx_eur,
+            -- Market part: the period's gain in the security's own currency, at today's rate.
+            -- The FX part is pnl_dtd_eur minus this (set after the query), so the two always
+            -- add up to the P&L itself, which this split never changes.
+            ((pf.qty_today * pf.price_today) - (pf.qty_dtd * pf.price_dtd) - COALESCE(cf.cf_dtd_sec, 0)) * COALESCE(pf.fx_today, 1) as pnl_dtd_market_eur,
             ((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_dtd * pf.price_dtd * COALESCE(pf.fx_dtd, 1)) - COALESCE(cf.cf_dtd_eur, 0)) as pnl_dtd_eur,
             CASE WHEN (pf.qty_dtd * pf.price_dtd * COALESCE(pf.fx_dtd, 1)) = 0 THEN 0
                  ELSE (((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_dtd * pf.price_dtd * COALESCE(pf.fx_dtd, 1)) - COALESCE(cf.cf_dtd_eur, 0)) / (pf.qty_dtd * pf.price_dtd * COALESCE(pf.fx_dtd, 1))) * 100
@@ -1153,17 +1169,8 @@ def get_pnl(
             ((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_wtd * pf.price_wtd * COALESCE(pf.fx_wtd, 1)) - COALESCE(cf.cf_wtd_eur, 0)) as pnl_wtd_eur,
             ((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_mtd * pf.price_mtd * COALESCE(pf.fx_mtd, 1)) - COALESCE(cf.cf_mtd_eur, 0)) as pnl_mtd_eur,
             ((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)) - (pf.qty_qtd * pf.price_qtd * COALESCE(pf.fx_qtd, 1)) - COALESCE(cf.cf_qtd_eur, 0)) as pnl_qtd_eur,
-            (CASE WHEN pf.qty_today = 0 THEN COALESCE((pf.qty_today * pf.price_today), 0) - COALESCE((pf.qty_ytd * pf.price_ytd),0)
-                  ELSE COALESCE((pf.qty_today * pf.price_today), 0) - COALESCE((pf.qty_ytd * pf.price_ytd),0)
-             END - COALESCE(cf.cf_ytd_eur, 0)) * COALESCE(pf.fx_today, 1) as pnl_ytd_market_eur,
-            CASE WHEN pf.qty_today = 0 THEN COALESCE((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)), 0) - COALESCE((pf.qty_ytd * pf.price_ytd * COALESCE(pf.fx_ytd, 1)),0)
-                 ELSE COALESCE((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)), 0) - COALESCE((pf.qty_ytd * pf.price_ytd * COALESCE(pf.fx_ytd, 1)),0)
-            END - COALESCE(cf.cf_ytd_eur, 0)
-            -
-            (CASE WHEN pf.qty_today = 0 THEN COALESCE((pf.qty_today * pf.price_today), 0) - COALESCE((pf.qty_ytd * pf.price_ytd),0)
-                  ELSE COALESCE((pf.qty_today * pf.price_today), 0) - COALESCE((pf.qty_ytd * pf.price_ytd),0)
-             END - COALESCE(cf.cf_ytd_eur, 0)) * COALESCE(pf.fx_today, 1)
-            as pnl_ytd_fx_eur,
+            (COALESCE((pf.qty_today * pf.price_today), 0) - COALESCE((pf.qty_ytd * pf.price_ytd), 0)
+             - COALESCE(cf.cf_ytd_sec, 0)) * COALESCE(pf.fx_today, 1) as pnl_ytd_market_eur,
             CASE WHEN pf.qty_today = 0 THEN COALESCE((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)), 0) - COALESCE((pf.qty_ytd * pf.price_ytd * COALESCE(pf.fx_ytd, 1)),0)
                  ELSE COALESCE((pf.qty_today * pf.price_today * COALESCE(pf.fx_today, 1)), 0) - COALESCE((pf.qty_ytd * pf.price_ytd * COALESCE(pf.fx_ytd, 1)),0)
             END - COALESCE(cf.cf_ytd_eur, 0) as pnl_ytd_eur,
@@ -1209,6 +1216,10 @@ def get_pnl(
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn)
+    # FX part of the Market / FX split = the window's P&L minus its market part, so the
+    # two add up to pnl_*_eur exactly — the P&L itself is computed as before.
+    for w in ("dtd", "ytd"):
+        df[f"pnl_{w}_fx_eur"] = df[f"pnl_{w}_eur"].fillna(0) - df[f"pnl_{w}_market_eur"].fillna(0)
     return _df_to_list(df)
 
 
