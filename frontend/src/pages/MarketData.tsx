@@ -7,7 +7,7 @@ import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
-import { getCurrencies, getSecurities, getPriceHistory, getFxRates, getPriceAnomalies, refreshFx, addPrice, deletePrice, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importPricesFromFile, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
+import { getCurrencies, getSecurities, getFxRates, getPriceAnomalies, refreshFx, addFxRate, deleteFxRate, upsertSecurity, upsertCurrency, api, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, importFxFromFile, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'Rates', 'FX Prices', 'Securities Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'Rates', 'FX Prices', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -737,303 +737,6 @@ function FxPricesTab() {
             </div>
           )}
           <Button onClick={handleSubmit} disabled={isPending || !curId} variant={action === 'delete' ? 'destructive' : 'primary'}>
-            {action === 'delete' ? <><Trash2 size={14} /> Delete</> : <><Plus size={14} /> Save</>}
-          </Button>
-          {msg && <span className={`text-xs px-3 py-1.5 rounded ${msg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{msg}</span>}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Securities Prices tab: history chart + manual entry ───────────────────────
-const SECURITIES_PRICES_COLS = [
-  { colId: 'select', checkboxSelection: true, headerCheckboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false },
-  { field: 'date', headerName: 'Date', width: 110, sort: 'desc' as const },
-  { field: 'close', headerName: 'Close', width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '' },
-  { field: 'high',  headerName: 'High',  width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'low',   headerName: 'Low',   width: 110, valueFormatter: (p: {value: unknown}) => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
-  { field: 'volume', headerName: 'Volume', width: 120, valueFormatter: (p: {value: unknown}) => p.value != null ? Number(p.value).toLocaleString() : '—' },
-  { field: 'source', headerName: 'Source', width: 110 },
-  { field: 'downloaded_at', headerName: 'Downloaded At', flex: 1 },
-]
-
-function SecuritiesPricesTab() {
-  const gridCols = useGridColumnState('market-data-securities-prices', SECURITIES_PRICES_COLS)
-  const gridScroll = useGridScrollState('market-data-securities-prices')
-  const gridFilter = useGridFilterState('market-data-securities-prices')
-  const { gridApi, onGridReady } = useGridApi(api => {
-    if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
-  })
-  const { isDark } = useTheme()
-  const qc = useQueryClient()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const [secId, setSecId] = useState<number | null>(null)
-  const [period, setPeriod] = useState<ChartPeriod>('All')
-  const fromDate = periodToFromDate(period)
-  const [priceSearch, setPriceSearch] = useState('')
-  const [selectedDates, setSelectedDates] = useState<string[]>([])
-  const [action, setAction] = useState<'save' | 'delete'>('save')
-  const [entryDate, setEntryDate] = useState(todayLocal())
-  const [entryValue, setEntryValue] = useState('')
-  const [msg, setMsg] = useState<string | null>(null)
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importConflict, setImportConflict] = useState<'skip' | 'overwrite'>('skip')
-  const [importMsg, setImportMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  const importMut = useMutation({
-    mutationFn: () => importPricesFromFile(importFile!, secId!, importConflict),
-    onSuccess: (d) => {
-      setImportMsg({ ok: true, text: `Imported ${d.inserted} row(s) — ${d.skipped} skipped (${d.total_rows} total in file).` })
-      qc.invalidateQueries({ queryKey: ['price-history'] })
-    },
-    onError: (e: { response?: { data?: { detail?: unknown } } }) => {
-      const d = e.response?.data?.detail
-      const text = Array.isArray(d) ? (d as { msg?: string }[]).map(x => x.msg ?? String(x)).join('; ') : (typeof d === 'string' ? d : 'Import failed')
-      setImportMsg({ ok: false, text })
-    },
-  })
-
-  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
-  const { data: history = [], isLoading } = useQuery({
-    queryKey: ['price-history', secId, fromDate],
-    queryFn: () => getPriceHistory(secId!, fromDate),
-    enabled: !!secId,
-    refetchInterval: liveRefetchMs,
-  })
-
-  const addPriceMut = useMutation({
-    mutationFn: addPrice,
-    onSuccess: () => { setMsg('Price saved.'); qc.invalidateQueries({ queryKey: ['price-history'] }); qc.invalidateQueries({ queryKey: ['securities'] }); setEntryValue('') },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
-  })
-  const delPriceMut = useMutation({
-    mutationFn: ({ sid, d }: { sid: number; d: string }) => deletePrice(sid, d),
-    onSuccess: () => { setMsg('Price deleted.'); qc.invalidateQueries({ queryKey: ['price-history'] }) },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
-  })
-
-  const handleSubmit = () => {
-    if (!secId || !entryDate) return
-    setMsg(null)
-    if (action === 'delete') delPriceMut.mutate({ sid: secId, d: entryDate })
-    else { if (!entryValue) return; addPriceMut.mutate({ security_id: secId, date: entryDate, close: Number(entryValue) }) }
-  }
-
-  const deleteSelected = async () => {
-    if (!secId) return
-    const dates = [...selectedDates]
-    setMsg(null)
-    for (const d of dates) await deletePrice(secId, d)
-    setSelectedDates([])
-    qc.invalidateQueries({ queryKey: ['price-history'] })
-    setMsg(`Deleted ${dates.length} record(s).`)
-  }
-
-  const [maDays, setMaDays] = useState(5)
-
-  const isPending = addPriceMut.isPending || delPriceMut.isPending
-  const priceRows = useMemo(() => [...(history as Record<string,unknown>[])].reverse(), [history])
-
-  const maData = useMemo(() => {
-    const rows = history as Record<string, unknown>[]
-    if (rows.length < 2 || maDays < 2) return { x: [] as string[], y: [] as (number | null)[] }
-    const x: string[] = []
-    const y: (number | null)[] = []
-    for (let i = 0; i < rows.length; i++) {
-      x.push(rows[i].date as string)
-      if (i < maDays - 1) { y.push(null); continue }
-      let sum = 0
-      for (let j = i - maDays + 1; j <= i; j++) sum += Number(rows[j].close)
-      y.push(sum / maDays)
-    }
-    return { x, y }
-  }, [history, maDays])
-
-  return (
-    <div className="p-4 space-y-5">
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <label className="text-xs font-medium text-slate-500 block mb-1">Security</label>
-          <select className="w-72 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-            value={secId ?? ''} onChange={e => { setSecId(Number(e.target.value) || null); setMsg(null); setSelectedDates([]) }}>
-            <option value="">— Select security —</option>
-            {(securities as Record<string,unknown>[]).map(s => (
-              <option key={String(s.id)} value={String(s.id)}>{String(s.ticker || '')} · {String(s.name)}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-slate-500 block mb-1">Period</label>
-          <div className="flex items-center gap-3">
-            <PeriodSelector value={period} onChange={setPeriod} />
-            {(() => {
-              const h = history as Record<string,unknown>[]
-              if (h.length < 2) return null
-              const first = Number(h[0].close), last = Number(h[h.length - 1].close)
-              if (!first) return null
-              const pct = ((last - first) / first) * 100
-              return <span className={`text-sm font-semibold tabular-nums ${pct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{pct >= 0 ? '+' : ''}{fmtPct(pct, 2)}</span>
-            })()}
-          </div>
-        </div>
-      </div>
-
-      {!secId ? (
-        <p className="text-sm text-slate-400">Select a security to view price history</p>
-      ) : isLoading ? (
-        <div className="flex justify-center py-12"><Spinner /></div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-500">MA Days</label>
-            <input
-              type="number" min={2} max={200} value={maDays}
-              onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
-              className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
-            />
-          </div>
-          <Plot
-            data={[
-              {
-                x: (history as Record<string,unknown>[]).map(r => r.date),
-                y: (history as Record<string,unknown>[]).map(r => r.close),
-                type: 'scatter', mode: 'lines', name: 'Close',
-                line: { color: '#3b82f6', width: 1.5 },
-                yaxis: 'y',
-              },
-              {
-                x: maData.x, y: maData.y,
-                type: 'scatter', mode: 'lines', name: `MA${maDays}`,
-                line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
-                yaxis: 'y',
-                connectgaps: false,
-              },
-              {
-                x: (history as Record<string,unknown>[]).map(r => r.date),
-                y: (history as Record<string,unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
-                type: 'bar', name: 'Volume',
-                marker: { color: 'rgba(148,163,184,0.4)' },
-                yaxis: 'y2',
-                hovertemplate: '%{y:,.0f}<extra>Volume</extra>',
-              },
-            ]}
-            layout={{
-              height: 360,
-              margin: { t: 10, r: 60, b: 40, l: 70 },
-              hovermode: 'x unified',
-              yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
-              yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
-                title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
-              legend: { orientation: 'h', y: -0.15, x: 0 },
-              bargap: 0.1,
-              ...plotLayout(isDark),
-            }}
-            config={{ displayModeBar: true, responsive: true }}
-            style={{ width: '100%' }}
-          />
-          <div className="flex items-center justify-between gap-3 mb-1">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input className="pl-8 w-56 h-7 text-xs" placeholder="Search…" value={priceSearch} onChange={e => setPriceSearch(e.target.value)} />
-            </div>
-            <div className="flex items-center gap-2">
-              {selectedDates.length > 0 && (
-                <Button size="sm" variant="destructive" disabled={isPending} onClick={deleteSelected}>
-                  <Trash2 size={13} /> Delete {selectedDates.length} selected
-                </Button>
-              )}
-              {gridFilter.hasFilters && (
-                <button onClick={() => gridFilter.clearFilters(gridApi)}
-                  className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
-                  ✕ Clear Filters
-                </button>
-              )}
-              <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
-              <CopyToExcelButton gridApi={gridApi} />
-            </div>
-          </div>
-          <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
-            <AgGridReact
-              theme="legacy"
-              onGridReady={onGridReady}
-              rowData={priceRows}
-              quickFilterText={priceSearch}
-              rowSelection="multiple"
-              onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string,unknown>) => r.date as string))}
-              initialState={gridScroll.initialState}
-              onStateUpdated={gridScroll.onStateUpdated}
-              onFilterChanged={gridFilter.onFilterChanged}
-              onColumnMoved={gridCols.onColumnMoved}
-              onColumnResized={gridCols.onColumnResized}
-              columnDefs={gridCols.colDefs}
-              defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="border-t border-slate-200 pt-4">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Import from File</p>
-        <p className="text-xs text-slate-500 mb-3">
-          Upload a tab-separated <code className="bg-slate-100 px-1 rounded">.txt</code> / <code className="bg-slate-100 px-1 rounded">.csv</code> / <code className="bg-slate-100 px-1 rounded">.tsv</code> file.
-          The importer finds the <code className="bg-slate-100 px-1 rounded">Date</code> header row automatically. Select a security above first.
-        </p>
-        <div className="flex flex-wrap gap-4 items-end">
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">File</label>
-            <label className="cursor-pointer flex items-center gap-2">
-              <span className="px-3 py-1.5 bg-slate-800 text-white text-xs rounded hover:bg-slate-700 transition-colors">⬆ Choose file</span>
-              <span className="text-xs text-slate-500">{importFile ? importFile.name : 'TXT, CSV, TSV'}</span>
-              <input type="file" accept=".txt,.csv,.tsv" className="hidden"
-                onChange={e => { setImportFile(e.target.files?.[0] ?? null); setImportMsg(null) }} />
-            </label>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">If date exists</label>
-            <div className="flex gap-3">
-              {(['skip', 'overwrite'] as const).map(v => (
-                <label key={v} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input type="radio" name="importConflict" value={v} checked={importConflict === v} onChange={() => setImportConflict(v)} />
-                  {v === 'skip' ? 'Skip' : 'Overwrite'}
-                </label>
-              ))}
-            </div>
-          </div>
-          <Button variant="primary" disabled={!importFile || !secId || importMut.isPending}
-            onClick={() => { setImportMsg(null); importMut.mutate() }}>
-            {importMut.isPending ? <><Spinner size={12} /> Importing…</> : '📂 Import'}
-          </Button>
-          {importMsg && (
-            <span className={`text-xs px-3 py-1.5 rounded ${importMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-              {importMsg.text}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="border-t border-slate-200 pt-4">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Manual Entry</p>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex gap-1">
-            {(['save', 'delete'] as const).map(a => (
-              <button key={a} onClick={() => { setAction(a); setMsg(null) }}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${action === a ? (a === 'delete' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white') : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                {a === 'save' ? 'Save / Upsert' : 'Delete Record'}
-              </button>
-            ))}
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-500 block mb-1">Date</label>
-            <Input type="date" className="w-36" value={entryDate} onChange={e => setEntryDate(e.target.value)} />
-          </div>
-          {action === 'save' && (
-            <div>
-              <label className="text-xs font-medium text-slate-500 block mb-1">Close Price</label>
-              <Input type="number" step="any" className="w-32" value={entryValue} onChange={e => setEntryValue(e.target.value)} placeholder="0.0000" />
-            </div>
-          )}
-          <Button onClick={handleSubmit} disabled={isPending || !secId} variant={action === 'delete' ? 'destructive' : 'primary'}>
             {action === 'delete' ? <><Trash2 size={14} /> Delete</> : <><Plus size={14} /> Save</>}
           </Button>
           {msg && <span className={`text-xs px-3 py-1.5 rounded ${msg.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>{msg}</span>}
@@ -2221,7 +1924,10 @@ function AlertsTab() {
 
 export default function MarketData() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [tab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
+  const [savedTab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
+  // A tab saved before it was removed (e.g. the old Securities Prices tab, now only
+  // on each Security Detail → Prices) would otherwise open a blank page.
+  const tab = TABS.includes(savedTab) ? savedTab : 'Currencies'
   // Deep-link support: "?tab=CAPE Ratios" (used by Dashboard's Market Valuation
   // tile) switches to that tab even when a different one was last persisted —
   // usePersist's initial value above only wins on a completely fresh visit with
@@ -2272,7 +1978,6 @@ export default function MarketData() {
             {tab === 'Currencies' && <CurrenciesTab search={search} onSearchChange={setSearch} />}
             {tab === 'Securities' && <SecuritiesTab search={search} onSearchChange={setSearch} />}
             {tab === 'FX Prices' && <FxPricesTab />}
-            {tab === 'Securities Prices' && <SecuritiesPricesTab />}
             {tab === 'Downloads' && <DownloadsTab />}
             {tab === 'Anomalies' && (
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (

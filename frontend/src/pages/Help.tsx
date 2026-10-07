@@ -1096,7 +1096,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, FX Prices, Securities Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <P>Reference and price data, in nine tabs: Currencies, Securities, Rates, FX Prices, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
         <Note>
           The <b>Securities</b> search box matches any text field — name, ticker, ISIN, Yahoo/TradingView symbols,
           exchange, type, sector, industry, tax category, currency, analyst rating and dividend/coupon frequency —

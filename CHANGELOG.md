@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-07
+
+### Removed
+- **Market Data → Securities Prices tab.** It duplicated Security Detail → Prices: the same chart with moving average and volume, the same price table with search/filter/columns/copy/multi-delete, the same Import from File and the same Manual Entry. Security Detail's version also has MA50/MA200 with the Golden/Death Cross badge, your average cost, the trailing-stop status and price-alert lines, and deletes selected rows in one request. Its only extra was a security dropdown to move between securities without leaving the page. Price maintenance now happens on each security's own page. A Market Data visit that had Securities Prices saved as its last tab opens on Currencies instead of a blank page. Saving a price on Security Detail → Prices now also refreshes the Market Data → Securities list (its latest-price column), which the removed tab used to do. Help updated (nine tabs). The frontend type-checks; not exercised in a browser (login required).
+
 ## 2026-10-06
 
 ### Fixed
