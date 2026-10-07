@@ -20,6 +20,7 @@ import { fmtNum, fmtEur, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES, LOAN_LENGTH_UNITS } from '@/lib/accountTypes'
 import { PERIODICITIES } from '@/components/TxModal'
 import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
+import { CurrencyCell } from '@/components/CurrencyLink'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
 const COMPOUNDING_FREQUENCIES = ['Monthly', 'Quarterly', 'Semi-Annual', 'Annual']
@@ -744,7 +745,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     { field: 'id', headerName: 'ID', width: 70 },
     { field: 'name', headerName: 'Account', flex: 2, minWidth: 160 },
     { field: 'type', headerName: 'Type', width: 130 },
-    { field: 'currency', headerName: 'Currency', width: 90 },
+    { field: 'currency', headerName: 'Currency', width: 90, cellRenderer: CurrencyCell },
     {
       field: 'balance', headerName: 'Balance ⓘ', width: 120, type: 'numericColumn' as const, filter: 'agNumberColumnFilter',
       headerTooltip: `Raw ledger balance, in the account's own currency: the literal sum of every transaction ever entered on this account, including ones dated in the future (e.g. an already-scheduled payment or charge). For Brokerage/Margin/Other Investment accounts this is NOT the account's value — those types track cash flows only (deposits/withdrawals/dividends netted against buys/sells), not holdings — see "Balance (${reportingCurrency})" for their real worth.`,

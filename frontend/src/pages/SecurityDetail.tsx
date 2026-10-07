@@ -38,6 +38,7 @@ import type { NewsItem } from '@/pages/News'
 import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
+import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
 function fmt(n: unknown, dec = 4) { return fmtNum(n != null ? Number(n) : null, dec) }
@@ -563,7 +564,7 @@ const ALL_TRANSACTIONS_COLS = [
   { field: 'tax_amount', headerName: 'W. Tax', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? fmt(p.value, 2) : '—', cellStyle: (p: { value: unknown }) => p.value != null ? { color: '#dc2626' } : null },
   { field: 'total_sec_cur', headerName: 'Total (Sec. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
   { field: 'total_acc_cur', headerName: 'Total (Acc. Cur.)', width: 140, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-  { field: 'currency', headerName: 'Currency', width: 90 },
+  { field: 'currency', headerName: 'Currency', width: 90, cellRenderer: CurrencyCell },
   { field: 'description', headerName: 'Description', flex: 1 },
 ]
 
@@ -1506,7 +1507,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'amount_per_share', headerName: 'Amount/Share', width: 130, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'total', headerName: 'Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-      { field: 'currency', headerName: 'Ccy', width: 70 },
+      { field: 'currency', headerName: 'Ccy', width: 70, cellRenderer: CurrencyCell },
     ]
     return [
       { field: 'account', headerName: 'Account', flex: 2 },
@@ -1515,7 +1516,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       { field: 'gross_total', headerName: 'Gross Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'tax', headerName: 'Tax', width: 100, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'net_total', headerName: 'Net Total', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
-      { field: 'currency', headerName: 'Ccy', width: 70 },
+      { field: 'currency', headerName: 'Ccy', width: 70, cellRenderer: CurrencyCell },
     ]
   }, [eventGroup])
   const { gridApi: previewGridApi, onGridReady: onPreviewGridReady } = useGridApi()
@@ -1962,7 +1963,7 @@ function OverviewTab({ secId, security, securityLoading, onEditDetails }: { secI
         <OverviewRow label="Sector" value={String(security.sector ?? '') || '—'} />
         <OverviewRow label="Industry" value={String(security.industry ?? '') || '—'} />
         <OverviewRow label="Market" value={String(security.tv_exchange ?? '') || '—'} />
-        <OverviewRow label="Currency" value={curr || '—'} />
+        <OverviewRow label="Currency" value={<CurrencyLink code={curr} />} />
       </OverviewPanel>
 
       <div className="md:row-span-2">

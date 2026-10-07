@@ -41,6 +41,7 @@ import type { TxForm, SplitRow } from '@/components/TxModal'
 import { AgGridReact } from 'ag-grid-react'
 import StressTestTab from '@/pages/StressTest'
 import type { ColDef } from 'ag-grid-community'
+import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 type Row = Record<string, unknown>
 
@@ -747,7 +748,6 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
 
 function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
-  const navigate = useNavigate()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
@@ -774,9 +774,7 @@ function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
             {fxSorted.map((r, i) => (
               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-2 py-1.5 font-mono font-medium">
-                  {r.currencies_id != null
-                    ? <button onClick={() => navigate(`/currencies/${r.currencies_id}`)} className="text-blue-600 hover:underline">{String(r.currency)}</button>
-                    : String(r.currency)}
+                  <CurrencyLink code={r.currency} />
                 </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.native_exposure), 2)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.eur_exposure))}</td>
@@ -1803,7 +1801,7 @@ function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
                 <td className="px-2 py-1.5 text-slate-500"><AccountLink id={r.accounts_id as number} name={String(r.account)} type={String(r.account_type ?? '')} /></td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 4)}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.last_price ?? 0), 4)}</td>
-                <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
+                <td className="px-2 py-1.5 text-slate-500"><CurrencyLink code={r.currency} /></td>
                 <td className="px-2 py-1.5 text-right tabular-nums font-medium">{fmtEur(Number(r.value_eur ?? 0))}</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{total > 0 ? (Number(r.value_eur ?? 0) / total * 100).toFixed(1) + '%' : '—'}</td>
               </tr>
@@ -1872,7 +1870,7 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
               <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.security)}</SecLink></td>
               <td className="px-2 py-1.5 font-mono text-slate-400 text-xs">{String(r.ticker ?? '—')}</td>
               <td className="px-2 py-1.5 text-slate-500">{String(r.type ?? '—')}</td>
-              <td className="px-2 py-1.5 text-slate-500">{String(r.currency ?? '—')}</td>
+              <td className="px-2 py-1.5 text-slate-500"><CurrencyLink code={r.currency} /></td>
               <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.quantity), 8)}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.price), 4)}</td>
               <td className="px-2 py-1.5 text-slate-400 text-xs">{String(r.price_date ?? '—')}</td>
@@ -3861,7 +3859,7 @@ function SavingsAccountsTab() {
                     {fcSorted.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
                         <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
-                        <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                        <td className="px-3 py-2 text-slate-500"><CurrencyLink code={r.currency} /></td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.current_balance), 2)}</td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{pct(r.apy_pct)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-slate-500 whitespace-nowrap">{days(r.cadence_days)}</td>
@@ -3911,7 +3909,7 @@ function SavingsAccountsTab() {
                       {rankSorted.map((r, i) => (
                         <tr key={i} className={`hover:bg-slate-50 ${i === 0 ? 'bg-green-50' : ''}`}>
                           <td className={`px-3 py-2 font-medium whitespace-nowrap sticky left-0 ${i === 0 ? 'bg-green-50' : 'bg-white'}`}>{i === 0 && '🏆 '}<AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type="Savings" /></td>
-                          <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                          <td className="px-3 py-2 text-slate-500"><CurrencyLink code={r.currency} /></td>
                           <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{r.institution_name != null ? String(r.institution_name) : '—'}</td>
                           <td className="px-3 py-2 whitespace-nowrap">{ratingBadge(r.rating, r.rating_quality, r.investment_grade)}</td>
                           <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.current_balance), 2)}</td>
@@ -3954,7 +3952,7 @@ function SavingsAccountsTab() {
                           <tr key={i} className="hover:bg-slate-50">
                             <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                             <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
-                            <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                            <td className="px-3 py-2 text-slate-500"><CurrencyLink code={r.currency} /></td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(Number(r.balance), 2)}</td>
                             <td className="px-3 py-2 text-blue-700 whitespace-nowrap">→ <AccountLink id={r.target_accounts_id as number} name={String(r.target_accounts_name)} type="Savings" /></td>
                             <td className="px-3 py-2 whitespace-nowrap">{ratingBadge(r.target_rating, r.target_rating_quality, r.target_investment_grade)}</td>
@@ -4055,7 +4053,7 @@ function SavingsAccountsTab() {
                       <tr key={i} className="hover:bg-slate-50">
                         <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
-                        <td className="px-3 py-2 text-slate-500">{String(r.currency)}</td>
+                        <td className="px-3 py-2 text-slate-500"><CurrencyLink code={r.currency} /></td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.principal ?? 0), 2)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-green-700 whitespace-nowrap">{fmtNum(Number(r.total_interest ?? 0), 2)}</td>
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtNum(Number(r.avg_balance ?? 0), 2)}</td>
@@ -4096,7 +4094,7 @@ function SavingsAccountsTab() {
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0 bg-white"><AccountLink id={r.accounts_id as number} name={String(r.accounts_name)} type={String(r.accounts_type)} /></td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.accounts_type)}</td>
-                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{String(r.currency)}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap"><CurrencyLink code={r.currency} /></td>
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.avg_principal_last != null ? fmtNum(Number(r.avg_principal_last), 2) : '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-green-700 whitespace-nowrap">{r.last_interest_sum != null ? fmtNum(Number(r.last_interest_sum), 2) : '—'}</td>
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.annual_interest_cash_last != null ? fmtNum(Number(r.annual_interest_cash_last), 2) : '—'}</td>
@@ -4176,7 +4174,7 @@ function BondScheduleTab() {
                   <td className="px-3 py-2 text-right tabular-nums text-green-700">{fmtEur(Number(r.annual_coupon_eur ?? 0))}</td>
                   <td className="px-3 py-2 text-right">{r.maturity_date ? String(r.maturity_date).slice(0, 10) : '—'}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${Number(r.days_to_maturity ?? 999) <= 365 ? 'text-amber-600 font-semibold' : ''}`}>{r.days_to_maturity != null ? Number(r.days_to_maturity) : '—'}</td>
-                  <td className="px-3 py-2 text-right text-slate-400">{String(r.currency ?? '')}</td>
+                  <td className="px-3 py-2 text-right text-slate-400"><CurrencyLink code={r.currency} /></td>
                 </tr>
               ))}
             </tbody>
@@ -5414,7 +5412,7 @@ function PortfolioActionSignalsTab() {
         valueFormatter: p => typeof p.value === 'string' ? p.value.slice(0, 10) : '—' },
       { field: 'sec_type', headerName: 'Type', width: 100, hide: true },
       { field: 'industry', headerName: 'Industry', width: 160, hide: true },
-      { field: 'currency', headerName: 'Currency', width: 90, hide: true },
+      { field: 'currency', headerName: 'Currency', width: 90, hide: true, cellRenderer: CurrencyCell },
       { field: 'exchange', headerName: 'Exchange', width: 100, hide: true },
       { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
         headerTooltip: 'Analyst target price vs current price — expected upside.', valueFormatter: p => pctFmt(p.value),
@@ -6770,7 +6768,7 @@ function CashFlowSection() {
                     <td className={`px-3 py-2 text-right tabular-nums font-semibold ${Number(r.amount_eur) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                       {fmtEur(Number(r.amount_eur))}
                     </td>
-                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs"><CurrencyLink code={r.currency || 'EUR'} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -6815,7 +6813,7 @@ function CashFlowSection() {
                       {fmtEur(Number(r.amount_eur))}
                     </td>
                     <td className="px-3 py-2 text-slate-500 text-xs">{String(r.periodicity || '—')}</td>
-                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs"><CurrencyLink code={r.currency || 'EUR'} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -6859,7 +6857,7 @@ function CashFlowSection() {
                       {fmtEur(Number(r.amount_eur))}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">{String(r.avg_days_between)}</td>
-                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs"><CurrencyLink code={r.currency || 'EUR'} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -6990,7 +6988,7 @@ function CashFlowSection() {
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-700">
                       {fmtEur(Number(r.amount_eur))}
                     </td>
-                    <td className="px-3 py-2 text-slate-400 text-xs">{String(r.currency || 'EUR')}</td>
+                    <td className="px-3 py-2 text-slate-400 text-xs"><CurrencyLink code={r.currency || 'EUR'} /></td>
                   </tr>
                 ))}
               </tbody>

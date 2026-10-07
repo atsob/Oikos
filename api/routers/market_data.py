@@ -63,25 +63,100 @@ def get_fx_rates(
     return _df(df)
 
 
+def _storage_base_id(conn) -> Optional[int]:
+    """The currency every stored FX rate is quoted against (Historical_FX.Currencies_Id_2,
+    EUR in practice). Read from the data rather than assumed, falling back to the EUR row."""
+    df = pd.read_sql("""
+        SELECT COALESCE(
+            (SELECT Currencies_Id_2 FROM Historical_FX GROUP BY Currencies_Id_2 ORDER BY COUNT(*) DESC LIMIT 1),
+            (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')) AS id
+    """, conn)
+    return None if df.empty or pd.isna(df["id"].iloc[0]) else int(df["id"].iloc[0])
+
+
+def _stored_rates(conn, cid: int) -> pd.Series:
+    """Stored rate history of one currency (storage-base units per 1 unit), date-indexed."""
+    df = pd.read_sql("""
+        SELECT Date AS date, FX_Rate::float AS rate FROM Historical_FX
+        WHERE Currencies_Id_1 = %(cid)s ORDER BY Date
+    """, conn, params={"cid": cid})
+    return pd.Series(df["rate"].values, index=pd.to_datetime(df["date"]).dt.date, dtype=float)
+
+
+def _cross_rates(conn, cid: int, quote_id: int, base_id: Optional[int]) -> pd.Series:
+    """Units of the quote currency per 1 unit of `cid`, from the two stored histories
+    (the storage base itself counts as a constant 1). Each side is carried forward to
+    the other's dates, so a day where only one of them has a rate still gets a value."""
+    if cid == quote_id:
+        return pd.Series(dtype=float)
+    x = None if cid == base_id else _stored_rates(conn, cid)
+    q = None if quote_id == base_id else _stored_rates(conn, quote_id)
+    if x is None and q is None:
+        return pd.Series(dtype=float)
+    idx = sorted(set(x.index if x is not None else []) | set(q.index if q is not None else []))
+    xs = x.reindex(idx).ffill() if x is not None else pd.Series(1.0, index=idx)
+    qs = q.reindex(idx).ffill() if q is not None else pd.Series(1.0, index=idx)
+    return (xs / qs).replace([float("inf")], float("nan")).dropna()
+
+
+def _resolve_quote(conn, quote: Optional[str], base_id: Optional[int]) -> tuple:
+    """(id, code) of the currency rates are shown in: the reporting currency the frontend
+    passes, or the storage base when it's missing or unknown."""
+    df = pd.read_sql("""
+        SELECT Currencies_Id AS id, TRIM(Currencies_ShortName) AS code FROM Currencies
+        WHERE TRIM(Currencies_ShortName) = %(q)s OR Currencies_Id = %(b)s
+        ORDER BY (TRIM(Currencies_ShortName) = %(q)s) DESC LIMIT 1
+    """, conn, params={"q": (quote or "").strip().upper(), "b": base_id or -1})
+    if df.empty:
+        return None, (quote or "EUR").strip().upper()
+    return int(df["id"].iloc[0]), str(df["code"].iloc[0])
+
+
+@router.get("/currencies/{cid}/history")
+def get_currency_history(cid: int, quote: Optional[str] = Query(None), from_date: str = Query("1900-01-01")):
+    """Rate history of one currency expressed in the quote (reporting) currency — what
+    Currency Detail's Overview chart plots. Market Data's stored rates are always against
+    the storage base; this converts them through it."""
+    with get_db() as conn:
+        base_id = _storage_base_id(conn)
+        quote_id, _ = _resolve_quote(conn, quote, base_id)
+        series = _cross_rates(conn, cid, quote_id, base_id) if quote_id is not None else pd.Series(dtype=float)
+    cutoff = pd.Timestamp(from_date).date()
+    series = series[[d >= cutoff for d in series.index]] if not series.empty else series
+    return [{"date": str(d), "rate": round(float(v), 10)} for d, v in series.items()]
+
+
 @router.get("/currencies/{cid}/detail")
-def get_currency_detail(cid: int):
-    """Everything Currency Detail's Overview/Exposure tabs show for one currency: its
-    latest rate vs EUR and how that rate moved (1D/1M/YTD/1Y), the interest-rate series
-    defined for it, and your exposure to it — cash-side accounts and held securities
-    quoted in it. Exposure uses the same definition as Reports → Inv. Portfolio → FX
-    Exposure (active non-Brokerage/Margin account balances + holdings at the latest
-    close), so the totals and the % share agree with that report."""
+def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
+    """Everything Currency Detail's Overview/Exposure/FX Effect tabs show for one currency.
+
+    Rates are shown in `quote` — the reporting currency (Tools → App Settings), defaulting
+    to the storage base: the latest rate and its 1D/1M/YTD/1Y change. Oikos stores every
+    FX rate against one storage base (EUR), so only currencies other than that base have
+    stored rates to maintain (`is_storage_base`), whatever the reporting currency is.
+
+    Exposure (cash-side accounts + held securities quoted in the currency) uses the same
+    definition as Reports → Inv. Portfolio → FX Exposure (active non-Brokerage/Margin
+    account balances + holdings at the latest close), so totals and the % share agree with
+    that report. Amounts are in the storage base (EUR); the frontend converts them to the
+    reporting currency for display, as everywhere else.
+
+    `cash_fx_effect` estimates the currency effect on those cash balances over 1D and YTD:
+    today's balance × the change in its rate against the storage base — the same
+    measurement the P&L report's Market / FX split uses for securities."""
     with get_db() as conn:
         cur = pd.read_sql("""
-            SELECT Currencies_Id AS id, Currencies_ShortName AS code, Currencies_Name AS name
+            SELECT Currencies_Id AS id, TRIM(Currencies_ShortName) AS code, Currencies_Name AS name
             FROM Currencies WHERE Currencies_Id = %(cid)s
         """, conn, params={"cid": cid})
         if cur.empty:
             raise HTTPException(404, "Currency not found")
-        fx = pd.read_sql("""
-            SELECT Date AS date, FX_Rate::float AS rate FROM Historical_FX
-            WHERE Currencies_Id_1 = %(cid)s ORDER BY Date
-        """, conn, params={"cid": cid})
+        base_id = _storage_base_id(conn)
+        base_code = pd.read_sql("SELECT TRIM(Currencies_ShortName) AS code FROM Currencies WHERE Currencies_Id = %(b)s",
+                                conn, params={"b": base_id or -1})
+        quote_id, quote_code = _resolve_quote(conn, quote, base_id)
+        stored = _stored_rates(conn, cid)
+        cross = _cross_rates(conn, cid, quote_id, base_id) if quote_id is not None else pd.Series(dtype=float)
         rates = pd.read_sql("""
             SELECT r.Rate_Series_Id AS id, r.Code AS code, r.Name AS name, r.Rate_Type AS rate_type,
                    h.Date::text AS date, h.Rate_Pct::float AS rate_pct
@@ -139,28 +214,26 @@ def get_currency_detail(cid: int):
                              WHERE h.Quantity > 0), 0) AS total_eur
         """, conn)
 
-    if not fx.empty:
-        fx["date"] = pd.to_datetime(fx["date"]).dt.date
+    def on_or_before(series: pd.Series, d) -> Optional[float]:
+        before = series[[x <= d for x in series.index]]
+        return float(before.iloc[-1]) if not before.empty else None
 
-    def rate_on_or_before(d) -> Optional[float]:
-        before = fx[fx["date"] <= d]
-        return float(before["rate"].iloc[-1]) if not before.empty else None
+    def window_refs(series: pd.Series) -> dict:
+        """Reference rates for each window; YTD measures from the previous year's last rate."""
+        last = series.index[-1]
+        return {
+            "1D": float(series.iloc[-2]) if len(series) > 1 else None,
+            "1M": on_or_before(series, last - timedelta(days=30)),
+            "YTD": on_or_before(series, date(last.year, 1, 1) - timedelta(days=1)),
+            "1Y": on_or_before(series, last - timedelta(days=365)),
+        }
 
     latest_rate = latest_date = None
     changes: dict = {}
-    if not fx.empty:
-        latest_rate = float(fx["rate"].iloc[-1])
-        last = fx["date"].iloc[-1]
-        latest_date = str(last)
-        prev = float(fx["rate"].iloc[-2]) if len(fx) > 1 else None
-        # YTD measures from the last rate of the previous year (the year-end close).
-        refs = {
-            "1D": prev,
-            "1M": rate_on_or_before(last - timedelta(days=30)),
-            "YTD": rate_on_or_before(date(last.year, 1, 1) - timedelta(days=1)),
-            "1Y": rate_on_or_before(last - timedelta(days=365)),
-        }
-        changes = {k: (round((latest_rate / v - 1) * 100, 4) if v else None) for k, v in refs.items()}
+    if not cross.empty:
+        latest_rate = float(cross.iloc[-1])
+        latest_date = str(cross.index[-1])
+        changes = {k: (round((latest_rate / v - 1) * 100, 4) if v else None) for k, v in window_refs(cross).items()}
 
     cash_eur = float(accounts["balance_eur"].sum()) if not accounts.empty else 0.0
     cash_native = float(accounts["balance"].sum()) if not accounts.empty else 0.0
@@ -168,12 +241,26 @@ def get_currency_detail(cid: int):
     sec_native = float(holdings["value"].sum()) if not holdings.empty else 0.0
     total_eur = float(total["total_eur"].iloc[0] or 0)
     exposure_eur = cash_eur + sec_eur
+    is_storage_base = cid == base_id
+    is_quote = cid == quote_id
+
+    # Cash revaluation against the storage base, as the P&L report's FX split measures it.
+    cash_fx_effect: dict = {"1D": 0.0, "YTD": 0.0} if is_storage_base else {"1D": None, "YTD": None}
+    if not is_storage_base and not stored.empty:
+        refs = window_refs(stored)
+        now = float(stored.iloc[-1])
+        cash_fx_effect = {k: (round(cash_native * (now - refs[k]), 2) if refs[k] is not None else None) for k in ("1D", "YTD")}
+
     return {
         **_df(cur)[0],
-        "is_base": cur["code"].iloc[0].strip().upper() == "EUR",
+        "storage_base": str(base_code["code"].iloc[0]) if not base_code.empty else "EUR",
+        "is_storage_base": is_storage_base,
+        "quote": quote_code,
+        "is_quote": is_quote,
         "latest_rate": latest_rate,
         "rate_date": latest_date,
-        "price_records": len(fx),
+        "stored_rate": float(stored.iloc[-1]) if not stored.empty else None,
+        "price_records": len(stored),
         "changes": changes,
         "interest_rates": _df(rates),
         "exposure": {
@@ -181,8 +268,10 @@ def get_currency_detail(cid: int):
             "securities_native": round(sec_native, 2), "securities_eur": round(sec_eur, 2),
             "total_native": round(cash_native + sec_native, 2), "total_eur": round(exposure_eur, 2),
             "share_pct": round(exposure_eur / total_eur * 100, 2) if total_eur else None,
-            "sensitivity_5pct_eur": round(exposure_eur * 0.05, 2),
+            # Holding your own reporting currency carries no currency risk in that currency.
+            "sensitivity_5pct_eur": 0.0 if is_quote else round(exposure_eur * 0.05, 2),
         },
+        "cash_fx_effect": cash_fx_effect,
         "accounts": _df(accounts),
         "holdings": _df(holdings),
     }
