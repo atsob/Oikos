@@ -2336,6 +2336,19 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                 (int(r[0]), str(r[1])): float(r[2]) for r in cur.fetchall()
             }
 
+            # Stored closes per security across the dates being fetched — used by Guard 3 to tell
+            # "TradingView sent something odd" from "the value we stored earlier was the odd one".
+            _stored_by_sid: dict[int, dict[str, float]] = {}
+            for (_s, _d), _c in existing_closes.items():
+                _stored_by_sid.setdefault(_s, {})[_d] = _c
+
+            def _stored_is_outlier(sid: int, dt: str, close: float) -> bool:
+                others = sorted(c for d, c in _stored_by_sid.get(sid, {}).items() if d != dt and c > 0)
+                if len(others) < 3:
+                    return False
+                median = others[len(others) // 2]
+                return max(close / median, median / close) <= MAX_OVERWRITE_RATIO
+
             safe_rows:          list = []
             holiday_deletes:    list = []   # (sid, dt) pairs to DELETE from DB
             skipped_future:     int  = 0
@@ -2396,6 +2409,16 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                 existing = existing_closes.get((sid, dt))
                 if existing and existing > 0 and close > 0:
                     ratio = max(close / existing, existing / close)
+                    if ratio > MAX_OVERWRITE_RATIO and _stored_is_outlier(sid, dt, close):
+                        # The stored value is the odd one out (every other stored close of this
+                        # security in the window agrees with the incoming one), so keeping it
+                        # would pin a bad price forever — correct it instead.
+                        logging.warning(
+                            "TradingView CORRECTING OUTLIER — %s: date=%s  stored=%.6f → %.6f "
+                            "(neighbouring closes agree with the incoming price)", sec_name, dt, existing, close)
+                        print(f"  🔧 Corrected outlier: {sec_name} {dt}  {existing:.6f} → {close:.6f}")
+                        safe_rows.append(row)
+                        continue
                     if ratio > MAX_OVERWRITE_RATIO:
                         skipped_ratio += 1
                         msg = (
@@ -2505,7 +2528,9 @@ def download_bond_prices_from_solidus(target_sec_id=None):
     """
     pdf_url = "https://www.solidus.gr/AppFol/appDetails/RadControls/fol1/Bonds/SOLIDUS_BOND_LIST.pdf"
 
-    response = requests.get(pdf_url)
+    # A timeout is essential here: without one a server that accepts the connection but never
+    # answers blocks this call — and, in the scheduler, every job behind it — indefinitely.
+    response = requests.get(pdf_url, timeout=(10, 60))
     if response.status_code != 200:
         print("Failed to receive the file.")
         return {"updated_count": 0, "target_matched": False}

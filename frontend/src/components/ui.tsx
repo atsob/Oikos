@@ -521,6 +521,33 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   )
 }
 
+// ── Prices-updated indicator ──────────────────────────────────────────────────
+// "Prices updated 4 min ago · 18:20" — turns amber after 30 min and red after 3 h, so a view
+// that has gone stale (or a refresh that stopped) is obvious at a glance. `at` is an ISO time.
+export function PricesUpdated({ at, detail, className }: { at?: string | null; detail?: string; className?: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t) }, [])
+  if (!at) return null
+  const t = new Date(at).getTime()
+  if (Number.isNaN(t)) return null
+  const min = Math.max(0, Math.floor((now - t) / 60_000))
+  const rel = min < 1 ? 'just now'
+    : min < 60 ? `${min} min ago`
+    : min < 48 * 60 ? `${Math.floor(min / 60)} h ${min % 60} min ago`
+    : `${Math.floor(min / 1440)} days ago`
+  const tone = min >= 180 ? 'text-red-600' : min >= 30 ? 'text-amber-600' : 'text-slate-500'
+  const when = new Date(t).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  const tip = `Last price download: ${when}.${detail ? ` ${detail}` : ''} Turns amber after 30 minutes and red after 3 hours.`
+  return (
+    <Tooltip text={tip}>
+      <span className={`text-xs whitespace-nowrap ${tone} ${className ?? ''}`}>
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1.5 align-middle" />
+        Prices updated {rel}
+      </span>
+    </Tooltip>
+  )
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
   label: string; value: string; sub?: string; color?: string

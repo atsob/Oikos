@@ -588,6 +588,38 @@ def get_price_history(
     return _df(df)
 
 
+@router.get("/prices-freshness")
+def get_prices_freshness(security_id: Optional[int] = Query(None)):
+    """When prices were last downloaded, for the "prices updated" indicator.
+
+    security_last_download — newest Downloaded_At among that security's prices (when security_id given).
+    job_* — the scheduler's market_data job: when it last finished, how, and its configured interval.
+    Times are ISO-8601 UTC ("...Z") so the browser can show them in its own zone.
+    """
+    iso = "to_char({c} AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')"
+    out = {"security_last_download": None, "job_last_run": None, "job_status": None, "job_message": None,
+           "job_interval_min": None}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if security_id:
+                cur.execute(f"SELECT {iso.format(c='MAX(Downloaded_At)')} FROM Historical_Prices WHERE Securities_Id = %s",
+                            (security_id,))
+                out["security_last_download"] = cur.fetchone()[0]
+            try:
+                cur.execute(f"SELECT {iso.format(c='last_run')}, last_status, last_message, schedule "
+                            "FROM Scheduler_Jobs WHERE job_id = 'market_data'")
+                row = cur.fetchone()
+            except Exception:
+                conn.rollback()
+                row = None
+            if row:
+                out["job_last_run"], out["job_status"], out["job_message"] = row[0], row[1], row[2]
+                import re
+                m = re.search(r"every\s+(\d+)\s*min", str(row[3] or ""), re.IGNORECASE)
+                out["job_interval_min"] = int(m.group(1)) if m else None
+    return out
+
+
 @router.get("/price-anomalies")
 def get_price_anomalies(threshold_pct: float = Query(100.0)):
     """Prices that deviate more than threshold_pct% from their neighbours."""

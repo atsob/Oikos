@@ -1095,6 +1095,13 @@ export const getIncomeExpenseFull = (
     category_id: categoryId || undefined,
   }}).then(r => r.data)
 
+export type PricesFreshness = {
+  security_last_download: string | null; job_last_run: string | null
+  job_status: string | null; job_message: string | null; job_interval_min: number | null
+}
+export const getPricesFreshness = (securityId?: number) =>
+  api.get('/market-data/prices-freshness', { params: { security_id: securityId } }).then(r => r.data as PricesFreshness)
+
 // Best / Worst Days (Reports -> Inv. Performance -> Best / Worst Days)
 export const getDayExtremeYears = (accountId?: number) =>
   api.get('/reports/day-extremes/years', { params: { account_id: accountId } }).then(r => r.data as number[])

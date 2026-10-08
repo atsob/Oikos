@@ -13,6 +13,11 @@ Jobs
                       Held/watchlisted securities, institutions, and opted-in payees.
 • Interest rates    : every INTEREST_RATES_INTERVAL_MINUTES (24 × 7).
                       €STR / ECB deposit rate (ECB), SOFR / EFFR / Fed target (NY Fed).
+
+Every job runs under a watchdog (see _guard): a job that hangs — typically a network call that
+never answers — is abandoned after its time limit, recorded as an error, and the loop carries on;
+if it is still stuck well past the limit the process exits so Docker (restart: unless-stopped)
+starts a clean one.
 """
 
 import warnings
@@ -24,6 +29,7 @@ warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy conne
 import sys
 import logging
 import re
+import threading
 import time
 from datetime import date, datetime, timedelta
 
@@ -216,6 +222,86 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
     return now.hour == hour and minute <= now.minute < minute + window
 
 
+# ── Watchdog ──────────────────────────────────────────────────────────────────
+# The tick loop is single-threaded, so one job that never returns (a network call with no
+# answer, a lock that is never released) used to stop *every* job behind it — market data
+# included — until someone restarted the container. Each job now runs in a worker thread that
+# the loop waits on only up to a limit.
+
+DEFAULT_JOB_TIMEOUT_MIN = 60
+JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
+    "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
+    "recurring_drafts": 10, "shiller_cape": 15, "daily_backup": 45,
+    "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120,
+    "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
+}
+# Market-data sub-steps are also limited one by one, so a stuck Yahoo call does not cost the
+# TradingView, bond and FX updates behind it.
+STEP_TIMEOUT_MIN = {"yahoo": 10, "tradingview": 10, "solidus": 3, "fx": 5}
+# A run abandoned at its limit but still alive after this many times the limit means the process
+# can't be trusted any more (stuck threads pile up, a DB lock may be held): exit and let Docker restart.
+HARD_EXIT_FACTOR = 2
+
+_workers: dict[str, tuple[threading.Thread, datetime, int]] = {}   # job_id -> (thread, started, limit_min)
+
+
+def _call_with_timeout(name: str, fn, timeout_min: float):
+    """Run fn() in a daemon thread and wait at most timeout_min. Returns (finished, error).
+    A call that does not finish is abandoned (a thread cannot be killed) — its thread is left
+    in _workers so the watchdog can see it is still alive."""
+    box: dict = {}
+
+    def _target():
+        try:
+            fn()
+        except BaseException as exc:                 # noqa: BLE001 — report, never kill the thread silently
+            box["error"] = exc
+
+    th = threading.Thread(target=_target, name=f"job-{name}", daemon=True)
+    th.start()
+    th.join(timeout_min * 60)
+    if th.is_alive():
+        _workers[name] = (th, datetime.now(), timeout_min)
+        return False, None
+    _workers.pop(name, None)
+    return True, box.get("error")
+
+
+def _check_stuck():
+    """Exit the process when an abandoned job is still running long past its limit."""
+    for name, (th, started, limit) in list(_workers.items()):
+        if not th.is_alive():
+            _workers.pop(name, None)
+            continue
+        age_min = (datetime.now() - started).total_seconds() / 60
+        if age_min >= limit * (HARD_EXIT_FACTOR - 1):
+            logging.critical(f"Job '{name}' has been stuck for {age_min + limit:.0f} min "
+                             f"(limit {limit:.0f} min) — exiting so the container restarts.")
+            _record_job(name, "error", f"stuck for over {age_min + limit:.0f} min — scheduler restarted")
+            logging.shutdown()
+            _os._exit(1)
+
+
+def _guard(job_id: str, fn) -> bool:
+    """Run a job under the watchdog. False when it was skipped or did not finish in time."""
+    prev = _workers.get(job_id)
+    if prev and prev[0].is_alive():
+        logging.error(f"Skipping '{job_id}': the previous run is still stuck.")
+        return False
+    limit = JOB_TIMEOUT_MIN.get(job_id, DEFAULT_JOB_TIMEOUT_MIN)
+    done, _err = _call_with_timeout(job_id, fn, limit)
+    if not done:
+        msg = f"timed out after {limit} min — abandoned, will retry on the next run"
+        logging.error(f"Job '{job_id}' {msg}.")
+        _record_job(job_id, "error", msg)
+        return False
+    if _err is not None:                      # a job normally records its own failure; this catches one that didn't
+        logging.error(f"Job '{job_id}' failed: {_err}", exc_info=_err)
+        _record_job(job_id, "error", str(_err))
+        return False
+    return True
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def _monthly_summary_job():
@@ -243,33 +329,27 @@ def _weekly_summary_job():
 def _market_data_job():
     logging.info("Running market data refresh…")
     errors = []
-    try:
-        download_historical_prices_from_yahoo(tsperiod="1d")
-        logging.info("Security prices refreshed.")
-    except Exception as e:
-        logging.error(f"Price refresh failed: {e}", exc_info=True)
-        errors.append(str(e))
 
-    try:
-        download_historical_prices_from_tradingview(tsperiod="1d")
-        logging.info("TradingView prices refreshed.")
-    except Exception as e:
-        logging.error(f"TradingView price refresh failed: {e}", exc_info=True)
-        errors.append(str(e))
+    def _step(label: str, key: str, fn):
+        prev = _workers.get(f"market_data:{key}")
+        if prev and prev[0].is_alive():
+            logging.error(f"{label}: the previous run is still stuck — skipped.")
+            errors.append(f"{label}: previous run still stuck")
+            return
+        done, err = _call_with_timeout(f"market_data:{key}", fn, STEP_TIMEOUT_MIN[key])
+        if not done:
+            logging.error(f"{label} timed out after {STEP_TIMEOUT_MIN[key]} min — skipped.")
+            errors.append(f"{label} timed out after {STEP_TIMEOUT_MIN[key]} min")
+        elif err is not None:
+            logging.error(f"{label} failed: {err}", exc_info=err)
+            errors.append(str(err))
+        else:
+            logging.info(f"{label} refreshed.")
 
-    try:
-        download_bond_prices_from_solidus()
-        logging.info("Bond prices refreshed.")
-    except Exception as e:
-        logging.error(f"Bond price refresh failed: {e}", exc_info=True)
-        errors.append(str(e))
-
-    try:
-        download_historical_fx(tsperiod="3d")   # 3 d to catch weekend gaps on Monday
-        logging.info("FX rates refreshed.")
-    except Exception as e:
-        logging.error(f"FX refresh failed: {e}", exc_info=True)
-        errors.append(str(e))
+    _step("Security prices", "yahoo", lambda: download_historical_prices_from_yahoo(tsperiod="1d"))
+    _step("TradingView prices", "tradingview", lambda: download_historical_prices_from_tradingview(tsperiod="1d"))
+    _step("Bond prices", "solidus", download_bond_prices_from_solidus)
+    _step("FX rates", "fx", lambda: download_historical_fx(tsperiod="3d"))   # 3 d to catch weekend gaps on Monday
 
     if errors:
         _record_job("market_data", "error", "; ".join(errors))
@@ -541,7 +621,7 @@ if __name__ == "__main__":
     # Run weekly summary immediately if this week's entry is missing
     if not _summary_exists_for_current_week():
         logging.info("No summary for current week — running now.")
-        _weekly_summary_job()
+        _guard('weekly_summary', _weekly_summary_job)
     else:
         logging.info("Current week's summary already exists — skipping startup run.")
 
@@ -550,7 +630,7 @@ if __name__ == "__main__":
     now = datetime.now()
     if _is_market_open(now):
         logging.info("Market is open — running initial market data refresh.")
-        _market_data_job()
+        _guard('market_data', _market_data_job)
         _last_market_refresh = now
 
     # Skip weekly summary if already past the scheduled window today
@@ -571,12 +651,12 @@ if __name__ == "__main__":
 
     # Recurring drafts: run once at startup
     logging.info("Running initial recurring drafts generation.")
-    _recurring_drafts_job()
+    _guard('recurring_drafts', _recurring_drafts_job)
     _last_recurring_drafts_date: date = date.today()
 
     # Securities info: run once at startup
     logging.info("Running initial securities info refresh.")
-    _securities_info_job()
+    _guard('securities_info', _securities_info_job)
     _last_securities_info_date: date = date.today()
 
     # Dividend history: weekly — skip if already ran this week
@@ -618,92 +698,93 @@ if __name__ == "__main__":
         time.sleep(TICK_SECONDS)
         now = datetime.now()
         sc = _get_all_schedules()
+        _check_stuck()
 
         # ── Market data: every N minutes ──────────────────────────────────────
         minutes_since_refresh = (now - _last_market_refresh).total_seconds() / 60
         if _is_market_open(now) and minutes_since_refresh >= _parse_interval(sc.get('market_data', ''), MARKET_REFRESH_INTERVAL_MINUTES):
-            _market_data_job()
+            _guard('market_data', _market_data_job)
             _last_market_refresh = now
 
         # ── Recurring drafts: once per calendar day ───────────────────────────
         if _last_recurring_drafts_date != date.today():
-            _recurring_drafts_job()
+            _guard('recurring_drafts', _recurring_drafts_job)
             _last_recurring_drafts_date = date.today()
 
         # ── Securities info: once per calendar day ────────────────────────────
         if _last_securities_info_date != date.today():
-            _securities_info_job()
+            _guard('securities_info', _securities_info_job)
             _last_securities_info_date = date.today()
 
         # ── Daily backup ──────────────────────────────────────────────────────
         bkp_h, bkp_m = _parse_daily(sc.get('daily_backup', ''), BACKUP_HOUR, 0)
         if _in_window(now, bkp_h, bkp_m) and _last_backup_date != date.today():
-            _backup_job()
+            _guard('daily_backup', _backup_job)
             _last_backup_date = date.today()
 
         # ── Morning maintenance ───────────────────────────────────────────────
         mnt_h, mnt_m = _parse_daily(sc.get('morning_maintenance', ''), MAINTENANCE_HOUR, MAINTENANCE_MINUTE)
         if _in_window(now, mnt_h, mnt_m) and _last_maintenance_date != date.today():
-            _morning_maintenance_job()
+            _guard('morning_maintenance', _morning_maintenance_job)
             _last_maintenance_date = date.today()
 
         # ── Weekly summary ────────────────────────────────────────────────────
         ws_wd, ws_h, ws_m = _parse_weekly(sc.get('weekly_summary', ''), WEEKLY_SUMMARY_WEEKDAY, WEEKLY_SUMMARY_HOUR, WEEKLY_SUMMARY_MINUTE)
         if now.weekday() == ws_wd and _in_window(now, ws_h, ws_m) and _last_weekly_summary_date != date.today():
-            _weekly_summary_job()
+            _guard('weekly_summary', _weekly_summary_job)
             _last_weekly_summary_date = date.today()
 
         # ── Monthly summary ───────────────────────────────────────────────────
         ms_d, ms_h, ms_m = _parse_monthly(sc.get('monthly_summary', ''), MONTHLY_SUMMARY_DAY, MONTHLY_SUMMARY_HOUR, MONTHLY_SUMMARY_MINUTE)
         if now.day == ms_d and _in_window(now, ms_h, ms_m) and _last_monthly_summary_month != now.month:
-            _monthly_summary_job()
+            _guard('monthly_summary', _monthly_summary_job)
             _last_monthly_summary_month = now.month
 
         # ── Dividend history: weekly ──────────────────────────────────────────
         _this_week_start = _current_week_start()
         dh_wd, dh_h, dh_m = _parse_weekly(sc.get('dividend_history', ''), DIVIDEND_HISTORY_WEEKDAY, DIVIDEND_HISTORY_HOUR, DIVIDEND_HISTORY_MINUTE)
         if now.weekday() == dh_wd and _in_window(now, dh_h, dh_m) and _last_dividend_history_week != _this_week_start:
-            _dividend_history_job()
+            _guard('dividend_history', _dividend_history_job)
             _last_dividend_history_week = _this_week_start
 
         # ── Stock splits: weekly ───────────────────────────────────────────────
         ss_wd, ss_h, ss_m = _parse_weekly(sc.get('stock_splits', ''), STOCK_SPLITS_WEEKDAY, STOCK_SPLITS_HOUR, STOCK_SPLITS_MINUTE)
         if now.weekday() == ss_wd and _in_window(now, ss_h, ss_m) and _last_stock_splits_week != _this_week_start:
-            _stock_splits_job()
+            _guard('stock_splits', _stock_splits_job)
             _last_stock_splits_week = _this_week_start
 
         # ── Fund composition (Portfolio X-Ray): monthly ───────────────────────
         fc_d, fc_h, fc_m = _parse_monthly(sc.get('fund_composition', ''), FUND_COMPOSITION_DAY, FUND_COMPOSITION_HOUR, FUND_COMPOSITION_MINUTE)
         if now.day == fc_d and _in_window(now, fc_h, fc_m) and _last_fund_composition_month != now.month:
-            _fund_composition_job()
+            _guard('fund_composition', _fund_composition_job)
             _last_fund_composition_month = now.month
 
         # ── Fundamentals (F-Score/Z-Score): monthly ───────────────────────────
         fn_d, fn_h, fn_m = _parse_monthly(sc.get('fundamentals', ''), FUNDAMENTALS_DAY, FUNDAMENTALS_HOUR, FUNDAMENTALS_MINUTE)
         if now.day == fn_d and _in_window(now, fn_h, fn_m) and _last_fundamentals_month != now.month:
-            _fundamentals_job()
+            _guard('fundamentals', _fundamentals_job)
             _last_fundamentals_month = now.month
 
         # ── Shiller CAPE: monthly ──────────────────────────────────────────────
         sh_d, sh_h, sh_m = _parse_monthly(sc.get('shiller_cape', ''), SHILLER_CAPE_DAY, SHILLER_CAPE_HOUR, SHILLER_CAPE_MINUTE)
         if now.day == sh_d and _in_window(now, sh_h, sh_m) and _last_shiller_cape_month != now.month:
-            _shiller_cape_job()
+            _guard('shiller_cape', _shiller_cape_job)
             _last_shiller_cape_month = now.month
 
         # ── Signal notifications: every N minutes ─────────────────────────────
         minutes_since_signal = (now - _last_signal_refresh).total_seconds() / 60
         if minutes_since_signal >= _parse_interval(sc.get('signal_notifications', ''), SIGNAL_REFRESH_INTERVAL_MINUTES):
-            _signal_notifications_job()
+            _guard('signal_notifications', _signal_notifications_job)
             _last_signal_refresh = now
 
         # ── News fetch: every N minutes ───────────────────────────────────────
         minutes_since_news = (now - _last_news_fetch).total_seconds() / 60
         if minutes_since_news >= _parse_interval(sc.get('news_fetch', ''), NEWS_FETCH_INTERVAL_MINUTES):
-            _news_fetch_job()
+            _guard('news_fetch', _news_fetch_job)
             _last_news_fetch = now
 
         # ── Interest rates (€STR, ECB, Fed, SOFR): every N minutes ────────────
         minutes_since_rates = (now - _last_interest_rates).total_seconds() / 60
         if minutes_since_rates >= _parse_interval(sc.get('interest_rates', ''), INTEREST_RATES_INTERVAL_MINUTES):
-            _interest_rates_job()
+            _guard('interest_rates', _interest_rates_job)
             _last_interest_rates = now

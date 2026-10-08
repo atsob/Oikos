@@ -7,9 +7,9 @@ import {
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
   generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert, acknowledgeZoneChange,
-  getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary,
+  getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary, getPricesFreshness,
 } from '@/lib/api'
-import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip } from '@/components/ui'
+import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip, PricesUpdated } from '@/components/ui'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
@@ -1141,12 +1141,17 @@ export default function Dashboard() {
     if (!weekPeriods.includes(ws)) weekPeriods.push(ws)
   })
 
+  const { data: freshness } = useQuery({ queryKey: ['prices-freshness'], queryFn: () => getPricesFreshness(), refetchInterval: 60_000 })
+
   return (
     <div>
       <PageHeader
         title="Dashboard"
         subtitle="Net worth overview"
         actions={
+          <>
+          <PricesUpdated at={freshness?.job_last_run}
+            detail={freshness?.job_status === 'error' ? `The last run reported problems: ${freshness.job_message ?? ''}.` : freshness?.job_interval_min ? `It runs every ${freshness.job_interval_min} minutes.` : undefined} />
           <SyncBalancesButton
             options={[
               { label: '🏦 Bank & Cash', target: 'cash' },
@@ -1157,6 +1162,7 @@ export default function Dashboard() {
             ]}
             onSync={handleSync}
           />
+          </>
         }
       />
 

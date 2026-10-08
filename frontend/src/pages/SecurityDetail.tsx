@@ -8,12 +8,12 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip, PricesUpdated,
 } from '@/components/ui'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
-  getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
+  getSecurities, getPriceHistory, getPricesFreshness, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
@@ -88,6 +88,9 @@ function PricesTab({ secId }: { secId: number }) {
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])
+  const { data: freshness } = useQuery({
+    queryKey: ['prices-freshness', secId], queryFn: () => getPricesFreshness(secId), refetchInterval: 60_000,
+  })
   const [action, setAction] = useState<'save' | 'delete'>('save')
   const [entryDate, setEntryDate] = useState(todayLocal())
   const [entryValue, setEntryValue] = useState('')
@@ -242,17 +245,9 @@ function PricesTab({ secId }: { secId: number }) {
     const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Grant', 'Vest', 'Exercise'])
     const REINVEST_LIKE = new Set(['Reinvest'])
     const SELL_LIKE = new Set(['Sell', 'ShrOut', 'Expire'])
-    const toPoint = (r: Record<string, unknown>) => {
-      const d = String(r.date).slice(0, 10)
-      const y = r.price_per_share != null ? Number(r.price_per_share) : (closeByDate.get(d) ?? null)
-      return { d, y, action: String(r.action ?? ''), quantity: r.quantity, price: r.price_per_share }
-    }
     const inRange = (txHistory as Record<string, unknown>[]).filter(r => String(r.date).slice(0, 10) >= fromDate)
-    return {
-      buys: inRange.filter(r => BUY_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-      reinvests: inRange.filter(r => REINVEST_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-      sells: inRange.filter(r => SELL_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-    }
+    const pts = (set: Set<string>) => mergeSameDayTrades(inRange.filter(r => set.has(String(r.action))), closeByDate)
+    return { buys: pts(BUY_LIKE), reinvests: pts(REINVEST_LIKE), sells: pts(SELL_LIKE) }
   }, [history, txHistory, fromDate])
 
   // Avg Cost, Trailing Stop, and price alerts render as ordinary legend-toggleable line
@@ -314,6 +309,8 @@ function PricesTab({ secId }: { secId: number }) {
             {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
           </span>
         )}
+        <PricesUpdated className="ml-auto" at={freshness?.security_last_download}
+          detail={freshness?.job_last_run ? `The scheduler's market-data job last finished ${new Date(freshness.job_last_run).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (${freshness.job_status ?? 'unknown'}).` : undefined} />
       </div>
 
       <div className="flex items-center gap-2">
@@ -378,7 +375,7 @@ function PricesTab({ secId }: { secId: number }) {
               type: 'scatter', mode: 'markers', name: 'Reinvest',
               marker: { color: '#14b8a6', size: 10, symbol: 'diamond', line: { color: '#0f766e', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
@@ -387,7 +384,7 @@ function PricesTab({ secId }: { secId: number }) {
               type: 'scatter', mode: 'markers', name: 'Buy',
               marker: { color: '#22c55e', size: 11, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
@@ -396,7 +393,7 @@ function PricesTab({ secId }: { secId: number }) {
               type: 'scatter', mode: 'markers', name: 'Sell',
               marker: { color: '#ef4444', size: 11, symbol: 'triangle-down', line: { color: '#b91c1c', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
           ]}
@@ -2108,17 +2105,9 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     const BUY_LIKE = new Set(['Buy', 'ShrIn', 'Grant', 'Vest', 'Exercise'])
     const REINVEST_LIKE = new Set(['Reinvest'])
     const SELL_LIKE = new Set(['Sell', 'ShrOut', 'Expire'])
-    const toPoint = (r: Record<string, unknown>) => {
-      const d = String(r.date).slice(0, 10)
-      const y = r.price_per_share != null ? Number(r.price_per_share) : (closeByDate.get(d) ?? null)
-      return { d, y, action: String(r.action ?? ''), quantity: r.quantity, price: r.price_per_share }
-    }
     const inRange = (txHistory as Record<string, unknown>[]).filter(r => String(r.date).slice(0, 10) >= fromDate)
-    return {
-      buys: inRange.filter(r => BUY_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-      reinvests: inRange.filter(r => REINVEST_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-      sells: inRange.filter(r => SELL_LIKE.has(String(r.action))).map(toPoint).filter(p => p.y != null),
-    }
+    const pts = (set: Set<string>) => mergeSameDayTrades(inRange.filter(r => set.has(String(r.action))), closeByDate)
+    return { buys: pts(BUY_LIKE), reinvests: pts(REINVEST_LIKE), sells: pts(SELL_LIKE) }
   }, [history, txHistory, fromDate])
 
   return (
@@ -2186,7 +2175,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               type: 'scatter', mode: 'markers', name: 'Reinvest',
               marker: { color: '#14b8a6', size: 9, symbol: 'diamond', line: { color: '#0f766e', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.reinvests.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
@@ -2195,7 +2184,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               type: 'scatter', mode: 'markers', name: 'Buy',
               marker: { color: '#22c55e', size: 10, symbol: 'triangle-up', line: { color: '#15803d', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.buys.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
             {
@@ -2204,7 +2193,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               type: 'scatter', mode: 'markers', name: 'Sell',
               marker: { color: '#ef4444', size: 10, symbol: 'triangle-down', line: { color: '#b91c1c', width: 1 } },
               yaxis: 'y',
-              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}`),
+              text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
           ]}
@@ -3317,4 +3306,27 @@ export default function SecurityDetail() {
       </div>
     </div>
   )
+}
+
+// One chart marker per day and kind of trade. A single order is often filled in several pieces
+// (IBKR books each fill as its own row), and stacked markers on the same date let the hover show
+// just one of them — a 5.9527-share buy read as 0.9526. Fills of one day are merged: quantities
+// add up and the price is the quantity-weighted average of the fills that have one.
+function mergeSameDayTrades(rows: Record<string, unknown>[], closeByDate: Map<string, number>) {
+  const byDay = new Map<string, Record<string, unknown>[]>()
+  for (const r of rows) {
+    const d = String(r.date).slice(0, 10)
+    byDay.set(d, [...(byDay.get(d) ?? []), r])
+  }
+  return [...byDay.entries()].map(([d, fills]) => {
+    const qty = fills.reduce((a, r) => a + Math.abs(Number(r.quantity) || 0), 0)
+    const priced = fills.filter(r => r.price_per_share != null && Number(r.quantity))
+    const pq = priced.reduce((a, r) => a + Math.abs(Number(r.quantity)), 0)
+    const price = pq > 0 ? priced.reduce((a, r) => a + Math.abs(Number(r.quantity)) * Number(r.price_per_share), 0) / pq : null
+    const actions = [...new Set(fills.map(r => String(r.action ?? '')))]
+    return {
+      d, y: price ?? closeByDate.get(d) ?? null,
+      action: actions.join(' + '), quantity: qty, price, fills: fills.length,
+    }
+  }).filter(p => p.y != null)
 }
