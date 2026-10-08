@@ -31,6 +31,7 @@ import {
   api,
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink } from '@/components/ui'
+import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -9666,6 +9667,9 @@ export default function Reports() {
       <div className="flex-1 min-w-0 overflow-auto">
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
           <h2 className="text-base font-semibold text-slate-800">{current?.label}</h2>
+          {['net-worth', 'inv-positions', 'inv-performance', 'securities', 'planning', 'custom'].includes(activeTab) && (
+            <PricesUpdatedAuto className="ml-auto mr-4" />
+          )}
           {activeTab !== 'net-worth' && activeTab !== 'inv-performance' && activeTab !== 'income-expense' && activeTab !== 'securities' && activeTab !== 'custom' && activeTab !== 'inv-positions' && activeTab !== 'cashflow' && activeTab !== 'tax' && activeTab !== 'budget' && activeTab !== 'planning' && (
             <div className="flex items-center gap-2">
               <Input type="date" className="w-36 text-sm" value={startDate} onChange={e => setStartDate(e.target.value)} />

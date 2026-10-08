@@ -12,6 +12,7 @@ import {
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
+import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty, todayLocal, toLocalISODate } from '@/lib/utils'
 import { Plus, Save, RefreshCw, ArrowLeftRight, ArrowLeft, Search, X } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
@@ -671,6 +672,7 @@ export default function Investments() {
         })()}
         actions={
           <div className="flex items-center gap-2">
+            <PricesUpdatedAuto className="mr-2" />
             {cameFromReport && (
               <>
                 <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>

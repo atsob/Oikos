@@ -155,7 +155,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Dashboard</H2>
-        <P>The landing page — a snapshot of where things stand right now. Top right, <b>Prices updated … ago</b> shows when the scheduler last finished its market-data refresh (grey, amber after 30 minutes, red after 3 hours; hover for the time and whether the run reported problems) — a quick check that prices are current.</P>
+        <P>The landing page — a snapshot of where things stand right now. Top right, <b>Prices updated … ago</b> shows when the scheduler last finished its market-data refresh (grey, amber after 30 minutes, red after 3 hours; hover for the time and whether the run reported problems) — a quick check that prices are current. The same indicator appears wherever market prices are used: the header of <b>Investments</b>, <b>Market Data</b>, every <b>Security</b> and <b>Currency</b> page (on a security it is that security's own last download), and the top bar of the valued Reports (Net Worth, Inv. Positions, Inv. Performance, Securities Analysis, Planning, Custom).</P>
         <H3>KPI cards</H3>
         <P>
           Net Worth, Cash, Investments, Pension &amp; Savings, and Assets, each with a "vs prev month" and
@@ -1230,7 +1230,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Columns, Copy to Excel) can delete any selected rows in one go; <b>Import from File</b> loads a
           tab-separated TXT/CSV/TSV price file (the <b>Date</b> header row is found automatically), skipping or
           overwriting dates that already exist; and <b>Manual Entry</b> saves (upserts) or deletes the close price
-          for any single date. This replaces the former Market Data → Securities Prices tab. Above the chart, <b>Prices updated … ago</b> shows when this security's prices were last downloaded (amber after 30 minutes, red after 3 hours) — a security with no price feed, whose prices you enter by hand, will naturally show an old time.
+          for any single date. This replaces the former Market Data → Securities Prices tab. At the top of the page (on every tab), <b>Prices updated … ago</b> shows when this security's prices were last downloaded (amber after 30 minutes, red after 3 hours) — a security with no price feed, whose prices you enter by hand, will naturally show an old time.
         </Note>
         <Note>
           <b>Fair Value (Est.)</b> is Oikos's own approximation of the "reversion to historical trading multiple"

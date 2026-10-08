@@ -8,12 +8,13 @@ import PlotlyReact from 'react-plotly.js'
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip, PricesUpdated,
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
 } from '@/components/ui'
+import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import {
-  getSecurities, getPriceHistory, getPricesFreshness, addPrice, deletePrice, deletePricesBulk,
+  getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
@@ -88,9 +89,6 @@ function PricesTab({ secId }: { secId: number }) {
   const fromDate = periodToFromDate(period)
   const [priceSearch, setPriceSearch] = useState('')
   const [selectedDates, setSelectedDates] = useState<string[]>([])
-  const { data: freshness } = useQuery({
-    queryKey: ['prices-freshness', secId], queryFn: () => getPricesFreshness(secId), refetchInterval: 60_000,
-  })
   const [action, setAction] = useState<'save' | 'delete'>('save')
   const [entryDate, setEntryDate] = useState(todayLocal())
   const [entryValue, setEntryValue] = useState('')
@@ -309,8 +307,6 @@ function PricesTab({ secId }: { secId: number }) {
             {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
           </span>
         )}
-        <PricesUpdated className="ml-auto" at={freshness?.security_last_download}
-          detail={freshness?.job_last_run ? `The scheduler's market-data job last finished ${new Date(freshness.job_last_run).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (${freshness.job_status ?? 'unknown'}).` : undefined} />
       </div>
 
       <div className="flex items-center gap-2">
@@ -3241,9 +3237,12 @@ export default function SecurityDetail() {
       <PageHeader
         title=""
         actions={
-          <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={13} /> Back
-          </Button>
+          <>
+            <PricesUpdatedAuto securityId={secId || undefined} />
+            <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+              <ArrowLeft size={13} /> Back
+            </Button>
+          </>
         }
       />
 

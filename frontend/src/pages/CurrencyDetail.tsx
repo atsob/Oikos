@@ -7,6 +7,7 @@ import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Search } from 'lucide-react'
+import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, AccountLink, Tooltip,
 } from '@/components/ui'
@@ -60,9 +61,12 @@ export default function CurrencyDetail() {
       <PageHeader
         title=""
         actions={
-          <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
-            <ArrowLeft size={13} /> Back
-          </Button>
+          <>
+            <PricesUpdatedAuto />
+            <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+              <ArrowLeft size={13} /> Back
+            </Button>
+          </>
         }
       />
 
