@@ -1409,7 +1409,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A dividend's Quantity is filled in from the actual position held on that date, same as Interactive
           Brokers — but Saxo's own dividend figure already has withholding tax deducted before it reaches the
           statement, reported only as a period total rather than per-dividend, so there's no separate tax
-          amount to record on the row.
+          amount to record on the row. When charges come from the <b>Transactions PDF</b>, the instrument is found
+          by name: if a dividend or charge lands on the "Saxo Bank (Account Fees)" placeholder instead of its
+          security, the name in the PDF didn't match one of yours — check the row's description (the part between
+          the third and fourth <code>|</code> is the name the parser read) rather than assuming the dividend is
+          real. A charge already imported is recognised by that description, so if you correct one by hand keep
+          its format, or the next import will add it again.
         </Note>
         <Note>
           <b>Saxo Bank → Authentication</b>: after authorizing with Saxo, the redirect back to Oikos carries the

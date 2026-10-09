@@ -235,6 +235,41 @@ def _col(row: list[dict], x_lo: float, x_hi: float) -> list[str]:
     return [w["text"] for w in row if x_lo <= w["x0"] < x_hi]
 
 
+# Table-header / page-furniture rows. Their words land in the Instrument column too (the header's
+# "currency amount Costs" line puts "currency" there), so they must never be read as the start of
+# an instrument name.
+_HEADER_ROW_RE = re.compile(
+    r"^(Instrument|Booked|TradeDate|currency\s+amount|Total|Transactions\s*-|Reporting|Introduction|This\s*section)",
+    re.IGNORECASE,
+)
+
+
+def _row_top(row: list[dict]) -> float:
+    return min(w["top"] for w in row)
+
+
+def _is_header_row(row: list[dict]) -> bool:
+    return bool(_HEADER_ROW_RE.match(" ".join(w["text"] for w in row)))
+
+
+def _is_post_row(rows: list[list[dict]], idx: int) -> bool:
+    """True if the non-date row at *idx* is the wrapped tail of the PREVIOUS entry's cell.
+
+    Saxo wraps a long instrument name over several lines around the entry's date row: the first
+    part sits above it and the rest below. A tail row therefore sits closer to the date row above
+    it than to the one below. Reading it as the start of the next entry's name glued it onto the
+    next instrument ("SpaceX" + "NVIDIACorp." -> a dividend that matched no security).
+    """
+    top = _row_top(rows[idx])
+    prev_top = next((_row_top(rows[i]) for i in range(idx - 1, -1, -1) if _is_date_row(rows[i])), None)
+    if prev_top is None:
+        return False
+    next_top = next((_row_top(rows[i]) for i in range(idx + 1, len(rows)) if _is_date_row(rows[i])), None)
+    if next_top is None:
+        return True
+    return (top - prev_top) < (next_top - top)
+
+
 def _is_date_row(row: list[dict]) -> bool:
     """True if the row contains at least one date token at Trade-Date position."""
     return any(
@@ -304,6 +339,10 @@ def parse_saxo_transactions_pdf(
 
                 # ── Non-date row: instrument name fragment ──────────────────
                 if not _is_date_row(row):
+                    # Page furniture and the tail of the previous entry's wrapped name are not
+                    # the start of the next entry's name.
+                    if _is_header_row(row) or _is_post_row(rows, row_idx):
+                        continue
                     instr_frag = " ".join(_col(row, _X_PRODUCT_MAX, _X_INSTR_MAX)).strip()
                     instr_frag = instr_frag.rstrip("-").strip()
 

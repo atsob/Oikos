@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-09
+
+### Fixed
+- **Saxo PDF import: an instrument name wrapped over several lines no longer leaks into the next row.** The Saxo Transactions PDF wraps a long instrument name around its date row — the start above it, the rest below ("SpaceExploration … / 01-Oct … / SpaceX"). The parser (`data/saxo_pdf_parser.py`) read that trailing line as the beginning of the *next* entry's name, so the NVIDIA cash dividend of 1 Oct 2026 was imported as "SpaceX NVIDIACorp." (note `…|CASHDIVIDEND|SPACEXNVIDIACORP.|2026-10-01`), matched no security and landed on the Saxo Bank (Account Fees) placeholder — a second copy of the NVDA dividend already booked, not a SpaceX dividend (SpaceX paid none). The same thing had happened with the table's own header: an older PDF turned the same dividend into "currency NVIDIACorp." from the header's "currency amount Costs" line. A tail line is now recognised by its position (closer to the date row above than to the one below) and header/page lines are ignored. Checked by parsing 13 of your Saxo PDFs before and after: the only record that changes in any of them is that NVIDIA dividend (in the two newest PDFs). **Data cleaned up by hand:** the duplicate "Dividend 0.15 on Saxo Bank (Account Fees)" row (Investments_Id 31385) was deleted, and the correct NVDA dividend (31339) had its key renamed from the leaked `…CURRENCYNVIDIACORP.…` to `SAXO|CHARGE|CASHDIVIDEND|NVIDIACORP.|2026-10-01`, so the next PDF import recognises it instead of adding it again.
+
 ## 2026-10-08
 
 ### Added
