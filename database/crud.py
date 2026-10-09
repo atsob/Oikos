@@ -1312,7 +1312,7 @@ def generate_draft_transactions() -> int:
     try:
         cur.execute("""
             SELECT Templates_Id, Accounts_Id, Payees_Id, Description, Total_Amount,
-                   Periodicity, Next_Due_Date, End_Date, Auto_Confirm, Accounts_Id_Target
+                   Periodicity, Next_Due_Date, End_Date, Auto_Confirm, Accounts_Id_Target, Is_Card_Payment
             FROM Recurring_Templates
             WHERE Active = TRUE
               AND Next_Due_Date <= CURRENT_DATE
@@ -1321,7 +1321,7 @@ def generate_draft_transactions() -> int:
         templates = cur.fetchall()
 
         for (tid, acc_id, payee_id, desc, amount, periodicity,
-             next_due, end_date, auto_confirm, target_acc) in templates:
+             next_due, end_date, auto_confirm, target_acc, is_card_payment) in templates:
 
             cur.execute("""
                 SELECT 1 FROM Transactions
@@ -1334,6 +1334,21 @@ def generate_draft_transactions() -> int:
                     (adv(next_due), tid)
                 )
                 continue
+
+            if is_card_payment:
+                # A card payment is whatever the card's statement says is owed at this moment —
+                # not the figure stored when the template was last looked at.
+                from database.card_statements import template_payment
+                calc = template_payment(cur, tid)
+                if calc and "error" not in calc:
+                    amount = -calc["owed"]
+                    cur.execute("UPDATE Recurring_Templates SET Total_Amount = %s WHERE Templates_Id = %s", (amount, tid))
+                    if calc["owed"] < 0.005:
+                        # Nothing owed: no zero-value transfer, just move on to the next cycle.
+                        adv = periodicity_advance_fn(periodicity)
+                        cur.execute("UPDATE Recurring_Templates SET Next_Due_Date = %s WHERE Templates_Id = %s",
+                                    (adv(next_due), tid))
+                        continue
 
             is_draft = not bool(auto_confirm)
 

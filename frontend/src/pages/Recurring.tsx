@@ -8,6 +8,7 @@ import {
   confirmRecurringDraft, deleteRecurringDraft,
   getAccounts, getPayees, getCategories, getSplits, getPayeeTopCategories,
   getRecentTransactionsForTemplate, createTemplateFromTransaction,
+  getCardPaymentPreview,
 } from '@/lib/api'
 import { PageHeader, Card, CardBody, Button, Badge, Input, Spinner, ColHeader, useSortTable, useEscapeKey, AccountOptions, AmountCalculator } from '@/components/ui'
 import { fmtEur, fmtDate } from '@/lib/utils'
@@ -38,6 +39,7 @@ interface TplForm {
   auto_confirm: boolean
   active: boolean
   accounts_id_target: string
+  is_card_payment: boolean
   total_occurrences: string
   installment_frequency: string
 }
@@ -56,6 +58,7 @@ const emptyForm = (): TplForm => ({
   auto_confirm: false,
   active: true,
   accounts_id_target: '',
+  is_card_payment: false,
   total_occurrences: '',
   installment_frequency: 'Monthly',
 })
@@ -121,6 +124,16 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
     ] : categories
   }, [categories, topCats, payeeId])
 
+  // A transfer into a credit card can be a "card payment": its amount isn't typed in but worked out
+  // from the card's balance at its latest statement date (database/card_statements.py).
+  const targetIsCard = String((accounts.find(a => String(a.id) === form.accounts_id_target) as Row | undefined)?.type ?? '') === 'Credit Card'
+  const isCardPay = form.is_card_payment && targetIsCard
+  const { data: cardPreview } = useQuery({
+    queryKey: ['card-payment-preview', form.accounts_id_target, form.next_due_date],
+    queryFn: () => getCardPaymentPreview(Number(form.accounts_id_target), form.next_due_date || new Date().toISOString().slice(0, 10)),
+    enabled: isCardPay && !!form.accounts_id_target,
+  })
+
   const splitsTotal = splits.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0)
   const tplTotal = parseFloat(form.total_amount) || 0
   const remaining = tplTotal - splitsTotal
@@ -168,8 +181,10 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Amount</label>
               <div className="flex gap-1.5">
-                <Input className="flex-1 min-w-0" type="number" step="0.01" value={form.total_amount} onChange={e => set('total_amount', e.target.value)} placeholder="0.00" />
-                <AmountCalculator value={form.total_amount} onApply={v => set('total_amount', v)} />
+                <Input className="flex-1 min-w-0" type="number" step="0.01" disabled={isCardPay}
+                  value={isCardPay && cardPreview && !cardPreview.error && cardPreview.amount != null ? String(cardPreview.amount) : form.total_amount}
+                  onChange={e => set('total_amount', e.target.value)} placeholder="0.00" />
+                {!isCardPay && <AmountCalculator value={form.total_amount} onApply={v => set('total_amount', v)} />}
               </div>
             </div>
             <div>
@@ -206,6 +221,26 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
               <AccountOptions accounts={visibleAccounts as Record<string, unknown>[]} />
             </select>
           </div>
+
+          {targetIsCard && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="rounded" checked={form.is_card_payment}
+                  onChange={e => set('is_card_payment', e.target.checked)} />
+                Credit card payment — calculate the amount automatically
+              </label>
+              {isCardPay && (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {!cardPreview ? 'Working out the amount…'
+                    : cardPreview.error ? <span className="text-red-600">{cardPreview.error}</span>
+                    : <>Pays the statement issued on <strong>{cardPreview.statement_date}</strong>{cardPreview.issued ? '' : ' (not issued yet — the figure so far)'}:
+                        the card's balance at that date of {fmtEur(-(cardPreview.balance_at_statement ?? 0))}
+                        {(cardPreview.credits_since ?? 0) > 0 ? <>, less {fmtEur(cardPreview.credits_since ?? 0)} paid since</> : null}
+                        {' '}= <strong>{fmtEur(cardPreview.owed ?? 0)}</strong>. Recalculated every day, and again when the draft is created.</>}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Flags */}
           <div className="flex items-center gap-6">
@@ -834,6 +869,7 @@ export default function Recurring() {
       auto_confirm: Boolean(t.auto_confirm),
       active: Boolean(t.is_active),
       accounts_id_target: t.accounts_id_target != null ? String(t.accounts_id_target) : '',
+      is_card_payment: Boolean(t.is_card_payment),
       total_occurrences: t.total_occurrences != null ? String(t.total_occurrences) : '',
       installment_frequency: String(t.installment_frequency ?? 'Monthly'),
     })
@@ -884,6 +920,7 @@ export default function Recurring() {
         auto_confirm: form.auto_confirm,
         active: form.active,
         accounts_id_target: form.accounts_id_target ? Number(form.accounts_id_target) : null,
+        is_card_payment: form.is_card_payment && String(((accounts as Row[]).find(a => String(a.id) === form.accounts_id_target))?.type ?? '') === 'Credit Card',
         total_occurrences: totalOccurrences,
         installment_frequency: totalOccurrences != null ? form.installment_frequency : null,
         splits: validSplits.map(s => ({
@@ -987,6 +1024,7 @@ export default function Recurring() {
                           <Badge label={`Installment: ${String(t.total_occurrences)}× ${String(t.installment_frequency)}`} variant="purple" />}
                         <Badge label={t.is_active ? 'Active' : 'Inactive'} variant={t.is_active ? 'green' : 'gray'} />
                         {Boolean(t.auto_confirm) && <Badge label="Auto-confirm" variant="blue" />}
+                        {Boolean(t.is_card_payment) && <Badge label="Card payment · auto amount" variant="purple" />}
                       </div>
                       <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
                         {Boolean(t.account_name) && <span>Account: {String(t.account_name)}</span>}

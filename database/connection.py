@@ -529,6 +529,11 @@ def _run_startup_migrations():
         # recurring independently on Periodicity/Next_Due_Date/End_Date. See
         # database\queries.py::_maybe_expand_installment_series.
         "ALTER TABLE Recurring_Templates ADD COLUMN IF NOT EXISTS Installment_Frequency VARCHAR(20)",
+        # Accounts: per-account switch for balance alerts, and a credit card's statement day.
+        # Recurring_Templates: a credit-card payment whose amount is calculated from the statement.
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Exclude_Balance_Alerts BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Statement_Day SMALLINT CHECK (Statement_Day BETWEEN 1 AND 31)",
+        "ALTER TABLE Recurring_Templates ADD COLUMN IF NOT EXISTS Is_Card_Payment BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Group_Id INTEGER",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Seq INTEGER",
         """CREATE INDEX IF NOT EXISTS idx_transactions_installment_group

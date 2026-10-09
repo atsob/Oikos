@@ -5,6 +5,7 @@ import math
 import pandas as pd
 from database.connection import get_db, get_connection
 from api.routers.register import _refresh_balance
+from database import card_statements
 
 router = APIRouter()
 
@@ -36,6 +37,7 @@ def get_templates():
                 rt.accounts_id AS account_id,
                 rt.payees_id AS payee_id,
                 rt.accounts_id_target AS accounts_id_target,
+                rt.is_card_payment AS is_card_payment,
                 a.accounts_name AS account_name,
                 p.payees_name AS payee_name
             FROM Recurring_Templates rt
@@ -73,24 +75,33 @@ def create_template(data: dict):
         raise HTTPException(400, "An installment series (Number of installments set) can't also be Auto-confirm")
     if total_occurrences is not None and not installment_frequency:
         raise HTTPException(400, "An installment series (Number of installments set) requires an Installment Frequency")
+    is_card_payment = bool(data.get("is_card_payment", False))
+    if is_card_payment and total_occurrences is not None:
+        raise HTTPException(400, "A credit-card payment can't also be an installment series")
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if is_card_payment:
+            problem = card_statements.validate_card_payment(cur, data.get("accounts_id_target"))
+            if problem:
+                raise HTTPException(400, problem)
         cur.execute("""
             INSERT INTO Recurring_Templates
                 (name, accounts_id, payees_id, description, total_amount, periodicity,
                  next_due_date, end_date, auto_confirm, active, accounts_id_target,
-                 total_occurrences, installment_frequency)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 total_occurrences, installment_frequency, is_card_payment)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING templates_id
         """, (
             data.get("name"), data.get("accounts_id"), data.get("payees_id"),
             data.get("description"), data.get("total_amount"), data.get("periodicity"),
             data.get("next_due_date") or None, data.get("end_date") or None,
             data.get("auto_confirm", False), data.get("active", True),
-            data.get("accounts_id_target"), total_occurrences, installment_frequency,
+            data.get("accounts_id_target"), total_occurrences, installment_frequency, is_card_payment,
         ))
         tid = cur.fetchone()[0]
+        if is_card_payment:
+            _set_calculated_amount(cur, tid)
         splits = data.get("splits", [])
         for sp in splits:
             cur.execute(
@@ -99,9 +110,52 @@ def create_template(data: dict):
             )
         conn.commit()
         return {"id": tid}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
+def _set_calculated_amount(cur, templates_id: int):
+    """Overwrite a card-payment template's Total_Amount with what the card's statement says is owed."""
+    res = card_statements.template_payment(cur, templates_id)
+    if res and "error" not in res:
+        cur.execute("UPDATE Recurring_Templates SET Total_Amount = %s WHERE templates_id = %s", (-res["owed"], templates_id))
+
+
+def _advance_template(cur, templates_id: int):
+    cur.execute("""
+        UPDATE Recurring_Templates SET next_due_date = CASE periodicity
+            WHEN 'Daily'        THEN next_due_date + INTERVAL '1 day'
+            WHEN 'Weekly'       THEN next_due_date + INTERVAL '1 week'
+            WHEN 'Bi-Weekly'    THEN next_due_date + INTERVAL '2 weeks'
+            WHEN 'Monthly'      THEN next_due_date + INTERVAL '1 month'
+            WHEN 'Bi-Monthly'   THEN next_due_date + INTERVAL '2 months'
+            WHEN 'Quarterly'    THEN next_due_date + INTERVAL '3 months'
+            WHEN 'Semi-Annual'  THEN next_due_date + INTERVAL '6 months'
+            WHEN 'Annual'       THEN next_due_date + INTERVAL '1 year'
+            ELSE NULL END
+        WHERE templates_id = %s
+    """, (templates_id,))
+
+
+@router.get("/card-payment-preview")
+def card_payment_preview(card_id: int, due_date: str):
+    """What a credit-card payment due on `due_date` would come to — for the template form."""
+    import datetime as _dt
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        problem = card_statements.validate_card_payment(cur, card_id)
+        if problem:
+            return {"error": problem}
+        cur.execute("SELECT Statement_Day FROM Accounts WHERE Accounts_Id = %s", (card_id,))
+        res = card_statements.amount_owed(cur, card_id, _dt.date.fromisoformat(due_date[:10]), int(cur.fetchone()[0]))
+        return {**{k: (v.isoformat() if isinstance(v, _dt.date) else v) for k, v in res.items()}, "amount": -res["owed"]}
     finally:
         conn.close()
 
@@ -148,23 +202,32 @@ def update_template(template_id: int, data: dict):
         raise HTTPException(400, "An installment series (Number of installments set) can't also be Auto-confirm")
     if total_occurrences is not None and not installment_frequency:
         raise HTTPException(400, "An installment series (Number of installments set) requires an Installment Frequency")
+    is_card_payment = bool(data.get("is_card_payment", False))
+    if is_card_payment and total_occurrences is not None:
+        raise HTTPException(400, "A credit-card payment can't also be an installment series")
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if is_card_payment:
+            problem = card_statements.validate_card_payment(cur, data.get("accounts_id_target"))
+            if problem:
+                raise HTTPException(400, problem)
         cur.execute("""
             UPDATE Recurring_Templates SET
                 name=%s, accounts_id=%s, payees_id=%s, description=%s,
                 total_amount=%s, periodicity=%s, next_due_date=%s,
                 end_date=%s, auto_confirm=%s, active=%s, accounts_id_target=%s,
-                total_occurrences=%s, installment_frequency=%s
+                total_occurrences=%s, installment_frequency=%s, is_card_payment=%s
             WHERE templates_id=%s
         """, (
             data.get("name"), data.get("accounts_id"), data.get("payees_id"),
             data.get("description"), data.get("total_amount"), data.get("periodicity"),
             data.get("next_due_date") or None, data.get("end_date") or None,
             data.get("auto_confirm", False), data.get("active", True),
-            data.get("accounts_id_target"), total_occurrences, installment_frequency, template_id,
+            data.get("accounts_id_target"), total_occurrences, installment_frequency, is_card_payment, template_id,
         ))
+        if is_card_payment:
+            _set_calculated_amount(cur, template_id)
         splits = data.get("splits")
         if splits is not None:
             cur.execute("DELETE FROM Recurring_Template_Splits WHERE templates_id = %s", (template_id,))
@@ -175,6 +238,9 @@ def update_template(template_id: int, data: dict):
                 )
         conn.commit()
         return {"updated": template_id}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -220,6 +286,12 @@ def run_template(template_id: int):
 
         cols = [d[0].lower() for d in cur.description]
         tmpl = dict(zip(cols, row))
+        if tmpl.get("is_card_payment"):
+            calc = card_statements.template_payment(cur, template_id)
+            if calc and "error" in calc:
+                raise HTTPException(400, calc["error"])
+            if calc:
+                tmpl["total_amount"] = -calc["owed"]
 
         # Insert draft transaction (no categories_id on Transactions — goes in Splits if needed).
         # accounts_id_target is carried over so that confirming this draft later
@@ -315,7 +387,7 @@ def generate_drafts():
         cur = conn.cursor()
         cur.execute("""
             SELECT templates_id, accounts_id, payees_id, description, name,
-                   total_amount, periodicity, next_due_date, auto_confirm, accounts_id_target
+                   total_amount, periodicity, next_due_date, auto_confirm, accounts_id_target, is_card_payment
             FROM Recurring_Templates
             WHERE active = TRUE
               AND (next_due_date IS NULL OR next_due_date <= CURRENT_DATE)
@@ -329,6 +401,17 @@ def generate_drafts():
             tid = tmpl["templates_id"]
             is_auto = bool(tmpl.get("auto_confirm"))
             target_account = tmpl.get("accounts_id_target")
+            if tmpl.get("is_card_payment"):
+                # A card payment is whatever the statement says is owed right now.
+                calc = card_statements.template_payment(cur, tid)
+                if calc and "error" not in calc:
+                    tmpl["total_amount"] = -calc["owed"]
+                    cur.execute("UPDATE Recurring_Templates SET total_amount = %s WHERE templates_id = %s", (-calc["owed"], tid))
+                    if calc["owed"] < 0.005:
+                        # Nothing owed: no zero-value transfer; the next cycle is advanced below as usual.
+                        tmpl["total_amount"] = 0
+                        _advance_template(cur, tid)
+                        continue
 
             if target_account:
                 # Transfer template: create the paired two-row transfer (source

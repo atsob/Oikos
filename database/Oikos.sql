@@ -268,6 +268,8 @@ CREATE TABLE Accounts (
     Loan_Compounding_Period        VARCHAR(20) DEFAULT 'Monthly',
     Loan_Payment_Frequency         VARCHAR(20) DEFAULT 'Monthly',
     Loan_Next_Due_Date             DATE,
+    Exclude_Balance_Alerts         BOOLEAN NOT NULL DEFAULT FALSE,  -- TRUE = no negative-balance / projected-shortfall alerts for this account
+    Statement_Day                  SMALLINT CHECK (Statement_Day BETWEEN 1 AND 31),  -- Credit Card: day of the month the balance to be paid is issued
     embedding         vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_id   ON Accounts(Accounts_Id);
@@ -395,6 +397,8 @@ CREATE TABLE IF NOT EXISTS Recurring_Templates (
                                                  -- End_Date exactly like a normal template, spawning
                                                  -- a fresh series every time it comes due again. See
                                                  -- database/queries.py::_confirm_draft_row.
+    Is_Card_Payment     BOOLEAN NOT NULL DEFAULT FALSE,  -- TRUE = a credit-card payment: Total_Amount is recalculated daily from the
+                                                 -- card's balance at its latest statement date (database/card_statements.py)
     Installment_Frequency VARCHAR(20),          -- Spacing between the N installments within one
                                                  -- series (independent of Periodicity, which only
                                                  -- governs when the template fires its next draft).

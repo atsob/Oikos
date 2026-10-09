@@ -625,6 +625,13 @@ def upsert_account(data: dict):
         loan_compounding_period = data.get('loan_compounding_period') or 'Monthly' if is_loan else None
         loan_payment_frequency = data.get('loan_payment_frequency') or 'Monthly' if is_loan else None
         loan_next_due_date = data.get('loan_next_due_date') or None if is_loan else None
+        exclude_alerts = bool(data.get('exclude_balance_alerts', False))
+        # Statement day only means something for a credit card.
+        statement_day = None
+        if data.get('type') == 'Credit Card' and data.get('statement_day') not in (None, ''):
+            statement_day = int(data.get('statement_day'))
+            if not 1 <= statement_day <= 31:
+                raise HTTPException(400, "Statement day must be between 1 and 31")
         if aid:
             cur.execute("""
                 UPDATE Accounts SET
@@ -634,7 +641,8 @@ def upsert_account(data: dict):
                     Loan_Rate_Spread_Pct=%s, Loan_Linked_Asset_Accounts_Id=%s,
                     Loan_Opening_Date=%s, Loan_Original_Balance=%s, Loan_Original_Length_Value=%s,
                     Loan_Original_Length_Unit=%s, Loan_Compounding_Period=%s, Loan_Payment_Frequency=%s,
-                    Loan_Next_Due_Date=%s
+                    Loan_Next_Due_Date=%s,
+                    Exclude_Balance_Alerts=%s, Statement_Day=%s
                 WHERE Accounts_Id=%s
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
@@ -648,6 +656,7 @@ def upsert_account(data: dict):
                   loan_opening_date, loan_original_balance, loan_original_length_value,
                   loan_original_length_unit, loan_compounding_period, loan_payment_frequency,
                   loan_next_due_date,
+                  exclude_alerts, statement_day,
                   aid))
         else:
             cur.execute("""
@@ -655,8 +664,9 @@ def upsert_account(data: dict):
                     (Accounts_Name, Accounts_Type, IBAN, Is_Active, Institutions_Id, Currencies_Id, Credit_Limit, Accounts_Id_Linked, Notes,
                      Loan_Type, Loan_Rate_Type, Loan_Interest_Rate_Pct, Loan_Rate_Index, Loan_Rate_Spread_Pct, Loan_Linked_Asset_Accounts_Id,
                      Loan_Opening_Date, Loan_Original_Balance, Loan_Original_Length_Value, Loan_Original_Length_Unit,
-                     Loan_Compounding_Period, Loan_Payment_Frequency, Loan_Next_Due_Date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
+                     Loan_Compounding_Period, Loan_Payment_Frequency, Loan_Next_Due_Date,
+                     Exclude_Balance_Alerts, Statement_Day)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING Accounts_Id
             """, (data.get('name'), data.get('type'), data.get('iban') or None,
                   data.get('is_active', True),
                   data.get('institutions_id') or None,
@@ -668,7 +678,8 @@ def upsert_account(data: dict):
                   loan_rate_spread_pct, loan_linked_asset_accounts_id,
                   loan_opening_date, loan_original_balance, loan_original_length_value,
                   loan_original_length_unit, loan_compounding_period, loan_payment_frequency,
-                  loan_next_due_date))
+                  loan_next_due_date,
+                  exclude_alerts, statement_day))
             aid = cur.fetchone()[0]
         conn.commit()
         return {"id": aid}
@@ -749,7 +760,9 @@ def get_accounts_master(search: Optional[str] = Query(None)):
                    a.Loan_Original_Length_Unit AS loan_original_length_unit,
                    a.Loan_Compounding_Period AS loan_compounding_period,
                    a.Loan_Payment_Frequency AS loan_payment_frequency,
-                   a.Loan_Next_Due_Date AS loan_next_due_date
+                   a.Loan_Next_Due_Date AS loan_next_due_date,
+                   a.Exclude_Balance_Alerts AS exclude_balance_alerts,
+                   a.Statement_Day AS statement_day
             FROM Accounts a
             JOIN Currencies c ON a.Currencies_Id = c.Currencies_Id
             LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id

@@ -672,6 +672,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     setEditRow({})
     setForm({
       name: '', type: 'Checking', currencies_id: '', institutions_id: '', iban: '', credit_limit: '', is_active: true, accounts_id_linked: '', notes: '',
+      exclude_balance_alerts: false, statement_day: '',
       loan_type: '', loan_rate_type: 'Fixed', loan_interest_rate_pct: '', loan_rate_index: '', loan_rate_spread_pct: '', loan_linked_asset_accounts_id: '',
       loan_opening_date: '', loan_original_balance: '', loan_original_length_value: '', loan_original_length_unit: 'Years',
       loan_compounding_period: 'Monthly', loan_payment_frequency: 'Monthly', loan_next_due_date: '',
@@ -690,6 +691,8 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         institutions_id: form.institutions_id ? Number(form.institutions_id) : null,
         iban: form.iban || null,
         credit_limit: form.credit_limit ? Number(form.credit_limit) : 0,
+        exclude_balance_alerts: Boolean(form.exclude_balance_alerts),
+        statement_day: String(form.type) === 'Credit Card' && form.statement_day ? Number(form.statement_day) : null,
         is_active: form.is_active,
         accounts_id_linked: form.accounts_id_linked ? Number(form.accounts_id_linked) : null,
         notes: form.notes || null,
@@ -905,6 +908,23 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             <Field label="Credit Limit">
               <Input type="number" step="0.01" value={String(form.credit_limit ?? '')} onChange={e => set('credit_limit', e.target.value)} placeholder="0.00" />
             </Field>
+            {String(form.type ?? '') === 'Credit Card' && (
+              <Field label="Statement day (1–31)">
+                <Input type="number" min="1" max="31" step="1" value={String(form.statement_day ?? '')}
+                  onChange={e => set('statement_day', e.target.value)} placeholder="e.g. 9" />
+                <p className="text-xs text-slate-400 mt-1">The day of the month the balance to be paid is issued. A card-payment Recurring Template uses it to work out what to pay.</p>
+              </Field>
+            )}
+            {['Checking', 'Savings', 'Cash', 'Credit Card'].includes(String(form.type ?? '')) && (
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="rounded" checked={Boolean(form.exclude_balance_alerts)}
+                    onChange={e => set('exclude_balance_alerts', e.target.checked)} />
+                  Exclude from balance alerts
+                </label>
+                <p className="text-xs text-slate-400 mt-1">No negative-balance or projected-shortfall alerts for this account — on the Dashboard or in the Cash Flow Forecast.</p>
+              </div>
+            )}
             {INVESTMENT_ACCOUNT_TYPES.includes(String(form.type ?? '')) && (
               <div className="col-span-2">
                 <div className="flex items-center justify-between mb-1">

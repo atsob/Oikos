@@ -178,9 +178,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           applying immediately on every click would refetch and reflow the panel mid-selection.
         </Note>
         <Note>
+          <b>Cash shortfall ahead</b> is the Cash Flow Forecast's account alert on the Dashboard: an account the
+          forecast projects will fall below zero (a credit card: beyond its limit) within the next 30 days,
+          with the date, how low it gets, when it recovers and the transfer suggested to cover it (from the
+          account earning the least interest). It is the same projection Reports → Cash Flow shows, kept for two
+          minutes; an account that is already below the line is covered by <b>Negative Balance</b> instead.
+        </Note>
+        <Note>
           Any account name shown on the Dashboard — the expanded <b>Accounts</b> panel, <b>Upcoming Bills</b>,
           the <b>Pension</b> KPI card, and a <b>Negative Balance</b>/<b>Credit Limit Nearly Reached</b> financial
-          insight — links into that account's own Cash Register or Investments entry, scoped
+          insight (an account marked <b>Exclude from balance alerts</b> in Static Data → Accounts never produces
+          either) or a <b>Cash shortfall ahead</b> insight — links into that account's own Cash Register or Investments entry, scoped
           to just it, the same as everywhere else in the app (see Reports for the full explanation). A{' '}
           <b>Back</b> button appears there to bring you straight back to the Dashboard.
         </Note>
@@ -482,6 +490,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           showing it either way, so opening an existing template never blanks out its current selection.
         </Note>
         <Note>
+          A transfer into a <b>credit card</b> can be a <b>credit-card payment</b>: tick <b>Credit card payment —
+          calculate the amount automatically</b> and the amount is no longer typed in. The card needs a <b>Statement
+          day</b> (Static Data → Accounts: the day of the month its balance to be paid is issued). The payment settles
+          the statement issued on or before its due date — the card's balance at the end of that day, less any
+          payments made since — and everything bought afterwards belongs to the next one. The amount is recalculated
+          every day in the background (the <b>Credit Card Payment Amounts</b> job in Tools → System), recomputed again
+          at the moment the draft is generated (nothing is created if nothing is owed), and used for the template in
+          the Cash Flow Forecast's account alerts. Until the statement is issued the figure is the balance so far. A
+          card-payment template can't be an installment series.
+        </Note>
+        <Note>
           Set a template's <b>Number of installments</b> plus a separate <b>Installment Frequency</b> to turn
           each draft it generates into a fixed-length series — a loan repayment, a 12-month installment
           purchase — instead of a single transaction (mutually exclusive with Auto-confirm, since installments
@@ -564,6 +583,27 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           value at maturity, matching Inv. Performance → Bond Schedule — the return is embedded in the discount
           purchase price rather than paid as a separate coupon.
         </P>
+        <Note>
+          At the top, <b>Account cash-flow alerts</b> look at each checking, savings and credit-card account on its
+          own: its balance today is rolled forward through the transactions already dated in the future and pending
+          drafts, every Recurring Template occurrence (a template with a target account moves money from one account
+          to the other, so credit-card payments and funding transfers are counted on both sides — a{' '}
+          <b>card-payment template</b> is projected at what the card will owe on the statement it settles, not at a
+          fixed amount), the detected recurring payments that can be tied to the account they usually hit, and
+          projected interest. An account marked <b>Exclude from balance alerts</b> (Static Data → Accounts) is shown
+          in the table but never alerted. A <b>critical</b>
+          alert means the account is already below its limit or will be within a week; a <b>warning</b> is further
+          out. Each alert says when it breaks the line, how low it gets, whether and when it recovers (so you can
+          tell a short dip before payday from a lasting hole), the biggest outflows before then, and a suggested
+          <b> transfer</b> from another checking or savings account that would stay above the line — the one earning
+          the <b>lowest interest rate</b> first (a single account that can cover everything is preferred to splitting
+          it), never a brokerage "(Cash)" account. Set the line with <b>Alert below (€)</b> (0 = overdrawn); credit cards are
+          checked against their own credit limit instead. Dividends, bond payments and unscheduled one-off
+          spending aren't attributed to an account, and physical Cash accounts aren't monitored (withdrawals
+          aren't predicted), so treat an alert as a prompt to look. <b>Show projected credit-card payments</b> lists
+          each simulated payment with the statement it settles. The report loads once per change and stays on
+          screen while it refreshes.
+        </Note>
         <Note>
           The <b>Include Bonds</b> checkbox next to YTD controls whether bonds are folded into the chart, KPI
           tiles, and Total Net — off by default, since a single maturing bond's face value can be a large lump
@@ -1043,7 +1083,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Categories</b> — the Income/Expense/Transfer/etc. taxonomy; also mergeable.</li>
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
           <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves Portfolio Analysis's Bond Quality view instead of "Direct / Unrated".</li>
-          <li><b>Accounts</b> — the full account list with type, currency, institution, active status, and a free-form <b>Notes</b> field (account type, holders, etc.), hidden by default in the grid.</li>
+          <li><b>Accounts</b> — the full account list with type, currency, institution, active status, and a free-form <b>Notes</b> field (account type, holders, etc.), hidden by default in the grid. A credit card also has a <b>Statement day</b> (the day of the month its balance to be paid is issued — used by credit-card payment templates), and any cash or credit-card account can be set to <b>Exclude from balance alerts</b>.</li>
           <li><b>Tax Rules</b> — capital-gains/dividend/income tax treatment per tax category.</li>
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
         </Ul>

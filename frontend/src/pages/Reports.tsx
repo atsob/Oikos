@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
@@ -6552,6 +6552,197 @@ const CF_COLOR_MAP: Record<string, string> = {
   'Income · Bonds (est.)':        '#B7950B',
 }
 
+type CfAlert = {
+  account_id: number; name: string; type: string; currency: string; severity: 'critical' | 'warning'
+  already_below: boolean; balance_eur: number; floor_eur: number; breach_date: string; days_until: number
+  min_balance_eur: number; min_date: string; shortfall_eur: number; recovery_date: string | null; days_below: number
+  drivers: { date: string; label: string; amount_eur: number }[]
+  suggested_transfers: { from_account_id: number; from_name: string; from_type: string; amount_eur: number; by_date: string; rate_pct: number }[]
+  unfunded_eur: number; series: [string, number][]
+}
+type CfAccountRow = {
+  account_id: number; name: string; type: string; currency: string; balance_eur: number; floor_eur: number | null
+  min_balance_eur: number; min_date: string; end_balance_eur: number; status: 'ok' | 'warning' | 'critical' | 'excluded'; rate_pct: number
+}
+type CfCardPayment = {
+  date: string; statement_date: string; label: string; from_account_id: number; from_name: string
+  card_account_id: number; card_name: string; amount_eur: number
+}
+type CfAlerts = { min_balance: number; accounts: CfAccountRow[]; alerts: CfAlert[]; card_payments: CfCardPayment[]; notes: string[] }
+
+// Account-level cash-flow alerts: which day-to-day accounts are projected to run short within the
+// horizon, why, and which other account could cover it (computed by api/routers/cash_alerts.py).
+function CashFlowAlerts({ data, isDark }: { data: CfAlerts; isDark: boolean }) {
+  const [chartFor, setChartFor] = useState<number | null>(null)
+  const [showAll, setShowAll] = usePersist<boolean>('cf_alert_accounts_open', false)
+  const critical = data.alerts.filter(a => a.severity === 'critical').length
+  const warning = data.alerts.length - critical
+  const [showCards, setShowCards] = useState(false)
+  const badge = (sev: string) => sev === 'critical' ? 'bg-red-100 text-red-700' : sev === 'warning' ? 'bg-amber-100 text-amber-800' : sev === 'excluded' ? 'bg-slate-100 text-slate-500' : 'bg-green-100 text-green-700'
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <h3 className="text-sm font-semibold text-slate-700">⚠️ Account cash-flow alerts</h3>
+        {data.alerts.length === 0 ? (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">All clear</span>
+        ) : (
+          <>
+            {critical > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">{critical} critical</span>}
+            {warning > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">{warning} warning{warning === 1 ? '' : 's'}</span>}
+          </>
+        )}
+        <Tooltip text={data.notes.join('\n\n')}>
+          <span className="text-xs text-slate-400 cursor-help underline decoration-dotted">How this is worked out</span>
+        </Tooltip>
+      </div>
+
+      {data.alerts.length === 0 && (
+        <p className="text-sm text-slate-500">
+          No account is projected to fall below its threshold ({fmtEur(data.min_balance)}) or credit limit within this horizon.
+        </p>
+      )}
+
+      {data.alerts.map(a => {
+        const floorLabel = a.type === 'Credit Card' ? `credit limit (${fmtEur(a.floor_eur)})` : `threshold (${fmtEur(a.floor_eur)})`
+        const opened = chartFor === a.account_id
+        return (
+          <div key={a.account_id} className={`rounded-lg border px-4 py-3 ${a.severity === 'critical' ? 'border-red-300 bg-red-50/60' : 'border-amber-300 bg-amber-50/60'}`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold uppercase ${badge(a.severity)}`}>{a.severity}</span>
+              <span className="font-semibold text-sm text-slate-800"><AccountLink id={a.account_id} name={a.name} type={a.type} /></span>
+              <span className="text-xs text-slate-500">{a.type} · now {fmtEur(a.balance_eur)}</span>
+            </div>
+            <p className="text-sm text-slate-700 mt-1.5">
+              {a.already_below
+                ? <>Already below the {floorLabel}.</>
+                : <>Projected to fall below the {floorLabel} on <strong>{a.breach_date}</strong> (in {a.days_until} day{a.days_until === 1 ? '' : 's'}).</>}
+              {' '}Lowest point <strong className="text-red-700">{fmtEur(a.min_balance_eur)}</strong> on {a.min_date} — <strong>{fmtEur(a.shortfall_eur)}</strong> short.
+              {' '}{a.recovery_date ? <>Back above on {a.recovery_date} ({a.days_below} day{a.days_below === 1 ? '' : 's'} below).</> : <>Does not recover within the horizon.</>}
+            </p>
+            {a.drivers.length > 0 && (
+              <p className="text-xs text-slate-500 mt-1">
+                Main outflows until then: {a.drivers.map(d => `${d.label || '—'} ${fmtEur(d.amount_eur)} (${d.date})`).join(' · ')}
+              </p>
+            )}
+            <div className="mt-2 space-y-0.5">
+              {a.suggested_transfers.map((t, i) => (
+                <p key={i} className="text-sm text-slate-800">
+                  💡 Move <strong>{fmtEur(t.amount_eur)}</strong> from <AccountLink id={t.from_account_id} name={t.from_name} type={t.from_type} /> by <strong>{t.by_date}</strong>
+                  <span className="text-xs text-slate-400"> · earns {t.rate_pct.toFixed(2)}% a year</span>
+                </p>
+              ))}
+              {a.unfunded_eur > 0.5 && (
+                <p className="text-xs text-red-700">
+                  {a.suggested_transfers.length ? `${fmtEur(a.unfunded_eur)} of the shortfall` : 'The shortfall'} can't be covered from your other checking or savings accounts.
+                </p>
+              )}
+            </div>
+            <button type="button" className="mt-2 text-xs text-blue-600 hover:underline" onClick={() => setChartFor(opened ? null : a.account_id)}>
+              {opened ? 'Hide balance chart' : 'Show projected balance'}
+            </button>
+            {opened && (
+              <Plot
+                data={[
+                  { x: a.series.map(p => p[0]), y: a.series.map(p => p[1]), type: 'scatter', mode: 'lines', name: 'Projected balance', line: { color: '#2563eb', width: 2 } },
+                  { x: [a.series[0][0], a.series[a.series.length - 1][0]], y: [a.floor_eur, a.floor_eur], type: 'scatter', mode: 'lines', name: floorLabel, line: { color: '#dc2626', width: 1.5, dash: 'dot' } },
+                ]}
+                layout={{ height: 240, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' },
+                  legend: { orientation: 'h' as const, y: -0.25 }, hovermode: 'x unified' as const, ...plotLayout(isDark) }}
+                config={{ displayModeBar: false, responsive: true }}
+                style={{ width: '100%' }}
+              />
+            )}
+          </div>
+        )
+      })}
+
+      {data.card_payments.length > 0 && (
+        <div>
+          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowCards(!showCards)}>
+            {showCards ? 'Hide' : 'Show'} projected credit-card payments ({data.card_payments.length})
+          </button>
+          {showCards && (
+            <div className="mt-2">
+              <p className="text-xs text-slate-400 mb-1">Each payment is what the card owes on the statement it settles — its balance at the latest statement date on or before the due date, less payments made since — projected from the card's own spending.</p>
+              <WithCopy>
+                <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10 bg-slate-50">
+                      <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                        <th className="px-3 py-2 text-left">Due</th>
+                        <th className="px-3 py-2 text-left">Statement</th>
+                        <th className="px-3 py-2 text-left">Card</th>
+                        <th className="px-3 py-2 text-left">Paid from</th>
+                        <th className="px-3 py-2 text-right">Amount (€)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {data.card_payments.map((p, i) => (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 tabular-nums text-slate-600">{p.date}</td>
+                          <td className="px-3 py-2 tabular-nums text-slate-500 text-xs">{p.statement_date}</td>
+                          <td className="px-3 py-2 font-medium"><AccountLink id={p.card_account_id} name={p.card_name} type="Credit Card" /></td>
+                          <td className="px-3 py-2 text-slate-500 text-xs"><AccountLink id={p.from_account_id} name={p.from_name} type="Checking" /></td>
+                          <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(p.amount_eur)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </WithCopy>
+            </div>
+          )}
+        </div>
+      )}
+
+      {data.accounts.length > 0 && (
+        <div>
+          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowAll(!showAll)}>
+            {showAll ? 'Hide' : 'Show'} all monitored accounts ({data.accounts.length})
+          </button>
+          {showAll && (
+            <div className="mt-2">
+              <WithCopy>
+                <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10 bg-slate-50">
+                      <tr className="text-xs text-slate-500 uppercase tracking-wide">
+                        <th className="px-3 py-2 text-left">Account</th>
+                        <th className="px-3 py-2 text-left">Type</th>
+                        <th className="px-3 py-2 text-right">Balance today (€)</th>
+                        <th className="px-3 py-2 text-right">Lowest (€)</th>
+                        <th className="px-3 py-2 text-left">On</th>
+                        <th className="px-3 py-2 text-right">End of horizon (€)</th>
+                        <th className="px-3 py-2 text-right">Earns (%/yr)</th>
+                        <th className="px-3 py-2 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...data.accounts].sort((x, y) => (x.status === 'ok' || x.status === 'excluded' ? 1 : 0) - (y.status === 'ok' || y.status === 'excluded' ? 1 : 0) || x.min_balance_eur - y.min_balance_eur).map(r => (
+                        <tr key={r.account_id} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 font-medium"><AccountLink id={r.account_id} name={r.name} type={r.type} /></td>
+                          <td className="px-3 py-2 text-slate-500 text-xs">{r.type}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${r.balance_eur < 0 ? 'text-red-600' : ''}`}>{fmtEur(r.balance_eur)}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${r.min_balance_eur < 0 ? 'text-red-600' : ''}`}>{fmtEur(r.min_balance_eur)}</td>
+                          <td className="px-3 py-2 text-slate-500 text-xs tabular-nums">{r.min_date}</td>
+                          <td className={`px-3 py-2 text-right tabular-nums ${r.end_balance_eur < 0 ? 'text-red-600' : ''}`}>{fmtEur(r.end_balance_eur)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.rate_pct ? r.rate_pct.toFixed(2) : '—'}</td>
+                          <td className="px-3 py-2"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge(r.status)}`}>{r.status === 'ok' ? 'OK' : r.status === 'excluded' ? 'Alerts off' : r.status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </WithCopy>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CashFlowSection() {
   const { isDark } = useTheme()
   const [days, setDays] = usePersist<number>('cf_days', 60)
@@ -6569,16 +6760,29 @@ function CashFlowSection() {
   const [includeBonds, setIncludeBonds] = usePersist<boolean>('cf_include_bonds', false)
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  // The query waits for the account preset to report its choice: starting it with "all accounts"
+  // and then again with the saved preset ran this (heavy) forecast twice on every visit.
+  const [presetReady, setPresetReady] = useState(false)
+  const [minBalance, setMinBalance] = usePersist<number>('cf_min_balance', 0)
+  const [minInput, setMinInput] = useState(String(minBalance))
+  const commitMin = () => {
+    const v = Number(minInput.replace(',', '.'))
+    if (Number.isFinite(v)) setMinBalance(v); else setMinInput(String(minBalance))
+  }
   const eoyDays = daysUntilEndOfYear()
   const effectiveDays = isEoy ? eoyDays : days
   const effectiveMonthsBack = ytdRecurring ? ytdMonthsBack() : monthsBack
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['cash-flow-forecast-full', effectiveDays, effectiveMonthsBack, presetAccountIds],
-    queryFn: () => getCashFlowForecastFull(effectiveDays, effectiveMonthsBack, presetAccountIds),
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['cash-flow-forecast-full', effectiveDays, effectiveMonthsBack, presetAccountIds, minBalance],
+    queryFn: () => getCashFlowForecastFull(effectiveDays, effectiveMonthsBack, presetAccountIds, minBalance),
+    enabled: presetReady,
+    placeholderData: keepPreviousData,   // keep the page on screen while a changed horizon/preset reloads
+    staleTime: 120_000,
   })
 
   const result = data as {
+    account_alerts: CfAlerts | null
     scheduled: Row[]
     templates: Row[]
     recurring: Row[]
@@ -6618,8 +6822,6 @@ function CashFlowSection() {
       marker: { color: CF_COLOR_MAP[series] ?? '#94a3b8' },
     }))
   }, [result, includeBonds])
-
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const m = result?.metrics
   const scheduled = result?.scheduled ?? []
@@ -6697,10 +6899,26 @@ function CashFlowSection() {
             </label>
           </Tooltip>
         </div>
+        <div className="flex items-center gap-2">
+          <Tooltip text="Account alerts flag a checking or savings account whose projected balance falls below this amount (0 = overdrawn). Credit cards are checked against their own credit limit instead.">
+            <span className="text-sm text-slate-500 cursor-help underline decoration-dotted">Alert below (€)</span>
+          </Tooltip>
+          <input type="text" inputMode="decimal" value={minInput} onChange={e => setMinInput(e.target.value)}
+            onBlur={commitMin} onKeyDown={e => { if (e.key === 'Enter') commitMin() }}
+            className="w-24 rounded border border-slate-300 px-2 py-1 text-sm text-right tabular-nums" />
+        </div>
       </div>
 
       {/* Account Selection — shares Net Worth's saved presets rather than keeping a separate set */}
-      <PortfolioPresetBar reportScope="net_worth" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
+      <PortfolioPresetBar reportScope="net_worth" eligibleTypes={ALL_ACCOUNT_TYPES}
+        onChange={ids => { setPresetAccountIds(ids); setPresetReady(true) }} />
+
+      {(!presetReady || isLoading) && <div className="flex justify-center py-12"><Spinner /></div>}
+      {isFetching && !isLoading && presetReady && <p className="text-xs text-slate-400 -mb-3">Updating…</p>}
+
+      {result && (<>
+      {/* Account-level alerts */}
+      {result.account_alerts && <CashFlowAlerts data={result.account_alerts} isDark={isDark} />}
 
       {/* KPI metrics */}
       {KPI_METRICS.length > 0 && (
@@ -7000,6 +7218,7 @@ function CashFlowSection() {
           </WithCopy>
         )}
       </div>
+      </>)}
     </div>
   )
 }

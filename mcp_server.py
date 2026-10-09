@@ -265,8 +265,8 @@ ENDPOINTS = {
         "description": "Exposure per currency: native amount, EUR amount and the EUR impact of a 5% FX move.",
     },
     "cash_flow_forecast": {
-        "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids"],
-        "description": "Forward-looking scheduled/recurring/dividend/interest cash flow projection.",
+        "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids", "min_balance"],
+        "description": "Forward-looking scheduled/recurring/dividend/interest cash flow projection, plus account_alerts: which checking/savings/credit-card accounts are projected to fall below min_balance (default 0) or their credit limit, with suggested transfers from other accounts.",
     },
     "income_expense": {
         "path": "/api/reports/income-expense", "params": ["start_date", "end_date"],

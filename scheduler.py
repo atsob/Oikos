@@ -231,7 +231,7 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
 DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
-    "recurring_drafts": 10, "shiller_cape": 15, "daily_backup": 45,
+    "recurring_drafts": 10, "credit_card_payments": 10, "shiller_cape": 15, "daily_backup": 45,
     "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
@@ -531,6 +531,21 @@ def _recurring_drafts_job():
         _record_job("recurring_drafts", "error", str(e))
 
 
+def _credit_card_payments_job():
+    """Recalculate every credit-card payment template's amount from its card's latest statement."""
+    logging.info("Running credit-card payment amounts refresh…")
+    try:
+        from database.card_statements import refresh_card_payment_templates
+        res = refresh_card_payment_templates()
+        for line in res["details"]:
+            logging.info(f"Card payment: {line}")
+        msg = f"{res['updated']} updated, {res['unchanged']} unchanged" + (f", {res['skipped']} skipped" if res["skipped"] else "")
+        _record_job("credit_card_payments", "error" if res["skipped"] else "success", msg + (": " + "; ".join(res["details"][:3]) if res["skipped"] else ""))
+    except Exception as e:
+        logging.error(f"Credit-card payment refresh failed: {e}", exc_info=True)
+        _record_job("credit_card_payments", "error", str(e))
+
+
 def _signal_notifications_job():
     """Compute final signals for all held securities and record any changes.
     Also checks Altman Z-Score risk zones (Safe/Grey/Distress) for the same kind
@@ -649,6 +664,10 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    # Credit-card payment amounts: refresh at startup, then daily (before drafts are generated)
+    _guard('credit_card_payments', _credit_card_payments_job)
+    _last_card_payments_date: date = date.today()
+
     # Recurring drafts: run once at startup
     logging.info("Running initial recurring drafts generation.")
     _guard('recurring_drafts', _recurring_drafts_job)
@@ -705,6 +724,12 @@ if __name__ == "__main__":
         if _is_market_open(now) and minutes_since_refresh >= _parse_interval(sc.get('market_data', ''), MARKET_REFRESH_INTERVAL_MINUTES):
             _guard('market_data', _market_data_job)
             _last_market_refresh = now
+
+        # ── Credit-card payment amounts: once per calendar day, from the configured time ──
+        cc_h, cc_m = _parse_daily(sc.get('credit_card_payments', ''), 5, 45)
+        if _last_card_payments_date != date.today() and (now.hour, now.minute) >= (cc_h, cc_m):
+            _guard('credit_card_payments', _credit_card_payments_job)
+            _last_card_payments_date = date.today()
 
         # ── Recurring drafts: once per calendar day ───────────────────────────
         if _last_recurring_drafts_date != date.today():

@@ -340,7 +340,7 @@ def get_upcoming_bills(days: int = Query(14)):
     # this is a direct Python call bypassing FastAPI's request cycle, so unlike a
     # real HTTP request, an unpassed default stays the Query sentinel object itself
     # rather than resolving to None, which crashes _parse_account_ids's .split(',').
-    fc = get_cash_flow_forecast_full(days=days, months_back=3, account_ids=None)
+    fc = get_cash_flow_forecast_full(days=days, months_back=3, account_ids=None, min_balance=0.0, with_alerts=False)
 
     bills = []
     for r in fc['scheduled']:
@@ -673,6 +673,7 @@ def get_insights():
                        c.Currencies_ShortName AS currency
                 FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
                 WHERE a.Is_Active = TRUE AND a.Accounts_Type IN ('Checking','Savings','Cash')
+                  AND NOT a.Exclude_Balance_Alerts
                   AND a.Accounts_Balance < 0 ORDER BY a.Accounts_Balance ASC
             """, conn)
             for _, row in df.iterrows():
@@ -691,6 +692,7 @@ def get_insights():
                        c.Currencies_ShortName AS currency
                 FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
                 WHERE a.Is_Active = TRUE AND a.Accounts_Type = 'Credit Card'
+                  AND NOT a.Exclude_Balance_Alerts
                   AND a.Credit_Limit IS NOT NULL AND a.Credit_Limit <> 0
                   AND ((ABS(a.Credit_Limit) + a.Accounts_Balance) / NULLIF(ABS(a.Credit_Limit),0) < 0.10
                        OR (ABS(a.Credit_Limit) + a.Accounts_Balance) < 500)
@@ -771,6 +773,11 @@ def get_insights():
                         "message": f"Savings rate in {month_lbl} was only {latest:.1f}% (EUR {income:,.0f} income, EUR {expenses:,.0f} expenses)."})
         except Exception:
             pass
+    # Accounts projected to run short (Reports -> Cash Flow's account alerts), next 30 days.
+    try:
+        insights.extend(_projected_cash_insights())
+    except Exception:
+        pass
     # ECB / Fed policy-rate changes, €STR/SOFR moves and XEON tracking — see database/rates.py.
     try:
         from database.rates import get_rate_alerts
@@ -778,3 +785,43 @@ def get_insights():
     except Exception:
         pass
     return insights
+
+
+_PROJECTED_CACHE: dict = {}
+PROJECTED_ALERT_DAYS = 30
+
+
+def _projected_cash_insights() -> list:
+    """One insight per account the Cash Flow Forecast projects to fall below its line within
+    PROJECTED_ALERT_DAYS (zero for cash accounts, the credit limit for a card). The forecast is the
+    same one Reports shows, so the two always agree; the result is kept for two minutes because the
+    Dashboard is opened often and the projection is not free. An account that is already below its
+    line is skipped — the Negative balance / Credit limit insights above cover it."""
+    import time as _time
+    hit = _PROJECTED_CACHE.get("v")
+    if hit and _time.time() - hit[0] < 120:
+        alerts = hit[1]
+    else:
+        from api.routers.reports import get_cash_flow_forecast_full
+        fc = get_cash_flow_forecast_full(days=PROJECTED_ALERT_DAYS, months_back=3, account_ids=None,
+                                         min_balance=0.0, with_alerts=True)
+        alerts = (fc.get("account_alerts") or {}).get("alerts", [])
+        _PROJECTED_CACHE["v"] = (_time.time(), alerts)
+    out = []
+    for a in alerts:
+        if a["already_below"]:
+            continue
+        from datetime import date as _d
+        when = _d.fromisoformat(a["breach_date"]).strftime("%d %b")
+        msg = (f"{a['name']} is projected to fall below its {'credit limit' if a['type'] == 'Credit Card' else 'zero balance'} "
+               f"on {when} (in {a['days_until']} day{'' if a['days_until'] == 1 else 's'}), reaching EUR {a['min_balance_eur']:,.0f} "
+               f"on {_d.fromisoformat(a['min_date']).strftime('%d %b')}")
+        msg += (f"; back above on {_d.fromisoformat(a['recovery_date']).strftime('%d %b')}." if a["recovery_date"]
+                else "; it does not recover within the period.")
+        if a["suggested_transfers"]:
+            t = a["suggested_transfers"][0]
+            msg += f" Suggested: move EUR {t['amount_eur']:,.0f} from {t['from_name']} by {_d.fromisoformat(t['by_date']).strftime('%d %b')}."
+        out.append({"type": "danger" if a["severity"] == "critical" else "warning", "icon": "projected_shortfall",
+                    "title": f"Cash shortfall ahead: {a['name']}", "message": msg,
+                    "account_id": a["account_id"], "account_type": a["type"], "account_name": a["name"]})
+    return out

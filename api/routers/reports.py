@@ -2813,11 +2813,28 @@ def get_cash_flow_forecast(months_ahead: int = Query(6)):
     return rows
 
 
+_TTL_CACHE: dict = {}
+
+
+def _ttl_cached(key: str, ttl_seconds: float, fn):
+    """Cache a DataFrame-returning call for a short time. The two helpers it wraps are global (not
+    per account) and take 1-2 seconds each, which dominated the forecast's response time."""
+    import time as _time
+    hit = _TTL_CACHE.get(key)
+    if hit and _time.time() - hit[0] < ttl_seconds:
+        return hit[1].copy()
+    df = fn()
+    _TTL_CACHE[key] = (_time.time(), df)
+    return df.copy()
+
+
 @router.get("/cash-flow-forecast-full")
 def get_cash_flow_forecast_full(
     days: int = Query(60),
     months_back: int = Query(2),
     account_ids: Optional[str] = Query(None),
+    min_balance: float = Query(0.0),
+    with_alerts: bool = Query(True),
 ):
     """
     Full cash-flow forecast replicating the Streamlit view, plus recurring templates:
@@ -2828,11 +2845,18 @@ def get_cash_flow_forecast_full(
       to avoid the same bill being counted twice)
     account_ids (comma-separated), when given, scopes every source to just those accounts —
     same Account Preset mechanism as Net Worth/Inv. Portfolio/Inv. Performance.
-    Returns: { scheduled, templates, recurring, metrics }
+    min_balance / with_alerts control the account-level alerts (api/routers/cash_alerts.py):
+    min_balance is the floor a cash account should not fall below; with_alerts=False skips them
+    (the Dashboard only needs the totals).
+    Returns: { scheduled, templates, recurring, metrics, account_alerts }
     """
     import datetime as _dt
     from dateutil.relativedelta import relativedelta
     from database.queries import _ensure_account_interest_rate_schema
+
+    # Called directly (the Dashboard does) the Query defaults above arrive as Query objects.
+    min_balance = float(min_balance) if isinstance(min_balance, (int, float)) else 0.0
+    with_alerts = with_alerts if isinstance(with_alerts, bool) else True
 
     today = _dt.date.today()
     cutoff = today + _dt.timedelta(days=days)
@@ -2858,8 +2882,10 @@ def get_cash_flow_forecast_full(
                 FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
             ),
             LatestFX AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+                SELECT c0.Currencies_Id AS Currencies_Id_1,
+                       (SELECT h.FX_Rate FROM Historical_FX h WHERE h.Currencies_Id_1 = c0.Currencies_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS FX_Rate
+                FROM Currencies c0
             )
             SELECT
                 t.Date,
@@ -2893,8 +2919,10 @@ def get_cash_flow_forecast_full(
                 FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
             ),
             LatestFX AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+                SELECT c0.Currencies_Id AS Currencies_Id_1,
+                       (SELECT h.FX_Rate FROM Historical_FX h WHERE h.Currencies_Id_1 = c0.Currencies_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS FX_Rate
+                FROM Currencies c0
             ),
             tmpl_categories AS (
                 SELECT rts.templates_id, STRING_AGG(DISTINCT c.Full_Path, ', ') AS category
@@ -3032,10 +3060,13 @@ def get_cash_flow_forecast_full(
                 JOIN interval_monthly im ON im.Payees_Id=n.Payees_Id AND im.Categories_Id=n.Categories_Id AND im.Currencies_Id=n.Currencies_Id
             ),
             fx AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+                SELECT c0.Currencies_Id AS Currencies_Id_1,
+                       (SELECT h.FX_Rate FROM Historical_FX h WHERE h.Currencies_Id_1 = c0.Currencies_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS FX_Rate
+                FROM Currencies c0
             )
             SELECT
+                s.Payees_Id AS payees_id, s.Categories_Id AS categories_id, s.Currencies_Id AS currencies_id,
                 s.Payees_Name,
                 COALESCE(cat.Full_Path, s.Categories_Name) AS category,
                 ROUND(s.avg_days_between::numeric, 0)    AS avg_days_between,
@@ -3050,14 +3081,36 @@ def get_cash_flow_forecast_full(
             ORDER  BY next_expected_date ASC
         """, conn)
 
+        # The account each detected pattern most often hits — lets the account-level alerts
+        # attribute an estimated payment to an account.
+        df_recurring_acct = pd.read_sql(f"""
+            SELECT t.Payees_Id AS payees_id, s.Categories_Id AS categories_id, a.Currencies_Id AS currencies_id,
+                   t.Accounts_Id AS accounts_id, COUNT(*) AS n
+            FROM Transactions t
+            JOIN Accounts a ON a.Accounts_Id = t.Accounts_Id
+            LEFT JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
+            LEFT JOIN Categories cat ON cat.Categories_Id = s.Categories_Id
+            WHERE t.Date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '{mb} months'
+              AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
+              AND t.Payees_Id IS NOT NULL
+              AND t.Transfers_Id IS NULL
+              AND NOT COALESCE(cat.Exclude_From_Forecast, FALSE)
+              {acct_clause_a}
+            GROUP BY t.Payees_Id, s.Categories_Id, a.Currencies_Id, t.Accounts_Id
+        """, conn)
+
         df_div = pd.read_sql(f"""
             WITH fx_latest AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+                SELECT c0.Currencies_Id AS Currencies_Id_1,
+                       (SELECT h.FX_Rate FROM Historical_FX h WHERE h.Currencies_Id_1 = c0.Currencies_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS FX_Rate
+                FROM Currencies c0
             ),
             price_latest AS (
-                SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
-                FROM Historical_Prices ORDER BY Securities_Id, Date DESC
+                SELECT s0.Securities_Id,
+                       (SELECT h.Close FROM Historical_Prices h WHERE h.Securities_Id = s0.Securities_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS Close
+                FROM Securities s0
             ),
             holdings_agg AS (
                 SELECT h.Securities_Id, SUM(h.Quantity) AS total_qty
@@ -3100,12 +3153,13 @@ def get_cash_flow_forecast_full(
             WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
         """, conn)
 
-        df_savings = _savings_last_period_df(conn)
+        df_savings = _ttl_cached("cf_savings_last", 300, lambda: _savings_last_period_df(conn))
         if acct_ids and not df_savings.empty:
             df_savings = df_savings[df_savings['accounts_id'].astype(int).isin(acct_ids)].copy()
 
         _ensure_account_interest_rate_schema()
-        df_rate_schedules = _load_manual_rate_schedules(conn, ['Savings', 'Checking'])
+        df_rate_schedules = _ttl_cached("cf_rate_schedules", 300,
+                                        lambda: _load_manual_rate_schedules(conn, ['Savings', 'Checking']))
         if acct_ids and not df_rate_schedules.empty:
             df_rate_schedules = df_rate_schedules[df_rate_schedules['accounts_id'].astype(int).isin(acct_ids)].copy()
 
@@ -3118,8 +3172,10 @@ def get_cash_flow_forecast_full(
 
         df_bonds = pd.read_sql(f"""
             WITH fx AS (
-                SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
-                FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
+                SELECT c0.Currencies_Id AS Currencies_Id_1,
+                       (SELECT h.FX_Rate FROM Historical_FX h WHERE h.Currencies_Id_1 = c0.Currencies_Id
+                        ORDER BY h.Date DESC LIMIT 1) AS FX_Rate
+                FROM Currencies c0
             )
             SELECT h.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
                    h.Accounts_Id AS accounts_id, a.Accounts_Name AS accounts_name,
@@ -3203,6 +3259,11 @@ def get_cash_flow_forecast_full(
 
     # Project recurring patterns as concrete future occurrences
     recur_rows = []
+    recur_account: dict = {}
+    if not df_recurring_acct.empty:
+        _top = df_recurring_acct.sort_values('n').drop_duplicates(['payees_id', 'categories_id', 'currencies_id'], keep='last')
+        for _r in _top.itertuples(index=False):
+            recur_account[(int(_r.payees_id), -1 if pd.isna(_r.categories_id) else int(_r.categories_id), int(_r.currencies_id))] = int(_r.accounts_id)
     if not df_recurring.empty:
         df_recurring['next_expected_date'] = pd.to_datetime(df_recurring['next_expected_date'])
         today_ts = pd.Timestamp(today)
@@ -3216,6 +3277,9 @@ def get_cash_flow_forecast_full(
                 next_dt += pd.Timedelta(days=avg_d)
             while next_dt <= cutoff_ts:
                 recur_rows.append({
+                    'accounts_id': recur_account.get((int(row['payees_id']),
+                                                      -1 if pd.isna(row['categories_id']) else int(row['categories_id']),
+                                                      int(row['currencies_id']))),
                     'date': next_dt.date().isoformat(),
                     'payees_name': str(row['payees_name'] or ''),
                     'category': str(row.get('category') or ''),
@@ -3464,7 +3528,26 @@ def get_cash_flow_forecast_full(
     int_in    = sum(r['amount_eur'] for r in interest_rows)
     bond_in   = sum(r['amount_eur'] for r in bond_rows)
 
+    account_alerts = None
+    if with_alerts:
+        from api.routers.cash_alerts import build_account_alerts
+        # What each account currently earns (% a year), so a transfer can be taken from the one that
+        # earns least: its manual rate schedule's tier for today's balance, else the last real
+        # interest period's APY for a Savings account, else nothing.
+        rates: dict = {}
+        if not df_savings.empty:
+            for _, r in df_savings.iterrows():
+                rates[int(r['accounts_id'])] = _fnum(r.get('apy_pct_last'))
+        for _aid, _info in schedules_by_account.items():
+            _sch = _schedule_for_date(_info['schedules'], today)
+            if _sch and _sch['tiers']:
+                _bal = max(_info['balance'], 0.0)
+                rates[_aid] = (_tiered_interest(_sch, _bal, 365) / _bal * 100.0) if _bal > 0 else _sch['tiers'][0][2]
+        with get_db() as conn:
+            account_alerts = build_account_alerts(conn, today, cutoff, acct_ids, min_balance, recur_rows, interest_rows, rates)
+
     return {
+        'account_alerts': account_alerts,
         'scheduled': scheduled,
         'templates': template_rows,
         'recurring': recur_rows,

@@ -226,8 +226,8 @@ export const saveBudget = (data: { year: number; categories_id: number; budget_a
 export const getCashFlowForecast = (monthsAhead = 6) =>
   api.get('/reports/cash-flow-forecast', { params: { months_ahead: monthsAhead } }).then(r => r.data)
 
-export const getCashFlowForecastFull = (days = 60, monthsBack = 2, accountIds?: number[]) =>
-  api.get('/reports/cash-flow-forecast-full', { params: { days, months_back: monthsBack, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+export const getCashFlowForecastFull = (days = 60, monthsBack = 2, accountIds?: number[], minBalance = 0) =>
+  api.get('/reports/cash-flow-forecast-full', { params: { days, months_back: monthsBack, account_ids: accountIds?.join(',') || undefined, min_balance: minBalance } }).then(r => r.data)
 
 export const searchAllTransactions = (q: string, limit = 50) =>
   api.get('/register/search', { params: { q, limit } }).then(r => r.data)
@@ -537,6 +537,13 @@ export const deleteFxRate = (currency_id: number, date: string) =>
 // ── Recurring Templates ───────────────────────────────────────────────────────
 export const getRecurringTemplates = () =>
   api.get('/recurring/templates').then(r => r.data)
+
+export type CardPaymentPreview = {
+  error?: string; amount?: number; owed?: number; statement_date?: string; statement_day?: number
+  balance_at_statement?: number; credits_since?: number; issued?: boolean
+}
+export const getCardPaymentPreview = (cardId: number, dueDate: string) =>
+  api.get('/recurring/card-payment-preview', { params: { card_id: cardId, due_date: dueDate } }).then(r => r.data as CardPaymentPreview)
 
 export const getTemplateSplits = (id: number) =>
   api.get(`/recurring/templates/${id}/splits`).then(r => r.data)
