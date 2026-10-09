@@ -508,7 +508,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           mean: they still govern only when the template fires its next draft, exactly like a plain template.
           Nothing is created when you save the template: the next due draft is generated and reviewed exactly
           like any other. Confirming it is what posts the remaining N-1 installments — spaced by Installment
-          Frequency, each one goes straight in as a real transaction alongside the one you just confirmed,
+          Frequency, each one a copy of the draft <i>as you confirm it</i> — so editing the draft first (the
+          amount, description, payee, category splits, date) changes every installment, not just the first — and
+          each one goes straight in as a real transaction alongside the one you just confirmed,
           rather than landing back in Pending Drafts — while the template itself is untouched and keeps
           recurring on its own schedule, starting a fresh series the next time it comes due. Every installment's
           description gets a "(i/N)" suffix so the series is identifiable in Cash Register; the Templates tab

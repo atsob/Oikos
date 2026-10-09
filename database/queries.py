@@ -2682,6 +2682,12 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
     are marked with a shared Installment_Group_Id (mirrors the Transfers_Id pattern) plus
     their Installment_Seq position.
 
+    The remaining occurrences copy the draft that was just confirmed — its amount, description,
+    payee, account, transfer target and splits as they are NOW — not the template: the draft is
+    routinely edited before it is confirmed (a different amount this time, say), and every
+    installment of the series has to follow that edit. Only the count and spacing come from the
+    template.
+
     The template itself is never touched here — it keeps recurring on its own schedule and
     will produce another draft, with its own fresh series, whenever it next comes due.
 
@@ -2693,19 +2699,26 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
     draft shares the template with an earlier cycle's already-expanded installments.
     """
     cur.execute("""
-        SELECT Total_Occurrences, Installment_Frequency, Accounts_Id, Payees_Id, Description,
-               Total_Amount, Accounts_Id_Target
-        FROM Recurring_Templates WHERE Templates_Id = %s
+        SELECT Total_Occurrences, Installment_Frequency FROM Recurring_Templates WHERE Templates_Id = %s
     """, (templates_id,))
     tmpl = cur.fetchone()
     if tmpl is None or tmpl[0] is None:
         return
-    total_occurrences, installment_frequency, accounts_id, payees_id, description, total_amount, target_acc = tmpl
+    total_occurrences, installment_frequency = tmpl
 
-    cur.execute("SELECT Installment_Group_Id FROM Transactions WHERE Transactions_Id = %s", (tx_id,))
+    cur.execute("""
+        SELECT Installment_Group_Id, Accounts_Id, Payees_Id, Description, Total_Amount, Accounts_Id_Target
+        FROM Transactions WHERE Transactions_Id = %s
+    """, (tx_id,))
     row = cur.fetchone()
     if row is None or row[0] is not None:
         return  # already expanded (or the row vanished) -- not a trigger
+    _, accounts_id, payees_id, description, total_amount, target_acc = row
+
+    # The confirmed draft's own splits — as edited — are what the other installments copy. A draft
+    # with none at all (not a transfer) falls back to the template's, as before.
+    cur.execute("SELECT 1 FROM Splits WHERE Transactions_Id = %s LIMIT 1", (tx_id,))
+    own_splits = cur.fetchone() is not None
 
     def _seq_description(seq: int) -> str:
         suffix = f"({seq}/{total_occurrences})"
@@ -2732,11 +2745,17 @@ def _maybe_expand_installment_series(cur, templates_id: int, tx_id: int, confirm
         """, (accounts_id, next_date, payees_id, _seq_description(seq), total_amount, templates_id,
               target_acc, tx_id, seq))
         new_tx_id = cur.fetchone()[0]
-        cur.execute("""
-            INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
-            SELECT %s, Categories_Id, Amount, Memo
-            FROM Recurring_Template_Splits WHERE Templates_Id = %s
-        """, (new_tx_id, templates_id))
+        if own_splits:
+            cur.execute("""
+                INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+                SELECT %s, Categories_Id, Amount, Memo FROM Splits WHERE Transactions_Id = %s
+            """, (new_tx_id, tx_id))
+        elif not target_acc:
+            cur.execute("""
+                INSERT INTO Splits (Transactions_Id, Categories_Id, Amount, Memo)
+                SELECT %s, Categories_Id, Amount, Memo
+                FROM Recurring_Template_Splits WHERE Templates_Id = %s
+            """, (new_tx_id, templates_id))
         _confirm_draft_row(cur, new_tx_id)
 
 
