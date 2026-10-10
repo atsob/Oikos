@@ -422,6 +422,10 @@ export const downloadYahooPrices = (period: string, securityId?: number) =>
 export const getShillerCape = (years?: number) =>
   api.get('/market-data/shiller-cape', { params: { years } }).then(r => r.data)
 
+// Market Watch: hyperscaler FCF, credit spreads, the 10-year yield, market breadth (api/routers/market_watch.py)
+export const getMarketWatch = (refresh = false) =>
+  api.get('/market-watch', { params: refresh ? { refresh: 1 } : undefined, timeout: 120000 }).then(r => r.data)
+export const getMarketWatchSummary = () => api.get('/market-watch/summary', { timeout: 120000 }).then(r => r.data)
 export const getShillerCapeSummary = () =>
   api.get('/market-data/shiller-cape/summary').then(r => r.data)
 

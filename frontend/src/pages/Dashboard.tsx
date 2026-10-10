@@ -16,6 +16,7 @@ import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hooks'
+import { MarketWatchPanel } from '@/components/MarketWatch'
 import { setPref } from '@/lib/preferences'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
@@ -1224,6 +1225,7 @@ export default function Dashboard() {
           <div className="lg:col-span-2 space-y-3">
             <InsightsPanel insights={insights as Insight[]} />
             <MarketValuationPanel />
+            <MarketWatchPanel />
             <SecuritiesAlertsPanel />
             <UncategorizedTransactionsPanel />
           </div>

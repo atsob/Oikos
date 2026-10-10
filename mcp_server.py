@@ -260,6 +260,10 @@ ENDPOINTS = {
         "path": "/api/market-data/currencies/{currency_id}/fx-effect", "params": ["period"],
         "description": "Currency effect on P&L for one currency (id in the path) over period DTD/WTD/MTD/QTD/YTD/1Y/3Y/5Y/All (default YTD): per account/security quoted in it, realized and unrealized P&L each split into market and FX, plus income; and the FX effect on cash balances.",
     },
+    "market_watch": {
+        "path": "/api/market-watch", "params": [],
+        "description": "The four market-health indicators with status/trend: hyperscaler free cash flow, credit spreads, 10-year Treasury yield and market breadth (% of S&P 500 above its 200/50-day average, equal vs cap weight), plus an overall verdict.",
+    },
     "cash_flow_forecast": {
         "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids", "min_balance"],
         "description": "Forward-looking scheduled/recurring/dividend/interest cash flow projection, plus account_alerts: which checking/savings/credit-card accounts are projected to fall below min_balance (default 0) or their credit limit, with suggested transfers from other accounts.",

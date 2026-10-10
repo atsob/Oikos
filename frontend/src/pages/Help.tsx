@@ -208,6 +208,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           and country-level ratios. Stays hidden until the first import has run.
         </Note>
         <Note>
+          The <b>Market Watch</b> tile right below it shows the status of four market-health indicators — hyperscaler
+          free cash flow, credit spreads, the 10-year Treasury yield and market breadth — as Healthy / Watch / Warning
+          with an improving ▲ / worsening ▼ arrow each, and links to Market Data → Market Watch for the detail.
+        </Note>
+        <Note>
           A <b>Loan Payment</b> alert shows once a Loan account's Next Payment Due date (set on the account's edit
           modal) is within its lead time. For a Fixed-rate loan that also has Opening Date and Original Length
           set, it estimates the principal/interest split using the exact same math as Reports → Financial
@@ -1216,7 +1221,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in eight tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
+        <P>Reference and price data, in nine tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, and Alerts.</P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
           holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
@@ -1286,6 +1291,21 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>CAPE Ratios</b>) or on demand from the <b>Market Valuation</b> section of the Downloads tab. Treat a
           high CAPE as long-horizon valuation context, not a timing signal — it describes the next decade's
           starting base rate, not when a correction happens.
+        </Note>
+        <Note>
+          <b>Market Watch</b> follows four indicators that together say whether a rally is healthy, each with a
+          status (<b>Healthy / Watch / Warning</b>), a trend arrow, the figures and a chart, and the rule of thumb used:
+          <b> Hyperscaler free cash flow</b> (Microsoft, Amazon, Alphabet, Meta, Oracle — does the capex pay back?
+          good: rising; warning: persistently negative, or down more than 10% on a year ago; from Yahoo's quarterly
+          cash-flow statements) · <b>Credit spreads</b> (the cost of funding; good: stable, warning: a sharp
+          widening — the real ICE BofA high-yield and investment-grade spreads when a free <code>FRED_API_KEY</code>
+          is set, otherwise a proxy from the high-yield and investment-grade bond ETFs relative to Treasuries) ·
+          <b> 10-year Treasury</b> (the cost of capital; good: below 5% and stable; warning: above 5.5% and rising)
+          · <b>Market breadth</b> (good: more stocks taking part; warning: a few stocks holding up the index — the
+          % of S&amp;P 500 stocks above their 200- and 50-day averages from TradingView, plus equal- vs cap-weight
+          S&amp;P 500). The banner sums them up: all four improving → the market has reason to continue; worsening
+          together → the risk rises even while the index makes new highs. Refreshed every six hours by the
+          scheduler (<b>Market Watch</b> job) or with the Refresh button; the sources are free and public.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

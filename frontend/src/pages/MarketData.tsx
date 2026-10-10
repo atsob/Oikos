@@ -10,6 +10,7 @@ const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyRea
 import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecurity, upsertCurrency, api, downloadCountryExposure, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
+import { MarketWatchTab } from '@/components/MarketWatch'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
@@ -46,7 +47,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'Rates', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'Rates', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Market Watch', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -1767,6 +1768,7 @@ export default function MarketData() {
             )}
             {tab === 'Watchlist' && <WatchlistTab />}
             {tab === 'CAPE Ratios' && <CapeRatiosTab />}
+            {tab === 'Market Watch' && <MarketWatchTab />}
             {tab === 'Rates' && <RatesTab />}
             {tab === 'Alerts' && <AlertsTab />}
           </CardBody>

@@ -1600,7 +1600,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "fund_countries", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "fund_countries", "news_fetch", "fund_composition",
     "fundamentals", "shiller_cape", "interest_rates",
 }
 
@@ -1616,6 +1616,7 @@ _SEED_JOBS = [
     ("fund_countries",     "Fund Country Exposure",  "Refreshes the country breakdown of every held fund from its provider (iShares daily holdings, Vanguard market allocation, justETF) — funds whose breakdown was typed in by hand are left alone.", "5th of month at 07:30", True),
     ("credit_card_payments", "Credit Card Payment Amounts", "Recalculates the amount of every credit-card payment template from the card's balance at its latest statement date, so forecasts and drafts use the current figure.", "Daily at 05:45", True),
     ("saxo_token_refresh", "Saxo Login Keep-alive", "Refreshes the Saxo OpenAPI token every few minutes so the importer never needs re-authorising (Importers → Saxo Bank: connect once). Does nothing until Saxo is connected.", "Every 10 min, 24×7", True),
+    ("market_watch",       "Market Watch",           "Refreshes the Market Watch snapshot — hyperscaler free cash flow, credit spreads, the 10-year Treasury yield and market breadth (Yahoo Finance, TradingView; FRED if a key is set).", "Every 360 min, 24×7", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications.", "Every 30 min, 24×7", True),
     ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
@@ -1706,6 +1707,9 @@ def _run_scheduler_job_fn(job_id: str):
             res = download_country_exposure()
             if res["errors"]:
                 raise RuntimeError(f"{res['errors']} fund(s) failed: " + "; ".join(f['name'] + ': ' + f['message'] for f in res['funds'] if f['status'] == 'error')[:300])
+        elif job_id == "market_watch":
+            from api.routers.market_watch import refresh_cache
+            refresh_cache()
         elif job_id == "saxo_token_refresh":
             from data.saxo_session import ensure_access_token
             ensure_access_token(force=True)

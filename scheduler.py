@@ -234,7 +234,7 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
 DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
-    "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "shiller_cape": 15, "daily_backup": 45,
+    "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "shiller_cape": 15, "daily_backup": 45,
     "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
@@ -565,6 +565,17 @@ def _credit_card_payments_job():
         _record_job("credit_card_payments", "error", str(e))
 
 
+def _market_watch_job():
+    """Refresh the Market Watch snapshot (hyperscaler FCF, credit spreads, 10-year yield, breadth)."""
+    try:
+        from api.routers.market_watch import refresh_cache
+        d = refresh_cache()
+        _record_job("market_watch", "success", d["overall"]["verdict"][:120])
+    except Exception as e:
+        logging.warning(f"Market Watch refresh failed: {e}")
+        _record_job("market_watch", "error", str(e)[:300])
+
+
 def _saxo_token_refresh_job():
     """Keep the Saxo login alive: refresh the token before the refresh token lapses (see data/saxo_session.py)."""
     try:
@@ -744,6 +755,9 @@ if __name__ == "__main__":
     # Saxo login keep-alive: first run deferred to tick loop
     _last_saxo_refresh: datetime = datetime.min
 
+    # Market Watch: first run deferred to tick loop
+    _last_market_watch: datetime = datetime.min
+
     # Morning maintenance: skip if already past the scheduled window today
     _last_maintenance_date: date = date.min
     _now_startup = datetime.now()
@@ -852,6 +866,11 @@ if __name__ == "__main__":
         if minutes_since_news >= _parse_interval(sc.get('news_fetch', ''), NEWS_FETCH_INTERVAL_MINUTES):
             _guard('news_fetch', _news_fetch_job)
             _last_news_fetch = now
+
+        # ── Market Watch: every N minutes ─────────────────────────────────────
+        if (now - _last_market_watch).total_seconds() / 60 >= _parse_interval(sc.get('market_watch', ''), 360):
+            _guard('market_watch', _market_watch_job)
+            _last_market_watch = now
 
         # ── Saxo login keep-alive: every N minutes (the refresh token is short-lived) ──
         if (now - _last_saxo_refresh).total_seconds() / 60 >= _parse_interval(sc.get('saxo_token_refresh', ''), 10):
