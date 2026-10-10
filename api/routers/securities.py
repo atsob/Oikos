@@ -129,7 +129,16 @@ def get_security_fund_composition(sec_id: int):
                    fth.Weight_Pct AS weight_pct, fth.Source AS source,
                    sec2.Securities_Id AS matched_securities_id, sec2.Securities_Name AS matched_name
             FROM Fund_Top_Holdings fth
-            LEFT JOIN Securities sec2 ON sec2.Yahoo_Ticker = fth.Symbol
+            -- Two securities can share a Yahoo ticker (e.g. a stock entered twice); take one, or every holding would be
+            -- listed once per match — and deleting one of the copies would delete the one row they all are.
+            LEFT JOIN LATERAL (
+                SELECT s2.Securities_Id, s2.Securities_Name FROM Securities s2
+                WHERE s2.Yahoo_Ticker = fth.Symbol
+                ORDER BY s2.Is_Active DESC,
+                         EXISTS (SELECT 1 FROM Holdings hh WHERE hh.Securities_Id = s2.Securities_Id AND hh.Quantity > 0) DESC,
+                         s2.Securities_Id
+                LIMIT 1
+            ) sec2 ON TRUE
             WHERE fth.Securities_Id = %(sid)s ORDER BY fth.Weight_Pct DESC, fth.Rank
         """, conn, params={"sid": sec_id})
     comp_records = _df(comp_df)

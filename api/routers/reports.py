@@ -4504,7 +4504,14 @@ def get_xray_stock_overlap(account_ids: Optional[str] = Query(None), compare_dat
         FROM Fund_Top_Holdings fth
         JOIN holdings_value hv ON hv.Securities_Id = fth.Securities_Id
         JOIN Securities s ON s.Securities_Id = fth.Securities_Id
-        LEFT JOIN Securities sec2 ON sec2.Yahoo_Ticker = fth.Symbol
+        LEFT JOIN LATERAL (
+                SELECT s2.Securities_Id, s2.Securities_Name FROM Securities s2
+                WHERE s2.Yahoo_Ticker = fth.Symbol
+                ORDER BY s2.Is_Active DESC,
+                         EXISTS (SELECT 1 FROM Holdings hh WHERE hh.Securities_Id = s2.Securities_Id AND hh.Quantity > 0) DESC,
+                         s2.Securities_Id
+                LIMIT 1
+            ) sec2 ON TRUE
         WHERE hv.sec_type IN ('ETF','Mutual Fund')
     )
     SELECT symbol, name, source_type, source_label, ROUND(value_eur::numeric,2) AS value_eur, securities_id,
