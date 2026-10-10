@@ -425,6 +425,15 @@ export const getShillerCape = (years?: number) =>
 // Market Watch: hyperscaler FCF, credit spreads, the 10-year yield, market breadth (api/routers/market_watch.py)
 export const getMarketWatch = (refresh = false) =>
   api.get('/market-watch', { params: refresh ? { refresh: 1 } : undefined, timeout: 120000 }).then(r => r.data)
+export type MarketWatchEvent = { at: string; indicator: string; from: string; to: string; message: string }
+export const getMarketWatchEvents = () => api.get('/market-watch/events').then(r => r.data as MarketWatchEvent[])
+export const getMarketWatchPlaybook = () => api.get('/market-watch/playbook').then(r => r.data as { text: string; is_default: boolean })
+export const saveMarketWatchPlaybook = (text: string) => api.put('/market-watch/playbook', { text }).then(r => r.data)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type MarketWatchBacktest = Record<string, any>
+export const getMarketWatchBacktest = () => api.get('/market-watch/backtest').then(r => r.data as MarketWatchBacktest | null)
+export const getMarketWatchBacktestHistory = () => api.get('/market-watch/backtest/history').then(r => r.data as MarketWatchBacktest[])
+export const runMarketWatchBacktest = () => api.post('/market-watch/backtest', {}, { timeout: 180000 }).then(r => r.data as MarketWatchBacktest)
 export const getMarketWatchSummary = () => api.get('/market-watch/summary', { timeout: 120000 }).then(r => r.data)
 export const getShillerCapeSummary = () =>
   api.get('/market-data/shiller-cape/summary').then(r => r.data)

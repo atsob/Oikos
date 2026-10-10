@@ -778,6 +778,12 @@ def get_insights():
         insights.extend(_projected_cash_insights())
     except Exception:
         pass
+    # Market Watch: the banner going red / leaving red, and a France–Germany spread in Warning
+    try:
+        from api.routers.market_watch import get_market_watch_insights
+        insights.extend(get_market_watch_insights())
+    except Exception:
+        pass
     # ECB / Fed policy-rate changes, €STR/SOFR moves and XEON tracking — see database/rates.py.
     try:
         from database.rates import get_rate_alerts

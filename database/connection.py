@@ -594,6 +594,35 @@ def _run_startup_migrations():
         # a source set before the Invesco provider existed was stored as a generic file link
         "UPDATE Fund_Country_Sources SET Provider = 'invesco' WHERE Provider = 'file' AND Url ILIKE '%invesco.com%'",
         "UPDATE Fund_Country_Sources SET Provider = 'vaneck' WHERE Provider = 'file' AND Url ILIKE '%vaneck.com%'",
+        # Market Watch: one row of readings per day (for back-testing the rules) and the list of status changes
+        """CREATE TABLE IF NOT EXISTS Market_Watch_Log (
+               Log_Date   DATE PRIMARY KEY,
+               Overall    VARCHAR(10),
+               Fcf        VARCHAR(10),
+               Spreads    VARCHAR(10),
+               Ten_Year   VARCHAR(10),
+               Breadth    VARCHAR(10),
+               Readings   JSONB,
+               Created_At TIMESTAMPTZ DEFAULT NOW()
+           )""",
+        # every back-test run with the rule version (a hash of the thresholds) and why it ran, so runs can be compared
+        """CREATE TABLE IF NOT EXISTS Market_Watch_Backtests (
+               Run_Id          SERIAL PRIMARY KEY,
+               Run_At          TIMESTAMPTZ DEFAULT NOW(),
+               Trigger         VARCHAR(30),
+               Rule_Version    VARCHAR(16),
+               Summary         JSONB,
+               Result          JSONB,
+               Material_Change TEXT
+           )""",
+        """CREATE TABLE IF NOT EXISTS Market_Watch_Events (
+               Event_Id    SERIAL PRIMARY KEY,
+               Event_At    TIMESTAMPTZ DEFAULT NOW(),
+               Indicator   VARCHAR(20) NOT NULL,
+               From_Status VARCHAR(10),
+               To_Status   VARCHAR(10),
+               Message     TEXT
+           )""",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Group_Id INTEGER",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Seq INTEGER",
         """CREATE INDEX IF NOT EXISTS idx_transactions_installment_group

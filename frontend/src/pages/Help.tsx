@@ -1300,12 +1300,27 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           cash-flow statements) · <b>Credit spreads</b> (the cost of funding; good: stable, warning: a sharp
           widening — the real ICE BofA high-yield and investment-grade spreads when a free <code>FRED_API_KEY</code>
           is set, otherwise a proxy from the high-yield and investment-grade bond ETFs relative to Treasuries) ·
-          <b> 10-year Treasury</b> (the cost of capital; good: below 5% and stable; warning: above 5.5% and rising)
+          <b> 10-year Treasury</b> (the cost of capital; good: below 5% and stable; warning: how fast it rises — up 0.75 pp in about 3 months, or above 5.5% and up 0.5 pp — not the level, which meant something else in the 1990s)
           · <b>Market breadth</b> (good: more stocks taking part; warning: a few stocks holding up the index — the
           % of S&amp;P 500 stocks above their 200- and 50-day averages from TradingView, plus equal- vs cap-weight
-          S&amp;P 500). The banner sums them up: all four improving → the market has reason to continue; worsening
-          together → the risk rises even while the index makes new highs. Refreshed every six hours by the
-          scheduler (<b>Market Watch</b> job) or with the Refresh button; the sources are free and public.
+          S&amp;P 500; if TradingView can't be reached the last good reading is shown, flagged, with a count of the 11 sector
+          ETFs above their averages as a cross-check). The banner sums them up: <b>green</b> — healthy (improving together: the market has reason to
+          continue); <b>amber</b> — mixed, or all four <i>worsening</i> together (moving toward their red line over the
+          last 20 trading days: a late-cycle pattern, not a crisis); <b>red</b> — two or more indicators in Warning,
+          the crash rules are on, and your <b>Playbook</b> (editable, shown on the tab) is displayed. Red lines: free
+          cash flow — two quarters in a row negative in total or trailing 4 quarters below zero (amber if capex is over
+          90% of operating cash flow); credit spreads — high yield up 0.75 pp in 20 days, or at 4.5%, or up 1.0 pp in 60
+          days, or investment grade at 1.3%; 10-year — up 0.75 pp in about 3 months, or above 5.5% and up 0.5 pp; breadth — the S&amp;P 500
+          within 5% of its high with under 40% of stocks above the 200-day average, or under 25% above the 50-day
+          while the 200-day is under 50%. A daily indicator turns red only after 3 trading days in a row, and clears
+          only once back past a margin (e.g. high yield under 4.0%), so it does not flip on and off. Two <b>context tiles</b> — the
+          France–Germany 10-year spread (amber from 0.9 pp, red at 1.3 pp or +0.4 pp in 3 months; it matters for the
+          playbook's French-bond step) and the equity risk premium (1/CAPE minus the 10-year real yield; red below 0)
+          — need a free <code>FRED_API_KEY</code> and don't count toward the banner. The Dashboard's Insights show an
+          alert only when the banner turns red (while it is red) or leaves red (for a week), and when the France
+          spread is red. Each refresh is logged per day, and a <b>Recent changes</b> list shows only changes of status.
+          The <b>Back-test</b> card at the bottom of the tab (button <b>Run back-test</b>, needs the FRED key; also <code>python -m data.market_watch_backtest</code>) shows how the credit and 10-year rules behaved around 2000, 2008, 2020, 2022 and March 2026, with every red spell and what the S&amp;P 500 did next. It re-runs by itself (scheduler job <b>Market Watch Back-test</b>) when a rule or threshold changes, on the first Sunday of each month, in mid February/May/August/November after earnings season, and once the daily log has six months — every run is stored with a <b>rule version</b> (a hash of the thresholds) so versions can be compared under <b>Past runs</b>; the Dashboard only mentions a <i>material</i> change (a new red spell, a crash caught or missed differently, red days moving more than 2 points). It never changes a threshold itself — it informs your decisions, it doesn't make them. Refreshed every six hours by
+          the scheduler (<b>Market Watch</b> job) or with the Refresh button; the sources are free and public.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

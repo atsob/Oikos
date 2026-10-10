@@ -1206,6 +1206,35 @@ CREATE TABLE IF NOT EXISTS Fund_Currency_Exposure (
     PRIMARY KEY (Securities_Id, Currency)
 );
 
+-- Market Watch (Market Data -> Market Watch): a daily log of the indicators' readings, and the status changes.
+CREATE TABLE IF NOT EXISTS Market_Watch_Log (
+    Log_Date   DATE PRIMARY KEY,
+    Overall    VARCHAR(10),
+    Fcf        VARCHAR(10),
+    Spreads    VARCHAR(10),
+    Ten_Year   VARCHAR(10),
+    Breadth    VARCHAR(10),
+    Readings   JSONB,
+    Created_At TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS Market_Watch_Backtests (
+    Run_Id          SERIAL PRIMARY KEY,
+    Run_At          TIMESTAMPTZ DEFAULT NOW(),
+    Trigger         VARCHAR(30),
+    Rule_Version    VARCHAR(16),
+    Summary         JSONB,
+    Result          JSONB,
+    Material_Change TEXT
+);
+CREATE TABLE IF NOT EXISTS Market_Watch_Events (
+    Event_Id    SERIAL PRIMARY KEY,
+    Event_At    TIMESTAMPTZ DEFAULT NOW(),
+    Indicator   VARCHAR(20) NOT NULL,
+    From_Status VARCHAR(10),
+    To_Status   VARCHAR(10),
+    Message     TEXT
+);
+
 -- Which provider page refreshes a fund's country rows (none = justETF by ISIN).
 CREATE TABLE IF NOT EXISTS Fund_Country_Sources (
     Securities_Id INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
