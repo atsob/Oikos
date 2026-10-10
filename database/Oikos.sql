@@ -1180,7 +1180,8 @@ CREATE TABLE IF NOT EXISTS Fund_Composition (
     Manual_Overrides               JSONB
 );
 -- A fund's own breakdown by country (Reports -> Inv. Portfolio -> Country Exposure): the share of the fund,
--- per kind of holding and country, entered by hand from the provider's factsheet.
+-- per kind of holding and country: downloaded from the fund's provider (see Fund_Country_Sources and the
+-- fund_countries scheduler job) or entered by hand; Origin says which.
 CREATE TABLE IF NOT EXISTS Fund_Country_Exposure (
     Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
     Kind          VARCHAR(20) NOT NULL CHECK (Kind IN ('Stocks', 'Government Bonds', 'Corporate Bonds', 'Other')),
