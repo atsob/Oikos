@@ -135,9 +135,10 @@ def get_currency_exposure(account_ids: Optional[str] = Query(None), include_liab
         hedged = bool(re.search(r"hedged", r.name or "", re.I))
         if sid in own:                                                     # the fund's own currency rows
             covered = 0.0
+            scale = min(1.0, 100.0 / max(sum(w for _, w in own[sid]), 1e-9))   # a provider's weights can add up to a hair over 100%
             for c, w in own[sid]:
                 covered += w
-                items.append((c, category, sid, None, r.name, r.ticker, value * w / 100.0, "Fund"))
+                items.append((c, category, sid, None, r.name, r.ticker, value * w * scale / 100.0, "Fund"))
             if covered < 99.995:
                 items.append((UNSPEC, category, sid, None, r.name, r.ticker, value * (100.0 - covered) / 100.0, "Fund"))
         elif hedged:                                                       # a hedged share class: its own currency

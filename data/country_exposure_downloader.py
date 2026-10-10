@@ -64,10 +64,14 @@ def _get(url: str) -> requests.Response:
 
 def fetch_ishares(url: str, kind_hint: str | None = None):
     """-> (rows[(kind, country, pct)], as_of date | None, note)"""
-    m = re.search(r"(https?://[^?#]*?/products/\d+(?:/[^/?#]+)?)", url)
-    if not m:
-        raise ValueError("Not an iShares/BlackRock product page URL (…/products/<id>/<name>)")
-    raw = _get(m.group(1).rstrip("/") + "/latest-holdings.csv").text
+    if re.search(r"fileType=csv", url, re.I):
+        csv_url = url                                        # a direct link to the holdings CSV ("…/1495092304805.ajax?fileType=csv…")
+    else:
+        m = re.search(r"(https?://[^?#]*?/products/\d+(?:/[^/?#]+)?)", url)
+        if not m:
+            raise ValueError("Not an iShares/BlackRock product page URL (…/products/<id>/<name>) or a direct holdings CSV link")
+        csv_url = m.group(1).rstrip("/") + "/latest-holdings.csv"
+    raw = _get(csv_url).text
     if "Ticker," not in raw:
         raise ValueError("The holdings file wasn't where expected (iShares may have changed its site)")
     as_of = None
@@ -75,7 +79,10 @@ def fetch_ishares(url: str, kind_hint: str | None = None):
     mo = re.search(r'"(\d{2}/\w{3}/\d{4})"', head)
     if mo:
         as_of = datetime.strptime(mo.group(1), "%d/%b/%Y").date()
-    df = pd.read_csv(io.StringIO(raw[raw.index("Ticker,"):]), thousands=",").dropna(subset=["Weight (%)"])
+    df = pd.read_csv(io.StringIO(raw[raw.index("Ticker,"):]), thousands=",", dtype={"Weight (%)": str}).dropna(subset=["Weight (%)"])
+    # The Swiss/other regional files write numbers with ’ or ' as the thousands separator.
+    df["Weight (%)"] = pd.to_numeric(df["Weight (%)"].str.replace(r"[’' ]", "", regex=True).str.replace(",", "", regex=False), errors="coerce")
+    df = df.dropna(subset=["Weight (%)"])
     df["c"] = df["Location"].map(_code)
 
     def kind(r):
@@ -84,7 +91,12 @@ def fetch_ishares(url: str, kind_hint: str | None = None):
         if r["Asset Class"] == "Fixed Income":
             s = r["Sector"]
             return "Government Bonds" if s in _GOV_SECTORS else ("Other" if s in _SECURITISED else "Corporate Bonds")
+        if cash_fund and r["Asset Class"] in ("Cash", "Money Market"):
+            return "Other"                                     # a cash / money-market fund: deposits and paper, by counterparty country
         return None                                            # cash, money market, futures …
+    # A cash fund (e.g. iShares € Cash UCITS) holds almost nothing but deposits and money-market paper; for any other
+    # fund the cash lines are a small residual and stay out of the country breakdown.
+    cash_fund = df.loc[df["Asset Class"].isin(["Equity", "Fixed Income"]), "Weight (%)"].sum() < 50
     df["kind"] = df.apply(kind, axis=1)
     g = df.dropna(subset=["c", "kind"]).groupby(["kind", "c"])["Weight (%)"].sum()
     rows = sorted(((k, c, round(float(w), 3)) for (k, c), w in g.items() if w >= 0.005), key=lambda r: -r[2])

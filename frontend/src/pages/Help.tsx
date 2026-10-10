@@ -760,7 +760,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           from the holdings list); a direct link to the provider's
           CSV/XLSX <b>holdings file</b> under <b>Change source…</b> — any file with a weight column and a country (or ISIN)
           column is read — for the full detail; or by pasting the table by hand. A fund tracking a one-country index
-          (S&amp;P 500, FTSE/Athex Large Cap) is set from the index and marked as such.
+          (S&amp;P 500, FTSE/Athex Large Cap) is set from the index and marked as such. For iShares you can paste either the product page or the link behind its <b>Download</b> (holdings CSV) button; a cash / money-market fund (iShares € Cash) is shown under <b>Other</b> by the country of its counterparties.
         </Note>
         <Note>
           <b>Currency Exposure</b> is the same tree for currencies — <b>currency → category → instrument</b> — looking
