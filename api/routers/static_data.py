@@ -524,7 +524,8 @@ def get_issuers(search: Optional[str] = Query(None)):
     with get_db() as conn:
         df = pd.read_sql(f"""
             SELECT Issuers_Id AS id, Issuers_Name AS name,
-                   Moodys AS moodys, S_P AS sp, Fitch AS fitch, Notes AS notes
+                   Moodys AS moodys, S_P AS sp, Fitch AS fitch, Notes AS notes,
+                   Country AS country, Is_Government AS is_government
             FROM Issuers
             WHERE 1=1 {clause}
             ORDER BY Issuers_Name ASC
@@ -546,12 +547,19 @@ def upsert_issuer(data: dict):
         'sp':     'S_P',
         'fitch':  'Fitch',
         'notes':  'Notes',
+        'country': 'Country',
+        'is_government': 'Is_Government',
     }
     fields = {}
     for k in col_map:
         v = data.get(k)
         fields[k] = v if (v not in ('', None) or k == 'name') else None
     fields['name'] = name
+    # Exposure by country: the issuer's country (ISO alpha-2) and whether it is a state; blank = decide automatically.
+    if fields['country']:
+        fields['country'] = str(fields['country']).strip().upper()[:2]
+    if isinstance(fields['is_government'], str):
+        fields['is_government'] = {'true': True, 'false': False}.get(fields['is_government'].strip().lower())
 
     try:
         with get_db() as conn:
@@ -898,7 +906,7 @@ def get_securities_master(search: Optional[str] = Query(None)):
             SELECT s.Securities_Id AS id, s.Ticker AS ticker,
                    s.Securities_Name AS name, s.Securities_Type AS type,
                    c.Currencies_Id AS currency_id, c.Currencies_ShortName AS currency,
-                   s.ISIN AS isin, s.Sector AS sector, s.Industry AS industry,
+                   s.ISIN AS isin, s.Sector AS sector, s.Industry AS industry, s.Country AS country,
                    s.Is_Active AS is_active, s.Is_Tax_Exempt AS is_tax_exempt,
                    s.Tax_Category AS tax_category,
                    s.Yahoo_Ticker AS yahoo_ticker, s.TV_Symbol AS tv_symbol, s.TV_Exchange AS tv_exchange,
@@ -918,7 +926,7 @@ def get_securities_master(search: Optional[str] = Query(None)):
             WHERE 1=1 {clause}
             GROUP BY s.Securities_Id, s.Ticker, s.Securities_Name, s.Securities_Type,
                      c.Currencies_Id, c.Currencies_ShortName,
-                     s.ISIN, s.Sector, s.Industry, s.Is_Active, s.Is_Tax_Exempt, s.Tax_Category,
+                     s.ISIN, s.Sector, s.Industry, s.Country, s.Is_Active, s.Is_Tax_Exempt, s.Tax_Category,
                      s.Yahoo_Ticker, s.TV_Symbol, s.TV_Exchange,
                      s.Maturity_Date, s.Coupon_Rate, s.Coupon_Frequency, s.Face_Value,
                      s.Dividend_Yield, s.Dividend_Rate, s.Dividend_Frequency,
@@ -954,6 +962,7 @@ def upsert_security(data: dict):
             _s('analyst_rating'), _n('analyst_target_price'),
             _s('tax_category'),
             data.get('issuer_id') or None,
+            (_s('country') or '').strip().upper()[:2] or None,
         )
         cols = """Ticker, Securities_Name, Securities_Type, Currencies_Id,
                   Is_Active, Is_Tax_Exempt, ISIN, Sector, Industry,
@@ -963,7 +972,7 @@ def upsert_security(data: dict):
                   Ex_Dividend_Date, Dividend_Pay_Date,
                   Payout_Ratio, Five_Year_Avg_Yield,
                   Analyst_Rating, Analyst_Target_Price,
-                  Tax_Category, Issuer_Id"""
+                  Tax_Category, Issuer_Id, Country"""
         placeholders = ','.join(['%s'] * len(vals))
         if sid:
             set_clause = ', '.join(f"{c.strip()}=%s" for c in cols.split(','))

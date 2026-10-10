@@ -338,6 +338,7 @@ def get_securities(search: Optional[str] = Query(None)):
                    s.ISIN AS isin,
                    s.Sector AS sector,
                    s.Industry AS industry,
+                   s.Country AS country,
                    s.Yahoo_Ticker AS yahoo_ticker,
                    s.TV_Symbol AS tv_symbol,
                    s.TV_Exchange AS tv_exchange,

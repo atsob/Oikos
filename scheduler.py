@@ -101,6 +101,9 @@ STOCK_SPLITS_MINUTE     = 0
 FUND_COMPOSITION_DAY     = 2  # 2nd of month at 07:30 — avoids colliding with monthly_summary (day 1)
 FUND_COMPOSITION_HOUR    = 7
 FUND_COMPOSITION_MINUTE  = 30
+FUND_COUNTRIES_DAY       = 5  # 5th of month at 07:30 — after fund_composition (2nd) and fundamentals (3rd)
+FUND_COUNTRIES_HOUR      = 7
+FUND_COUNTRIES_MINUTE    = 30
 FUNDAMENTALS_DAY         = 3  # 3rd of month at 07:30 — avoids colliding with fund_composition (day 2)
 FUNDAMENTALS_HOUR        = 7
 FUNDAMENTALS_MINUTE      = 30
@@ -232,7 +235,7 @@ DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
     "recurring_drafts": 10, "credit_card_payments": 10, "shiller_cape": 15, "daily_backup": 45,
-    "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120,
+    "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
 # Market-data sub-steps are also limited one by one, so a stuck Yahoo call does not cost the
@@ -423,6 +426,22 @@ def _fund_composition_job():
     except Exception as e:
         logging.error(f"Fund composition refresh failed: {e}", exc_info=True)
         _record_job("fund_composition", "error", str(e))
+
+
+def _fund_countries_job():
+    """Refresh every held fund's country breakdown from its provider, once a month."""
+    logging.info("Running fund country exposure refresh…")
+    try:
+        from data.country_exposure_downloader import download_country_exposure
+        res = download_country_exposure()
+        for fnd in res["funds"]:
+            logging.info(f"Fund country exposure: {fnd['name']}: {fnd['status']} — {fnd['message']}")
+        msg = f"{res['updated']} updated, {res['skipped']} kept, {res['errors']} failed"
+        bad = "; ".join(f"{x['name']}: {x['message']}" for x in res["funds"] if x["status"] == "error")
+        _record_job("fund_countries", "error" if res["errors"] else "success", msg + (": " + bad if bad else ""))
+    except Exception as e:
+        logging.error(f"Fund country exposure refresh failed: {e}", exc_info=True)
+        _record_job("fund_countries", "error", str(e))
 
 
 def _fundamentals_job():
@@ -687,6 +706,9 @@ if __name__ == "__main__":
     # Monthly summary: skip if already ran this month
     _last_monthly_summary_month: int = -1
 
+    # Fund country exposure: skip if already ran this month
+    _last_fund_countries_month: int = -1
+
     # Fund composition: skip if already ran this month
     _last_fund_composition_month: int = -1
 
@@ -777,6 +799,12 @@ if __name__ == "__main__":
         if now.weekday() == ss_wd and _in_window(now, ss_h, ss_m) and _last_stock_splits_week != _this_week_start:
             _guard('stock_splits', _stock_splits_job)
             _last_stock_splits_week = _this_week_start
+
+        # ── Fund country exposure: monthly ────────────────────────────────────
+        fx_d, fx_h, fx_m = _parse_monthly(sc.get('fund_countries', ''), FUND_COUNTRIES_DAY, FUND_COUNTRIES_HOUR, FUND_COUNTRIES_MINUTE)
+        if now.day == fx_d and _in_window(now, fx_h, fx_m) and _last_fund_countries_month != now.month:
+            _guard('fund_countries', _fund_countries_job)
+            _last_fund_countries_month = now.month
 
         # ── Fund composition (Portfolio X-Ray): monthly ───────────────────────
         fc_d, fc_h, fc_m = _parse_monthly(sc.get('fund_composition', ''), FUND_COMPOSITION_DAY, FUND_COMPOSITION_HOUR, FUND_COMPOSITION_MINUTE)

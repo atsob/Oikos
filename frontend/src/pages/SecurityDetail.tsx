@@ -13,10 +13,11 @@ import {
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
+import type { FundCountryRow } from '@/lib/api'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
-  getSecurityFundComposition, getSecurityFundMembership, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
+  getSecurityFundComposition, getSecurityFundMembership, getFundCountryExposure, saveFundCountryExposure, clearFundCountryExposure, parseCountryText, getCountryList, getFundCountrySource, setFundCountrySource, downloadCountryExposure, getFundCurrencyExposure, saveFundCurrencyExposure, clearFundCurrencyExposure, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
@@ -2383,6 +2384,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
             <ActionRow id="yahoo-divs" label="Download Dividend History" onClick={() => run('yahoo-divs', () => downloadYahooDividends(secId))} />
             <ActionRow id="yahoo-splits" label="Download Split History" onClick={() => run('yahoo-splits', () => downloadStockSplits(secId))} />
             {isFund && <ActionRow id="fund-composition" label="Download Fund Composition (X-Ray)" onClick={() => run('fund-composition', () => downloadFundComposition(secId))} />}
+            {isFund && <ActionRow id="fund-countries" label="Download Country Exposure" onClick={() => run('fund-countries', () => downloadCountryExposure(secId))} />}
             {isStock && <ActionRow id="fundamentals" label="Download Fundamentals (F-Score/Z-Score)" onClick={() => run('fundamentals', () => downloadFundamentals(secId))} />}
             <ActionRow id="yahoo-px" label={`Download Prices (${period})`} onClick={() => run('yahoo-px', () => downloadYahooPrices(period, secId))} />
           </div>
@@ -2817,6 +2819,261 @@ function TopHoldingsEditor({ secId, holdings, onSaved }: {
   )
 }
 
+// A fund's own breakdown by country — the share of the fund per kind of holding and country, typed or
+// pasted from the provider's page. Reports → Inv. Portfolio → Country Exposure spreads the fund's value over it.
+const COUNTRY_KINDS = ['Stocks', 'Government Bonds', 'Corporate Bonds', 'Other']
+function CountryExposureEditor({ secId }: { secId: number }) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({ queryKey: ['fund-country', secId], queryFn: () => getFundCountryExposure(secId) })
+  const { data: countryList = [] } = useQuery({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
+  const [editing, setEditing] = useState(false)
+  const [rows, setRows] = useState<FundCountryRow[]>([])
+  const [paste, setPaste] = useState('')
+  const [pasteKind, setPasteKind] = useState('Stocks')
+  const [source, setSource] = useState('')
+  const [asOf, setAsOf] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const guessKind = () => {
+    const mix = data?.asset_mix
+    if ((mix?.bond ?? 0) >= 0.7) return /gov|treasur|sovereign/i.test(String(mix?.category ?? '')) ? 'Government Bonds' : 'Corporate Bonds'
+    return 'Stocks'
+  }
+  const startEdit = () => {
+    setRows((data?.rows ?? []).map(r => ({ kind: r.kind, country: r.country, weight_pct: r.weight_pct })))
+    setSource(data?.source ?? ''); setAsOf(data?.as_of ?? ''); setPaste(''); setPasteKind(guessKind()); setMsg(null); setEditing(true)
+  }
+  const total = rows.reduce((s, r) => s + (Number(r.weight_pct) || 0), 0)
+
+  const addPasted = async () => {
+    setMsg(null)
+    try {
+      const res = await parseCountryText(paste)
+      setRows(prev => {
+        const next = [...prev]
+        for (const p of res.rows) {
+          const i = next.findIndex(r => r.kind === pasteKind && r.country === p.country)
+          if (i >= 0) next[i] = { ...next[i], weight_pct: p.weight_pct }; else next.push({ kind: pasteKind, country: p.country, weight_pct: p.weight_pct })
+        }
+        return next
+      })
+      setPaste('')
+      if (res.unrecognised.length) setMsg({ ok: false, text: `Not recognised (skipped): ${res.unrecognised.join(' · ')}` })
+    } catch { setMsg({ ok: false, text: 'Could not read that text.' }) }
+  }
+  const save = async () => {
+    setSaving(true); setMsg(null)
+    try {
+      await saveFundCountryExposure(secId, { rows, source, as_of: asOf })
+      await qc.invalidateQueries({ queryKey: ['fund-country', secId] })
+      qc.invalidateQueries({ queryKey: ['xray', 'country-exposure'] })
+      setEditing(false)
+    } catch (e) {
+      setMsg({ ok: false, text: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Could not save.' })
+    } finally { setSaving(false) }
+  }
+  const clear = async () => {
+    if (!confirm('Remove this fund\'s country breakdown?')) return
+    await clearFundCountryExposure(secId)
+    await qc.invalidateQueries({ queryKey: ['fund-country', secId] })
+    qc.invalidateQueries({ queryKey: ['xray', 'country-exposure'] })
+  }
+  const sel = 'rounded border border-slate-300 px-2 py-1 text-sm'
+
+  // Where this fund's rows are refreshed from automatically (monthly job + the Update button).
+  const { data: srcCfg } = useQuery({ queryKey: ['fund-country-source', secId], queryFn: () => getFundCountrySource(secId) })
+  const [srcOpen, setSrcOpen] = useState(false)
+  const [srcUrl, setSrcUrl] = useState('')
+  const [updating, setUpdating] = useState(false)
+  const [updMsg, setUpdMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const providerLabel = (p: string | null | undefined) => p === 'ishares' ? 'iShares daily holdings' : p === 'vanguard' ? 'Vanguard market allocation' : p === 'invesco' ? 'Invesco fund data' : p === 'vaneck' ? 'VanEck fund data' : p === 'file' ? 'a holdings file' : p === 'index' ? 'the index definition (single-country index)' : 'justETF (top countries only)'
+  const refreshAll = async () => {
+    await qc.invalidateQueries({ queryKey: ['fund-country', secId] })
+    qc.invalidateQueries({ queryKey: ['xray', 'country-exposure'] })
+  }
+  const updateNow = async (force: boolean) => {
+    setUpdating(true); setUpdMsg(null)
+    try {
+      const r = await downloadCountryExposure(secId, force)
+      setUpdMsg({ ok: r.ok, text: r.message })
+      await refreshAll()
+    } catch (e) {
+      setUpdMsg({ ok: false, text: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Update failed.' })
+    } finally { setUpdating(false) }
+  }
+  const saveSource = async () => {
+    try {
+      await setFundCountrySource(secId, { url: srcUrl, kind: srcCfg?.kind ?? null })
+      await qc.invalidateQueries({ queryKey: ['fund-country-source', secId] })
+      setSrcOpen(false); setUpdMsg(null)
+    } catch (e) {
+      setUpdMsg({ ok: false, text: (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Could not save the source.' })
+    }
+  }
+  const autoPanel = (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 space-y-1.5 text-xs text-slate-500">
+      <p>
+        {data?.origin === 'manual'
+          ? <>Entered by hand — automatic updates leave it alone.</>
+          : data?.origin === 'index'
+            ? <>Set from the fund's index definition (a single-country index) — it doesn't change, so it isn't refreshed.</>
+            : data?.origin
+            ? <>Updated automatically from <strong>{providerLabel(data.origin)}</strong> (monthly).</>
+            : <>Not updated automatically yet.</>}
+        {' '}Source: <strong>{srcCfg?.url ? providerLabel(srcCfg.provider) : 'justETF by ISIN (top countries only)'}</strong>
+        {srcCfg?.url && <span className="font-mono break-all"> · {srcCfg.url}</span>}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="text-blue-600 hover:underline disabled:opacity-50" disabled={updating} onClick={() => updateNow(data?.origin === 'manual' ? window.confirm('Replace the rows you entered by hand with the provider\'s data?') : false)}>
+          {updating ? 'Updating…' : 'Update now'}
+        </button>
+        <button type="button" className="text-blue-600 hover:underline" onClick={() => { setSrcUrl(srcCfg?.url ?? ''); setSrcOpen(o => !o) }}>Change source…</button>
+      </div>
+      {srcOpen && (
+        <div className="space-y-1.5 pt-1">
+          <input className={`${sel} w-full font-mono`} value={srcUrl} onChange={e => setSrcUrl(e.target.value)}
+            placeholder="iShares / Vanguard product page, or a direct link to a CSV/XLSX holdings file (SPDR, Xtrackers, Amundi, VanEck …) — empty = justETF by ISIN" />
+          <div className="flex gap-2"><Button size="sm" onClick={saveSource}>Save source</Button><Button size="sm" variant="secondary" onClick={() => setSrcOpen(false)}>Cancel</Button></div>
+        </div>
+      )}
+      {updMsg && <p className={updMsg.ok ? 'text-green-700' : 'text-red-600'}>{updMsg.text}</p>}
+    </div>
+  )
+
+  if (isLoading) return <div className="py-3"><Spinner /></div>
+  if (!editing) {
+    const rs = data?.rows ?? []
+    return (
+      <div className="py-2 space-y-2">
+        {rs.length === 0 ? (
+          <p className="text-sm text-slate-500">No country breakdown yet — Reports → Inv. Portfolio → Country Exposure shows this fund under “No country data”.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-xs text-slate-400 uppercase tracking-wide"><th className="text-left py-1">Country</th><th className="text-left py-1">Kind</th><th className="text-right py-1">% of fund</th></tr></thead>
+            <tbody>
+              {rs.map(r => (
+                <tr key={`${r.kind}|${r.country}`} className="border-t border-slate-100">
+                  <td className="py-1">{r.name ?? r.country}</td><td className="py-1 text-slate-500">{r.kind}</td>
+                  <td className="py-1 text-right tabular-nums">{r.weight_pct.toFixed(2)}%</td>
+                </tr>
+              ))}
+              <tr className="border-t border-slate-200 font-medium"><td className="py-1" colSpan={2}>Total{data?.total_pct != null && data.total_pct < 99.995 ? ` (${(100 - data.total_pct).toFixed(2)}% not broken down)` : ''}</td><td className="py-1 text-right tabular-nums">{(data?.total_pct ?? 0).toFixed(2)}%</td></tr>
+            </tbody>
+          </table>
+        )}
+        {rs.length > 0 && (data?.source || data?.as_of) && <p className="text-xs text-slate-400">{data?.source}{data?.source && data?.as_of ? ' · ' : ''}{data?.as_of ? `as of ${data.as_of}` : ''}</p>}
+        {autoPanel}
+        <div className="flex gap-3">
+          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={startEdit}>{rs.length ? 'Edit' : 'Add country breakdown'}</button>
+          {rs.length > 0 && <button type="button" className="text-xs text-red-600 hover:underline" onClick={clear}>Remove</button>}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="py-2 space-y-3">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+        <p className="text-xs text-slate-500">Paste the provider's country table — one country and its weight per line, e.g. “France 40.8” or “Italy;34” — choose what kind of holdings it describes, and add it. Repeat for another kind (a fund with both government and corporate bonds).</p>
+        <textarea className="w-full rounded border border-slate-300 px-2 py-1 text-sm font-mono" rows={4} value={paste} onChange={e => setPaste(e.target.value)} placeholder={'France\t40.8\nItaly\t34.0\nGermany\t12.5'} />
+        <div className="flex items-center gap-2">
+          <select className={sel} value={pasteKind} onChange={e => setPasteKind(e.target.value)}>{COUNTRY_KINDS.map(k => <option key={k}>{k}</option>)}</select>
+          <Button size="sm" variant="secondary" onClick={addPasted} disabled={!paste.trim()}>Add rows</Button>
+        </div>
+      </div>
+      <table className="w-full text-sm">
+        <thead><tr className="text-xs text-slate-400 uppercase tracking-wide"><th className="text-left py-1">Country</th><th className="text-left py-1">Kind</th><th className="text-right py-1">% of fund</th><th /></tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-t border-slate-100">
+              <td className="py-1 pr-2">
+                <select className={`${sel} w-full`} value={r.country} onChange={e => setRows(rows.map((x, j) => j === i ? { ...x, country: e.target.value } : x))}>
+                  {countryList.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                </select>
+              </td>
+              <td className="py-1 pr-2">
+                <select className={sel} value={r.kind} onChange={e => setRows(rows.map((x, j) => j === i ? { ...x, kind: e.target.value } : x))}>{COUNTRY_KINDS.map(k => <option key={k}>{k}</option>)}</select>
+              </td>
+              <td className="py-1 pr-2 text-right"><input type="number" step="0.01" min="0" max="100" className={`${sel} w-24 text-right`} value={r.weight_pct}
+                onChange={e => setRows(rows.map((x, j) => j === i ? { ...x, weight_pct: Number(e.target.value) } : x))} /></td>
+              <td className="py-1"><button type="button" className="text-slate-400 hover:text-red-600" onClick={() => setRows(rows.filter((_, j) => j !== i))}>✕</button></td>
+            </tr>
+          ))}
+          <tr className="border-t border-slate-200 font-medium">
+            <td className="py-1" colSpan={2}>Total <span className={total > 100.005 ? 'text-red-600 font-normal' : 'text-slate-400 font-normal'}>{total > 100.005 ? '(over 100%)' : total < 99.995 && total > 0 ? `(${(100 - total).toFixed(2)}% will show as not broken down)` : ''}</span></td>
+            <td className="py-1 text-right tabular-nums">{total.toFixed(2)}%</td><td />
+          </tr>
+        </tbody>
+      </table>
+      <div className="flex flex-wrap items-center gap-3">
+        <input className={`${sel} w-64`} placeholder="Source (e.g. iShares factsheet)" value={source} onChange={e => setSource(e.target.value)} />
+        <label className="text-xs text-slate-500">As of <input type="date" className={sel} value={asOf} onChange={e => setAsOf(e.target.value)} /></label>
+      </div>
+      {msg && <p className={`text-xs ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</p>}
+      <div className="flex gap-2">
+        <Button size="sm" onClick={save} disabled={saving}>Save</Button>
+        <Button size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Button>
+      </div>
+    </div>
+  )
+}
+
+// A fund's own breakdown by currency (what its holdings are denominated in). iShares funds download it with the
+// country breakdown; for others it is derived (stocks by country, bonds in the fund's currency) unless typed in here.
+function CurrencyExposureEditor({ secId }: { secId: number }) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({ queryKey: ['fund-currency', secId], queryFn: () => getFundCurrencyExposure(secId) })
+  const [editing, setEditing] = useState(false)
+  const [text, setText] = useState('')
+  const [msg, setMsg] = useState<string | null>(null)
+  const done = async () => {
+    await qc.invalidateQueries({ queryKey: ['fund-currency', secId] })
+    qc.invalidateQueries({ queryKey: ['xray', 'currency-exposure'] })
+  }
+  const start = () => { setText((data?.rows ?? []).map(r => `${r.currency}\t${r.weight_pct}`).join('\n')); setMsg(null); setEditing(true) }
+  const save = async () => {
+    const rows: { currency: string; weight_pct: number }[] = []
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.trim().match(/^([A-Za-z]{3})[\s:;,\t]+(-?\d+(?:[.,]\d+)?)\s*%?$/)
+      if (line.trim() && !m) { setMsg(`Not understood: “${line.trim()}” — write a currency code and a weight, e.g. USD 62.5`); return }
+      if (m) rows.push({ currency: m[1].toUpperCase(), weight_pct: Number(m[2].replace(',', '.')) })
+    }
+    try {
+      await saveFundCurrencyExposure(secId, { rows, source: 'entered by hand', as_of: new Date().toISOString().slice(0, 10) })
+      await done(); setEditing(false)
+    } catch (e) { setMsg((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Could not save.') }
+  }
+  if (isLoading) return <div className="py-3"><Spinner /></div>
+  const rs = data?.rows ?? []
+  if (editing) return (
+    <div className="py-2 space-y-2">
+      <p className="text-xs text-slate-500">One currency and its share of the fund per line (“USD 62.5”). A hedged share class is simply 100% its own currency.</p>
+      <textarea className="w-full rounded border border-slate-300 px-2 py-1 text-sm font-mono" rows={5} value={text} onChange={e => setText(e.target.value)} placeholder={'USD\t62.5\nEUR\t20\nJPY\t5.5'} />
+      {msg && <p className="text-xs text-red-600">{msg}</p>}
+      <div className="flex gap-2"><Button size="sm" onClick={save}>Save</Button><Button size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Button></div>
+    </div>
+  )
+  return (
+    <div className="py-2 space-y-2">
+      {rs.length === 0
+        ? <p className="text-sm text-slate-500">None stored — the Currency Exposure report derives it from the country breakdown (stocks by each country's currency, bonds in the fund's own currency).</p>
+        : (
+          <table className="w-full text-sm">
+            <tbody>
+              {rs.map(r => <tr key={r.currency} className="border-t border-slate-100"><td className="py-1">{r.currency}</td><td className="py-1 text-right tabular-nums">{r.weight_pct.toFixed(2)}%</td></tr>)}
+              <tr className="border-t border-slate-200 font-medium"><td className="py-1">Total</td><td className="py-1 text-right tabular-nums">{data?.total_pct.toFixed(2)}%</td></tr>
+            </tbody>
+          </table>
+        )}
+      {rs.length > 0 && <p className="text-xs text-slate-400">{data?.source}{data?.as_of ? ` · as of ${data.as_of}` : ''}{data?.origin === 'manual' ? ' · entered by hand (kept on updates)' : ' · updated automatically'}</p>}
+      <div className="flex gap-3">
+        <button type="button" className="text-xs text-blue-600 hover:underline" onClick={start}>{rs.length ? 'Edit' : 'Enter currencies'}</button>
+        {rs.length > 0 && <button type="button" className="text-xs text-red-600 hover:underline" onClick={async () => { if (confirm('Remove the stored currency breakdown?')) { await clearFundCurrencyExposure(secId); await done() } }}>Remove</button>}
+      </div>
+    </div>
+  )
+}
+
 function CompositionHoldingsTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
@@ -2956,6 +3213,14 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
       <CompositionSection title="Sector Weightings">
         <BreakdownEditor secId={secId} field="sector_weightings" buckets={SECTOR_WEIGHTING_BUCKETS}
           rawValue={sectorWeightings} composition={composition} onSaved={refetchComposition} />
+      </CompositionSection>
+
+      <CompositionSection title="Country Exposure">
+        <CountryExposureEditor secId={secId} />
+      </CompositionSection>
+
+      <CompositionSection title="Currency Exposure">
+        <CurrencyExposureEditor secId={secId} />
       </CompositionSection>
 
       <CompositionSection title="Bond Stats">

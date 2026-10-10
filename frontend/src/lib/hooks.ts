@@ -301,6 +301,43 @@ export function useScrollRestore<T extends HTMLElement>(key: string, ready: bool
   return { ref, onScroll } as const
 }
 
+// ── useMainScrollRestore ─────────────────────────────────────────────────────
+// Like useScrollRestore, but for pages whose content scrolls the app's <main> pane
+// rather than an inner div (long trees/tables with no max height). Put `ref` on any
+// element inside the page; clicking through to a detail page and coming back then
+// lands where you were instead of at the top.
+export function useMainScrollRestore(key: string, ready: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [saved, setSaved] = usePersist<number | null>(`scroll_${key}`, null)
+  const restored = useRef(false)
+
+  useEffect(() => {
+    if (ready && !restored.current && saved != null) {
+      const main = ref.current?.closest('main')
+      if (main) { main.scrollTop = saved; restored.current = true }
+    }
+  }, [ready, saved])
+
+  useEffect(() => {
+    const main = ready ? ref.current?.closest('main') : null
+    if (!main) return
+    let last: number | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const onScroll = () => {
+      last = main.scrollTop
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { timer = null; if (last != null) setSaved(last) }, 400)
+    }
+    main.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      main.removeEventListener('scroll', onScroll)
+      if (timer) { clearTimeout(timer); if (last != null) setSaved(last) }
+    }
+  }, [ready, setSaved])
+
+  return ref
+}
+
 // ── useGridApi ───────────────────────────────────────────────────────────────
 // Captures a grid's GridApi for use outside ag-Grid (e.g. CopyToExcelButton),
 // via onGridReady. Pass an optional onReady for anything else a grid already

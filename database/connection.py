@@ -534,6 +534,51 @@ def _run_startup_migrations():
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Exclude_Balance_Alerts BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE Accounts ADD COLUMN IF NOT EXISTS Statement_Day SMALLINT CHECK (Statement_Day BETWEEN 1 AND 31)",
         "ALTER TABLE Recurring_Templates ADD COLUMN IF NOT EXISTS Is_Card_Payment BOOLEAN NOT NULL DEFAULT FALSE",
+        # Exposure by country: a security's / issuer's country (ISO alpha-2), whether an issuer is a government,
+        # and a fund's own country breakdown (share of the fund per kind and country).
+        "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Country VARCHAR(2)",
+        "ALTER TABLE Issuers ADD COLUMN IF NOT EXISTS Country VARCHAR(2)",
+        "ALTER TABLE Issuers ADD COLUMN IF NOT EXISTS Is_Government BOOLEAN",
+        """CREATE TABLE IF NOT EXISTS Fund_Country_Exposure (
+               Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Kind          VARCHAR(20) NOT NULL CHECK (Kind IN ('Stocks', 'Government Bonds', 'Corporate Bonds', 'Other')),
+               Country       VARCHAR(2) NOT NULL,
+               Weight_Pct    NUMERIC(8, 4) NOT NULL CHECK (Weight_Pct >= 0),
+               Source        VARCHAR(100),
+               As_Of         DATE,
+               Updated_At    TIMESTAMPTZ DEFAULT NOW(),
+               PRIMARY KEY (Securities_Id, Kind, Country)
+           )""",
+        # Where a fund's country rows came from ('manual' = typed in; otherwise the provider the downloader used),
+        # and which provider page to refresh them from.
+        "ALTER TABLE Fund_Country_Exposure ADD COLUMN IF NOT EXISTS Origin VARCHAR(20) NOT NULL DEFAULT 'manual'",
+        # a fund's own breakdown by currency (the currencies its holdings are in; a hedged fund is simply its share-class currency)
+        """CREATE TABLE IF NOT EXISTS Fund_Currency_Exposure (
+               Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Currency      VARCHAR(3) NOT NULL,
+               Weight_Pct    NUMERIC(8, 4) NOT NULL CHECK (Weight_Pct >= 0),
+               Source        VARCHAR(100),
+               As_Of         DATE,
+               Updated_At    TIMESTAMPTZ DEFAULT NOW(),
+               Origin        VARCHAR(20) NOT NULL DEFAULT 'manual',
+               PRIMARY KEY (Securities_Id, Currency)
+           )""",
+        # a generic holdings-file provider (any CSV/XLSX of holdings with a country or ISIN column)
+        "ALTER TABLE Fund_Country_Sources DROP CONSTRAINT IF EXISTS fund_country_sources_provider_check",
+        """DO $$ BEGIN
+               ALTER TABLE Fund_Country_Sources ADD CONSTRAINT fund_country_sources_provider_check
+                   CHECK (Provider IN ('ishares', 'vanguard', 'justetf', 'file', 'invesco', 'vaneck'));
+           EXCEPTION WHEN duplicate_object THEN NULL; END $$""",
+        """CREATE TABLE IF NOT EXISTS Fund_Country_Sources (
+               Securities_Id INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+               Provider      VARCHAR(20) NOT NULL CHECK (Provider IN ('ishares', 'vanguard', 'justetf', 'file', 'invesco', 'vaneck')),
+               Url           TEXT,
+               Kind          VARCHAR(20) CHECK (Kind IN ('Stocks', 'Government Bonds', 'Corporate Bonds', 'Other')),
+               Updated_At    TIMESTAMPTZ DEFAULT NOW()
+           )""",
+        # a source set before the Invesco provider existed was stored as a generic file link
+        "UPDATE Fund_Country_Sources SET Provider = 'invesco' WHERE Provider = 'file' AND Url ILIKE '%invesco.com%'",
+        "UPDATE Fund_Country_Sources SET Provider = 'vaneck' WHERE Provider = 'file' AND Url ILIKE '%vaneck.com%'",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Group_Id INTEGER",
         "ALTER TABLE Transactions ADD COLUMN IF NOT EXISTS Installment_Seq INTEGER",
         """CREATE INDEX IF NOT EXISTS idx_transactions_installment_group

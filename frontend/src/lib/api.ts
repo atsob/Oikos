@@ -971,8 +971,6 @@ export const getInvestmentPositionsHistory = (startDate: string, accountIds?: nu
 export const getHoldingsSnapshot = (asOf?: string, accountIds?: number[]) =>
   api.get('/reports/holdings-snapshot', { params: { ...(asOf ? { as_of: asOf } : {}), account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getFxExposure = (accountIds?: number[]) =>
-  api.get('/reports/fx-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getXraySectorWeighting = (accountIds?: number[], compareDate?: string) =>
   api.get('/reports/xray/sector-weighting', { params: { account_ids: accountIds?.join(',') || undefined, compare_date: compareDate || undefined } }).then(r => r.data)
@@ -987,6 +985,56 @@ export const saveXrayAssetAllocationTargets = (payload: Record<string, number>) 
 
 export const getXrayStyleBox = (accountIds?: number[], compareDate?: string) =>
   api.get('/reports/xray/style-box', { params: { account_ids: accountIds?.join(',') || undefined, compare_date: compareDate || undefined } }).then(r => r.data)
+
+// Exposure by country (Reports -> Inv. Portfolio -> Portfolio Analysis -> Country Exposure)
+export type CountryExposureItem = { securities_id: number | null; account_id?: number | null; name: string; ticker: string; via: 'Direct' | 'Fund'; value_eur: number; pct: number }
+export type CountryExposureCategory = { category: string; value_eur: number; pct: number; items: CountryExposureItem[] }
+export type CountryExposureCountry = {
+  code: string; name: string; value_eur: number; pct: number; special: boolean; categories: CountryExposureCategory[]
+  // currency report only: rate to EUR, the amount in the currency itself, and the EUR impact of a 5% move in it
+  rate?: number | null; native_value?: number | null; impact_5pct_eur?: number | null
+}
+export type CountryExposure = {
+  total_eur: number; countries: CountryExposureCountry[]; notes: string[]
+  uncovered_funds: { securities_id: number; name: string; ticker: string; value_eur: number }[]
+  derived_funds?: string[]
+}
+export const getCountryExposure = (accountIds?: number[]) =>
+  api.get('/reports/country-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data as CountryExposure)
+export type FundCountryRow = { kind: string; country: string; name?: string; weight_pct: number }
+export type FundCountryExposure = {
+  rows: FundCountryRow[]; source: string | null; as_of: string | null; total_pct: number; origin: string | null
+  asset_mix: { stock?: number | null; bond?: number | null; category?: string | null }
+}
+export const getFundCountryExposure = (secId: number) =>
+  api.get(`/reports/country-exposure/funds/${secId}`).then(r => r.data as FundCountryExposure)
+export const saveFundCountryExposure = (secId: number, body: { rows: FundCountryRow[]; source?: string; as_of?: string }) =>
+  api.put(`/reports/country-exposure/funds/${secId}`, body).then(r => r.data)
+// Currency exposure (same tree shape as the country report)
+export const getCurrencyExposure = (accountIds?: number[], includeLiabilities = false) =>
+  api.get('/reports/currency-exposure', { params: { account_ids: accountIds?.join(',') || undefined, include_liabilities: includeLiabilities || undefined } }).then(r => r.data as CountryExposure)
+export type FundCurrencyExposure = { rows: { currency: string; weight_pct: number }[]; source: string | null; as_of: string | null; origin: string | null; total_pct: number }
+export const getFundCurrencyExposure = (secId: number) =>
+  api.get(`/reports/currency-exposure/funds/${secId}`).then(r => r.data as FundCurrencyExposure)
+export const saveFundCurrencyExposure = (secId: number, body: { rows: { currency: string; weight_pct: number }[]; source?: string; as_of?: string }) =>
+  api.put(`/reports/currency-exposure/funds/${secId}`, body).then(r => r.data)
+export const clearFundCurrencyExposure = (secId: number) =>
+  api.delete(`/reports/currency-exposure/funds/${secId}`).then(r => r.data)
+
+export type FundCountrySource = { provider: string | null; url: string | null; kind: string | null }
+export const getFundCountrySource = (secId: number) =>
+  api.get(`/reports/country-exposure/funds/${secId}/source`).then(r => r.data as FundCountrySource)
+export const setFundCountrySource = (secId: number, body: { url: string; kind?: string | null }) =>
+  api.put(`/reports/country-exposure/funds/${secId}/source`, body).then(r => r.data)
+// Refresh country rows from the providers: one fund, or every held fund. force also replaces rows typed in by hand.
+export const downloadCountryExposure = (securityId?: number, force?: boolean) =>
+  api.post('/reports/country-exposure/download', { ...(securityId ? { security_id: securityId } : {}), ...(force ? { force: true } : {}) }).then(r => r.data as { ok: boolean; message: string })
+export const clearFundCountryExposure = (secId: number) =>
+  api.delete(`/reports/country-exposure/funds/${secId}`).then(r => r.data)
+export const parseCountryText = (text: string) =>
+  api.post('/reports/country-exposure/parse', { text }).then(r => r.data as { rows: { country: string; name: string; weight_pct: number }[]; unrecognised: string[] })
+export const getCountryList = () =>
+  api.get('/reports/country-exposure/countries').then(r => r.data as { code: string; name: string }[])
 
 export const getXrayBondQuality = (accountIds?: number[], compareDate?: string) =>
   api.get('/reports/xray/bond-quality', { params: { account_ids: accountIds?.join(',') || undefined, compare_date: compareDate || undefined } }).then(r => r.data)

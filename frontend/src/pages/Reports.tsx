@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react'
-import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useSettings } from '@/lib/hooks'
+import React, { useState, useMemo, useCallback, useEffect, Fragment } from 'react'
+import type { CountryExposureCountry } from '@/lib/api'
+import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useMainScrollRestore, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
@@ -11,8 +12,8 @@ import {
   getCapitalGains,
   getBudgetVsActual, getAnnualIncome, getYtdExpenseTransactions, saveBudget,
   getCashFlowForecastFull, getPnl, getPnlPeriod,
-  getNetWorthByAccount, getInvestmentPositionsHistory, getFxExposure,
-  getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio,
+  getNetWorthByAccount, getInvestmentPositionsHistory,
+  getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio, getCountryExposure, getCurrencyExposure,
   getSpendingTrends, getSavingsRateDetail,
   getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
   getGoals, upsertGoal, deleteGoal,
@@ -746,49 +747,6 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
   return <PivotTable data={rows} groupBy="accounts_name" colKey="date" valKey="value_eur" showTotal={false} idKey="accounts_id" linkType="Brokerage" />
-}
-
-function FxExposureTab({ accountIds }: { accountIds?: number[] }) {
-  const { isDark } = useTheme()
-  const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['fx-exposure', accountIds], queryFn: () => getFxExposure(accountIds), refetchInterval: liveRefetchMs })
-  const rows = data as Row[]
-  const { sorted: fxSorted, sortKey: fxSK, sortDir: fxSD, toggleSort: fxSort } = useSortTable(rows, 'eur_exposure', 'desc')
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  return (
-    <div className="space-y-4">
-      <Plot
-        data={[{ x: rows.map(r => Number(r.eur_exposure)), y: rows.map(r => String(r.currency)), type: 'bar', orientation: 'h', marker: { color: '#8b5cf6' }, text: rows.map(r => fmtEur(Number(r.eur_exposure))), textposition: 'outside' }]}
-        layout={{ height: Math.max(240, rows.length * 40), margin: { t: 10, r: 100, b: 40, l: 60 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, ...plotLayout(isDark) }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            <tr className="bg-slate-50 text-xs text-slate-500">
-              <ColHeader label="Currency" sortKey="currency" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Native Exposure" sortKey="native_exposure" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="EUR Exposure" sortKey="eur_exposure" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="5% FX Move Impact" sortKey="sensitivity_5pct_eur" currentKey={fxSK} currentDir={fxSD} onSort={fxSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-            </tr>
-          </thead>
-          <tbody>
-            {fxSorted.map((r, i) => (
-              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-2 py-1.5 font-mono font-medium">
-                  <CurrencyLink code={r.currency} />
-                </td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(Number(r.native_exposure), 2)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.eur_exposure))}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-amber-600">{fmtEur(Number(r.sensitivity_5pct_eur))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </WithCopy>
-    </div>
-  )
 }
 
 // ── Portfolio X-Ray ──────────────────────────────────────────────────────────
@@ -1745,13 +1703,179 @@ function lastMonthEnd(): string {
   return toLocalISODate(d)
 }
 
+const COUNTRY_CAT_COLORS: Record<string, string> = {
+  'Stocks': '#3b82f6', 'Government Bonds': '#f59e0b', 'Corporate Bonds': '#a855f7', 'Funds': '#94a3b8',
+  'Cash & Deposits': '#14b8a6', 'Crypto': '#f97316', 'Commodities': '#eab308', 'Other': '#64748b', 'Not broken down': '#cbd5e1',
+}
+
+// Country -> category -> instrument. Direct holdings take their country from the security / issuer / ISIN;
+// a fund is spread over the country rows entered for it (api/routers/country_exposure.py).
+function XrayCountryExposureTab({ accountIds, mode = 'country' }: { accountIds?: number[]; mode?: 'country' | 'currency' }) {
+  const { isDark } = useTheme()
+  const isCcy = mode === 'currency'
+  const [liabilities, setLiabilities] = usePersist<boolean>('xray_currency_liabilities', false)
+  const { data, isLoading, error } = useQuery({ queryKey: ['xray', isCcy ? 'currency-exposure' : 'country-exposure', accountIds, isCcy && liabilities], queryFn: () => isCcy ? getCurrencyExposure(accountIds, liabilities) : getCountryExposure(accountIds), placeholderData: keepPreviousData })
+  // Expanded rows and the filter persist, and so does the scroll position, so clicking through to a security
+  // and coming back lands on the same row instead of a collapsed tree at the top.
+  const [openList, setOpenList] = usePersist<string[]>(`xray_${mode}_open`, [])
+  const open = useMemo(() => new Set(openList), [openList])
+  const setOpen = (s: Set<string>) => setOpenList([...s])
+  const [search, setSearch] = usePersist<string>(`xray_${mode}_search`, '')
+  const toggle = (k: string) => { const n = new Set(open); if (n.has(k)) n.delete(k); else n.add(k); setOpen(n) }
+  const scrollRef = useMainScrollRestore(`xray_${mode}`, !isLoading)
+
+  const q = search.trim().toLowerCase()
+  const countries = useMemo(() => {
+    const list = data?.countries ?? []
+    if (!q) return list
+    // Keep a country if its name or any instrument under it matches; prune non-matching branches.
+    return list.map(c => {
+      if (c.name.toLowerCase().includes(q)) return c
+      const cats = c.categories.map(k => ({ ...k, items: k.items.filter(i => `${i.name} ${i.ticker}`.toLowerCase().includes(q)) })).filter(k => k.items.length)
+      return cats.length ? { ...c, categories: cats } : null
+    }).filter(Boolean) as CountryExposureCountry[]
+  }, [data, q])
+
+  const chartCountries = useMemo(() => (data?.countries ?? []).slice(0, 15), [data])
+  const categories = useMemo(() => [...new Set((data?.countries ?? []).flatMap(c => c.categories.map(k => k.category)))], [data])
+
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (error || !data) return <p className="text-sm text-red-600">Could not load the {isCcy ? 'currency' : 'country'} exposure.</p>
+  const native = (c: CountryExposureCountry, v: number) => c.rate ? Math.round(v / c.rate * 100) / 100 : null
+  const impact = (c: CountryExposureCountry, v: number) => c.rate && c.code !== 'EUR' ? Math.round(v * 5) / 100 : null
+  const allKeys = () => new Set(countries.flatMap(c => [c.code, ...c.categories.map(k => `${c.code}|${k.category}`)]))
+  const flat = (): (string | number)[][] => [
+    [isCcy ? 'Currency' : 'Country', 'Category', 'Instrument', 'Via', ...(isCcy ? ['Native amount'] : []), 'Value (EUR)', '% of portfolio', ...(isCcy ? ['5% FX move (EUR)'] : [])],
+    ...countries.flatMap(c => c.categories.flatMap(k => k.items.map(i => [c.name, k.category, `${i.name}${i.ticker ? ` (${i.ticker})` : ''}`, i.via === 'Fund' ? 'Fund look-through' : 'Direct',
+      ...(isCcy ? [native(c, i.value_eur) ?? ''] : []), i.value_eur, i.pct, ...(isCcy ? [impact(c, i.value_eur) ?? ''] : [])]))),
+  ]
+  const uncoveredValue = data.uncovered_funds.reduce((s, u) => s + u.value_eur, 0)
+
+  return (
+    <div className="space-y-4" ref={scrollRef}>
+      {isCcy && (data.derived_funds?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          Currency of {data.derived_funds!.length} fund{data.derived_funds!.length === 1 ? ' is' : 's are'} <strong>derived</strong> — from its country breakdown, or because it is a hedged share class: {data.derived_funds!.join(', ')}.
+          A fund that publishes its own currencies (iShares funds are downloaded automatically) is exact; you can also type them in under Security Detail → Composition → <em>Currency exposure</em>.
+        </div>
+      )}
+      {data.uncovered_funds.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <strong>{data.uncovered_funds.length} fund{data.uncovered_funds.length === 1 ? '' : 's'} ({fmtEur(uncoveredValue)}, {(uncoveredValue / (data.total_eur || 1) * 100).toFixed(1)}% of the portfolio)</strong> {isCcy
+            ? <>have nothing to look through and count in the currency they are quoted in (“Funds (no look-through)”). Add a country or currency breakdown under Security Detail → Composition:{' '}</>
+            : <>have no country breakdown yet and are shown whole under “No country data”. Enter one in Security Detail → Composition → <em>Country exposure</em>:{' '}</>}
+          {data.uncovered_funds.slice(0, 8).map((u, i) => (
+            <span key={u.securities_id}>{i > 0 && ', '}<SecLink id={u.securities_id}>{u.ticker || u.name}</SecLink></span>
+          ))}{data.uncovered_funds.length > 8 ? '…' : ''}
+        </div>
+      )}
+
+      <Plot
+        data={categories.map(cat => ({
+          type: 'bar' as const, orientation: 'h' as const, name: cat,
+          y: [...chartCountries].reverse().map(c => c.name),
+          x: [...chartCountries].reverse().map(c => c.categories.find(k => k.category === cat)?.value_eur ?? 0),
+          marker: { color: COUNTRY_CAT_COLORS[cat] ?? '#94a3b8' },
+          hovertemplate: `%{y} · ${cat}: €%{x:,.0f}<extra></extra>`,
+        }))}
+        layout={{ barmode: 'stack' as const, height: Math.max(260, chartCountries.length * 28 + 90), margin: { t: 10, r: 20, b: 60, l: 170 },
+          xaxis: { tickformat: ',.0f', tickprefix: '€' }, legend: { orientation: 'h' as const, y: -0.15 }, ...plotLayout(isDark) }}
+        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={isCcy ? 'Filter by currency or instrument…' : 'Filter by country or instrument…'}
+          className="rounded border border-slate-300 px-2 py-1 text-sm w-64" />
+        <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setOpen(allKeys())}>Expand all</button>
+        <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setOpen(new Set())}>Collapse all</button>
+        {isCcy && (
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer" title="Add credit cards, loans and other liabilities (negative) as their own category, so each currency is a net position">
+            <input type="checkbox" checked={liabilities} onChange={e => setLiabilities(e.target.checked)} /> Net of credit cards &amp; loans
+          </label>
+        )}
+        <span className="text-xs text-slate-400">Total {fmtEur(data.total_eur)}</span>
+        <span className="ml-auto"><CopyToExcelButton getRows={flat} /></span>
+      </div>
+
+      <div className="overflow-x-auto border border-slate-200 rounded-lg">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <tr>
+              <th className="px-3 py-2 text-left">{isCcy ? 'Currency' : 'Country'} / category / instrument</th>
+              {isCcy && <th className="px-3 py-2 text-right">Amount in currency</th>}
+              <th className="px-3 py-2 text-right">Value (€)</th>
+              <th className="px-3 py-2 text-right">% of portfolio</th>
+              <th className="px-3 py-2 text-right">{isCcy ? '% of currency' : '% of country'}</th>
+              {isCcy && <th className="px-3 py-2 text-right" title="What a 5% move in this currency against the euro would add or subtract (not shown for EUR)">5% FX move (€)</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {countries.length === 0 && <tr><td colSpan={isCcy ? 6 : 4} className="px-3 py-6 text-center text-slate-400">Nothing matches.</td></tr>}
+            {countries.map(c => {
+              const cOpen = open.has(c.code) || !!q
+              return (
+                <Fragment key={c.code}>
+                  <tr className="border-t border-slate-200 bg-slate-50/60 cursor-pointer hover:bg-slate-100" onClick={() => toggle(c.code)}>
+                    <td className="px-3 py-2 font-semibold">{cOpen ? '▾' : '▸'} {c.name}{c.special && <span className="ml-2 text-xs font-normal text-slate-400">not a {isCcy ? 'currency' : 'country'}</span>}</td>
+                    {isCcy && <td className="px-3 py-2 text-right tabular-nums">{c.native_value != null ? <>{fmtNum(c.native_value, 2)} <CurrencyLink code={c.code} className="text-xs text-blue-600 hover:underline" /></> : ''}</td>}
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtEur(c.value_eur)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{c.pct.toFixed(2)}%</td>
+                    <td className="px-3 py-2 text-right text-slate-400">100%</td>
+                    {isCcy && <td className="px-3 py-2 text-right tabular-nums text-amber-600">{c.impact_5pct_eur != null ? fmtEur(c.impact_5pct_eur) : ''}</td>}
+                  </tr>
+                  {cOpen && c.categories.map(k => {
+                    const key = `${c.code}|${k.category}`
+                    const kOpen = open.has(key) || !!q
+                    return (
+                      <Fragment key={key}>
+                        <tr className="border-t border-slate-100 cursor-pointer hover:bg-slate-50" onClick={() => toggle(key)}>
+                          <td className="pl-8 pr-3 py-1.5">
+                            <span className="inline-block w-2.5 h-2.5 rounded-sm mr-2 align-middle" style={{ background: COUNTRY_CAT_COLORS[k.category] ?? '#94a3b8' }} />
+                            {kOpen ? '▾' : '▸'} {k.category}
+                          </td>
+                          {isCcy && <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{native(c, k.value_eur) != null ? fmtNum(native(c, k.value_eur)!, 2) : ''}</td>}
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtEur(k.value_eur)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{k.pct.toFixed(2)}%</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{c.value_eur ? (k.value_eur / c.value_eur * 100).toFixed(1) : '0.0'}%</td>
+                          {isCcy && <td className="px-3 py-1.5 text-right tabular-nums text-amber-600/80">{impact(c, k.value_eur) != null ? fmtEur(impact(c, k.value_eur)!) : ''}</td>}
+                        </tr>
+                        {kOpen && k.items.map(i => (
+                          <tr key={`${key}|${i.securities_id}`} className="border-t border-slate-100 text-slate-600">
+                            <td className="pl-16 pr-3 py-1">
+                              {i.account_id
+                                ? <AccountLink id={i.account_id} name={i.name} type={i.ticker || 'Checking'} />
+                                : <SecLink id={i.securities_id as number}>{i.name}</SecLink>}
+                              {i.ticker && !i.account_id && <span className="ml-1.5 font-mono text-xs text-slate-400">{i.ticker}</span>}
+                              {i.via === 'Fund' && <span className="ml-2 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">via fund</span>}
+                            </td>
+                            {isCcy && <td className="px-3 py-1 text-right tabular-nums text-slate-400">{native(c, i.value_eur) != null ? fmtNum(native(c, i.value_eur)!, 2) : ''}</td>}
+                            <td className="px-3 py-1 text-right tabular-nums">{fmtEur(i.value_eur)}</td>
+                            <td className="px-3 py-1 text-right tabular-nums text-slate-400">{i.pct.toFixed(2)}%</td>
+                            <td className="px-3 py-1 text-right tabular-nums text-slate-400">{k.value_eur ? (i.value_eur / k.value_eur * 100).toFixed(1) : '0.0'}% of category</td>
+                            {isCcy && <td className="px-3 py-1 text-right tabular-nums text-amber-600/70">{impact(c, i.value_eur) != null ? fmtEur(impact(c, i.value_eur)!) : ''}</td>}
+                          </tr>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <ul className="list-disc pl-4 space-y-1 text-xs text-slate-400">{data.notes.map((t, i) => <li key={i}>{t}</li>)}</ul>
+    </div>
+  )
+}
+
 function XRayTab({ accountIds }: { accountIds?: number[] }) {
   const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
   const [compareDate, setCompareDate] = usePersist('xray_compare_date', '')
   const today = todayLocal()
   return (
     <div className="space-y-3">
-      <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Country Exposure', 'Currency Exposure', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
+      {tab !== 'Country Exposure' && tab !== 'Currency Exposure' && (
       <div className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
         <Tooltip text="Show current values alongside a past date's, reconstructed from your transaction history and historical prices/FX. Sector weights, asset mix, credit ratings, category, and expense ratio always reflect today's fund data — Oikos has no historical version of a fund's own internal makeup.">
           <span className="text-slate-500 cursor-help underline decoration-dotted">Compare vs</span>
@@ -1762,6 +1886,9 @@ function XRayTab({ accountIds }: { accountIds?: number[] }) {
         <button onClick={() => setCompareDate(lastMonthEnd())} className="text-xs text-blue-600 hover:underline">End of last month</button>
         {compareDate && <button onClick={() => setCompareDate('')} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>}
       </div>
+      )}
+      {tab === 'Country Exposure' && <XrayCountryExposureTab accountIds={accountIds} />}
+      {tab === 'Currency Exposure' && <XrayCountryExposureTab accountIds={accountIds} mode="currency" />}
       {tab === 'Asset Allocation' && <XrayAssetAllocationTab accountIds={accountIds} compareDate={compareDate || undefined} />}
       {tab === 'Sector Weighting' && <XraySectorWeightingTab accountIds={accountIds} compareDate={compareDate || undefined} />}
       {tab === 'Style Box' && <XrayStyleBoxTab accountIds={accountIds} compareDate={compareDate || undefined} />}
@@ -2040,7 +2167,8 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
   // One-time migration: this sub-tab was labeled 'X-Ray' before the rename to
   // 'Portfolio Analysis' — a user with that value already persisted would
   // otherwise land on a blank pane, since nothing below matches the old label.
-  useEffect(() => { if (tab === 'X-Ray') setTab('Portfolio Analysis') }, [tab, setTab])
+  // 'FX Exposure' was folded into Portfolio Analysis → Currency Exposure; send a persisted old value there.
+  useEffect(() => { if (tab === 'X-Ray' || tab === 'FX Exposure') setTab('Portfolio Analysis') }, [tab, setTab])
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
 
   // Default to Dec 31 of the previous calendar year
@@ -2052,7 +2180,7 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       <PortfolioPresetBar reportScope="inv_positions" eligibleTypes={INV_POSITION_ACCOUNT_TYPES} onChange={setPresetAccountIds} />
 
       {/* Shared date control — applies to Graph, Summary and Detail Analysis only; hidden
-          elsewhere since Current Holdings, FX Exposure, and Portfolio Analysis always
+          elsewhere since Current Holdings and Portfolio Analysis always
           show live data and ignore it, which was confusing to leave visible. */}
       {(tab === 'Graph' || tab === 'Summary' || tab === 'Detail Analysis') && (
         <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
@@ -2072,13 +2200,12 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
         </div>
       )}
 
-      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'FX Exposure', 'Portfolio Analysis', 'Costs by Broker']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Graph', 'Summary', 'Detail Analysis', 'Current Holdings', 'Portfolio Analysis', 'Costs by Broker']} active={tab} onChange={setTab} />
       {tab === 'Graph' && <InvPositionsGraph startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Summary' && <InvPositionsSummary startDate={asOf} accountIds={presetAccountIds} />}
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
       {tab === 'Costs by Broker' && <CostsByBrokerTab />}
       {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
-      {tab === 'FX Exposure' && <FxExposureTab accountIds={presetAccountIds} />}
       {tab === 'Portfolio Analysis' && <XRayTab accountIds={presetAccountIds} />}
     </div>
   )

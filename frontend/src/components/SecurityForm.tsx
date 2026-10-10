@@ -14,7 +14,7 @@ export const EMPTY_SECURITY_FORM: Record<string, string> = {
   dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
   dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
   analyst_rating: '', analyst_target_price: '',
-  tax_category: '', issuer_id: '',
+  tax_category: '', issuer_id: '', country: '',
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
@@ -77,6 +77,10 @@ export function SecurityFormFields({ form, set, currencies, taxRules, issuers = 
       </FormField>
       <FormField label="Sector"><Input value={form.sector} onChange={e => set('sector', e.target.value)} /></FormField>
       <FormField label="Industry"><Input value={form.industry} onChange={e => set('industry', e.target.value)} /></FormField>
+      <FormField label="Country (blank = from the ISIN)">
+        <Input value={form.country ?? ''} maxLength={2} placeholder="e.g. GR, US" className="uppercase"
+          onChange={e => set('country', e.target.value.toUpperCase())} />
+      </FormField>
       {form.price_scale && Number(form.price_scale) !== 1 && (
         <FormField label="Price Scale">
           <div className="w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-800">

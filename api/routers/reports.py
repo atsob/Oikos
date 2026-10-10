@@ -3866,45 +3866,6 @@ def get_holdings_snapshot(as_of: str = Query(None), account_ids: Optional[str] =
 
 
 # ── FX Exposure ───────────────────────────────────────────────────────────────
-@router.get("/fx-exposure")
-def get_fx_exposure(account_ids: Optional[str] = Query(None)):
-    # A selected preset becomes the complete account universe for both buckets —
-    # cash exposure isn't just "everything non-investment" anymore once a specific
-    # set of accounts has been chosen, same as the investment side.
-    acct_ids = _parse_account_ids(account_ids)
-    cash_clause = _acct_clause(acct_ids, "a.Accounts_Id")
-    inv_clause = _acct_clause(acct_ids, "h.Accounts_Id")
-    query = f"""
-    WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
-    prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC),
-    cash_exp AS (
-        SELECT a.Currencies_Id, SUM(a.Accounts_Balance) AS native_exposure
-        FROM Accounts a WHERE a.Is_Active=TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin'){cash_clause} GROUP BY a.Currencies_Id
-    ),
-    inv_exp AS (
-        SELECT s.Currencies_Id, SUM(h.Quantity * COALESCE(p.Close,0)) AS native_exposure
-        FROM Holdings h JOIN Securities s ON h.Securities_Id=s.Securities_Id
-        LEFT JOIN prices p ON p.Securities_Id=h.Securities_Id
-        WHERE h.Quantity > 0{inv_clause} GROUP BY s.Currencies_Id
-    ),
-    combined AS (
-        SELECT Currencies_Id, native_exposure FROM cash_exp
-        UNION ALL SELECT Currencies_Id, native_exposure FROM inv_exp
-    ),
-    aggregated AS (SELECT Currencies_Id, SUM(native_exposure) AS native_exposure FROM combined GROUP BY Currencies_Id)
-    SELECT c.Currencies_ShortName AS currency, a.Currencies_Id AS currencies_id,
-           ROUND(a.native_exposure::numeric,2) AS native_exposure,
-           ROUND((a.native_exposure * COALESCE(fx.FX_Rate,1))::numeric,2) AS eur_exposure,
-           ROUND((a.native_exposure * COALESCE(fx.FX_Rate,1) * 0.05)::numeric,2) AS sensitivity_5pct_eur
-    FROM aggregated a JOIN Currencies c ON c.Currencies_Id=a.Currencies_Id
-    LEFT JOIN fx ON fx.Currencies_Id_1=a.Currencies_Id
-    ORDER BY ABS(a.native_exposure * COALESCE(fx.FX_Rate,1)) DESC
-    """
-    with get_db() as conn:
-        df = pd.read_sql(query, conn)
-    return _df_to_list(df)
-
-
 # ── Portfolio X-Ray ──────────────────────────────────────────────────────────
 # Look-through ETF/Mutual Fund composition (cached in Fund_Composition /
 # Fund_Top_Holdings by data/downloaders.py::download_fund_composition, sourced

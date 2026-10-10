@@ -260,10 +260,6 @@ ENDPOINTS = {
         "path": "/api/market-data/currencies/{currency_id}/fx-effect", "params": ["period"],
         "description": "Currency effect on P&L for one currency (id in the path) over period DTD/WTD/MTD/QTD/YTD/1Y/3Y/5Y/All (default YTD): per account/security quoted in it, realized and unrealized P&L each split into market and FX, plus income; and the FX effect on cash balances.",
     },
-    "fx_exposure": {
-        "path": "/api/reports/fx-exposure", "params": ["account_ids"],
-        "description": "Exposure per currency: native amount, EUR amount and the EUR impact of a 5% FX move.",
-    },
     "cash_flow_forecast": {
         "path": "/api/reports/cash-flow-forecast-full", "params": ["days", "months_back", "account_ids", "min_balance"],
         "description": "Forward-looking scheduled/recurring/dividend/interest cash flow projection, plus account_alerts: which checking/savings/credit-card accounts are projected to fall below min_balance (default 0) or their credit limit, with suggested transfers from other accounts.",
@@ -283,6 +279,14 @@ ENDPOINTS = {
     "interest_rates": {
         "path": "/api/market-data/rates", "params": ["series", "years"],
         "description": "Rate history. series = comma-separated codes from interest_rate_series (default ESTR, ECB_DFR, SOFR, EFFR, FED_UPPER, FED_LOWER); years = last N years.",
+    },
+    "country_exposure": {
+        "path": "/api/reports/country-exposure", "params": ["account_ids"],
+        "description": "Investment exposure by country -> category (Stocks, Government Bonds, Corporate Bonds, ...) -> instrument, with funds spread over their entered country breakdown.",
+    },
+    "currency_exposure": {
+        "path": "/api/reports/currency-exposure", "params": ["account_ids", "include_liabilities"],
+        "description": "Currency exposure looked through funds: currency -> category -> instrument (cash accounts included), with the amount in each currency and the EUR impact of a 5% FX move. include_liabilities=true nets credit cards and loans.",
     },
     "day_extremes": {
         "path": "/api/reports/day-extremes", "params": ["account_id", "year", "n", "min_base", "period"],

@@ -162,7 +162,9 @@ CREATE TABLE IF NOT EXISTS Issuers (
     Moodys       VARCHAR(4) REFERENCES Credit_Ratings_LT(Moodys),
     S_P          VARCHAR(4) REFERENCES Credit_Ratings_LT(S_P),
     Fitch        VARCHAR(4) REFERENCES Credit_Ratings_LT(Fitch),
-    Notes        TEXT
+    Notes        TEXT,
+    Country      VARCHAR(2),      -- ISO alpha-2: where the issuer is based (exposure by country)
+    Is_Government BOOLEAN         -- TRUE = a state / government issuer; NULL = decide from the name
 );
 
 
@@ -189,6 +191,7 @@ CREATE TABLE Securities (
     Securities_Name      VARCHAR(255) UNIQUE NOT NULL,
     Securities_Type      Securities_Type NOT NULL,
     Currencies_Id        INTEGER NOT NULL REFERENCES Currencies(Currencies_Id),
+    Country              VARCHAR(2),          -- ISO alpha-2 (exposure by country); NULL = take it from the ISIN prefix
     Sector               VARCHAR(50),
     Industry             VARCHAR(50),
     Analyst_Rating       VARCHAR(20),
@@ -1176,6 +1179,41 @@ CREATE TABLE IF NOT EXISTS Fund_Composition (
     Expense_Ratio_Override         NUMERIC(6,4),
     Manual_Overrides               JSONB
 );
+-- A fund's own breakdown by country (Reports -> Inv. Portfolio -> Country Exposure): the share of the fund,
+-- per kind of holding and country, entered by hand from the provider's factsheet.
+CREATE TABLE IF NOT EXISTS Fund_Country_Exposure (
+    Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Kind          VARCHAR(20) NOT NULL CHECK (Kind IN ('Stocks', 'Government Bonds', 'Corporate Bonds', 'Other')),
+    Country       VARCHAR(2) NOT NULL,
+    Weight_Pct    NUMERIC(8, 4) NOT NULL CHECK (Weight_Pct >= 0),
+    Source        VARCHAR(100),
+    As_Of         DATE,
+    Updated_At    TIMESTAMPTZ DEFAULT NOW(),
+    Origin        VARCHAR(20) NOT NULL DEFAULT 'manual',   -- 'manual' or the provider the downloader used
+    PRIMARY KEY (Securities_Id, Kind, Country)
+);
+
+-- A fund's own breakdown by currency (Reports -> Inv. Portfolio -> Currency Exposure).
+CREATE TABLE IF NOT EXISTS Fund_Currency_Exposure (
+    Securities_Id INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Currency      VARCHAR(3) NOT NULL,
+    Weight_Pct    NUMERIC(8, 4) NOT NULL CHECK (Weight_Pct >= 0),
+    Source        VARCHAR(100),
+    As_Of         DATE,
+    Updated_At    TIMESTAMPTZ DEFAULT NOW(),
+    Origin        VARCHAR(20) NOT NULL DEFAULT 'manual',
+    PRIMARY KEY (Securities_Id, Currency)
+);
+
+-- Which provider page refreshes a fund's country rows (none = justETF by ISIN).
+CREATE TABLE IF NOT EXISTS Fund_Country_Sources (
+    Securities_Id INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Provider      VARCHAR(20) NOT NULL CHECK (Provider IN ('ishares', 'vanguard', 'justetf', 'file', 'invesco', 'vaneck')),
+    Url           TEXT,
+    Kind          VARCHAR(20) CHECK (Kind IN ('Stocks', 'Government Bonds', 'Corporate Bonds', 'Other')),
+    Updated_At    TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS Fund_Top_Holdings (
     Fund_Holding_Id  SERIAL PRIMARY KEY,
     Securities_Id    INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,

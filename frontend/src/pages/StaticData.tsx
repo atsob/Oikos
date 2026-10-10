@@ -12,7 +12,7 @@ import {
   getPayeeTransactions, getCategoryTransactions,
   getTaxCategoryRules, createTaxCategoryRule, updateTaxCategoryRule,
   getInstrumentTypeOverrides, createInstrumentTypeOverride, updateInstrumentTypeOverride,
-  getCreditRatings, getIssuers, upsertIssuer,
+  getCreditRatings, getIssuers, upsertIssuer, getCountryList,
   getAccountInterestRates, upsertAccountInterestRateSchedule, deleteAccountInterestRateSchedule,
 } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, CopyToExcelButton, AccountOptions, AG_GRID_COLUMN_TYPES } from '@/components/ui'
@@ -1533,6 +1533,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ratingOptions = useRatingOptions()
+  const { data: countryList = [] } = useQuery({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
 
   const { data = [], isLoading } = useQuery({ queryKey: ['issuers'], queryFn: () => getIssuers() })
 
@@ -1548,7 +1549,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
 
   const openNew = () => {
     setEditRow({})
-    setForm({ name: '', moodys: '', sp: '', fitch: '', notes: '' })
+    setForm({ name: '', moodys: '', sp: '', fitch: '', notes: '', country: '', is_government: '' })
     setError(null)
   }
 
@@ -1600,6 +1601,8 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
     { field: 'moodys', headerName: "Moody's", width: 90 },
     { field: 'sp', headerName: 'S&P', width: 80 },
     { field: 'fitch', headerName: 'Fitch', width: 80 },
+    { field: 'country', headerName: 'Country', width: 90 },
+    { field: 'is_government', headerName: 'Government', width: 110, valueFormatter: (p: { value: unknown }) => p.value == null ? '' : p.value ? 'Yes' : 'No' },
     { field: 'notes', headerName: 'Notes', flex: 2, minWidth: 160 },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
@@ -1674,6 +1677,19 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
             <div className="col-span-2">
               <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} /></Field>
             </div>
+            <Field label="Country">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.country ?? ''} onChange={e => set('country', e.target.value)}>
+                <option value="">— from the bond's ISIN —</option>
+                {(countryList as { code: string; name: string }[]).map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Government issuer?">
+              <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.is_government ?? ''} onChange={e => set('is_government', e.target.value)}>
+                <option value="">Decide automatically (name / sector)</option>
+                <option value="true">Yes — a state / government</option>
+                <option value="false">No — a company</option>
+              </select>
+            </Field>
             <Field label="Moody's">
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.moodys ?? ''} onChange={e => set('moodys', e.target.value)}>
                 <option value="">— not rated —</option>

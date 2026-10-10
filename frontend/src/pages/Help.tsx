@@ -659,7 +659,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>
         <Note>
           The <b>As of date</b> control only applies to <b>Graph</b>, <b>Summary</b>, and <b>Detail Analysis</b> —
-          it's hidden on <b>Current Holdings</b> and <b>FX Exposure</b>, which always show live data. <b>Portfolio
+          it's hidden on <b>Current Holdings</b>, which always shows live data. <b>Portfolio
           Analysis</b> has its own separate <b>Compare vs</b> control instead (see below) rather than this one.
         </Note>
         <Note>
@@ -673,7 +673,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
-          Holdings, FX Exposure, Portfolio Analysis) to a saved set of accounts — see the same
+          Holdings, Portfolio Analysis) to a saved set of accounts — see the same
           control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}
           alongside investment accounts: include one in a preset and Portfolio Analysis → Asset Allocation shows
           its balance as a <b>Cash</b> slice instead of only ever breaking down investment holdings.
@@ -718,6 +718,60 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           it doesn't sum to 100% together with AAA/AA/A/etc. and can overlap them (e.g. a bond already counted as
           "A" can also be government-issued), so it's excluded from the rating table/chart and shown as a
           separate informational line instead, still click-to-drill like any other row.
+        </Note>
+        <Note>
+          <b>Country Exposure</b> shows where the portfolio is invested, as a tree: <b>country → category (Stocks,
+          Government Bonds, Corporate Bonds, Cash &amp; Deposits, Crypto, Commodities …) → instrument</b>, with a stacked
+          bar chart of the top countries, a filter, Expand/Collapse all and Copy to Excel. A direct stock takes its
+          country from the security's own <b>Country</b> (Security Detail → Setup) or, if blank, from its ISIN's
+          two-letter prefix; a direct bond from the security, then its issuer's country (Static Data → Issuers →
+          <b>Country</b>), then the ISIN, and it counts as a Government bond when the issuer is marked
+          <b>Government issuer</b>, its sector is Government, or the name reads like a state (Republic, Treasury,
+          T-Bill …). A <b>fund</b> is spread over the rows entered under Security Detail → Composition →{' '}
+          <b>Country Exposure</b>: paste the provider's country table (“France 40.8”, one per line), pick the kind of
+          holdings it describes (Stocks / Government Bonds / Corporate Bonds / Other), and add; repeat for another kind,
+          then Save. Each row is a share of the fund; whatever they don't cover appears as “Not broken down by
+          country”, and a fund with no rows is shown whole under “No country data” (a banner lists them) so totals
+          always reconcile. Crypto and commodities sit under “Not country-specific”; a stock or bond with neither
+          country nor ISIN under “Country unknown”. It follows the account preset and shows today's prices (no
+          compare date). <b>Fund breakdowns update themselves:</b> a monthly job (<b>Fund Country Exposure</b>, Tools →
+          System; also <b>Download Country Exposure</b> on a security's Downloads tab and Market Data → Downloads, and{' '}
+          <b>Update now</b> beside the fund's rows) fetches every held fund's breakdown from its provider — an{' '}
+          <b>iShares</b> product page → its daily holdings file aggregated by country (stocks, and bonds split into
+          government / corporate / other), a <b>Vanguard</b> page → its market-allocation table, otherwise{' '}
+          <b>justETF</b> by ISIN (top countries only, the fallback). Point a fund at a page with <b>Change source…</b>
+          (paste the product page URL). Rows you typed in by hand are never overwritten automatically, and a less
+          detailed source (justETF) never replaces a more detailed one; <b>Update now</b> on a hand-entered fund asks
+          before replacing it. A fund the provider has no countries for (a commodity ETC, a US-listed ETF) is simply
+          skipped.
+        </Note>
+        <Note>
+          <b>Cash accounts</b> in the chosen accounts (Cash, Checking, Savings) are part of Country Exposure under{' '}
+          <b>Cash &amp; Deposits</b>, at today's balance and placed by the account's IBAN country, else its bank's BIC;
+          physical cash and accounts with neither are “Country unknown”. Credit cards, loans and property are left out.
+          <b> Funds outside iShares and Vanguard</b> (VanEck, SPDR, Xtrackers, Amundi, Invesco …) are covered three ways:
+          justETF by ISIN, automatically, for any UCITS fund (the top countries only); the product page of a US <b>Invesco</b> or <b>VanEck</b>
+          ETF (country weights and currencies straight from the provider; VanEck's UCITS pages too — their currencies are summed
+          from the holdings list); a direct link to the provider's
+          CSV/XLSX <b>holdings file</b> under <b>Change source…</b> — any file with a weight column and a country (or ISIN)
+          column is read — for the full detail; or by pasting the table by hand. A fund tracking a one-country index
+          (S&amp;P 500, FTSE/Athex Large Cap) is set from the index and marked as such.
+        </Note>
+        <Note>
+          <b>Currency Exposure</b> is the same tree for currencies — <b>currency → category → instrument</b> — looking
+          through funds, which replaces the old FX Exposure tab (that counted a fund in the currency it is quoted in). Direct
+          stocks and bonds count in their own currency, cash accounts in the account's currency, and <b>crypto and commodities in US
+          dollars</b> (they are priced in dollars; a EUR quote is just a conversion). A fund uses its own currency
+          rows where it has them — iShares funds download them with the country breakdown (the market currency of each
+          holding), or type them under Security Detail → Composition → <b>Currency exposure</b> — and a <i>hedged</i> share
+          class is entirely its own currency. Otherwise the currency is <b>derived</b>: stocks by the home currency of each
+          country in the fund's country breakdown, bonds in the fund's own currency; a note lists the derived funds. A fund
+          with nothing to look through stays in its quoting currency under “Funds (no look-through)”. It is the currency of
+          the holdings, not of the underlying earnings. Each currency also shows the <b>amount in that currency</b> and the
+          <b>5% FX move</b> — what a 5% change against the euro would add or subtract (not shown for EUR) — and the
+          <b>Net of credit cards &amp; loans</b> option adds those accounts as a negative “Liabilities” category, so every
+          currency becomes a net position. Expanded rows, the filter and the scroll position are remembered, so coming back from a
+          security's page lands where you were.
         </Note>
         <Note>
           <b>Stock Overlap</b> rows link through to Security Detail when the symbol is already a registered
@@ -1165,7 +1219,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>Reference and price data, in eight tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, and Alerts.</P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
-          holdings, the account lists in Static Data, Security Detail, and the Reports tables (FX Exposure, Savings,
+          holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
           bonds, holdings and others) — opening that currency's <b>Currency Detail</b> page, with a selector to switch
           currency. Rates there are shown in your <b>reporting currency</b> (Tools → App Settings): <b>Overview</b> has
           the rate and its inverse with the 1D / 1M / YTD / 1Y change, your exposure to the currency, its share of your
@@ -1174,8 +1228,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           (always against EUR, the storage base, whatever the reporting currency): chart, table with multi-row delete,{' '}
           <b>Import from File</b> and <b>Manual Entry</b> — this replaces the former Market Data → FX Prices tab; EUR,
           having no stored rates of its own, has no Prices tab. <b>Exposure</b> lists the active accounts holding the
-          currency and the securities quoted in it, linking to each — the same definition as the FX Exposure report
-          (cash in Brokerage/Margin accounts isn't counted), but always over all accounts. <b>FX Effect</b> shows how
+          currency and the securities quoted in it, linking to each — by quoting currency (funds are not looked through — that is
+          Portfolio Analysis → Currency Exposure; cash in Brokerage/Margin accounts isn't counted), always over all accounts. <b>FX Effect</b> shows how
           much of your P&amp;L came from the currency moving, over a period you choose (DTD, WTD, MTD, QTD, YTD, 1Y,
           3Y, 5Y, All). For each account/security quoted in the currency it splits the P&amp;L into <b>realized</b>{' '}
           (units sold in the period) and <b>unrealized</b> (units still held), each into a <b>market</b> part (the price

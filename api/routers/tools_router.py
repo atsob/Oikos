@@ -1600,7 +1600,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "fund_countries", "news_fetch", "fund_composition",
     "fundamentals", "shiller_cape", "interest_rates",
 }
 
@@ -1613,6 +1613,7 @@ _SEED_JOBS = [
     ("securities_info",    "Securities Info",        "Downloads securities metadata (sector, industry, analyst targets, dividends) from Yahoo Finance and TradingView.", "Once per calendar day",          True),
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
     ("stock_splits",       "Stock Splits",           "Downloads stock split history for all tracked securities from Yahoo Finance and raises a dashboard alert for any newly discovered split.", "Sunday at 07:00", True),
+    ("fund_countries",     "Fund Country Exposure",  "Refreshes the country breakdown of every held fund from its provider (iShares daily holdings, Vanguard market allocation, justETF) — funds whose breakdown was typed in by hand are left alone.", "5th of month at 07:30", True),
     ("credit_card_payments", "Credit Card Payment Amounts", "Recalculates the amount of every credit-card payment template from the card's balance at its latest statement date, so forecasts and drafts use the current figure.", "Daily at 05:45", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications.", "Every 30 min, 24×7", True),
@@ -1699,6 +1700,11 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "stock_splits":
             from data.downloaders import download_stock_splits
             download_stock_splits()
+        elif job_id == "fund_countries":
+            from data.country_exposure_downloader import download_country_exposure
+            res = download_country_exposure()
+            if res["errors"]:
+                raise RuntimeError(f"{res['errors']} fund(s) failed: " + "; ".join(f['name'] + ': ' + f['message'] for f in res['funds'] if f['status'] == 'error')[:300])
         elif job_id == "credit_card_payments":
             from database.card_statements import refresh_card_payment_templates
             refresh_card_payment_templates()

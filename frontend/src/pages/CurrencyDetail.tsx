@@ -165,7 +165,7 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
       </div>
       {!detail.is_quote && ex.total_eur !== 0 && (
         <p className="text-xs text-slate-500">
-          <Tooltip text="The value of your exposure times 5% — the same figure as the 5% FX Move Impact column in Reports → Inv. Portfolio → FX Exposure.">
+          <Tooltip text="The value of your exposure times 5% — the same figure as the 5% FX move column in Reports → Inv. Portfolio → Portfolio Analysis → Currency Exposure, which also looks through funds.">
             A 5% move in {detail.code} against {q} changes your wealth by about <b className="text-amber-600">{fmtEur(ex.sensitivity_5pct_eur)}</b>.
           </Tooltip>
         </p>
@@ -469,7 +469,7 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
     <div className="p-4 space-y-6">
       <p className="text-xs text-slate-500">
         Everything you hold in {code}, across all accounts: balances of active cash-side accounts (Brokerage and
-        Margin cash excluded, as in Reports → Inv. Portfolio → FX Exposure) and securities quoted in {code}, valued
+        Margin cash excluded) and securities quoted in {code} — funds counted in the currency they are quoted in; Reports → Inv. Portfolio → Portfolio Analysis → Currency Exposure looks through them — valued
         at their latest close, converted to your reporting currency ({rc}) at the latest rates.
       </p>
 
@@ -605,7 +605,7 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
     return (
       <p className="p-4 text-sm text-slate-500">
         P&amp;L is measured in {detail.storage_base}, so holdings in {detail.code} have no currency effect of their own here. The effect of
-        other currencies is on each of their pages (e.g. via Reports → Inv. Portfolio → FX Exposure).
+        other currencies is on each of their pages (e.g. via Reports → Inv. Portfolio → Portfolio Analysis → Currency Exposure).
       </p>
     )
   }
