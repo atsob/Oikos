@@ -3083,3 +3083,27 @@ PAYEES = ['Opening Balance',
  'Vodafone',
  'Wolt',
  'Hermes']
+
+
+# --- Fund country / currency exposure (Reports -> Inv. Portfolio -> Portfolio Analysis) ---
+# (ticker, provider, url, kind) -- where the monthly "Fund Country Exposure" job refreshes a fund's country and
+# currency breakdown from. Public provider pages only; funds without a row fall back to justETF by ISIN.
+FUND_COUNTRY_SOURCES = [
+    ('EUNA.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/291770/ishares-core-global-aggregate-bond-ucits-etf-eur-hedged-acc-fund', None),
+    ('EUNK.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251861/ishares-core-msci-europe-ucits-etf', None),
+    ('EUNL.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf', None),
+    ('EUNM.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251858/ishares-msci-em-ucits-etf', None),
+    ('IBCI', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251739/ishares-euro-inflation-linked-government-bond-ucits-etf', None),
+    ('IS0E.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251908/ishares-gold-producers-ucits-etf', None),
+    ('IUHE.AS', 'ishares', 'https://www.ishares.com/uk/individual/en/products/314478/ishares-s-p-500-health-care-sector-ucits-etf-eur-hedged-dist-fund', None),
+    ('NLR', 'vaneck', 'https://www.vaneck.com/us/en/investments/uranium-nuclear-energy-etf-nlr/team/', None),
+    ('PHO', 'invesco', 'https://www.invesco.com/us/en/financial-products/etfs/invesco-water-resources-etf.html', None),
+    ('VECA.DE', 'vanguard', 'https://www.nl.vanguard/professional/product/etf/bond/9695/eur-corporate-bond-ucits', 'Corporate Bonds'),
+    ('VWCE.DE', 'vanguard', 'https://www.nl.vanguard/professional/product/etf/equity/9679/ftse-all-world-ucits-etf-accumulating', 'Stocks'),
+]
+
+# (ticker, kind, country, weight_pct, source) -- a fund tracking a single-country index is 100% that country; stored
+# with origin 'index' so no provider refresh replaces it.
+FUND_COUNTRY_INDEX = [
+    ('VUAA.DE', 'Stocks', 'US', 100.0, 'S&P 500 index: US companies only'),
+]

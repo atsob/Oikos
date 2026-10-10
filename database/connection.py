@@ -249,6 +249,21 @@ def _seed_reference_data(conn) -> None:
          in sd.SECURITIES],
     )
 
+    # Where each seeded fund's country/currency breakdown is refreshed from (the monthly Fund Country Exposure
+    # job), and single-country index funds, which are 100% that country by definition.
+    cur.executemany(
+        """INSERT INTO Fund_Country_Sources (Securities_Id, Provider, Url, Kind)
+           SELECT Securities_Id, %s, %s, %s FROM Securities WHERE Ticker = %s
+           ON CONFLICT (Securities_Id) DO NOTHING""",
+        [(prov, url, kind, t) for (t, prov, url, kind) in sd.FUND_COUNTRY_SOURCES],
+    )
+    cur.executemany(
+        """INSERT INTO Fund_Country_Exposure (Securities_Id, Kind, Country, Weight_Pct, Source, As_Of, Origin)
+           SELECT Securities_Id, %s, %s, %s, %s, CURRENT_DATE, 'index' FROM Securities WHERE Ticker = %s
+           ON CONFLICT DO NOTHING""",
+        [(kind, ctry, w, src, t) for (t, kind, ctry, w, src) in sd.FUND_COUNTRY_INDEX],
+    )
+
     # Categories form a tree (up to 3 levels deep); insert parent-before-child,
     # remapping each source install's old id to the new one via RETURNING so
     # child rows can point at the right freshly-generated parent id.
