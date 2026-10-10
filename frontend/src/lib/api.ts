@@ -777,6 +777,11 @@ export const saxoSaveAccountMap = (accountMap: Record<string, number>) =>
   api.post('/bank/saxo-save-account-map', { account_map: accountMap }).then(r => r.data)
 export const saxoSaveChargePayee = (payeeId: number | null) =>
   api.post('/bank/saxo-save-charge-payee', { payee_id: payeeId }).then(r => r.data)
+export type SaxoSession = { connected: boolean; access_token?: string; expires_at?: number; use_sim?: boolean; status: string; reason?: string; transient?: boolean }
+export const saxoSession = (force = false) =>
+  api.get('/bank/saxo-session', { params: force ? { force: 1 } : undefined }).then(r => r.data as SaxoSession)
+export const saxoSaveCredentials = (data: { app_key: string; app_secret: string; use_sim: boolean }) =>
+  api.post('/bank/saxo-save-credentials', data).then(r => r.data)
 export const saxoGetAuthUrl = (appKey: string, appSecret: string, redirectUri: string, useSim: boolean) =>
   api.post('/bank/saxo-auth-url', { app_key: appKey, app_secret: appSecret, redirect_uri: redirectUri, use_sim: useSim }).then(r => r.data)
 export const saxoExchangeCode = (data: { app_key: string; app_secret: string; code: string; redirect_uri: string; use_sim: boolean; remember: boolean }) =>

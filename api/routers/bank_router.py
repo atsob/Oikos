@@ -646,6 +646,34 @@ def saxo_save_charge_payee(data: dict):
     return {"ok": True}
 
 
+@router.post("/saxo-save-credentials")
+def saxo_save_credentials(data: dict):
+    """Remember the app key/secret before the browser leaves for Saxo's login page, so that the page it returns to
+    can finish the connection by itself."""
+    from database.queries import save_app_setting
+    for k in ("app_key", "app_secret"):
+        if not (data.get(k) or "").strip():
+            raise HTTPException(400, "App key and secret are required")
+    save_app_setting("saxo_app_key", data["app_key"].strip())
+    save_app_setting("saxo_app_secret", data["app_secret"].strip())
+    save_app_setting("saxo_use_sim", "1" if data.get("use_sim") else "0")
+    return {"ok": True}
+
+
+@router.get("/saxo-session")
+def saxo_session(force: bool = False):
+    """A valid access token, refreshed by the server when needed — or connected=False when the user has to connect
+    (never did, or the login expired)."""
+    from data.saxo_session import ensure_access_token, SaxoNotConnected, status
+    try:
+        s = ensure_access_token(force=force)
+        return {"connected": True, **s, "status": "ok"}
+    except SaxoNotConnected as e:
+        return {"connected": False, "status": status(), "reason": str(e)}
+    except Exception as e:                                   # Saxo unreachable etc. — not the same as an expired login
+        return {"connected": False, "status": status(), "reason": f"Could not reach Saxo: {e}"[:300], "transient": True}
+
+
 @router.post("/saxo-auth-url")
 def saxo_auth_url(data: dict):
     try:
@@ -667,13 +695,13 @@ def saxo_exchange_code(data: dict):
             data["redirect_uri"], use_sim=data.get("use_sim", False)
         )
         expiry = int(time.time()) + int(tok.get("expires_in", 1200))
-        if data.get("remember"):
+        if data.get("remember", True):
+            from data.saxo_session import store_tokens
             save_app_setting("saxo_app_key",      data["app_key"])
             save_app_setting("saxo_app_secret",   data["app_secret"])
             save_app_setting("saxo_use_sim",      "1" if data.get("use_sim") else "0")
             save_app_setting("saxo_redirect_uri", data["redirect_uri"])
-            save_app_setting("saxo_refresh_token", tok.get("refresh_token", ""))
-            save_app_setting("saxo_token_expiry",  str(expiry))
+            store_tokens(tok)
         return {"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", ""), "expires_at": expiry}
     except HTTPException:
         raise
@@ -692,8 +720,8 @@ def saxo_refresh(data: dict):
             data["refresh_token"], use_sim=data.get("use_sim", False)
         )
         expiry = int(time.time()) + int(tok.get("expires_in", 1200))
-        save_app_setting("saxo_refresh_token", tok.get("refresh_token", data["refresh_token"]))
-        save_app_setting("saxo_token_expiry", str(expiry))
+        from data.saxo_session import store_tokens
+        store_tokens({**tok, "refresh_token": tok.get("refresh_token", data["refresh_token"])})
         return {"access_token": tok["access_token"], "refresh_token": tok.get("refresh_token", data["refresh_token"]), "expires_at": expiry}
     except HTTPException:
         raise
@@ -719,6 +747,7 @@ def saxo_fetch_trades(data: dict):
         from data.saxo_connector import (
             fetch_trades, fetch_instrument_details, parse_trades, parse_charges,
             check_existing_records, check_fuzzy_duplicates, preview_security_matches,
+            fetch_bookings, parse_bookings, check_charge_records,
         )
         access_token = data["access_token"]
         client_key = data["client_key"]
@@ -738,11 +767,16 @@ def saxo_fetch_trades(data: dict):
         for acc in mapped_accs:
             all_raw.extend(fetch_trades(access_token, client_key, acc["AccountKey"], d_from, d_to, use_sim=use_sim))
 
-        uic_pairs = list({(t.get("Uic"), t.get("AssetType", "Stock")) for t in all_raw if t.get("Uic")})
+        all_bookings = []                      # the account entries: CFD financing, fees, dividends, …
+        for acc in mapped_accs:
+            all_bookings.extend(fetch_bookings(access_token, client_key, acc["AccountKey"], d_from, d_to, use_sim=use_sim))
+
+        uic_pairs = list({(t.get("Uic"), t.get("AssetType", "Stock")) for t in all_raw + all_bookings if t.get("Uic")})
         instr_cache = fetch_instrument_details(access_token, uic_pairs, use_sim=use_sim)
 
         inv_records = parse_trades(all_raw, instr_cache)
-        charge_records = parse_charges(all_raw, instr_cache)
+        charge_records = parse_charges(all_raw, instr_cache) + parse_bookings(all_bookings, instr_cache)
+        ch_exists, ch_fuzzy = check_charge_records(charge_records, account_map)
         existing_inv = check_existing_records(inv_records, account_map)
         fuzzy_inv = check_fuzzy_duplicates(inv_records, account_map)
         fuzzy_inv -= existing_inv
@@ -765,7 +799,7 @@ def saxo_fetch_trades(data: dict):
 
         return {
             "inv_records": _annotate(inv_records, existing_inv, fuzzy_inv),
-            "charge_records": [dict(r) for r in charge_records],
+            "charge_records": _annotate(charge_records, ch_exists, ch_fuzzy),
             "sec_matches": {k: {"sec_id": v[0], "match_type": v[1]} for k, v in sec_matches.items()},
         }
     except Exception as e:
@@ -779,6 +813,7 @@ def saxo_import(data: dict):
             fetch_trades, fetch_instrument_details, parse_trades, parse_charges,
             check_existing_records, check_fuzzy_duplicates,
             run_import, run_charges_import,
+            fetch_bookings, parse_bookings, check_charge_records,
         )
         access_token = data["access_token"]
         client_key = data["client_key"]
@@ -801,10 +836,13 @@ def saxo_import(data: dict):
         for acc in mapped_accs:
             all_raw.extend(fetch_trades(access_token, client_key, acc["AccountKey"], d_from, d_to, use_sim=use_sim))
 
-        uic_pairs = list({(t.get("Uic"), t.get("AssetType", "Stock")) for t in all_raw if t.get("Uic")})
+        all_bookings = []
+        for acc in mapped_accs:
+            all_bookings.extend(fetch_bookings(access_token, client_key, acc["AccountKey"], d_from, d_to, use_sim=use_sim))
+        uic_pairs = list({(t.get("Uic"), t.get("AssetType", "Stock")) for t in all_raw + all_bookings if t.get("Uic")})
         instr_cache = fetch_instrument_details(access_token, uic_pairs, use_sim=use_sim)
         inv_records = parse_trades(all_raw, instr_cache)
-        charge_records = parse_charges(all_raw, instr_cache)
+        charge_records = parse_charges(all_raw, instr_cache) + parse_bookings(all_bookings, instr_cache)
 
         selected_descs = data.get("selected_descs")  # list of desc keys the UI wants to import; None = auto-filter
 
@@ -820,6 +858,12 @@ def saxo_import(data: dict):
                 fuzzy_inv -= existing_inv
                 inv_records = [r for r in inv_records if r["desc"] not in existing_inv and r["desc"] not in fuzzy_inv]
 
+        if not replace_mode:                   # charges: what the user ticked, else everything not already (or likely) there
+            ch_exists, ch_fuzzy = check_charge_records(charge_records, account_map)
+            if selected_descs is not None:
+                charge_records = [r for r in charge_records if r["desc"] in set(selected_descs) and r["desc"] not in ch_exists]
+            else:
+                charge_records = [r for r in charge_records if r["desc"] not in ch_exists and r["desc"] not in ch_fuzzy]
         counts = {}
         if import_inv and inv_records:
             counts.update(run_import(inv_records, account_map, replace_mode=replace_mode))

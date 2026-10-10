@@ -14,7 +14,7 @@ import {
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport, saveSecurityMappings,
   revtParse, revtImport, revsParse, revsImport, importFile,
   getImporterSettings, saveImporterSettings, getLinkedAccount,
-  saxoGetSettings, saxoSaveAccountMap, saxoSaveChargePayee, saxoGetAuthUrl, saxoExchangeCode, saxoRefreshToken,
+  saxoGetSettings, saxoSaveAccountMap, saxoSaveChargePayee, saxoGetAuthUrl, saxoExchangeCode, saxoSession, saxoSaveCredentials,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
   coinbaseGetSettings, coinbaseTest, coinbaseFetch, coinbaseImport,
@@ -1905,25 +1905,24 @@ function SaxoTab() {
   const [appKey, setAppKey] = useState('')
   const [appSecret, setAppSecret] = useState('')
   const [useSim, setUseSim] = useState(false)
-  const [redirectUri, setRedirectUri] = useState('http://localhost:8501')
-  const [remember, setRemember] = useState(true)
+  // Saxo sends the browser back to this page after the login, so the redirect URL is simply wherever Oikos is open
+  // (localhost, the LAN address, Tailscale …). Every one you use must be listed as a redirect URL in your Saxo app.
+  const redirectUri = `${window.location.origin}/importers`
 
-  // Auth state
+  // Auth state — the server owns the tokens (data/saxo_session.py) and keeps them fresh; this is just the current one
   const [accessToken, setAccessToken] = useState('')
-  const [refreshToken, setRefreshToken] = useState('')
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
-  const [authCode, setAuthCode] = useState('')
-  const [authUrl, setAuthUrl] = useState('')
-  const [autoRefreshAttempted, setAutoRefreshAttempted] = useState(false)
+  const [sessionMsg, setSessionMsg] = useState('')
+  const [returnCode, setReturnCode] = useState('')
+  const sessionStarted = useRef(false)
 
-  // Saxo's OAuth redirect lands back on this page as ?code=...&state=saxo_import
-  // (see data/saxo_connector.py get_auth_url) — auto-fill the code so the user
-  // doesn't have to copy it out of the address bar by hand.
+  // Saxo's login redirects back here as ?code=…&state=saxo_import — pick the code up and finish the connection
+  // below, instead of making the user copy it out of the address bar.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     if (code && params.get('state') === 'saxo_import') {
-      setAuthCode(code)
+      setReturnCode(code)
       const url = new URL(window.location.href)
       url.searchParams.delete('code')
       url.searchParams.delete('state')
@@ -1942,38 +1941,42 @@ function SaxoTab() {
     const s = settingsQuery.data
     if (s.app_key) setAppKey(s.app_key)
     if (s.app_secret) setAppSecret(s.app_secret)
-    if (s.redirect_uri) setRedirectUri(s.redirect_uri)
     setUseSim(!!s.use_sim)
     if (s.account_map && Object.keys(s.account_map).length > 0) setSavedAccountMap(s.account_map)
   }, [settingsQuery.data])
 
-  // Auto-refresh token on load if we have a saved refresh token
+  // Load the accounts for a token and apply the saved mapping
+  const loadAccounts = (token: string, sim: boolean, map: Record<string, number>) =>
+    saxoFetchAccounts(token, sim).then((d: { client_key: string; accounts: Record<string, unknown>[] }) => {
+      setClientKey(d.client_key)
+      setSaxoAccounts(d.accounts.map(a => ({ ...a, app_account_id: map[a.AccountId as string] ?? undefined })) as typeof saxoAccounts)
+    })
+  const applySession = (d: { access_token?: string; expires_at?: number }, sim: boolean, map: Record<string, number>) => {
+    setAccessToken(d.access_token || ''); setExpiresAt(d.expires_at ?? null); setSessionMsg('')
+    return loadAccounts(d.access_token || '', sim, map)
+  }
+
+  // Back from Saxo's login with a code: exchange it (the server stores the tokens), then load the accounts
   useEffect(() => {
-    if (autoRefreshAttempted) return
-    if (!settingsQuery.data) return
     const s = settingsQuery.data
-    if (s.refresh_token && s.app_key && s.app_secret) {
-      setAutoRefreshAttempted(true)
-      setRefreshToken(s.refresh_token)
-      // Attempt silent token refresh
-      saxoRefreshToken({ app_key: s.app_key, app_secret: s.app_secret, refresh_token: s.refresh_token, use_sim: s.use_sim })
-        .then((d: { access_token: string; refresh_token: string; expires_at: number }) => {
-          setAccessToken(d.access_token)
-          setRefreshToken(d.refresh_token)
-          setExpiresAt(d.expires_at)
-          // Fetch accounts right away so mapping is ready
-          return saxoFetchAccounts(d.access_token, s.use_sim).then((ad: { client_key: string; accounts: Record<string, unknown>[] }) => {
-            setClientKey(ad.client_key)
-            const map = s.account_map as Record<string, number>
-            setSaxoAccounts(ad.accounts.map((a: Record<string, unknown>) => ({
-              ...a,
-              app_account_id: map[a.AccountId as string] ?? undefined,
-            })) as Array<{ AccountId: string; AccountKey: string; AccountType: string; Currency: string; app_account_id?: number }>)
-          })
-        })
-        .catch(() => { /* silent fail — user can re-auth manually */ })
-    }
-  }, [settingsQuery.data, autoRefreshAttempted])
+    if (!returnCode || !s || sessionStarted.current) return
+    sessionStarted.current = true
+    saxoExchangeCode({ app_key: s.app_key, app_secret: s.app_secret, code: returnCode, redirect_uri: redirectUri, use_sim: !!s.use_sim, remember: true })
+      .then(d => applySession(d, !!s.use_sim, (s.account_map || {}) as Record<string, number>))
+      .catch(e => setSessionMsg(apiErrorMsg(e)))
+      .finally(() => setReturnCode(''))
+  }, [returnCode, settingsQuery.data])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Otherwise ask the server for a valid token (it refreshes it itself and keeps it alive in the background)
+  useEffect(() => {
+    const s = settingsQuery.data
+    if (!s || returnCode || sessionStarted.current) return
+    sessionStarted.current = true
+    saxoSession().then(d => {
+      if (d.connected) return applySession(d, !!d.use_sim, (s.account_map || {}) as Record<string, number>)
+      if (d.status === 'expired' || d.transient) setSessionMsg(d.reason || '')
+    }).catch(() => { /* not reachable — the Connect button is still there */ })
+  }, [settingsQuery.data, returnCode])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Import options
   const [dateFrom, setDateFrom] = useState('')
@@ -1991,34 +1994,47 @@ function SaxoTab() {
   const isAuthenticated = !!accessToken && !!expiresAt && Date.now() / 1000 < expiresAt
   const minutesLeft = expiresAt ? Math.max(0, Math.round((expiresAt - Date.now() / 1000) / 60)) : 0
 
-  const authUrlMut = useMutation({
-    mutationFn: () => saxoGetAuthUrl(appKey, appSecret, redirectUri, useSim),
-    onSuccess: (d) => setAuthUrl(d.url),
-  })
-  const exchangeMut = useMutation({
-    mutationFn: () => saxoExchangeCode({ app_key: appKey, app_secret: appSecret, code: authCode, redirect_uri: redirectUri, use_sim: useSim, remember }),
-    onSuccess: (d) => {
-      setAccessToken(d.access_token); setRefreshToken(d.refresh_token); setExpiresAt(d.expires_at)
-      setAuthCode(''); setAuthUrl('')
-      fetchAccountsMut.mutate()
+  // One click: remember the credentials, then go to Saxo's login — it returns here and the code above does the rest
+  const connectMut = useMutation({
+    mutationFn: async () => {
+      await saxoSaveCredentials({ app_key: appKey, app_secret: appSecret, use_sim: useSim })
+      const d = await saxoGetAuthUrl(appKey, appSecret, redirectUri, useSim)
+      window.location.href = d.url
     },
   })
   const refreshMut = useMutation({
-    mutationFn: () => saxoRefreshToken({ app_key: appKey, app_secret: appSecret, refresh_token: refreshToken, use_sim: useSim }),
-    onSuccess: (d) => { setAccessToken(d.access_token); setRefreshToken(d.refresh_token); setExpiresAt(d.expires_at) },
-  })
-  const fetchAccountsMut = useMutation({
-    mutationFn: () => saxoFetchAccounts(accessToken, useSim),
+    mutationFn: () => saxoSession(true),
     onSuccess: (d) => {
-      setClientKey(d.client_key)
-      // Apply saved mapping when populating accounts
-      const map = savedAccountMap
-      setSaxoAccounts(d.accounts.map((a: Record<string, unknown>) => ({
-        ...a,
-        app_account_id: map[a.AccountId as string] ?? undefined,
-      })))
+      if (d.connected) { setAccessToken(d.access_token || ''); setExpiresAt(d.expires_at ?? null) }
+      else setSessionMsg(d.reason || 'The Saxo login has expired — connect again.')
     },
   })
+  const fetchAccountsMut = useMutation({
+    mutationFn: () => loadAccounts(accessToken, useSim, savedAccountMap),
+  })
+
+  // Keep the page's token fresh while it is open: the server refreshes it, we just ask again shortly before it runs out
+  useEffect(() => {
+    if (!expiresAt) return
+    const t = setInterval(() => {
+      if (Date.now() / 1000 > expiresAt - 300) refreshMut.mutate()
+    }, 60_000)
+    return () => clearInterval(t)
+  }, [expiresAt])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Map a Saxo account to the app account whose name contains its id (e.g. "Saxo - 928371INET"), when exactly one does
+  useEffect(() => {
+    const apps = (allAccounts.data || []) as Array<{ id: number; name: string }>
+    if (!apps.length || !saxoAccounts.some(a => !a.app_account_id)) return
+    let changed = false
+    const next = saxoAccounts.map(a => {
+      if (a.app_account_id) return a
+      const hits = apps.filter(x => String(x.name).toLowerCase().includes(String(a.AccountId).toLowerCase()))
+      if (hits.length === 1) { changed = true; return { ...a, app_account_id: hits[0].id } }
+      return a
+    })
+    if (changed) setSaxoAccounts(next)
+  }, [saxoAccounts, allAccounts.data])
 
   // Persist account mapping whenever it changes
   useEffect(() => {
@@ -2032,7 +2048,10 @@ function SaxoTab() {
     mutationFn: () => saxoFetchTrades({ access_token: accessToken, client_key: clientKey, saxo_accounts: saxoAccounts, date_from: dateFrom, date_to: dateTo, use_sim: useSim }),
     onSuccess: (d) => {
       setPreview(d)
-      setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
+      setSelectedInv(new Set([
+        ...defaultSelection(d.inv_records as Array<Record<string, unknown>>),
+        ...defaultSelection((d.charge_records ?? []) as Array<Record<string, unknown>>),
+      ]))
       setSecMappingOverrides({})
     },
   })
@@ -2044,6 +2063,7 @@ function SaxoTab() {
       }
       const selectedDescs = preview
         ? (preview.inv_records as Array<Record<string, unknown>>)
+            .concat((preview.charge_records as Array<Record<string, unknown>>) ?? [])
             .filter(r => selectedInv.has(r.desc as string))
             .map(r => r.desc as string)
         : null
@@ -2058,7 +2078,7 @@ function SaxoTab() {
   return (
     <div className="space-y-4">
       <InfoBox>
-        Import trading history from <strong>Saxo Bank</strong> via the OpenAPI (OAuth2 flow). Enter your app credentials, authorize, then fetch and import trades.
+        Import trading history from <strong>Saxo Bank</strong> via the OpenAPI. Enter your app credentials once and click <strong>Connect to Saxo</strong>; after that Oikos keeps the connection alive and you go straight to fetching and importing trades.
       </InfoBox>
 
       {/* Credentials */}
@@ -2075,18 +2095,14 @@ function SaxoTab() {
               <input type="password" className="w-full border rounded px-3 py-1.5 text-sm" placeholder="AppSecret…" value={appSecret} onChange={e => setAppSecret(e.target.value)} />
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Redirect URI</label>
-            <input className="w-full border rounded px-3 py-1.5 text-sm" value={redirectUri} onChange={e => setRedirectUri(e.target.value)} />
+          <div className="text-xs text-slate-500">
+            Redirect URL for this address: <code className="bg-slate-100 px-1 rounded select-all">{redirectUri}</code> — add it (and the one for every other
+            address you open Oikos from) to your Saxo app's redirect URLs.
           </div>
           <div className="flex gap-4 text-sm">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={useSim} onChange={e => setUseSim(e.target.checked)} className="rounded" />
               Use Simulation environment
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="rounded" />
-              Remember credentials
             </label>
           </div>
           {useSim && <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">⚠️ Simulation mode active — connects to sim.logonvalidation.net</div>}
@@ -2107,35 +2123,24 @@ function SaxoTab() {
                   {refreshMut.isPending ? <Spinner size={12} /> : <RefreshCw size={12} />} Refresh
                 </Button>
               )}
-              <button className="ml-auto text-xs text-red-500" onClick={() => { setAccessToken(''); setRefreshToken(''); setExpiresAt(null); setSaxoAccounts([]) }}>
+              <button className="ml-auto text-xs text-red-500" onClick={() => { setAccessToken(''); setExpiresAt(null); setSaxoAccounts([]) }}>
                 Logout
               </button>
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                <Button onClick={() => authUrlMut.mutate()} disabled={!appKey || !appSecret || authUrlMut.isPending}>
-                  {authUrlMut.isPending ? <Spinner size={14} /> : null} Get Authorization URL
+              {sessionMsg && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{sessionMsg}</div>}
+              <div className="flex items-center gap-3">
+                <Button onClick={() => connectMut.mutate()} disabled={!appKey || !appSecret || connectMut.isPending || !!returnCode}>
+                  {connectMut.isPending || returnCode ? <Spinner size={14} /> : null} {returnCode ? 'Finishing…' : 'Connect to Saxo'}
                 </Button>
-                {authUrl && (
-                  <a href={authUrl} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
-                    🔑 Authorize with Saxo
-                  </a>
-                )}
-              </div>
-              {authUrl && <p className="text-xs text-slate-500">After authorizing, paste the <code>code</code> parameter from the redirect URL below.</p>}
-              <div className="flex gap-2">
-                <input className="flex-1 border rounded px-3 py-1.5 text-sm" placeholder="Paste authorization code…" value={authCode} onChange={e => setAuthCode(e.target.value)} />
-                <Button onClick={() => exchangeMut.mutate()} disabled={!authCode || !appKey || !appSecret || exchangeMut.isPending}>
-                  {exchangeMut.isPending ? <Spinner size={14} /> : null} Exchange
-                </Button>
+                <span className="text-xs text-slate-500">Saxo's login opens in this tab and brings you back here. You only do this once — Oikos keeps the connection alive in the background.</span>
               </div>
             </div>
           )}
-          {(authUrlMut.isError || exchangeMut.isError || refreshMut.isError) && (
+          {(connectMut.isError || refreshMut.isError) && (
             <ErrorBox msg={(() => {
-              const err = authUrlMut.error || exchangeMut.error || refreshMut.error
+              const err = connectMut.error || refreshMut.error
               if (!err) return ''
               const axiosErr = err as { response?: { data?: { detail?: string } }; message?: string }
               return axiosErr.response?.data?.detail || axiosErr.message || 'Unknown error'
@@ -2233,8 +2238,9 @@ function SaxoTab() {
           <CardHeader>
             {(() => {
               const recs = preview.inv_records as Array<Record<string, unknown>>
-              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length
-              return <CardTitle>Preview — {recs.length} trades, {(preview.charge_records as unknown[]).length} charges · <span className="text-green-600">{importCount} to import</span></CardTitle>
+              const chg = preview.charge_records as Array<Record<string, unknown>>
+              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length + chg.filter(r => selectedInv.has(r.desc as string)).length
+              return <CardTitle>Preview — {recs.length} trades, {chg.length} account entries · <span className="text-green-600">{importCount} to import</span></CardTitle>
             })()}
           </CardHeader>
           <CardBody className="space-y-3">
@@ -2277,6 +2283,42 @@ function SaxoTab() {
                 </table>
               </div>
             )}
+            {(preview.charge_records as unknown[]).length > 0 && (
+              <div className="overflow-x-auto">
+                <div className="text-xs font-medium text-slate-600 mb-1">Account entries — CFD financing, dividends (net of withholding tax), custody fees, VAT …</div>
+                <table className="w-full text-xs">
+                  <thead><tr className="text-slate-500 border-b">
+                    <th className="text-left py-1 pr-3">
+                      <SelectAllCheckbox records={preview.charge_records as Record<string, unknown>[]} selected={selectedInv} setSelected={setSelectedInv} />
+                    </th>
+                    {['Status', 'Date', 'Entry', 'Security', 'Action', 'Amount'].map(h => (
+                      <th key={h} className="text-left py-1 pr-3">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {(preview.charge_records as Array<Record<string, unknown>>).map((r, i) => {
+                      const willImport = selectedInv.has(r.desc as string)
+                      return (
+                        <tr key={i} className={`border-b last:border-0 ${!willImport && r.status !== 'exists' ? 'opacity-50' : ''}`}>
+                          <td className="py-1 pr-3">
+                            <ImportCheckboxCell status={String(r.status ?? 'new')} checked={willImport}
+                              onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
+                          </td>
+                          <td className="py-1 pr-3">
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${statusColor(String(r.status ?? 'new'))}`}>{statusLabel(String(r.status ?? 'new'))}</span>
+                          </td>
+                          <td className="py-1 pr-3 font-mono">{r.date as string}</td>
+                          <td className="py-1 pr-3">{r.charge_type as string}</td>
+                          <td className="py-1 pr-3">{(r.symbol as string) || (r.name as string) || '—'}</td>
+                          <td className="py-1 pr-3">{r.action as string}</td>
+                          <td className="py-1 pr-3 text-right">{typeof r.total_eur === 'number' ? fmtNum(r.total_eur, 2) : ''}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
             {Object.keys(preview.sec_matches).length > 0 && (
               <SecurityMappingPanel
                 secMatches={preview.sec_matches as Record<string, { sec_id: number | null; match_type: string }>}
@@ -2286,7 +2328,8 @@ function SaxoTab() {
             )}
             {(() => {
               const recs = preview.inv_records as Array<Record<string, unknown>>
-              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length
+              const chg = preview.charge_records as Array<Record<string, unknown>>
+              const importCount = recs.filter(r => selectedInv.has(r.desc as string)).length + chg.filter(r => selectedInv.has(r.desc as string)).length
               return (
                 <Button onClick={() => importMut.mutate()} disabled={importMut.isPending || importCount === 0}>
                   {importMut.isPending ? <><Spinner size={14} /> Importing…</> : <>✅ Confirm Import ({importCount} records)</>}
@@ -2349,7 +2392,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
       <CardHeader><CardTitle>💸 Account Charges (CFD Finance · Dividends · Fees)</CardTitle></CardHeader>
       <CardBody className="space-y-3">
         <InfoBox>
-          The Saxo <code>/cs/v1/reports/trades/</code> endpoint returns trade executions only — overnight CFD financing, custody fees, dividends, and other account entries are in the <strong>Transaction and Balance Report PDF</strong> (Saxo → My Portfolio → Reports).
+          The Saxo API's <strong>Fetch &amp; Preview</strong> (Saxo Bank tab) already brings in these account entries — overnight CFD financing, custody fees, VAT, dividends and CFD dividend adjustments — through the <code>/cs/v1/reports/bookings/</code> endpoint, alongside the trades. Use the <strong>Transaction and Balance Report PDF</strong> (Saxo → My Portfolio → Reports) for periods the API doesn't return, or to cross-check.
         </InfoBox>
 
         <div className="grid grid-cols-2 gap-3">
@@ -3899,6 +3942,11 @@ export default function Importers() {
   const [bankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
   const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
   const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
+
+  // Back from Saxo's login (?code=…&state=saxo_import): show the Saxo tab, which finishes the connection
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('state') === 'saxo_import') { setSection('brokerage'); setBrokerTab(BROKERAGE_TABS[2]) }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>

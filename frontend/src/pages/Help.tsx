@@ -1499,6 +1499,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           this only applies at the moment of import, so the preview table still shows the placeholder.
         </Note>
         <Note>
+          <b>Saxo Bank → account entries from the API</b>: <b>Fetch &amp; Preview</b> now lists, besides the trades, the
+          account's other entries — overnight <b>CFD financing</b>, <b>dividends</b> (net of withholding tax, the two
+          bookings of a corporate action added together), <b>CFD dividend adjustments</b>, <b>custody fees</b>,
+          <b>VAT</b>, interest/financing cost and depository charges — read from Saxo's bookings report, so the
+          Transaction and Balance PDF is only needed for periods the API doesn't return. Each entry shows whether it is
+          new, already imported, or a likely duplicate (same day and action and the same amount or instrument — e.g.
+          something imported earlier from the PDF); only the new ones are ticked. Commissions and exchange fees stay
+          with their trades, and deposits/withdrawals with the bank import.
+        </Note>
+        <Note>
           <b>Saxo Bank → Account Charges</b>: account-level charges (VAT, CustodyFee, FinancingCost, …) have no
           underlying security, so they're linked to a single <b>Charge Payee</b> instead — configurable in that
           section, defaulting to auto-creating a "Saxo Bank" payee the first time you import if left unset.
@@ -1513,9 +1523,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           its format, or the next import will add it again.
         </Note>
         <Note>
-          <b>Saxo Bank → Authentication</b>: after authorizing with Saxo, the redirect back to Oikos carries the
-          authorization code in the URL — it's picked up and pasted into the "authorization code" field
-          automatically, so you don't need to copy it out of the address bar by hand.
+          <b>Saxo Bank → Connect</b>: enter your App Key and Secret once and click <b>Connect to Saxo</b>. Saxo's login
+          opens in the same tab and returns to Oikos, which finishes the connection by itself — no URL or code to
+          copy. The redirect URL is the address you have Oikos open at plus <code>/importers</code> (shown on the
+          page); add each address you use (localhost, the LAN address, Tailscale …) to your Saxo app's redirect
+          URLs. After that the <b>Saxo Login Keep-alive</b> scheduler job refreshes the token every 10 minutes, so
+          you normally never connect again and go straight to fetching and importing; if the login does lapse
+          (the scheduler was down for a while) the page says so and one click reconnects. Saxo accounts are mapped
+          to your accounts automatically when your account's name contains the Saxo account id.
         </Note>
         <Note>
           A green <b>Authenticated</b> badge only means the OAuth token exchange succeeded — it does not mean

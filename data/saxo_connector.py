@@ -488,6 +488,8 @@ def fetch_instrument_details(
     base = f"{_api_base(use_sim)}/ref/v1/instruments/details"
 
     for asset_type, uics in by_type.items():
+        if asset_type == "Cash":              # deposits/withdrawals carry a pseudo-instrument the details service doesn't know
+            continue
         for i in range(0, len(uics), 100):
             chunk = uics[i : i + 100]
             try:
@@ -497,7 +499,8 @@ def fetch_instrument_details(
                 })
                 for instr in data.get("Data", []):
                     primary = instr.get("PrimaryListing") or {}
-                    key = (instr["Identifier"], instr["AssetType"])
+                    # the service now answers with "Uic"; older responses used "Identifier"
+                    key = (instr.get("Identifier", instr.get("Uic")), instr["AssetType"])
                     result[key] = {
                         "Symbol":      instr.get("Symbol", ""),
                         "Description": instr.get("Description", ""),
@@ -871,9 +874,8 @@ def parse_charges(
       • VAT             — value-added tax on certain fees
       • OtherEvent      — miscellaneous account bookings
 
-    SAXO *may or may not* return these through ``/cs/v1/reports/trades/``
-    depending on account type and API version.  If the list is empty the UI
-    will direct the user to the PDF reconciliation path instead.
+    The trades report does not carry them (see ``parse_bookings`` — the
+    ``/cs/v1/reports/bookings/`` endpoint does); this stays for any that do appear.
 
     Records are compatible with ``run_charges_import()`` and share the same
     dedup-key format as ``parse_trades()`` so a combined replace-mode wipe
@@ -954,6 +956,179 @@ def parse_charges(
         })
 
     return records
+
+
+# ===========================================================================
+# Account entries (bookings) — the API route to what the Transaction and Balance PDF contains
+# ===========================================================================
+
+# /cs/v1/reports/bookings/{ClientKey} lists every cash booking: CFD financing, custody fee, VAT, dividends and their
+# withholding tax, CFD dividend adjustments, depository charges, interest, deposits … Mapped here to the same charge
+# records the PDF parser produces (BkAmountType -> (charge type, account-level?)); the trade-related bookings
+# (Commission, Exchange Fee, Share Amount, P/L) belong to the trades, and Cash Amount (deposits/withdrawals) to the
+# bank import, so they are left out.
+_BOOKING_TYPES: dict[str, tuple[str, bool]] = {
+    "CFD Finance":                          ("CFDFinance", False),
+    "CFD Cash Adjustment":                  ("CFDcashadjustment", False),
+    "Corporate Actions - Cash Dividends":   ("Cashdividend", False),
+    "Depository Charges":                   ("DepositoryCharges", False),
+    "Custody Fee":                          ("CustodyFee", True),
+    "VAT":                                  ("VAT", True),
+    "Financing Cost":                       ("FinancingCost", True),
+    "Interest":                             ("FinancingCost", True),
+}
+_BOOKING_WHT = "Corporate Actions - Withholding Tax"
+
+
+def fetch_bookings(
+    access_token: str,
+    client_key:   str,
+    account_key:  str,
+    from_date:    date,
+    to_date:      date,
+    use_sim:      bool = False,
+) -> list[dict]:
+    """All bookings of one account in [from_date, to_date] (pages followed through the __next link)."""
+    url = f"{_api_base(use_sim)}/cs/v1/reports/bookings/{client_key}"
+    params: dict = {"AccountKey": account_key, "FromDate": from_date.isoformat(), "ToDate": to_date.isoformat(), "$top": 1000}
+    records: list[dict] = []
+    while True:
+        data = _api_get(access_token, url, params)
+        records.extend(data.get("Data", []))
+        next_url = data.get("__next", "")
+        skip_tok = urllib.parse.parse_qs(urllib.parse.urlparse(next_url).query).get("$skiptoken", [None])[0] if next_url else None
+        if not skip_tok:
+            break
+        params = {"$skiptoken": skip_tok}
+    return records
+
+
+def parse_bookings(raw_bookings: list[dict], instrument_cache: dict[tuple[int, str], dict]) -> list[dict]:
+    """Turn bookings into charge records for ``run_charges_import`` (same shape as the PDF parser's).
+
+    A dividend is recorded net of its withholding tax, as the PDF shows it: the "Cash Dividends" booking and the
+    "Withholding Tax" booking of the same corporate action are added together. Several bookings of the same kind for
+    the same instrument and day are summed into one record.
+    """
+    groups: dict[tuple, dict] = {}
+    for b in raw_bookings:
+        btype = b.get("BkAmountType") or ""
+        is_wht = btype == _BOOKING_WHT
+        if btype not in _BOOKING_TYPES and not is_wht:
+            continue
+        raw_date = (b.get("Date") or "")[:10]
+        try:
+            d = date.fromisoformat(raw_date)
+        except ValueError:
+            continue
+        acc_amt = float(b.get("AmountAccountCurrency") or 0)
+        sec_amt = float(b.get("Amount") or 0)
+        if acc_amt == 0:
+            continue
+        uic, at = b.get("Uic"), b.get("AssetType") or ""
+        instr = instrument_cache.get((uic, at), {}) if uic else {}
+        symbol = instr.get("Symbol") or b.get("InstrumentSymbol") or ""
+        name = instr.get("Description") or b.get("InstrumentDescription") or ""
+        ccy = instr.get("Currency") or b.get("Currency") or b.get("AccountCurrency") or "EUR"
+        ctype, acct_level = ("WithholdingTax", False) if is_wht else _BOOKING_TYPES[btype]
+        account = b.get("AccountId", "")
+        ca = b.get("CaMasterRecordId") or ""
+        if ctype in ("Cashdividend", "WithholdingTax") and ca:
+            key = (account, "DIV", ca)                      # a dividend and its withholding tax belong together
+        else:
+            key = (account, ctype, symbol, raw_date)
+        g = groups.setdefault(key, {
+            "date": d, "account": account, "ctype": ctype, "acct_level": acct_level, "symbol": symbol, "name": name,
+            "currency": ccy, "asset_type": at, "acc": 0.0, "sec": 0.0, "acc_ccy": b.get("AccountCurrency") or "EUR",
+            "has_div": False,
+        })
+        g["acc"] += acc_amt
+        g["sec"] += sec_amt
+        if ctype == "Cashdividend":
+            g["has_div"] = True
+            g["ctype"] = "Cashdividend"
+    records: list[dict] = []
+    for g in groups.values():
+        total = round(g["acc"], 2)
+        if total == 0:
+            continue
+        ctype, positive = g["ctype"], total > 0
+        if ctype == "Cashdividend":
+            action = "Dividend" if positive else "MiscExp"
+        elif ctype == "CFDcashadjustment":
+            action = "MiscInc" if positive else "MiscExp"
+        elif g["acct_level"]:
+            action = "CashIn" if positive else "CashOut"
+        elif ctype == "WithholdingTax":
+            action = "MiscInc" if positive else "MiscExp"     # a withholding tax with no dividend booking in range
+        else:                                                   # CFD financing, depository charges
+            action = "MiscInc" if positive else "MiscExp"
+        key = ctype.upper().replace(" ", "")
+        iso = g["date"].isoformat()
+        if g["acct_level"]:
+            desc = f"{_SAXO_PREFIX}CHARGE|{key}||{iso}|" + f"{abs(total):.4f}".replace(".", "_")
+        else:
+            desc = f"{_SAXO_PREFIX}CHARGE|{key}|{g['symbol']}|{iso}"
+        sec_amt = abs(g["sec"]) if g["currency"] != g["acc_ccy"] and g["sec"] else None
+        fx = round(abs(total) / sec_amt, 8) if sec_amt else None
+        at = g["asset_type"]
+        records.append({
+            "record_type":     "investment",
+            "source":          "SAXO",
+            "desc":            desc,
+            "symbol":          "" if g["acct_level"] else g["symbol"],
+            "name":            "" if g["acct_level"] else g["name"],
+            "isin":            "",
+            "currency":        g["currency"],
+            "asset_category":  _sec_type(at) if at else "Other",
+            "instrument_type": _instrument_type(at) if at else "Other",
+            "saxo_asset_type": at,
+            "date":            g["date"],
+            "action":          action,
+            "quantity":        0.0,
+            "price":           0.0,
+            "commission":      0.0,
+            "total_eur":       round(abs(total), 2),
+            "total_sec_cur":   round(sec_amt, 8) if sec_amt else None,
+            "fx_rate_db":      fx,
+            "exchange":        "",
+            "account_id_str":  g["account"],
+            "charge_type":     ctype,
+        })
+    records.sort(key=lambda r: (r["date"], r["desc"]))
+    return records
+
+
+def check_charge_records(records: list, account_map: "dict[str, int]") -> tuple[set, set]:
+    """-> (exists, likely_dup): descriptions already stored verbatim, and records that probably are already there
+    under another description (the PDF import names an instrument differently): same account, date, action and amount."""
+    exists: set[str] = set()
+    fuzzy: set[str] = set()
+    if not records or not account_map:
+        return exists, fuzzy
+    with get_db() as conn:
+        cur = conn.cursor()
+        for r in records:
+            acc = account_map.get(r.get("account_id_str"))
+            if not acc:
+                continue
+            cur.execute("SELECT 1 FROM Investments WHERE Accounts_Id = %s AND Description = %s LIMIT 1", (acc, r["desc"]))
+            if cur.fetchone():
+                exists.add(r["desc"])
+                continue
+            # same account, day and action — and either the same amount or the same instrument (a PDF-imported
+            # record names it differently, and a dividend may have been entered gross where this one is net)
+            cur.execute(
+                """SELECT 1 FROM Investments i LEFT JOIN Securities s ON s.Securities_Id = i.Securities_Id
+                   WHERE i.Accounts_Id = %s AND i.Date = %s AND i.Action = %s::investments_action
+                     AND (ABS(ABS(COALESCE(i.Total_Amount_AccCur, 0)) - %s) < 0.006
+                          OR (%s <> '' AND UPPER(COALESCE(s.Ticker, '')) = %s)) LIMIT 1""",
+                (acc, r["date"], r["action"], r["total_eur"], (r.get("symbol") or "").split(":")[0].upper(),
+                 (r.get("symbol") or "").split(":")[0].upper()),
+            )
+            if cur.fetchone():
+                fuzzy.add(r["desc"])
+    return exists, fuzzy
 
 
 # ===========================================================================
