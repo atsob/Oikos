@@ -13,6 +13,7 @@ export interface AppSettings {
   liveRefreshSeconds: number // auto-refresh interval for price/balance-driven views (0 = off)
   riskFreeRateSource: string // 'eur_estr' | 'us_tbill' — Sharpe Ratio's risk-free rate proxy
   trailingStopPct: number // % below the trailing 1-year high that flags a security's Trailing Stop as triggered
+  homeCountry: string // ISO alpha-2 country of usage ('' = not set) — which market Market Data → Local Market Watch follows
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -28,6 +29,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   liveRefreshSeconds: 60,
   riskFreeRateSource: 'eur_estr',
   trailingStopPct: 20,
+  homeCountry: '',
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

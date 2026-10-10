@@ -17,6 +17,7 @@ import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODa
 import { useTheme } from '@/lib/theme'
 import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hooks'
 import { MarketWatchPanel } from '@/components/MarketWatch'
+import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
@@ -1226,6 +1227,7 @@ export default function Dashboard() {
             <InsightsPanel insights={insights as Insight[]} />
             <MarketValuationPanel />
             <MarketWatchPanel />
+            <LocalWatchPanel />
             <SecuritiesAlertsPanel />
             <UncategorizedTransactionsPanel />
           </div>

@@ -1226,6 +1226,18 @@ CREATE TABLE IF NOT EXISTS Market_Watch_Backtests (
     Result          JSONB,
     Material_Change TEXT
 );
+CREATE TABLE IF NOT EXISTS Local_Watch_Log (
+    Log_Date   DATE NOT NULL,
+    Country    VARCHAR(2) NOT NULL,
+    Overall    VARCHAR(10),
+    Trend      VARCHAR(10),
+    Breadth    VARCHAR(10),
+    Banks      VARCHAR(10),
+    Sovereign  VARCHAR(10),
+    Readings   JSONB,
+    Created_At TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (Log_Date, Country)
+);
 CREATE TABLE IF NOT EXISTS Market_Watch_Events (
     Event_Id    SERIAL PRIMARY KEY,
     Event_At    TIMESTAMPTZ DEFAULT NOW(),

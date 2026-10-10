@@ -594,7 +594,8 @@ def _run_startup_migrations():
         # a source set before the Invesco provider existed was stored as a generic file link
         "UPDATE Fund_Country_Sources SET Provider = 'invesco' WHERE Provider = 'file' AND Url ILIKE '%invesco.com%'",
         "UPDATE Fund_Country_Sources SET Provider = 'vaneck' WHERE Provider = 'file' AND Url ILIKE '%vaneck.com%'",
-        # Market Watch: one row of readings per day (for back-testing the rules) and the list of status changes
+        # Market Watch: one row of readings per day (for back-testing the rules) and the list of status changes;
+        # Local Market Watch keeps its own daily log, one row per day and country
         """CREATE TABLE IF NOT EXISTS Market_Watch_Log (
                Log_Date   DATE PRIMARY KEY,
                Overall    VARCHAR(10),
@@ -615,6 +616,20 @@ def _run_startup_migrations():
                Result          JSONB,
                Material_Change TEXT
            )""",
+        """CREATE TABLE IF NOT EXISTS Local_Watch_Log (
+               Log_Date   DATE NOT NULL,
+               Country    VARCHAR(2) NOT NULL,
+               Overall    VARCHAR(10),
+               Trend      VARCHAR(10),
+               Breadth    VARCHAR(10),
+               Banks      VARCHAR(10),
+               Sovereign  VARCHAR(10),
+               Readings   JSONB,
+               Created_At TIMESTAMPTZ DEFAULT NOW(),
+               PRIMARY KEY (Log_Date, Country)
+           )""",
+        "DROP TABLE IF EXISTS Greece_Watch_Log",
+        "DELETE FROM Market_Watch_Events WHERE Indicator LIKE 'gr_%'",          # the Greece-only watch, replaced by Local Market Watch before release
         """CREATE TABLE IF NOT EXISTS Market_Watch_Events (
                Event_Id    SERIAL PRIMARY KEY,
                Event_At    TIMESTAMPTZ DEFAULT NOW(),

@@ -7,7 +7,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import PlotlyReact from 'react-plotly.js'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import { getMarketWatch, getMarketWatchSummary, getMarketWatchEvents, getMarketWatchPlaybook, saveMarketWatchPlaybook, getMarketWatchBacktest, getMarketWatchBacktestHistory, runMarketWatchBacktest } from '@/lib/api'
+import { getMarketWatch, getMarketWatchSummary, getMarketWatchEvents, getMarketWatchPlaybook, saveMarketWatchPlaybook, getLocalWatchEvents, getLocalWatchPlaybook, saveLocalWatchPlaybook, getMarketWatchBacktest, getMarketWatchBacktestHistory, runMarketWatchBacktest } from '@/lib/api'
 import { Card, CardBody, Spinner, Button, Tooltip } from '@/components/ui'
 import { plotLayout, fmtNum } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
@@ -16,10 +16,10 @@ import { useTheme } from '@/lib/theme'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
-type Level = 'good' | 'warn' | 'bad' | 'na'
-type Trend = 'improving' | 'worsening' | 'flat' | undefined
+export type Level = 'good' | 'warn' | 'bad' | 'na'
+export type Trend = 'improving' | 'worsening' | 'flat' | undefined
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Ind = Record<string, any> & { status: Level; trend?: Trend; red_pending?: boolean; note?: string; series?: Record<string, { x: string[]; y: number[] }> }
+export type Ind = Record<string, any> & { status: Level; trend?: Trend; red_pending?: boolean; note?: string; series?: Record<string, { x: string[]; y: number[] }> }
 
 const CHIP: Record<Level, { label: string; cls: string; dot: string }> = {
   good: { label: 'Healthy', cls: 'bg-green-50 text-green-700 border-green-200', dot: 'bg-green-500' },
@@ -29,7 +29,7 @@ const CHIP: Record<Level, { label: string; cls: string; dot: string }> = {
 }
 const TREND = { improving: { g: '▲', cls: 'text-green-700', t: 'improving' }, worsening: { g: '▼', cls: 'text-red-600', t: 'worsening' }, flat: { g: '▬', cls: 'text-slate-400', t: 'flat' } }
 
-function Chip({ level, trend }: { level: Level; trend?: Trend }) {
+export function Chip({ level, trend }: { level: Level; trend?: Trend }) {
   const c = CHIP[level]
   const t = trend ? TREND[trend] : null
   return (
@@ -40,7 +40,7 @@ function Chip({ level, trend }: { level: Level; trend?: Trend }) {
   )
 }
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+export function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
     <div>
       <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
@@ -50,10 +50,10 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   )
 }
 
-const signed = (v: number | null | undefined, d = 2, unit = '') => v == null ? '—' : `${v >= 0 ? '+' : '−'}${fmtNum(Math.abs(v), d)}${unit}`
-const tone = (v: number | null | undefined, goodWhenDown = false) => v == null || v === 0 ? '' : ((v > 0) === goodWhenDown ? 'text-red-600' : 'text-green-700')
+export const signed = (v: number | null | undefined, d = 2, unit = '') => v == null ? '—' : `${v >= 0 ? '+' : '−'}${fmtNum(Math.abs(v), d)}${unit}`
+export const tone = (v: number | null | undefined, goodWhenDown = false) => v == null || v === 0 ? '' : ((v > 0) === goodWhenDown ? 'text-red-600' : 'text-green-700')
 
-function Lines({ series, height = 220, lines }: { series: Record<string, { x: string[]; y: number[] }>; height?: number; lines?: { y: number; label: string }[] }) {
+export function Lines({ series, height = 220, lines }: { series: Record<string, { x: string[]; y: number[] }>; height?: number; lines?: { y: number; label: string }[] }) {
   const { isDark } = useTheme()
   const palette = ['#3b82f6', '#f59e0b', '#8b5cf6', '#10b981']
   return (
@@ -67,7 +67,7 @@ function Lines({ series, height = 220, lines }: { series: Record<string, { x: st
   )
 }
 
-function Shell({ title, why, good, warn, ind, children }: { title: string; why: string; good: string; warn: string; ind: Ind; children: React.ReactNode }) {
+export function Shell({ title, why, good, warn, ind, children }: { title: string; why: string; good: string; warn: string; ind: Ind; children: React.ReactNode }) {
   return (
     <Card>
       <CardBody className="space-y-3">
@@ -181,13 +181,14 @@ function BreadthCard({ d }: { d: Ind }) {
   )
 }
 
-function Playbook({ level }: { level: Level }) {
+export function Playbook({ level, scope = 'market' }: { level: Level; scope?: 'market' | 'local' }) {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ['market-watch-playbook'], queryFn: getMarketWatchPlaybook })
+  const g = scope === 'local'
+  const { data } = useQuery({ queryKey: ['market-watch-playbook', scope], queryFn: g ? getLocalWatchPlaybook : getMarketWatchPlaybook })
   const [text, setText] = useState<string | null>(null)
   const save = useMutation({
-    mutationFn: (t: string) => saveMarketWatchPlaybook(t),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['market-watch-playbook'] }); setText(null) },
+    mutationFn: (t: string) => (g ? saveLocalWatchPlaybook : saveMarketWatchPlaybook)(t),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['market-watch-playbook', scope] }); setText(null) },
   })
   if (!data) return null
   const red = level === 'bad'
@@ -317,8 +318,8 @@ function BacktestCard() {
   )
 }
 
-function RecentChanges() {
-  const { data = [] } = useQuery({ queryKey: ['market-watch-events'], queryFn: getMarketWatchEvents, staleTime: 5 * 60 * 1000 })
+export function RecentChanges({ scope = 'market' }: { scope?: 'market' | 'local' }) {
+  const { data = [] } = useQuery({ queryKey: ['market-watch-events', scope], queryFn: scope === 'local' ? getLocalWatchEvents : getMarketWatchEvents, staleTime: 5 * 60 * 1000 })
   if (data.length === 0) return null
   return (
     <Card>

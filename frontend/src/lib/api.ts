@@ -434,6 +434,12 @@ export type MarketWatchBacktest = Record<string, any>
 export const getMarketWatchBacktest = () => api.get('/market-watch/backtest').then(r => r.data as MarketWatchBacktest | null)
 export const getMarketWatchBacktestHistory = () => api.get('/market-watch/backtest/history').then(r => r.data as MarketWatchBacktest[])
 export const runMarketWatchBacktest = () => api.post('/market-watch/backtest', {}, { timeout: 180000 }).then(r => r.data as MarketWatchBacktest)
+// Local Market Watch — the country of usage's own health check (api/routers/local_watch.py)
+export const getLocalWatch = (refresh = false) => api.get('/local-watch', { params: refresh ? { refresh: 1 } : undefined, timeout: 120000 }).then(r => r.data)
+export const getLocalWatchSummary = () => api.get('/local-watch/summary', { timeout: 120000 }).then(r => r.data)
+export const getLocalWatchEvents = () => api.get('/local-watch/events').then(r => r.data as MarketWatchEvent[])
+export const getLocalWatchPlaybook = () => api.get('/local-watch/playbook').then(r => r.data as { text: string; is_default: boolean })
+export const saveLocalWatchPlaybook = (text: string) => api.put('/local-watch/playbook', { text }).then(r => r.data)
 export const getMarketWatchSummary = () => api.get('/market-watch/summary', { timeout: 120000 }).then(r => r.data)
 export const getShillerCapeSummary = () =>
   api.get('/market-data/shiller-cape/summary').then(r => r.data)

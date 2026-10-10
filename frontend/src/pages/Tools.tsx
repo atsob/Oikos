@@ -23,6 +23,7 @@ import {
   getDuplicateInvCashLinks, fixDuplicateInvCashLinks,
   getLogs,
   getCurrenciesMaster,
+  getCountryList,
   getPayees,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
@@ -2193,6 +2194,7 @@ function AppSettingsPanel() {
   const [saved, setSaved] = useSettings()
   const [form, setForm] = useState<AppSettings>(saved)
   const { data: currencyRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['currencies-master'], queryFn: getCurrenciesMaster })
+  const { data: countryRows = [] } = useQuery<{ code: string; name: string }[]>({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
   const { data: payeeRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['payees'], queryFn: () => getPayees() })
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
@@ -2286,6 +2288,22 @@ function AppSettingsPanel() {
                 <option value={6}>Saturday</option>
               </select>
             </div>
+          </div>
+
+          {/* Country of usage */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Country of Usage</h3>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.homeCountry} onChange={e => set('homeCountry', e.target.value)}>
+              <option value="">— not set —</option>
+              {countryRows.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              The country whose market <b>Market Data → Local Market Watch</b> (and its Dashboard tile) follows: its benchmark
+              index, its banks, its large caps and its 10-year yield against Germany's. Built-in for Greece, France, Germany,
+              Italy, Spain, the Netherlands, Portugal, the United Kingdom and the United States; for another country the tab
+              says so (a country is a few lines in <code>database/local_markets.py</code>). Save to apply.
+            </p>
           </div>
 
           {/* Transfers */}

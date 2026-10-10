@@ -782,6 +782,8 @@ def get_insights():
     try:
         from api.routers.market_watch import get_market_watch_insights
         insights.extend(get_market_watch_insights())
+        from api.routers.local_watch import get_local_watch_insights
+        insights.extend(get_local_watch_insights())
     except Exception:
         pass
     # ECB / Fed policy-rate changes, €STR/SOFR moves and XEON tracking — see database/rates.py.

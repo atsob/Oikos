@@ -1221,7 +1221,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in nine tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, and Alerts.</P>
+        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts.</P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
           holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
@@ -1321,6 +1321,23 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           spread is red. Each refresh is logged per day, and a <b>Recent changes</b> list shows only changes of status.
           The <b>Back-test</b> card at the bottom of the tab (button <b>Run back-test</b>, needs the FRED key; also <code>python -m data.market_watch_backtest</code>) shows how the credit and 10-year rules behaved around 2000, 2008, 2020, 2022 and March 2026, with every red spell and what the S&amp;P 500 did next. It re-runs by itself (scheduler job <b>Market Watch Back-test</b>) when a rule or threshold changes, on the first Sunday of each month, in mid February/May/August/November after earnings season, and once the daily log has six months — every run is stored with a <b>rule version</b> (a hash of the thresholds) so versions can be compared under <b>Past runs</b>; the Dashboard only mentions a <i>material</i> change (a new red spell, a crash caught or missed differently, red days moving more than 2 points). It never changes a threshold itself — it informs your decisions, it doesn't make them. Refreshed every six hours by
           the scheduler (<b>Market Watch</b> job) or with the Refresh button; the sources are free and public.
+        </Note>
+        <Note>
+          <b>Local Market Watch</b> is the same health check for the market where you live. Choose your <b>Country of
+          Usage</b> in Tools → App Settings (built in: Greece, France, Germany, Italy, Spain, the Netherlands, Portugal, the
+          United Kingdom, the United States; another country is a few lines in <code>database/local_markets.py</code>) and
+          the tab and the Dashboard tile follow it. Four indicators count toward its banner — the <b>index trend</b>
+          (benchmark index against its 52-week high and 200-day average; red: 15% or more below the high and under the
+          200-day), <b>breadth</b> (share of about 20 large caps above their 200- and 50-day averages; same rule as Market
+          Watch), the <b>banks</b> (equal-weight basket of the systemic banks; red: 20% or more below its high and under
+          its 200-day) and the <b>sovereign spread</b> (the country's 10-year yield minus Germany's, FRED monthly with a
+          ~6-week lag, so a slow leg; red at 1.8 pp or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; not
+          shown for Germany, the UK or the US) — plus context that doesn't: <b>liquidity</b> (the index's volume, 20 days
+          against 120) and <b>your exposure to the country</b> from the Country Exposure report. Same rules as Market Watch:
+          red only with two or more in Warning, 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
+          editable playbook per country, a daily log and a change list, and a Dashboard alert only when the banner turns
+          red or leaves red. The thresholds are starting values to tune with the daily log; a local back-test is not built
+          yet.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

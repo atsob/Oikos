@@ -446,6 +446,7 @@ def compute(prev: dict | None = None) -> dict:
         verdict, level = "Broadly healthy, no indicator is flashing a warning.", "good"
     out["overall"] = {"level": level, "verdict": verdict, "bad": bad, "warn": warn, "improving": imp, "worsening": wor}
     out["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    out["rule_version"] = rule_version()
     return out
 
 
@@ -472,6 +473,8 @@ def _record(prev: dict, data: dict) -> None:
             if prev.get("generated_at"):
                 before = {k: prev.get(k, {}).get("status") for k in ("fcf", "spreads", "ten_year", "breadth", "france", "erp")}
                 before["overall"] = (prev.get("overall") or {}).get("level")
+                if before["overall"] == "bad" and sum(v == "bad" for k, v in before.items() if k in ("fcf", "spreads", "ten_year", "breadth")) < 2:
+                    before["overall"] = "warn"          # a snapshot written by older rules said red with no indicator in Warning: it was not really red
                 for k, to in levels.items():
                     frm = before.get(k)
                     if frm and to and frm != to and to != "na" and frm != "na":
@@ -495,6 +498,8 @@ def _cached(max_age_h: float = CACHE_HOURS) -> dict | None:
         return None
     try:
         d = json.loads(raw)
+        if d.get("rule_version") != rule_version():          # written by an older version of the rules (e.g. a container not yet restarted)
+            return None
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(d["generated_at"])).total_seconds() / 3600
         return d if age <= max_age_h else None
     except Exception:
@@ -568,8 +573,8 @@ def get_market_watch_insights() -> list:
     if not d.get("overall"):
         return []
     out = []
-    if d["overall"]["level"] == "bad":
-        reds = [_LABELS[k] for k in ("fcf", "spreads", "ten_year", "breadth") if d.get(k, {}).get("status") == "bad"]
+    reds = [_LABELS[k] for k in ("fcf", "spreads", "ten_year", "breadth") if d.get(k, {}).get("status") == "bad"]
+    if len(reds) >= 2:                      # judged from the indicators themselves, not the stored banner level
         out.append({"type": "danger", "icon": "market_watch", "title": "Market Watch is RED — the crash rules are on",
                     "message": f"In warning: {', '.join(reds)}. Open Market Data → Market Watch for your playbook."})
     else:

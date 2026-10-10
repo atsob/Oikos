@@ -11,6 +11,7 @@ import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecur
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { MarketWatchTab } from '@/components/MarketWatch'
+import { LocalWatchTab } from '@/components/LocalWatch'
 import { plotLayout, plotAxis, fmtNum, fmtPct, todayLocal } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { Search, Plus, Trash2, Pencil, Save, X, Copy } from 'lucide-react'
@@ -47,7 +48,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   )
 }
 
-const TABS = ['Currencies', 'Securities', 'Rates', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Market Watch', 'Alerts']
+const TABS = ['Currencies', 'Securities', 'Rates', 'Downloads', 'Anomalies', 'Watchlist', 'CAPE Ratios', 'Market Watch', 'Local Market Watch', 'Alerts']
 
 const ANOMALY_COLS: ColDef[] = [
   { field: 'security_name', headerName: 'Security', flex: 2 },
@@ -1769,6 +1770,7 @@ export default function MarketData() {
             {tab === 'Watchlist' && <WatchlistTab />}
             {tab === 'CAPE Ratios' && <CapeRatiosTab />}
             {tab === 'Market Watch' && <MarketWatchTab />}
+            {tab === 'Local Market Watch' && <LocalWatchTab />}
             {tab === 'Rates' && <RatesTab />}
             {tab === 'Alerts' && <AlertsTab />}
           </CardBody>

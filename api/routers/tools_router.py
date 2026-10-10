@@ -1600,7 +1600,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "fund_countries", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "fund_countries", "news_fetch", "fund_composition",
     "fundamentals", "shiller_cape", "interest_rates",
 }
 
@@ -1617,6 +1617,7 @@ _SEED_JOBS = [
     ("credit_card_payments", "Credit Card Payment Amounts", "Recalculates the amount of every credit-card payment template from the card's balance at its latest statement date, so forecasts and drafts use the current figure.", "Daily at 05:45", True),
     ("saxo_token_refresh", "Saxo Login Keep-alive", "Refreshes the Saxo OpenAPI token every few minutes so the importer never needs re-authorising (Importers → Saxo Bank: connect once). Does nothing until Saxo is connected.", "Every 10 min, 24×7", True),
     ("market_watch",       "Market Watch",           "Refreshes the Market Watch snapshot — hyperscaler free cash flow, credit spreads, the 10-year Treasury yield and market breadth (Yahoo Finance, TradingView; FRED if a key is set).", "Every 360 min, 24×7", True),
+    ("local_watch",        "Local Market Watch",     "Refreshes the Local Market Watch snapshot for the country of usage (Tools → App Settings) — benchmark index trend, breadth of its large caps, the systemic banks and the 10-year spread to Germany (Yahoo Finance; FRED if a key is set).", "Every 360 min, 24×7", True),
     ("market_watch_backtest", "Market Watch Back-test", "Re-runs the back-test of the Market Watch red rules (credit spreads, 10-year yield, plus the daily log) when a rule or threshold changes, on the first Sunday of the month, in mid Feb/May/Aug/Nov after earnings season, and once the daily log reaches six months. Every run is stored with its rule version; a Dashboard alert only for a material change. Never edits a threshold.", "On a rule change · 1st Sunday monthly · mid Feb/May/Aug/Nov", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications.", "Every 30 min, 24×7", True),
@@ -1641,6 +1642,7 @@ def _ensure_scheduler_table(cur):
             last_message TEXT
         )
     """)
+    cur.execute("DELETE FROM Scheduler_Jobs WHERE job_id = 'greece_watch'")     # replaced by local_watch
     for job_id, name, desc, schedule, enabled in _SEED_JOBS:
         cur.execute("""
             INSERT INTO Scheduler_Jobs (job_id, name, description, schedule, enabled)
@@ -1708,6 +1710,9 @@ def _run_scheduler_job_fn(job_id: str):
             res = download_country_exposure()
             if res["errors"]:
                 raise RuntimeError(f"{res['errors']} fund(s) failed: " + "; ".join(f['name'] + ': ' + f['message'] for f in res['funds'] if f['status'] == 'error')[:300])
+        elif job_id == "local_watch":
+            from api.routers.local_watch import refresh_cache as _lw_refresh
+            _lw_refresh()
         elif job_id == "market_watch_backtest":
             from api.routers.market_watch import run_and_store
             run_and_store("manual (scheduler)")
