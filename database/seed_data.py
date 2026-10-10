@@ -2495,7 +2495,11 @@ SECURITIES = [('0VQL.L',
   'US98850P1093',
   'Foreign Listed',
   True,
-  False)]
+  False),
+ ('G2X.DE', 'Vaneck Gold Miners UCITS ETF USD (Acc)', 'ETF', 'EUR', 'Equity', 'Materials', 'G2X.DE', 'G2X', 'XETR', 'IE00BQQP9F84', 'UCITS', True, True),
+ ('IS3Q.DE', 'iShares Edge MSCI World Quality Factor UCITS ETF USD (Acc)', 'ETF', 'EUR', None, None, 'IS3Q.DE', 'IS3Q', 'XETR', 'IE00BP3QZ601', 'UCITS', True, True),
+ ('NUKL', 'VanEck Uranium and Nuclear Technologies UCITS ETF USD (Acc)', 'ETF', 'EUR', 'Equity', 'Energy', 'NUKL.HM', 'NUKL', 'GETTEX', 'IE000M7V94E1', 'UCITS', True, False),
+ ('VVSM.DE', 'VanEck Semiconductor UCITS ETF (Acc)', 'ETF', 'EUR', 'Equity', 'Information Technology', 'VVSM.DE', 'VVSM', 'XETR', 'IE00BMC38736', 'UCITS', True, True)]
 
 # (old_id, name, old_parent_id, type) -- old_id/old_parent_id are from the source install,
 # used only to rebuild parent/child relationships on insert; not the ids in a fresh DB.
@@ -3096,6 +3100,10 @@ FUND_COUNTRY_SOURCES = [
     ('IBCI', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251739/ishares-euro-inflation-linked-government-bond-ucits-etf', None),
     ('IS0E.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/251908/ishares-gold-producers-ucits-etf', None),
     ('IUHE.AS', 'ishares', 'https://www.ishares.com/uk/individual/en/products/314478/ishares-s-p-500-health-care-sector-ucits-etf-eur-hedged-dist-fund', None),
+    ('G2X.DE', 'vaneck', 'https://www.vaneck.com/uk/en/investments/gold-miners-etf/overview/', None),
+    ('IS3Q.DE', 'ishares', 'https://www.ishares.com/uk/individual/en/products/270054/ishares-msci-world-quality-factor', None),
+    ('NUKL', 'vaneck', 'https://www.vaneck.com/uk/en/investments/nuclear-etf/overview/', None),
+    ('VVSM.DE', 'vaneck', 'https://www.vaneck.com/uk/en/investments/semiconductor-etf/overview/', None),
     ('NLR', 'vaneck', 'https://www.vaneck.com/us/en/investments/uranium-nuclear-energy-etf-nlr/team/', None),
     ('PHO', 'invesco', 'https://www.invesco.com/us/en/financial-products/etfs/invesco-water-resources-etf.html', None),
     ('VECA.DE', 'vanguard', 'https://www.nl.vanguard/professional/product/etf/bond/9695/eur-corporate-bond-ucits', 'Corporate Bonds'),
