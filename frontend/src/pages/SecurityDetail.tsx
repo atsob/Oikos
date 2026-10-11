@@ -18,13 +18,14 @@ import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityFundComposition, getSecurityFundMembership, getFundCountryExposure, saveFundCountryExposure, clearFundCountryExposure, parseCountryText, getCountryList, getFundCountrySource, setFundCountrySource, downloadCountryExposure, getFundCurrencyExposure, saveFundCurrencyExposure, clearFundCurrencyExposure, setSecurityCategoryOverride,
-  setSecurityMorningstarCategory, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
+  setSecurityMorningstarCategory,
+  setSecurityAssetMixOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
-  downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
+  downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadMorningstar, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadIsin, downloadSolidusBonds,
   importPricesFromFile, upsertSecurity, getCurrencies,
   getTaxCategoryRules,
   getAccounts, getPortfolioSignals, getFundamentalScores, getPnl, getIssuers,
@@ -2347,6 +2348,7 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       jobs.push(['tv-px',   () => downloadTvPrices('max', secId)])
     }
     jobs.push(['eodhd-isin', () => downloadIsin(secId)])
+    if (isFund) jobs.push(['morningstar', () => downloadMorningstar(secId)])    // after the ISIN fetch: it looks the fund up by ISIN
     if (isBond) jobs.push(['solidus', () => downloadSolidusBonds(secId)])
     for (const [key, fn] of jobs) await run(key, fn)
     setDownloadAllRunning(false)
@@ -2418,6 +2420,20 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
           <ActionRow id="eodhd-isin" label="Fetch ISIN" onClick={() => run('eodhd-isin', () => downloadIsin(secId))} />
         </div>
       </div>
+
+      {isFund && (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Morningstar</p>
+          <p className="text-xs text-slate-400 mb-2">
+            {String(security.isin ?? '').trim()
+              ? <>Looks this fund up by its ISIN (<span className="font-mono text-slate-600">{String(security.isin)}</span>): Morningstar Category, Style Box and, for a bond fund, effective duration and maturity. Values you set by hand are kept.</>
+              : <>Needs an ISIN — set one on this security or use <span className="font-mono">Fetch ISIN</span> above.</>}
+          </p>
+          <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
+            <ActionRow id="morningstar" label="Download Morningstar Category & Style Box" onClick={() => run('morningstar', () => downloadMorningstar(secId))} />
+          </div>
+        </div>
+      )}
 
       {isBond && (
         <div>
@@ -2635,6 +2651,87 @@ function BreakdownEditor({ secId, field, buckets, rawValue, composition, onSaved
           <Button size="sm" disabled={saving} onClick={save}>Save</Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Cash / stocks / bonds / preferred / convertible / other, as Yahoo reports them — editable, for a fund whose mix is missing or wrong.
+// Saved into the same columns the reports read; a mark in Manual_Overrides keeps the Yahoo download from overwriting it.
+const ASSET_MIX_KEYS = ['cash', 'stock', 'bond', 'preferred', 'convertible', 'other']
+function AssetMixEditor({ secId, mix, composition, onSaved }: {
+  secId: number; mix: [string, unknown][]; composition: Record<string, unknown> | null; onSaved: () => void
+}) {
+  const isManual = Boolean((composition?.manual_overrides as Record<string, unknown> | null)?.Asset_Mix)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const present = mix.some(([, v]) => v != null)
+  const total = draft.reduce((s, v) => s + (Number(v) || 0), 0)
+
+  const startEdit = () => {
+    setDraft(mix.map(([, v]) => v != null ? String(Math.round(Number(v) * 100 * 100) / 100) : ''))
+    setError('')
+    setEditing(true)
+  }
+  const save = async () => {
+    setSaving(true); setError('')
+    try {
+      const payload: Record<string, number> = {}
+      ASSET_MIX_KEYS.forEach((k, i) => { payload[k] = Number(draft[i]) || 0 })
+      await setSecurityAssetMixOverride(secId, payload)
+      onSaved(); setEditing(false)
+    } catch (e) { setError(extractHoldingError(e)) } finally { setSaving(false) }
+  }
+  const reset = async () => {
+    if (!confirm("Remove the asset mix you entered and fetch Yahoo's again?")) return
+    setSaving(true); setError('')
+    try {
+      await setSecurityAssetMixOverride(secId, null)
+      await downloadFundComposition(secId)
+      onSaved()
+    } catch (e) { setError(extractHoldingError(e)) } finally { setSaving(false) }
+  }
+
+  if (!editing) {
+    return (
+      <>
+        {!present
+          ? <p className="text-xs text-slate-400 py-1.5">No asset mix yet.</p>
+          : mix.filter(([, v]) => v != null).map(([label, v]) => <OverviewRow key={label} label={label} value={fmtPct(Number(v) * 100)} />)}
+        <div className="flex items-center justify-between py-1.5">
+          <button className="text-xs text-blue-600 hover:underline" onClick={startEdit}>{present ? 'Edit asset mix' : 'Enter asset mix manually'}</button>
+          {isManual && (
+            <span className="text-xs text-slate-400">
+              Manually set — <button className="text-blue-600 hover:underline" disabled={saving} onClick={reset}>Reset to Yahoo</button>
+            </span>
+          )}
+        </div>
+        {error && <p className="text-xs text-red-600 pb-1.5">{error}</p>}
+      </>
+    )
+  }
+  return (
+    <div className="py-2 space-y-1.5">
+      {mix.map(([label], i) => (
+        <div key={label} className="flex items-center justify-between gap-2">
+          <span className="text-xs text-slate-500">{label}</span>
+          <div className="flex items-center gap-1">
+            <Input type="number" step="any" min={0} max={100} className="w-20 text-right" disabled={saving}
+              value={draft[i] ?? ''} onChange={e => setDraft(d => d.map((x, j) => j === i ? e.target.value : x))} />
+            <span className="text-slate-400 text-xs">%</span>
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center justify-between pt-1.5 mt-1 border-t border-slate-100">
+        <span className={`text-xs ${Math.abs(total - 100) > 0.5 ? 'text-amber-600' : 'text-slate-400'}`}>Total: {total.toFixed(1)}% (must be 100)</span>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+          <Button size="sm" disabled={saving || Math.abs(total - 100) > 0.5} onClick={save}>Save</Button>
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <p className="text-xs text-slate-400">Your mix is kept when Yahoo is downloaded again; use Reset to Yahoo to go back.</p>
     </div>
   )
 }
@@ -2948,7 +3045,9 @@ function CountryExposureEditor({ secId }: { secId: number }) {
     return (
       <div className="py-2 space-y-2">
         {rs.length === 0 ? (
-          <p className="text-sm text-slate-500">No country breakdown yet — Reports → Inv. Portfolio → Country Exposure shows this fund under “No country data”.</p>
+          data?.commodity
+            ? <p className="text-sm text-slate-500">Commodity fund — no country applies. Reports → Inv. Portfolio → Country Exposure counts it under Commodities (“Not country-specific”), so there is nothing to download or enter.</p>
+            : <p className="text-sm text-slate-500">No country breakdown yet — Reports → Inv. Portfolio → Country Exposure shows this fund under “No country data”.</p>
         ) : (
           <table className="w-full text-sm">
             <thead><tr className="text-xs text-slate-400 uppercase tracking-wide"><th className="text-left py-1">Country</th><th className="text-left py-1">Kind</th><th className="text-right py-1">% of fund</th></tr></thead>
@@ -2964,7 +3063,7 @@ function CountryExposureEditor({ secId }: { secId: number }) {
           </table>
         )}
         {rs.length > 0 && (data?.source || data?.as_of) && <p className="text-xs text-slate-400">{data?.source}{data?.source && data?.as_of ? ' · ' : ''}{data?.as_of ? `as of ${data.as_of}` : ''}</p>}
-        {autoPanel}
+        {!(data?.commodity && rs.length === 0) && autoPanel}
         <div className="flex gap-3">
           <button type="button" className="text-xs text-blue-600 hover:underline" onClick={startEdit}>{rs.length ? 'Edit' : 'Add country breakdown'}</button>
           {rs.length > 0 && <button type="button" className="text-xs text-red-600 hover:underline" onClick={clear}>Remove</button>}
@@ -3130,10 +3229,10 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
-  const assetMix: [string, unknown][] = composition ? [
-    ['Cash', composition.asset_cash_pct], ['Stocks', composition.asset_stock_pct], ['Bonds', composition.asset_bond_pct],
-    ['Preferred', composition.asset_preferred_pct], ['Convertible', composition.asset_convertible_pct], ['Other', composition.asset_other_pct],
-  ] : []
+  const assetMix: [string, unknown][] = [
+    ['Cash', composition?.asset_cash_pct], ['Stocks', composition?.asset_stock_pct], ['Bonds', composition?.asset_bond_pct],
+    ['Preferred', composition?.asset_preferred_pct], ['Convertible', composition?.asset_convertible_pct], ['Other', composition?.asset_other_pct],
+  ]
   const sectorWeightings = (composition?.sector_weightings as Record<string, number> | null) ?? null
   const bondRatings = (composition?.bond_ratings as Record<string, number> | null) ?? null
 
@@ -3166,7 +3265,7 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
         } />
         <p className="text-xs text-slate-400 pb-1.5">
           {composition?.morningstar_updated ? `Fetched from Morningstar ${String(composition.morningstar_updated).slice(0, 10)} (monthly job or Market Data → Downloads). ` : 'Fetched from Morningstar by ISIN (monthly job or Market Data → Downloads). '}
-          The Style Box is worked out from the fund's holdings — size and style for equity funds, credit quality and duration for bond funds; cash and commodity funds have a Category only. Leave the category blank to use Morningstar's.
+          {composition?.morningstar_portfolio_date ? `Morningstar's portfolio is from ${String(composition.morningstar_portfolio_date).slice(0, 10)}; it fills in an Asset Mix or Sector Weightings Yahoo lacks. ` : ''}The Style Box is worked out from the fund's holdings — size and style for equity funds, credit quality and duration for bond funds; cash and commodity funds have a Category only. Leave the category blank to use Morningstar's.
         </p>
       </CompositionSection>
 
@@ -3226,13 +3325,9 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
         </div>
       )}
 
-      {composition && assetMix.some(([, v]) => v != null) && (
-        <CompositionSection title="Asset Mix">
-          {assetMix.filter(([, v]) => v != null).map(([label, v]) => (
-            <OverviewRow key={label} label={label} value={fmtPct(Number(v) * 100)} />
-          ))}
-        </CompositionSection>
-      )}
+      <CompositionSection title="Asset Mix">
+        <AssetMixEditor secId={secId} mix={assetMix} composition={composition} onSaved={refetchComposition} />
+      </CompositionSection>
 
       <CompositionSection title="Sector Weightings">
         <BreakdownEditor secId={secId} field="sector_weightings" buckets={SECTOR_WEIGHTING_BUCKETS}

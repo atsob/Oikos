@@ -792,11 +792,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Morningstar's Category of each fund (<i>Global Large-Cap Blend Equity</i>, <i>EUR Corporate Bond</i> …), or its coarser broad
           group with the <b>Broad groups</b> box. Click a square, a row or a bar to list the securities in it, with their Style Box and
           Category (a ✎ marks one set by hand). Morningstar's Style Box and Category are fetched by ISIN (Market Data → Downloads →
-          <b>Morningstar</b>, or the monthly <b>Morningstar Category &amp; Style Box</b> scheduler job), together with a bond fund's
+          <b>Morningstar</b>, a fund's own Downloads tab, or the monthly <b>Morningstar Category &amp; Style Box</b> scheduler job), together with a bond fund's
           <b>Duration</b> and <b>Maturity</b> (effective, in years — Yahoo's figures for these are not used). To set one yourself — for a
           fund Morningstar does not cover — open that fund's Security Detail → <b>Composition</b> tab → <b>Morningstar</b> section: pick a
           Style Box from the dropdown or type a Category; yours wins over Morningstar's and is never overwritten.
-          Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
+          Portfolio Analysis reflects it immediately. Where Yahoo has no asset mix or sector weights for a fund, Morningstar's (same download) fills them in, and the equity sector weights Yahoo gives a bond, cash or commodity fund are removed. A commodity fund has no country: Country Exposure counts it under Commodities (Not country-specific) and its country download is skipped. The <b>Asset Mix</b> there (cash, stocks, bonds, preferred, convertible, other) can be entered by hand when Yahoo's is missing or wrong — the six shares must add up to 100, it survives later Yahoo downloads, and <b>Reset to Yahoo</b> undoes it. The same tab also has an <b>Asset Class Override</b> for Asset
           Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
           physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it
           routes the fund's whole value to the class you pick instead. Similarly, direct bonds land in Bond

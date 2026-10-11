@@ -45,6 +45,12 @@ _SECURITISED = {"Agency Fixed Rate", "CMBS", "Covered Other", "Hybrid Collateral
 _GOV_NAME = re.compile(r"gov|treasur|sovereign|bund|gilt|inflation[- ]linked", re.I)
 
 
+# A commodity / precious-metal ETF or ETC (Morningstar category "Commodities …", an asset-class override of Commodities, or Sector
+# "Commodities"): it has no country, so there is nothing to download and Country Exposure counts it as "Not country-specific".
+COMMODITY_FUND_COND = """(fc.Asset_Class_Override = 'Commodities' OR s.Sector = 'Commodities'
+                          OR LEFT(LOWER(COALESCE(fc.Morningstar_Category_Override, fc.Morningstar_Category, '')), 8) = 'commodit')"""
+
+
 class NoData(ValueError):
     """The provider simply has no country data for this fund (a commodity ETC, a US-listed ETF …) — not a failure."""
 
@@ -412,6 +418,11 @@ def download_country_exposure(target_sec_id=None, force: bool = False, only_held
                 out["funds"].append({"id": sid, "name": name, "status": status, "message": msg})
                 out["updated" if status == "updated" else ("errors" if status == "error" else "skipped")] += 1
 
+            cur.execute(f"""SELECT 1 FROM Securities s LEFT JOIN Fund_Composition fc ON fc.Securities_Id = s.Securities_Id
+                            WHERE s.Securities_Id = %s AND {COMMODITY_FUND_COND}""", (sid,))
+            if cur.fetchone():
+                done("skipped", "commodity fund — not country-specific (Country Exposure counts it under Commodities)")
+                continue
             cur.execute("SELECT Provider, Url, Kind FROM Fund_Country_Sources WHERE Securities_Id = %s", (sid,))
             src = cur.fetchone()
             cur.execute("SELECT MAX(Origin), COUNT(*) FROM Fund_Country_Exposure WHERE Securities_Id = %s", (sid,))

@@ -335,6 +335,55 @@ def set_security_field_override(sec_id: int, data: dict):
     return {"id": sec_id}
 
 
+# The six asset-class shares of a fund's Asset Mix, as the percentages the UI works in -> the fraction columns Yahoo fills.
+_ASSET_MIX_COLUMNS = {
+    "cash": "Asset_Cash_Pct", "stock": "Asset_Stock_Pct", "bond": "Asset_Bond_Pct",
+    "preferred": "Asset_Preferred_Pct", "convertible": "Asset_Convertible_Pct", "other": "Asset_Other_Pct",
+}
+
+
+@router.patch("/{sec_id}/fund-composition/asset-mix-override")
+def set_security_asset_mix_override(sec_id: int, data: dict):
+    """Manual Asset Mix (cash / stocks / bonds / preferred / convertible / other), for a fund Yahoo has no mix for or a wrong one (e.g.
+    a UCITS ETF that comes back 100% "Other"). `value` is {cash, stock, bond, preferred, convertible, other} in percent and has to add
+    up to 100; null clears it. Written to the same columns every report already reads, with an 'Asset_Mix' mark in Manual_Overrides
+    that makes download_fund_composition leave those six columns alone. Clearing removes the mark and the six values — run Download
+    Fund Composition afterwards to get Yahoo's back."""
+    raw = data.get("value")
+    with get_db() as conn:
+        cur = conn.cursor()
+        if raw is None:
+            sets = ", ".join(f"{c} = NULL" for c in _ASSET_MIX_COLUMNS.values())
+            cur.execute(f"""
+                INSERT INTO Fund_Composition (Securities_Id) VALUES (%s)
+                ON CONFLICT (Securities_Id) DO UPDATE SET {sets},
+                    Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{{}}'::jsonb) - 'Asset_Mix'
+            """, (sec_id,))
+            return {"id": sec_id}
+        if not isinstance(raw, dict):
+            raise HTTPException(400, "value must be an object of {cash, stock, bond, preferred, convertible, other} percentages")
+        pct = {}
+        for k in _ASSET_MIX_COLUMNS:
+            try:
+                v = float(raw.get(k) or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{k} must be a number")
+            if v < 0 or v > 100:
+                raise HTTPException(400, f"{k} must be between 0 and 100")
+            pct[k] = v
+        if abs(sum(pct.values()) - 100) > 0.5:
+            raise HTTPException(400, f"The six shares add up to {sum(pct.values()):.1f}%, not 100%")
+        cols = list(_ASSET_MIX_COLUMNS.values())
+        cur.execute(f"""
+            INSERT INTO Fund_Composition (Securities_Id, {", ".join(cols)}, Manual_Overrides)
+            VALUES (%s, {", ".join(["%s"] * len(cols))}, jsonb_build_object('Asset_Mix', true))
+            ON CONFLICT (Securities_Id) DO UPDATE SET
+                {", ".join(f"{c} = EXCLUDED.{c}" for c in cols)},
+                Manual_Overrides = COALESCE(Fund_Composition.Manual_Overrides, '{{}}'::jsonb) || jsonb_build_object('Asset_Mix', true)
+        """, (sec_id, *[pct[k] / 100 for k in _ASSET_MIX_COLUMNS]))
+    return {"id": sec_id}
+
+
 # field -> DB column, for the two JSONB breakdown fields (a {bucket: percentage} dict
 # each, rather than one scalar). Canonical bucket keys match what Yahoo itself uses —
 # so a manual entry merges seamlessly with a fund whose OTHER data still comes from

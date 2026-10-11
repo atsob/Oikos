@@ -1179,6 +1179,7 @@ CREATE TABLE IF NOT EXISTS Fund_Composition (
     Morningstar_Category           VARCHAR(100),
     Morningstar_Category_Override  VARCHAR(100),
     Morningstar_Broad_Category     VARCHAR(100),
+    Morningstar_Portfolio_Date     DATE,
     Morningstar_Id                 VARCHAR(20),
     Morningstar_Updated            TIMESTAMPTZ,
     Asset_Class_Override           VARCHAR(20),

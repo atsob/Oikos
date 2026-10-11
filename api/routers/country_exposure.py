@@ -28,6 +28,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from api.routers.reports import _acct_clause, _parse_account_ids, _pit_ctes
+from data.country_exposure_downloader import COMMODITY_FUND_COND
 from database.connection import get_db
 from database.countries import COUNTRIES, country_name, isin_country, parse_country
 
@@ -143,6 +144,8 @@ def get_fund_exposure(sec_id: int):
             SELECT Asset_Stock_Pct::float AS stock, Asset_Bond_Pct::float AS bond, Category_Name AS category
             FROM Fund_Composition WHERE Securities_Id = %(s)s
         """, conn, params={"s": sec_id})
+        commodity = not pd.read_sql(f"""SELECT 1 FROM Securities s LEFT JOIN Fund_Composition fc ON fc.Securities_Id = s.Securities_Id
+            WHERE s.Securities_Id = %(s)s AND {COMMODITY_FUND_COND}""", conn, params={"s": sec_id}).empty
     rows = [{**r, "name": country_name(r["country"])} for r in df.to_dict(orient="records")]
     mix = fc.iloc[0].to_dict() if not fc.empty else {}
     return {
@@ -150,6 +153,7 @@ def get_fund_exposure(sec_id: int):
         "source": rows[0]["source"] if rows else None, "as_of": rows[0]["as_of"] if rows else None,
         "origin": rows[0]["origin"] if rows else None,
         "total_pct": round(sum(r["weight_pct"] for r in rows), 4),
+        "commodity": commodity,                      # a commodity fund has no country: Country Exposure shows it under Commodities
         # Hints for the editor: which kind a fund's rows probably are.
         "asset_mix": {k: (None if pd.isna(v) else v) for k, v in mix.items()},
     }
@@ -313,6 +317,10 @@ def get_country_exposure(account_ids: Optional[str] = Query(None)):
     by_fund: dict[int, list] = {}
     for r in exposure.itertuples(index=False):
         by_fund.setdefault(int(r.sid), []).append((r.kind, r.country, float(r.w)))
+    with get_db() as conn:
+        commodity_funds = set(pd.read_sql(f"""SELECT s.Securities_Id AS sid FROM Securities s
+            LEFT JOIN Fund_Composition fc ON fc.Securities_Id = s.Securities_Id
+            WHERE s.Securities_Type::text IN ('ETF', 'Mutual Fund') AND {COMMODITY_FUND_COND}""", conn)["sid"].astype(int))
 
     items = []            # (key, category, sid, aid, name, ticker, value, via)
     uncovered = []        # funds with no country rows
@@ -320,6 +328,9 @@ def get_country_exposure(account_ids: Optional[str] = Query(None)):
         sid, value = int(r.sid), float(r.value_eur)
         if r.stype in FUND_TYPES:
             rows = by_fund.get(sid)
+            if not rows and sid in commodity_funds:          # a commodity ETF/ETC has no country: not a gap in the data
+                items.append((NO_COUNTRY, "Commodities", sid, None, r.name, r.ticker, value, "Fund"))
+                continue
             if not rows:
                 items.append((NO_DATA, "Funds", sid, None, r.name, r.ticker, value, "Fund"))
                 uncovered.append({"securities_id": sid, "name": r.name, "ticker": r.ticker, "value_eur": round(value, 2)})

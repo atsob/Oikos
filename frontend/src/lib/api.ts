@@ -657,6 +657,10 @@ export const setSecurityExpenseRatioOverride = (secId: number, expenseRatioOverr
 export const setSecurityFieldOverride = (secId: number, field: string, value: number | string | null) =>
   api.patch(`/securities/${secId}/fund-composition/field-override`, { field, value }).then(r => r.data)
 
+// Manual Asset Mix — value is { cash, stock, bond, preferred, convertible, other } in percent, adding up to 100; null clears it.
+export const setSecurityAssetMixOverride = (secId: number, value: Record<string, number> | null) =>
+  api.patch(`/securities/${secId}/fund-composition/asset-mix-override`, { value }).then(r => r.data)
+
 // Manual override for the Sector Weightings / Bond Ratings breakdown — value is a
 // {bucket: percentage} map (e.g. { technology: 25 } for 25%); pass {} or null to clear.
 export const setSecurityBreakdownOverride = (secId: number, field: 'sector_weightings' | 'bond_ratings', value: Record<string, number | string> | null) =>
@@ -1040,7 +1044,7 @@ export const getCountryExposure = (accountIds?: number[]) =>
   api.get('/reports/country-exposure', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data as CountryExposure)
 export type FundCountryRow = { kind: string; country: string; name?: string; weight_pct: number }
 export type FundCountryExposure = {
-  rows: FundCountryRow[]; source: string | null; as_of: string | null; total_pct: number; origin: string | null
+  rows: FundCountryRow[]; source: string | null; as_of: string | null; total_pct: number; origin: string | null; commodity?: boolean
   asset_mix: { stock?: number | null; bond?: number | null; category?: string | null }
 }
 export const getFundCountryExposure = (secId: number) =>

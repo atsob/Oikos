@@ -1216,7 +1216,13 @@ def download_fund_composition(target_sec_id=None):
             holdings_by_sec[sec_id] = top_rows
 
         if comp_rows:
-            set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in _FUND_COMPOSITION_COLUMNS)
+            # An Asset Mix typed in on the fund's page (Manual_Overrides 'Asset_Mix') is kept; Yahoo's mix replaces it only after a reset.
+            _mix_cols = {"Asset_Cash_Pct", "Asset_Stock_Pct", "Asset_Bond_Pct", "Asset_Preferred_Pct", "Asset_Convertible_Pct", "Asset_Other_Pct"}
+            # Nothing from Yahoo (a hiccup, or a fund it has no mix for) does not wipe what Morningstar filled in (data/morningstar.py).
+            set_clause = ", ".join(
+                f"{c} = CASE WHEN Fund_Composition.Manual_Overrides ? 'Asset_Mix' THEN Fund_Composition.{c} ELSE COALESCE(EXCLUDED.{c}, Fund_Composition.{c}) END"
+                if c in _mix_cols else (f"{c} = COALESCE(EXCLUDED.{c}, Fund_Composition.{c})" if c == "Sector_Weightings" else f"{c} = EXCLUDED.{c}")
+                for c in _FUND_COMPOSITION_COLUMNS)
             execute_batch(cur, f"""
                 INSERT INTO Fund_Composition (Securities_Id, {", ".join(_FUND_COMPOSITION_COLUMNS)}, Last_Updated, Fetch_Error)
                 VALUES (%s, {", ".join(["%s"] * len(_FUND_COMPOSITION_COLUMNS))}, NOW(), NULL)
@@ -1242,6 +1248,9 @@ def download_fund_composition(target_sec_id=None):
                 ON CONFLICT (Securities_Id) DO UPDATE SET Fetch_Error = EXCLUDED.Fetch_Error, Last_Updated = NOW()
             """, error_rows, page_size=500)
 
+        conn.commit()
+        from data.morningstar import clean_non_equity_sectors      # Yahoo's equity sector weights on a bond / cash / commodity fund are noise
+        clean_non_equity_sectors(cur)
         conn.commit()
         print(f"Fund composition complete — {len(comp_rows)} fund(s) cached, {len(error_rows)} error(s).")
         logging.info(f"Fund composition: {len(comp_rows)} funds cached, {len(error_rows)} errors.")
