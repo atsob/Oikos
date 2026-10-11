@@ -1336,8 +1336,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           against 120) and <b>your exposure to the country</b> from the Country Exposure report. Same rules as Market Watch:
           red only with two or more in Warning, 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
           editable playbook per country, a daily log and a change list, and a Dashboard alert only when the banner turns
-          red or leaves red. The thresholds are starting values to tune with the daily log; a local back-test is not built
-          yet.
+          red or leaves red. The thresholds are starting values to tune with the daily log. The <b>Back-test</b> card at the bottom of
+          the tab (button <b>Run back-test</b>) tests the index-trend, bank and sovereign-spread rules — and the banner rule on
+          those three — over every major fall of the country's index, shows when each went red against the peak and how much
+          more the index fell, marks a red that was merely carried over from an earlier fall, and keeps every run with its
+          rule version; it re-runs by itself when a rule changes, on the first Sunday of the month and when the daily log
+          reaches six months, and it never changes a threshold. Breadth has no free history, so the log will test it.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

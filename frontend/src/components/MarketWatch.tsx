@@ -223,8 +223,8 @@ export function Playbook({ level, scope = 'market' }: { level: Level; scope?: 'm
   )
 }
 
-type Row = Record<string, string | number | null>
-function Grid({ rows, cols }: { rows: Row[]; cols: [string, string][] }) {
+export type Row = Record<string, string | number | boolean | null>
+export function Grid({ rows, cols }: { rows: Row[]; cols: [string, string][] }) {
   if (!rows.length) return <p className="text-xs text-slate-400">None in the period.</p>
   return (
     <div className="overflow-x-auto max-h-72 overflow-y-auto">
@@ -250,7 +250,7 @@ function Grid({ rows, cols }: { rows: Row[]; cols: [string, string][] }) {
 }
 
 const EP_COLS: [string, string][] = [['Episode', 'episode'], ['Index peak', 'peak'], ['Red first fired', 'first_red'], ['Days vs peak', 'days_vs_peak'], ['S&P 500 vs peak then', 'from_peak_pct'], ['Further fall to the trough', 'further_pct']]
-const SPELL_COLS: [string, string][] = [['Red from', 'from'], ['Until', 'until'], ['Days', 'days'], ['S&P 500', 'spx'], ['+3 months', 'm3_pct'], ['+6 months', 'm6_pct'], ['Worst fall in 6 months', 'worst_6m_pct']]
+export const SPELL_COLS: [string, string][] = [['Red from', 'from'], ['Until', 'until'], ['Days', 'days'], ['S&P 500', 'spx'], ['+3 months', 'm3_pct'], ['+6 months', 'm6_pct'], ['Worst fall in 6 months', 'worst_6m_pct']]
 
 function BacktestCard() {
   const qc = useQueryClient()

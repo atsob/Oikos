@@ -614,8 +614,10 @@ def _run_startup_migrations():
                Rule_Version    VARCHAR(16),
                Summary         JSONB,
                Result          JSONB,
-               Material_Change TEXT
+               Material_Change TEXT,
+               Scope           VARCHAR(20) NOT NULL DEFAULT 'market'
            )""",
+        "ALTER TABLE Market_Watch_Backtests ADD COLUMN IF NOT EXISTS Scope VARCHAR(20) NOT NULL DEFAULT 'market'",
         """CREATE TABLE IF NOT EXISTS Local_Watch_Log (
                Log_Date   DATE NOT NULL,
                Country    VARCHAR(2) NOT NULL,

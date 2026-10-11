@@ -234,7 +234,7 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
 DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
-    "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "shiller_cape": 15, "daily_backup": 45,
+    "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
     "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
@@ -610,6 +610,28 @@ def _local_watch_job():
         _record_job("local_watch", "error", str(e)[:300])
 
 
+_lbt_attempt: dict = {"at": datetime.min}
+
+
+def _local_watch_backtest_job():
+    """The same as the Market Watch back-test job, for the country of usage: when a rule changed, on the first Sunday of the month, or when
+    the daily log reaches six months. Reports only — it never changes a threshold."""
+    try:
+        from api.routers.local_watch import backtest_due, run_and_store
+        due = backtest_due()
+        if not due:
+            return
+        if (datetime.now() - _lbt_attempt["at"]).total_seconds() < 6 * 3600:
+            return
+        _lbt_attempt["at"] = datetime.now()
+        res = run_and_store(due)
+        _lbt_attempt["at"] = datetime.min
+        _record_job("local_watch_backtest", "success", f"{due}: rule {res['rule_version']}" + (f"; {res['material_change'][:150]}" if res.get("material_change") else "; no material change"))
+    except Exception as e:
+        logging.warning(f"Local Market Watch back-test failed: {e}")
+        _record_job("local_watch_backtest", "error", str(e)[:300])
+
+
 def _saxo_token_refresh_job():
     """Keep the Saxo login alive: refresh the token before the refresh token lapses (see data/saxo_session.py)."""
     try:
@@ -792,6 +814,7 @@ if __name__ == "__main__":
     # Market Watch: first run deferred to tick loop
     _last_market_watch: datetime = datetime.min
     _last_bt_check: datetime = datetime.min
+    _last_lbt_check: datetime = datetime.min
     _last_local_watch: datetime = datetime.min
 
     # Morning maintenance: skip if already past the scheduled window today
@@ -917,6 +940,9 @@ if __name__ == "__main__":
         if (now - _last_bt_check).total_seconds() >= 600:
             _guard('market_watch_backtest', _market_watch_backtest_job)
             _last_bt_check = now
+        if (now - _last_lbt_check).total_seconds() >= 600:
+            _guard('local_watch_backtest', _local_watch_backtest_job)
+            _last_lbt_check = now
 
         # ── Saxo login keep-alive: every N minutes (the refresh token is short-lived) ──
         if (now - _last_saxo_refresh).total_seconds() / 60 >= _parse_interval(sc.get('saxo_token_refresh', ''), 10):

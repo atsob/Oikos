@@ -379,6 +379,127 @@ def save_playbook(data: dict):
     return {"ok": True}
 
 
+# ── Back-test: stored runs compared by rule version, run from the UI and by the scheduler ───────────────────────
+
+LOG_READY_DAYS = 180
+BACKTEST_ALERT = {"share_red_pts": 2.0, "episode_days": 30}
+
+
+def _scope() -> str:
+    return f"local:{home_country()}"
+
+
+def _summary(res: dict) -> dict:
+    out = {"share_red": {}, "spells": {}, "episodes": {}, "log_days": (res.get("log") or {}).get("days", 0)}
+    for k, v in (res.get("rules") or {}).items():
+        out["share_red"][k] = v.get("share_red_pct")
+        out["spells"][k] = len(v.get("spells") or [])
+        out["episodes"][k] = {e["episode"]: e["first_red"] for e in v.get("episodes") or []}
+    return out
+
+
+def _material(prev: dict | None, new: dict, prev_ver: str | None, ver: str) -> str | None:
+    """Only a change that matters: a new red spell, a fall caught or missed differently (or its first red date moving), or the share of red
+    days moving by more than the set number of points. Otherwise None — the run is stored and its date updated, quietly."""
+    if not prev:
+        return None
+    notes = []
+    for k in new["share_red"]:
+        d = (new["share_red"].get(k) or 0) - (prev.get("share_red", {}).get(k) or 0)
+        if abs(d) > BACKTEST_ALERT["share_red_pts"]:
+            notes.append(f"{k}: red on {new['share_red'][k]}% of days ({d:+.1f} points)")
+        if new["spells"].get(k, 0) > prev.get("spells", {}).get(k, 0):
+            notes.append(f"{k}: a new red spell")
+        for ep, first in new["episodes"].get(k, {}).items():
+            before = prev.get("episodes", {}).get(k, {}).get(ep)
+            if before is None and ep not in prev.get("episodes", {}).get(k, {}):
+                continue                                           # a fall that was not in the previous run's list
+            if (before is None) != (first is None):
+                notes.append(f"{k}: {ep} now {'caught' if first else 'missed'}")
+            elif before and first and abs((pd.Timestamp(first) - pd.Timestamp(before)).days) > BACKTEST_ALERT["episode_days"]:
+                notes.append(f"{k}: {ep} first red moved {before} → {first}")
+    if prev_ver and prev_ver != ver:
+        notes.insert(0, f"rule version {prev_ver} → {ver}" + ("" if notes else ": no material difference in the back-test"))
+    return "; ".join(notes) or None
+
+
+def run_and_store(trigger: str = "manual") -> dict:
+    from database.connection import get_db
+    from data.local_watch_backtest import run_backtest
+    res = run_backtest()
+    ver, scope = rule_version(), _scope()
+    res["rule_version"], res["trigger"] = ver, trigger
+    summ = _summary(res)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT Rule_Version, Summary FROM Market_Watch_Backtests WHERE Scope = %s ORDER BY Run_At DESC LIMIT 1", (scope,))
+        last = cur.fetchone()
+        change = _material(last[1] if last else None, summ, last[0] if last else None, ver)
+        cur.execute("INSERT INTO Market_Watch_Backtests (Trigger, Rule_Version, Summary, Result, Material_Change, Scope) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (trigger, ver, json.dumps(summ), json.dumps(res), change, scope))
+    res["material_change"] = change
+    save_app_setting(f"local_watch_backtest:{home_country()}", json.dumps(res))
+    return res
+
+
+def backtest_due(now: datetime | None = None) -> str | None:
+    """Why a local back-test should run now, or None: no run yet for this country, a rule changed, the first Sunday of the month (after 03:00),
+    or the daily log reaching six months (the first run that can test breadth)."""
+    from database.connection import get_db
+    if _no_country() is not None:
+        return None
+    now = now or datetime.now()
+    scope, cc = _scope(), home_country()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT Run_At, Rule_Version FROM Market_Watch_Backtests WHERE Scope = %s ORDER BY Run_At DESC LIMIT 1", (scope,))
+        last = cur.fetchone()
+        if last is None:
+            return "first run"
+        if last[1] != rule_version():
+            return "rule change"
+        if now.weekday() == 6 and now.day <= 7 and now.hour >= 3 and last[0].astimezone().replace(tzinfo=None) < now.replace(hour=3, minute=0, second=0, microsecond=0):
+            return "monthly"
+        cur.execute("SELECT COUNT(*) FROM Local_Watch_Log WHERE Country = %s", (cc,))
+        if cur.fetchone()[0] >= LOG_READY_DAYS:
+            cur.execute("SELECT 1 FROM Market_Watch_Backtests WHERE Scope = %s AND Trigger = 'log 6 months' LIMIT 1", (scope,))
+            if cur.fetchone() is None:
+                return "log 6 months"
+    return None
+
+
+@router.get("/backtest")
+def get_backtest():
+    """The last stored back-test for the current country (or null)."""
+    if _no_country() is not None:
+        return None
+    raw = get_app_setting(f"local_watch_backtest:{home_country()}")
+    return json.loads(raw) if raw else None
+
+
+@router.get("/backtest/history")
+def get_backtest_history(limit: int = 20):
+    from database.connection import get_db
+    if _no_country() is not None:
+        return []
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT Run_At, Trigger, Rule_Version, Summary, Material_Change FROM Market_Watch_Backtests WHERE Scope = %s ORDER BY Run_At DESC LIMIT %s", (_scope(), limit))
+        return [{"at": r[0].isoformat(timespec="seconds"), "trigger": r[1], "rule_version": r[2], "summary": r[3], "material_change": r[4]} for r in cur.fetchall()]
+
+
+@router.post("/backtest")
+def run_backtest_endpoint():
+    """Run the local back-test now (the "Run again" button): a few seconds — Yahoo history of the index and banks, FRED for the spread."""
+    from fastapi import HTTPException
+    if _no_country() is not None:
+        raise HTTPException(400, "Choose a country with a profile under Tools → App Settings → Country of Usage first.")
+    try:
+        return run_and_store("manual")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 def get_local_watch_insights() -> list:
     """Dashboard insights: the local banner turning red (while it is red) or leaving red (a week). Reads the stored snapshot, never fetches."""
     from database.connection import get_db
@@ -388,9 +509,20 @@ def get_local_watch_insights() -> list:
         return []
     p = get_profile(cc)
     labels = _labels(p)
+    out_bt = []
+    try:                                                                  # a back-test whose result changed materially (last 7 days)
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT Material_Change FROM Market_Watch_Backtests WHERE Scope = %s AND Material_Change IS NOT NULL AND Run_At > NOW() - INTERVAL '7 days' ORDER BY Run_At DESC LIMIT 1", (_scope(),))
+            row = cur.fetchone()
+        if row:
+            out_bt = [{"type": "info", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) back-test changed",
+                       "message": f"{row[0][:300]} — see the Back-test card on Market Data → Local Market Watch."}]
+    except Exception:
+        pass
     reds = [labels[k] for k in ("trend", "breadth", "banks", "sovereign") if d.get(k, {}).get("status") == "bad"]
     if len(reds) >= 2:
-        return [{"type": "danger", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) is RED — the local crash rules are on",
+        return out_bt + [{"type": "danger", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) is RED — the local crash rules are on",
                  "message": f"In warning: {', '.join(reds)}. Open Market Data → Local Market Watch for your playbook."}]
     try:
         with get_db() as conn:
@@ -398,7 +530,7 @@ def get_local_watch_insights() -> list:
             cur.execute("SELECT Event_At FROM Market_Watch_Events WHERE Indicator = 'local_overall' AND From_Status = 'bad' AND Event_At > NOW() - INTERVAL '7 days' ORDER BY Event_At DESC LIMIT 1")
             row = cur.fetchone()
         if row:
-            return [{"type": "info", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) is out of red", "message": f"Left red on {row[0].strftime('%d %b')}."}]
+            return out_bt + [{"type": "info", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) is out of red", "message": f"Left red on {row[0].strftime('%d %b')}."}]
     except Exception:
         pass
-    return []
+    return out_bt

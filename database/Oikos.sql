@@ -1224,7 +1224,8 @@ CREATE TABLE IF NOT EXISTS Market_Watch_Backtests (
     Rule_Version    VARCHAR(16),
     Summary         JSONB,
     Result          JSONB,
-    Material_Change TEXT
+    Material_Change TEXT,
+    Scope           VARCHAR(20) NOT NULL DEFAULT 'market'     -- 'market' (Market Watch) or 'local:<country>' (Local Market Watch)
 );
 CREATE TABLE IF NOT EXISTS Local_Watch_Log (
     Log_Date   DATE NOT NULL,

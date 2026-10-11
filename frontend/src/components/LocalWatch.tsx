@@ -4,10 +4,10 @@
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
-import { getLocalWatch, getLocalWatchSummary } from '@/lib/api'
+import { getLocalWatch, getLocalWatchSummary, getLocalWatchBacktest, getLocalWatchBacktestHistory, runLocalWatchBacktest } from '@/lib/api'
 import { Card, CardBody, Spinner, Button, Tooltip } from '@/components/ui'
 import { fmtNum, fmtEur } from '@/lib/utils'
-import { Chip, Stat, Lines, Shell, Playbook, RecentChanges, signed, tone } from '@/components/MarketWatch'
+import { Chip, Stat, Lines, Shell, Playbook, RecentChanges, Grid, SPELL_COLS, signed, tone } from '@/components/MarketWatch'
 import type { Ind, Level, Trend } from '@/components/MarketWatch'
 
 type Profile = { code: string; name: string; index_name: string; bank_note: string; banks: string[] }
@@ -123,6 +123,65 @@ function ExposureCard({ d, p }: { d: Ind; p: Profile }) {
   )
 }
 
+const FALL_COLS: [string, string][] = [['Fall (peak → trough)', 'episode'], ['Depth', 'depth_pct'], ['Red first fired', 'first_red'], ['Days vs peak', 'days_vs_peak'],
+  ['Carried over', 'carried_txt'], ['Index vs peak then', 'from_peak_pct'], ['Further fall to the trough', 'further_pct']]
+const RULE_NAMES: Record<string, string> = { trend: 'Index trend', banks: 'Banks', sovereign: 'Sovereign spread (2-month publication lag)', banner: 'Banner rule — two or more of these red at once' }
+
+function BacktestCard({ p }: { p: Profile }) {
+  const qc = useQueryClient()
+  const { data: r } = useQuery({ queryKey: ['local-watch-backtest', p.code], queryFn: getLocalWatchBacktest, staleTime: Infinity })
+  const { data: history = [] } = useQuery({ queryKey: ['local-watch-backtest-history', p.code], queryFn: getLocalWatchBacktestHistory, staleTime: 5 * 60 * 1000 })
+  const run = useMutation({
+    mutationFn: runLocalWatchBacktest,
+    onSuccess: d => { qc.setQueryData(['local-watch-backtest', p.code], d); qc.invalidateQueries({ queryKey: ['local-watch-backtest-history', p.code] }) },
+  })
+  const err = run.error as { response?: { data?: { detail?: string } }; message?: string } | null
+  return (
+    <Card>
+      <CardBody className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="font-semibold">Back-test of the red rules — {p.name}</div>
+            <div className="text-xs text-slate-500">How the index-trend, bank and sovereign-spread rules — and the banner rule on those three — would have behaved in every major fall of the {p.index_name} since the history starts. Breadth has no free history: the daily log will test it. It re-runs by itself when a rule changes, on the first Sunday of the month and when the log reaches 6 months, and it only reports: it never changes a threshold.</div>
+          </div>
+          <Button size="sm" onClick={() => run.mutate()} disabled={run.isPending}>
+            {run.isPending ? <><Spinner size={12} /> Running…</> : <><RefreshCw size={12} /> {r ? 'Run again' : 'Run back-test'}</>}
+          </Button>
+        </div>
+        {run.isError && <p className="text-sm text-red-600">{err?.response?.data?.detail ?? err?.message ?? 'The back-test failed.'}</p>}
+        {r && (
+          <div className="space-y-5">
+            <p className="text-[11px] text-slate-400">Run {new Date(r.generated_at).toLocaleString()} · rule version <code>{r.rule_version}</code> · reason: {r.trigger} · index from {r.ranges.index_from}, banks from {r.ranges.banks_from}{r.ranges.sovereign_from ? `, spread from ${r.ranges.sovereign_from}` : ''}</p>
+            {r.material_change && <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2"><b>Changed since the previous run:</b> {r.material_change}</div>}
+            <ul className="text-[11px] text-slate-500 list-disc pl-4 space-y-0.5">{(r.notes ?? []).map((n: string, i: number) => <li key={i}>{n}</li>)}</ul>
+            <p className="text-xs text-slate-600">Major falls (a bear market: {r.min_depth}% down from a peak, ended by a {r.min_depth}% rally from the low): {r.drawdowns.length}. "Carried over" means the rule had been red since an earlier fall and never cleared, so it was not a new signal — and "days vs peak" is how many days after the index's peak the red began (negative: before it).</p>
+            {Object.keys(RULE_NAMES).filter(k => r.rules[k]).map(k => (
+              <div key={k} className="space-y-1">
+                <div className="text-sm font-medium">{RULE_NAMES[k]} <span className="text-slate-400 font-normal">· red on {r.rules[k].share_red_pct}% of days ({r.rules[k].share_red_10y_pct}% over the last 10 years)</span></div>
+                <Grid rows={(r.rules[k].episodes as Record<string, string | number | boolean | null>[]).map(e => ({ ...e, carried_txt: e.carried ? 'yes' : '' }))} cols={FALL_COLS} />
+                <details><summary className="text-xs text-blue-600 cursor-pointer">Every red spell ({r.rules[k].spells.length}) and what the index did next</summary><Grid rows={r.rules[k].spells} cols={SPELL_COLS} /></details>
+              </div>
+            ))}
+            {r.log && (
+              <div className="space-y-1">
+                <div className="text-sm font-medium">From the daily log <span className="text-slate-400 font-normal">· {r.log.days} of {r.log.ready_days} days{r.log.ready ? ' — long enough to test breadth and the banner' : ' — about 6 months are needed to test breadth and the "two or more red" rule on all four'}</span></div>
+                {r.log.days > 0 && <p className="text-xs text-slate-600">Banner: {r.log.banner_days.bad} red · {r.log.banner_days.warn} amber · {r.log.banner_days.good} green days. Days with an indicator red — trend {r.log.indicator_red_days.trend}, breadth {r.log.indicator_red_days.breadth}, banks {r.log.indicator_red_days.banks}, sovereign {r.log.indicator_red_days.sovereign}; two or more at once: {r.log.two_or_more_red_days}.</p>}
+              </div>
+            )}
+            {history.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-sm font-medium">Past runs — compare rule versions</div>
+                <Grid rows={history.map(h => ({ at: new Date(h.at).toLocaleDateString(), trigger: h.trigger, ver: h.rule_version, tr: h.summary?.share_red?.trend ?? null, bk: h.summary?.share_red?.banks ?? null, sv: h.summary?.share_red?.sovereign ?? null, bn: h.summary?.share_red?.banner ?? null, ch: h.material_change ?? '' }))}
+                  cols={[['Run', 'at'], ['Reason', 'trigger'], ['Rule version', 'ver'], ['Trend red days %', 'tr'], ['Banks %', 'bk'], ['Sovereign %', 'sv'], ['Banner %', 'bn'], ['Material change', 'ch']]} />
+              </div>
+            )}
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 // Nothing to show until a country with a profile is chosen
 function NoCountry({ d }: { d: { country: string | null; unsupported?: boolean; supported: { code: string; name: string }[] } }) {
   const navigate = useNavigate()
@@ -176,6 +235,7 @@ export function LocalWatchTab() {
         <ExposureCard d={data.exposure ?? { status: 'na' }} p={p} />
       </div>
       <RecentChanges scope="local" />
+      <BacktestCard p={p} />
     </div>
   )
 }

@@ -592,7 +592,7 @@ def get_market_watch_insights() -> list:
     try:                                                                  # a back-test whose result changed materially (last 7 days)
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT Run_At, Material_Change FROM Market_Watch_Backtests WHERE Material_Change IS NOT NULL "
+            cur.execute("SELECT Run_At, Material_Change FROM Market_Watch_Backtests WHERE Scope = 'market' AND Material_Change IS NOT NULL "
                         "AND Run_At > NOW() - INTERVAL '7 days' ORDER BY Run_At DESC LIMIT 1")
             row = cur.fetchone()
         if row:
@@ -660,7 +660,7 @@ def run_and_store(trigger: str = "manual") -> dict:
     summ = _summary(res)
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Rule_Version, Summary FROM Market_Watch_Backtests ORDER BY Run_At DESC LIMIT 1")
+        cur.execute("SELECT Rule_Version, Summary FROM Market_Watch_Backtests WHERE Scope = 'market' ORDER BY Run_At DESC LIMIT 1")
         last = cur.fetchone()
         change = _material(last[1] if last else None, summ, last[0] if last else None, ver)
         cur.execute("INSERT INTO Market_Watch_Backtests (Trigger, Rule_Version, Summary, Result, Material_Change) VALUES (%s, %s, %s, %s, %s)",
@@ -678,7 +678,7 @@ def backtest_due(now: datetime | None = None) -> str | None:
     now = now or datetime.now()
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Run_At, Rule_Version FROM Market_Watch_Backtests ORDER BY Run_At DESC LIMIT 1")
+        cur.execute("SELECT Run_At, Rule_Version FROM Market_Watch_Backtests WHERE Scope = 'market' ORDER BY Run_At DESC LIMIT 1")
         last = cur.fetchone()
         if last is None:
             return "first run"
@@ -687,12 +687,12 @@ def backtest_due(now: datetime | None = None) -> str | None:
         if now.weekday() == 6 and now.day <= 7 and now.hour >= 3 and last[0].astimezone().replace(tzinfo=None) < now.replace(hour=3, minute=0, second=0, microsecond=0):
             return "monthly"
         if now.month in (2, 5, 8, 11) and now.day >= 15:
-            cur.execute("SELECT 1 FROM Market_Watch_Backtests WHERE Trigger = 'earnings season' AND date_trunc('month', Run_At) = date_trunc('month', NOW()) LIMIT 1")
+            cur.execute("SELECT 1 FROM Market_Watch_Backtests WHERE Scope = 'market' AND Trigger = 'earnings season' AND date_trunc('month', Run_At) = date_trunc('month', NOW()) LIMIT 1")
             if cur.fetchone() is None:
                 return "earnings season"
         cur.execute("SELECT COUNT(*) FROM Market_Watch_Log")
         if cur.fetchone()[0] >= LOG_READY_DAYS:
-            cur.execute("SELECT 1 FROM Market_Watch_Backtests WHERE Trigger = 'log 6 months' LIMIT 1")
+            cur.execute("SELECT 1 FROM Market_Watch_Backtests WHERE Scope = 'market' AND Trigger = 'log 6 months' LIMIT 1")
             if cur.fetchone() is None:
                 return "log 6 months"
     return None
@@ -710,7 +710,7 @@ def get_backtest_history(limit: int = 20):
     from database.connection import get_db
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Run_At, Trigger, Rule_Version, Summary, Material_Change FROM Market_Watch_Backtests ORDER BY Run_At DESC LIMIT %s", (limit,))
+        cur.execute("SELECT Run_At, Trigger, Rule_Version, Summary, Material_Change FROM Market_Watch_Backtests WHERE Scope = 'market' ORDER BY Run_At DESC LIMIT %s", (limit,))
         return [{"at": r[0].isoformat(timespec="seconds"), "trigger": r[1], "rule_version": r[2], "summary": r[3], "material_change": r[4]} for r in cur.fetchall()]
 
 
