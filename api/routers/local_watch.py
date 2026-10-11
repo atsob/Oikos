@@ -34,13 +34,30 @@ CACHE_KEY, CACHE_HOURS = "local_watch_cache", 6
 
 # Starting thresholds — to be tuned by the user, and by the daily log in a few months. Same idea as Market Watch's RULES.
 RULES_LOCAL = {
-    "logic": 1, "persist_days": PERSIST_DAYS,
+    "logic": 2, "persist_days": PERSIST_DAYS,
     "trend": {"red_drawdown": 15.0, "amber_drawdown": 8.0, "clear_drawdown": 10.0, "worse_pts_20d": 1.5},
     "breadth": {"near_high_pct": 5, "red_200d": 40, "red_50d": 25, "red_50d_needs_200d_under": 50, "amber_200d": 50, "amber_50d": 30,
                 "clear_200d": 45, "clear_50d": 30, "good_200d": 50},
-    "banks": {"red_drawdown": 20.0, "amber_drawdown": 10.0, "clear_drawdown": 12.0},
+    "banks": {"red_drawdown": 30.0, "amber_drawdown": 10.0, "clear_drawdown": 15.0, "red_underperf_pts": 10.0, "amber_underperf_pts": 5.0, "clear_underperf_pts": 5.0},
     "sovereign": {"amber_pp": 1.0, "red_pp": 1.8, "red_3m_pp": 0.5},
 }
+
+
+_RANK = {"bad": 3, "warn": 2, "good": 1}
+
+
+def _equity(trend: dict, banks: dict) -> dict:
+    """Trend and banks are one 'equity' indicator — the worse of the two — so that red needs a second, independent confirmation."""
+    sts = [x.get("status") for x in (trend, banks) if x.get("status") in _RANK]
+    tds = [x.get("trend") for x in (trend, banks) if x.get("trend")]
+    status = max(sts, key=lambda v: _RANK[v]) if sts else "na"
+    t = "worsening" if "worsening" in tds else ("improving" if tds and all(v == "improving" for v in tds) else "flat")
+    return {"status": status, "trend": t}
+
+
+def _is_red(st: dict) -> bool:
+    """The banner rule: equity (trend or banks) in Warning AND breadth or the sovereign spread in Warning."""
+    return "bad" in (st.get("trend"), st.get("banks")) and "bad" in (st.get("breadth"), st.get("sovereign"))
 
 
 def rule_version() -> str:
@@ -125,17 +142,20 @@ def _banks(p: dict, prev: dict | None = None) -> dict:
     px = _panel(list(p["banks"]), "3y")
     basket = ((px / px.iloc[-260:].iloc[0]).mean(axis=1) * 100).dropna()          # equal weight, rebased to 100 a year ago
     sma = basket.rolling(200).mean()
+    idxs = _series(p["index"], "3y")
     dd = lambda x: float((1 - x.iloc[-1] / x.tail(252).max()) * 100)
+    # banks lagging the rest of the market is the real sign of bank stress: their 3-month return minus the index's, in points
+    under = lambda k: ((_rel(_upto(basket, k), 63) or 0) - (_rel(_upto(idxs, k), 63) or 0)) * 100
 
     def red(k):
         x = _upto(basket, k)
-        return bool(dd(x) >= R["red_drawdown"] and x.iloc[-1] < x.rolling(200).mean().iloc[-1])
-    d, below = dd(basket), bool(basket.iloc[-1] < sma.iloc[-1])
-    status, pending = _decide([red(k) for k in range(PERSIST_DAYS)], bool(below or d >= R["amber_drawdown"]), (prev or {}).get("status") == "bad",
-                              not (d < R["clear_drawdown"] and not below))
+        return bool((dd(x) >= R["red_drawdown"] and x.iloc[-1] < x.rolling(200).mean().iloc[-1]) or under(k) <= -R["red_underperf_pts"])
+    d, below, lag = dd(basket), bool(basket.iloc[-1] < sma.iloc[-1]), under(0)
+    status, pending = _decide([red(k) for k in range(PERSIST_DAYS)], bool(below or d >= R["amber_drawdown"] or lag <= -R["amber_underperf_pts"]),
+                              (prev or {}).get("status") == "bad", not (d < R["clear_drawdown"] and not below and lag > -R["clear_underperf_pts"]))
     d20 = dd(_upto(basket, 20))
     trend = "worsening" if d - d20 >= 1.5 else ("improving" if d20 - d >= 1.5 else "flat")
-    rel = (_rel(basket, 63) or 0) - (_rel(_series(p["index"], "1y"), 63) or 0)
+    rel = lag / 100
     banks = [{"name": n, "ticker": t, "ret_3m_pct": round((_rel(px[t].dropna(), 63) or 0) * 100, 1), "below_high_pct": round(dd(px[t].dropna()), 1)}
              for t, n in p["banks"].items() if t in px]
     return {"status": status, "red_pending": pending, "trend": trend, "below_high_pct": round(d, 1), "below_200d": below,
@@ -160,7 +180,8 @@ def _sovereign(p: dict, prev: dict | None = None) -> dict:
     sp, spp = (home - de).dropna(), (home - pr).dropna()
     now = float(sp.iloc[-1])
     d3 = float(sp.iloc[-1] - sp.iloc[-4]) if len(sp) > 3 else None
-    status = "bad" if now >= R["red_pp"] or (d3 is not None and d3 >= R["red_3m_pp"]) else ("warn" if now >= R["amber_pp"] else "good")
+    rising = d3 is not None and d3 > 0
+    status = "bad" if (now >= R["red_pp"] and rising) or (d3 is not None and d3 >= R["red_3m_pp"]) else ("warn" if now >= R["amber_pp"] else "good")
     trend = "flat" if d3 is None else ("worsening" if d3 > 0.1 else ("improving" if d3 < -0.1 else "flat"))
     peer_name = get_profile(peer)["name"]
     return {"status": status, "trend": trend, "spread_pp": round(now, 2), "chg_3m": round(d3, 2) if d3 is not None else None,
@@ -182,10 +203,11 @@ def _liquidity(p: dict) -> dict:
             "series": {"Volume, 20-day average (m shares)": _pts((h.rolling(20).mean() / 1e6).dropna(), 250)}}
 
 
-def _exposure(cc: str, name: str) -> dict:
-    """How much of the user's portfolio is in this country, from the Country Exposure report (stocks, bonds, cash, funds' look-through)."""
+def _exposure(cc: str, name: str, account_ids: str | None = None) -> dict:
+    """How much of the user's portfolio is in this country, from the Country Exposure report (stocks, bonds, cash, funds' look-through) —
+    for every account (the household), or for the accounts of a Portfolio Preset (the user's own portfolio)."""
     from api.routers.country_exposure import get_country_exposure
-    d = get_country_exposure(None)
+    d = get_country_exposure(account_ids)
     row = next((c for c in d["countries"] if c["code"] == cc), None)
     if not row:
         return {"status": "na", "note": f"No exposure to {name} found."}
@@ -230,7 +252,8 @@ def compute(prev: dict | None = None) -> dict:
     with ThreadPoolExecutor(max_workers=4) as pool:
         for k, v in pool.map(run, jobs):
             out[k] = v
-    live = [out[k] for k in ("trend", "breadth", "banks", "sovereign") if out[k].get("status") != "na"]
+    out["equity"] = _equity(out["trend"], out["banks"])
+    live = [out[k] for k in ("equity", "breadth", "sovereign") if out[k].get("status") != "na"]
     bad = sum(v["status"] == "bad" for v in live)
     warn = sum(v["status"] == "warn" for v in live)
     imp = sum(v.get("trend") == "improving" for v in live)
@@ -238,9 +261,9 @@ def compute(prev: dict | None = None) -> dict:
     n = p["name"]
     if not live:
         verdict, level = "No data could be fetched.", "na"
-    elif bad >= 2:
-        verdict, level = f"Two or more {n} indicators are in Warning — the local crash rules are on.", "bad"
-    elif len(live) >= 3 and wor == len(live):
+    elif _is_red({k: out[k].get("status") for k in ("trend", "breadth", "banks", "sovereign")}):
+        verdict, level = f"{n} equities are in Warning and breadth or the sovereign spread confirms it — the local crash rules are on.", "bad"
+    elif len(live) >= 2 and wor == len(live):
         verdict = (f"All the {n} indicators are worsening together — none has crossed its red line yet." if bad == 0
                    else f"All the {n} indicators are worsening together and one is already in Warning.")
         level = "warn"
@@ -267,6 +290,7 @@ def _record(prev: dict, data: dict) -> None:
     cc, labels = data["country"], _labels(get_profile(data["country"]))
     levels = {k: data[k].get("status") for k in ("trend", "breadth", "banks", "sovereign")}
     levels["overall"] = data["overall"]["level"]
+    transition = None
     try:
         with get_db() as conn:
             cur = conn.cursor()
@@ -279,15 +303,29 @@ def _record(prev: dict, data: dict) -> None:
             if prev.get("generated_at") and prev.get("country") == cc:
                 before = {k: prev.get(k, {}).get("status") for k in ("trend", "breadth", "banks", "sovereign")}
                 before["overall"] = (prev.get("overall") or {}).get("level")
-                if before["overall"] == "bad" and sum(v == "bad" for k, v in before.items() if k != "overall") < 2:
+                if before["overall"] == "bad" and not _is_red(before):
                     before["overall"] = "warn"          # a stored red with fewer than two indicators in Warning was not really red
                 for k, to in levels.items():
                     frm = before.get(k)
                     if frm and to and frm != to and to != "na" and frm != "na":
                         cur.execute("INSERT INTO Market_Watch_Events (Indicator, From_Status, To_Status, Message) VALUES (%s, %s, %s, %s)",
                                     (f"local_{k}", frm, to, f"{labels[k]}: {_NAMES.get(frm, frm)} → {_NAMES.get(to, to)}"))
+                        if k == "overall":
+                            transition = (frm, to)
     except Exception as e:
         log.warning("Local Watch: could not record the log/events: %s", e)
+    if transition and (transition[1] == "bad" or transition[0] == "bad"):          # into red, out of red: the two moments that call for action
+        try:
+            from database.notify import notify
+            n = get_profile(cc)["name"]
+            reds = [labels[k] for k in ("trend", "breadth", "banks", "sovereign") if data[k].get("status") == "bad"]
+            plan = get_playbook()["text"]
+            if transition[1] == "bad":
+                notify(f"🔴 Local Market Watch ({n}) is RED — the local crash rules are on\nIn warning: {', '.join(reds)}\n\nYour playbook:\n{plan}")
+            else:
+                notify(f"🟢 Local Market Watch ({n}) is out of red\n{data['overall']['verdict']}\n\nYour playbook says when to resume the normal plan:\n{plan}")
+        except Exception as e:
+            log.warning("Local Watch: Telegram alert failed: %s", e)
 
 
 def refresh_cache() -> dict:
@@ -322,7 +360,7 @@ def _default_playbook() -> str:
     n = (get_profile(home_country()) or {}).get("name", "local")
     return (f"When the {n} banner turns RED:\n"
             "1. Don't sell in a panic — decide with the plan, not the day's price.\n"
-            f"2. Pause new money into {n} stocks and bonds for 1–2 months; put it in the cash fund.\n"
+            f"2. Pause new money into {n} stocks, and don't roll maturing {n} government bonds or T-bills into new ones — hold the proceeds in the cash fund — for 1–2 months.\n"
             f"3. Check what share of the portfolio is in {n} (the tile above) against the limit you have set.\n"
             "4. Resume when the banner has been out of red for 10 trading days.\n"
             "5. Review the plan 3 months after any red episode.\n"
@@ -338,6 +376,15 @@ def get_local_watch(refresh: bool = False):
         if d:
             return d
     return refresh_cache()
+
+
+@router.get("/exposure")
+def get_exposure(account_ids: str | None = None):
+    """The exposure tile for a chosen set of accounts (a Portfolio Preset); no account_ids = every account."""
+    if (empty := _no_country()) is not None:
+        return {"status": "na", "note": "Choose a country of usage first."}
+    p = get_profile(home_country())
+    return _exposure(home_country(), p["name"], account_ids or None)
 
 
 @router.get("/summary")
@@ -390,7 +437,7 @@ def _scope() -> str:
 
 
 def _summary(res: dict) -> dict:
-    out = {"share_red": {}, "spells": {}, "episodes": {}, "log_days": (res.get("log") or {}).get("days", 0)}
+    out = {"share_red": {}, "spells": {}, "episodes": {}, "log_days": (res.get("log") or {}).get("days", 0), "data_date": res.get("data_date")}
     for k, v in (res.get("rules") or {}).items():
         out["share_red"][k] = v.get("share_red_pct")
         out["spells"][k] = len(v.get("spells") or [])
@@ -434,6 +481,9 @@ def run_and_store(trigger: str = "manual") -> dict:
         cur = conn.cursor()
         cur.execute("SELECT Rule_Version, Summary FROM Market_Watch_Backtests WHERE Scope = %s ORDER BY Run_At DESC LIMIT 1", (scope,))
         last = cur.fetchone()
+        if last and last[0] == ver and (last[1] or {}).get("data_date") == summ["data_date"]:
+            res["skipped"], res["material_change"] = True, None              # same rule version, same data: nothing new to store
+            return res
         change = _material(last[1] if last else None, summ, last[0] if last else None, ver)
         cur.execute("INSERT INTO Market_Watch_Backtests (Trigger, Rule_Version, Summary, Result, Material_Change, Scope) VALUES (%s, %s, %s, %s, %s, %s)",
                     (trigger, ver, json.dumps(summ), json.dumps(res), change, scope))
@@ -521,7 +571,7 @@ def get_local_watch_insights() -> list:
     except Exception:
         pass
     reds = [labels[k] for k in ("trend", "breadth", "banks", "sovereign") if d.get(k, {}).get("status") == "bad"]
-    if len(reds) >= 2:
+    if _is_red({k: d.get(k, {}).get("status") for k in ("trend", "breadth", "banks", "sovereign")}):
         return out_bt + [{"type": "danger", "icon": "local_watch", "title": f"Local Market Watch ({p['name']}) is RED — the local crash rules are on",
                  "message": f"In warning: {', '.join(reds)}. Open Market Data → Local Market Watch for your playbook."}]
     try:

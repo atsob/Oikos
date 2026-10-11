@@ -2,6 +2,17 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-11
+
+### Added
+- **Telegram alerts for the red banner.** When **Market Watch** or **Local Market Watch** turns red — and again when it leaves red — a plain-text message goes to your phone with the indicators in Warning and your **playbook**, so the action is in front of you without opening Oikos. Only those two moments are sent, never the daily readings. Set up once: create a bot with @BotFather (`/newbot`), put its token and your chat id in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; both are passed to the app and scheduler containers by `docker-compose.yml`, the token is a secret and is never stored in the database), then **Tools → App Settings → Telegram Alerts → Send test message**. A checkbox in the same section switches the alerts off; with the variables empty nothing is sent. New: `database/notify.py`, `api/routers/notify.py` (`GET /api/notify/status`, `POST /api/notify/test`). Restart the app and scheduler containers to pick up the variables.
+- **Local Market Watch: your exposure for the household and for your own portfolio.** The exposure tile now shows two figures: the **household** (every account, including say children's T-bills and deposits) and your **own portfolio**, chosen from the Portfolio Presets you already use in Reports → Inv. Portfolio (remembered). A table breaks both down by category. New endpoint `GET /api/local-watch/exposure?account_ids=`.
+
+### Changed
+- **Local Market Watch: banks, sovereign spread and banner rules reworked from the first Greek back-test.** *Banks*: red when the basket is **30% or more below its high and under its 200-day**, **or lags the index by 10 points over 3 months** (amber from 10% / 5 points; clears below 15% drawdown, above the 200-day and less than 5 points behind) — a bank basket can fall further than the index without it meaning stress, but falling much faster than the index does. *Sovereign spread*: red when the spread is **1.8 pp or more and still rising, or up 0.5 pp in 3 months**, and only the **euro era** counts (Greece from 2001, the rest from 1999) because the pre-euro drachma spread is a different animal. *Banner*: the index trend and the banks now count as **one equity indicator** (the worse of the two), and red needs **equity in Warning and breadth or the sovereign spread in Warning** — before, two equity legs falling together (which is normal in a sell-off) were enough. The back-test card gained an *Equity* row and tests the banner as equity AND sovereign. Because the rules changed, the rule version changed and a fresh back-test runs.
+- **Local Market Watch playbook, step 2.** "Pause new money into Greek stocks" has little to act on when most of the wealth is government paper and cash. The default now reads: *pause new money into {country} stocks, and don't roll maturing {country} government bonds or T-bills into new ones — hold the proceeds in the cash fund — for 1–2 months.* An existing, edited playbook is untouched.
+- **Back-tests: a run with nothing new is not stored.** Pressing *Run back-test* (or the scheduler) with the same rule version and the same last data date as the stored run used to add an identical row each time. It now says *nothing new — nothing stored* and leaves the history alone (`skipped` in the result). The Greek back-test also records the spread's last month so a new FRED month counts as new data.
+
 ## 2026-10-10
 
 ### Added

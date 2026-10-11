@@ -24,6 +24,8 @@ import {
   getLogs,
   getCurrenciesMaster,
   getCountryList,
+  getNotifyStatus,
+  sendNotifyTest,
   getPayees,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
@@ -2194,12 +2196,14 @@ function AppSettingsPanel() {
   const [saved, setSaved] = useSettings()
   const [form, setForm] = useState<AppSettings>(saved)
   const { data: currencyRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['currencies-master'], queryFn: getCurrenciesMaster })
+  const { data: notifyStatus } = useQuery({ queryKey: ['notify-status'], queryFn: getNotifyStatus, staleTime: 60_000 })
+  const [tgMsg, setTgMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const { data: countryRows = [] } = useQuery<{ code: string; name: string }[]>({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
   const { data: payeeRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['payees'], queryFn: () => getPayees() })
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
 
-  const set = (k: keyof AppSettings, v: string | number) => {
+  const set = (k: keyof AppSettings, v: string | number | boolean) => {
     setForm(f => ({ ...f, [k]: v }))
     setDirty(true)
     setSaved_(false)
@@ -2288,6 +2292,30 @@ function AppSettingsPanel() {
                 <option value={6}>Saturday</option>
               </select>
             </div>
+          </div>
+
+          {/* Telegram alerts */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Telegram Alerts</h3>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.telegramAlerts} onChange={e => set('telegramAlerts', e.target.checked)} className="rounded" />
+              Message me when Market Watch or Local Market Watch turns red, or leaves red
+            </label>
+            <div className="mt-2 flex items-center gap-3">
+              <button type="button" className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-50" disabled={!notifyStatus?.configured}
+                onClick={() => { setTgMsg(null); sendNotifyTest().then(() => setTgMsg({ ok: true, text: 'Sent — check Telegram.' })).catch((e: { response?: { data?: { detail?: string } } }) => setTgMsg({ ok: false, text: e.response?.data?.detail ?? 'Could not send.' })) }}>
+                Send test message
+              </button>
+              <span className={`text-xs ${notifyStatus?.configured ? 'text-green-700' : 'text-amber-700'}`}>
+                {notifyStatus ? (notifyStatus.configured ? 'Bot configured' : 'Not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env and restart') : ''}
+              </span>
+              {tgMsg && <span className={`text-xs ${tgMsg.ok ? 'text-green-700' : 'text-red-600'}`}>{tgMsg.text}</span>}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Only the two moments that call for action — a banner turning red (with your playbook in the message) and leaving
+              red — never the daily readings. Set up a bot with @BotFather and put its token and your chat id in <code>.env</code>
+              (see <code>.env.example</code>); the token is a secret, so it is not stored in the database or shown here.
+            </p>
           </div>
 
           {/* Country of usage */}

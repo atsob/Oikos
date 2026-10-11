@@ -593,7 +593,7 @@ def _market_watch_backtest_job():
         _bt_attempt["at"] = datetime.now()
         res = run_and_store(due)
         _bt_attempt["at"] = datetime.min
-        _record_job("market_watch_backtest", "success", f"{due}: rule {res['rule_version']}" + (f"; {res['material_change'][:150]}" if res.get("material_change") else "; no material change"))
+        _record_job("market_watch_backtest", "success", f"{due}: rule {res['rule_version']}" + ("; no new data since the last run, nothing stored" if res.get("skipped") else (f"; {res['material_change'][:150]}" if res.get("material_change") else "; no material change")))
     except Exception as e:
         logging.warning(f"Market Watch back-test failed: {e}")
         _record_job("market_watch_backtest", "error", str(e)[:300])
@@ -626,7 +626,7 @@ def _local_watch_backtest_job():
         _lbt_attempt["at"] = datetime.now()
         res = run_and_store(due)
         _lbt_attempt["at"] = datetime.min
-        _record_job("local_watch_backtest", "success", f"{due}: rule {res['rule_version']}" + (f"; {res['material_change'][:150]}" if res.get("material_change") else "; no material change"))
+        _record_job("local_watch_backtest", "success", f"{due}: rule {res['rule_version']}" + ("; no new data since the last run, nothing stored" if res.get("skipped") else (f"; {res['material_change'][:150]}" if res.get("material_change") else "; no material change")))
     except Exception as e:
         logging.warning(f"Local Market Watch back-test failed: {e}")
         _record_job("local_watch_backtest", "error", str(e)[:300])

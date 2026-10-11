@@ -1326,22 +1326,32 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Local Market Watch</b> is the same health check for the market where you live. Choose your <b>Country of
           Usage</b> in Tools → App Settings (built in: Greece, France, Germany, Italy, Spain, the Netherlands, Portugal, the
           United Kingdom, the United States; another country is a few lines in <code>database/local_markets.py</code>) and
-          the tab and the Dashboard tile follow it. Four indicators count toward its banner — the <b>index trend</b>
+          the tab and the Dashboard tile follow it. Four indicators feed its banner — the <b>index trend</b>
           (benchmark index against its 52-week high and 200-day average; red: 15% or more below the high and under the
           200-day), <b>breadth</b> (share of about 20 large caps above their 200- and 50-day averages; same rule as Market
-          Watch), the <b>banks</b> (equal-weight basket of the systemic banks; red: 20% or more below its high and under
-          its 200-day) and the <b>sovereign spread</b> (the country's 10-year yield minus Germany's, FRED monthly with a
-          ~6-week lag, so a slow leg; red at 1.8 pp or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; not
+          Watch), the <b>banks</b> (equal-weight basket of the systemic banks; red: 30% or more below its high and under
+          its 200-day, or 10 points behind the index over 3 months) and the <b>sovereign spread</b> (the country's 10-year yield minus Germany's, FRED monthly with a
+          ~6-week lag, so a slow leg; only the euro era counts; red at 1.8 pp and still rising, or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; not
           shown for Germany, the UK or the US) — plus context that doesn't: <b>liquidity</b> (the index's volume, 20 days
-          against 120) and <b>your exposure to the country</b> from the Country Exposure report. Same rules as Market Watch:
-          red only with two or more in Warning, 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
+          against 120) and <b>your exposure to the country</b> from the Country Exposure report. The index trend and the banks count as <b>one equity indicator</b>; the banner turns red only when
+          equity is in Warning <i>and</i> breadth or the sovereign spread confirms it. Same persistence as Market Watch: 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
           editable playbook per country, a daily log and a change list, and a Dashboard alert only when the banner turns
           red or leaves red. The thresholds are starting values to tune with the daily log. The <b>Back-test</b> card at the bottom of
           the tab (button <b>Run back-test</b>) tests the index-trend, bank and sovereign-spread rules — and the banner rule on
-          those three — over every major fall of the country's index, shows when each went red against the peak and how much
+          those three (equity and sovereign for the banner) — over every major fall of the country's index, shows when each went red against the peak and how much
           more the index fell, marks a red that was merely carried over from an earlier fall, and keeps every run with its
           rule version; it re-runs by itself when a rule changes, on the first Sunday of the month and when the daily log
-          reaches six months, and it never changes a threshold. Breadth has no free history, so the log will test it.
+          reaches six months, and it never changes a threshold; a run with the same rule version and no new data is not stored.
+          Breadth has no free history, so the log will test it. The exposure tile shows the <b>household</b> (all accounts) next to
+          your <b>own portfolio</b> (pick a Portfolio Preset).
+        </Note>
+        <Note>
+          <b>Telegram alerts.</b> Market Watch and Local Market Watch can message you when the banner turns red and when it
+          leaves red, with the indicators in Warning and your playbook — never the daily readings. Create a bot with
+          @BotFather (<code>/newbot</code>), put its token in <code>TELEGRAM_BOT_TOKEN</code> and your chat id in
+          <code>TELEGRAM_CHAT_ID</code> in <code>.env</code> (see <code>.env.example</code> for how to find the chat id), restart
+          the app and scheduler containers, then press <b>Send test message</b> in Tools → App Settings → Telegram Alerts. The
+          same section has the on/off checkbox. The token is a secret, so it lives only in <code>.env</code>.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

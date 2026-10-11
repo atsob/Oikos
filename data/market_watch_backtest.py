@@ -155,6 +155,7 @@ def run_backtest() -> dict:
     both = (ty & sr.reindex(ty.index).fillna(False))
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data_date": str(spx.index[-1].date()),
         "ranges": {"spx_from": str(spx.index[0].date()), "ten_year_from": str(dgs.index[0].date()), "baa_from": str(baa.index[0].date()), "ice_from": str(hy.index[0].date())},
         "log": log_section(),
         "credit_live": {"share_red_pct": round(float(cr.mean()) * 100, 1), "spells": red_rows(cr, spx), "episodes": episode_rows(cr, spx)},

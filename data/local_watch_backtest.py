@@ -2,11 +2,13 @@
 
 What can be tested over a long history, for any country with a profile (database/local_markets.py):
   trend       the benchmark index: 15% or more below its 52-week high and under its 200-day average
-  banks       an equal-weight basket of the systemic banks (daily-rebalanced from the banks that traded each day): 20% or more below its
-              high and under its 200-day
-  sovereign   the country's 10-year yield minus Germany's (FRED monthly) — used with a 2-month lag, as that is when a month's figure is
-              really known (the series is published about 6 weeks late), so there is no peeking
-  banner      two or more of the three red at once — the banner rule, on the legs that have a history
+  banks       an equal-weight basket of the systemic banks (daily-rebalanced from the banks that traded each day): 30% or more below its
+              high and under its 200-day, or lagging the index by 10 points over 3 months
+  sovereign   the country's 10-year yield minus Germany's (FRED monthly), from the euro era only, used with a 2-month lag (that is when a
+              month's figure is really known), so there is no peeking
+  equity      trend or banks — ONE indicator, so that the banner needs a second, independent confirmation
+  banner      equity red AND the sovereign spread red — the banner rule on the legs that have a history (breadth, the other
+              confirmation, has none)
 What cannot: breadth (the large caps' constituents have no free history) — the stored daily log (Local_Watch_Log) will cover it.
 
 The rules are those of api/routers/local_watch.py (RULES_LOCAL): a red condition must hold 3 trading days in a row and clears only when
@@ -49,17 +51,21 @@ def trend_red(idx: pd.Series) -> pd.Series:
     return persistent((dd >= R["red_drawdown"]) & (idx < sma), (dd < R["clear_drawdown"]) & (idx >= sma))
 
 
-def banks_red(basket: pd.Series) -> pd.Series:
+def banks_red(basket: pd.Series, idx: pd.Series) -> pd.Series:
+    """Red when 30% or more below the high and under the 200-day — or lagging the index by 10 points over 3 months (the real sign of bank stress)."""
     R = RULES_LOCAL["banks"]
     sma = basket.rolling(200).mean()
     dd = _dd(basket)
-    return persistent((dd >= R["red_drawdown"]) & (basket < sma), (dd < R["clear_drawdown"]) & (basket >= sma))
+    lag = (basket.pct_change(63, fill_method=None) - idx.reindex(basket.index).ffill().pct_change(63, fill_method=None)) * 100
+    red = ((dd >= R["red_drawdown"]) & (basket < sma)) | (lag <= -R["red_underperf_pts"])
+    return persistent(red, (dd < R["clear_drawdown"]) & (basket >= sma) & (lag > -R["clear_underperf_pts"]))
 
 
 def sovereign_red(spread: pd.Series, daily_index: pd.DatetimeIndex) -> pd.Series:
-    """The monthly spread with its publication lag, spread over the days: red at the red level or +0.5 pp in 3 months."""
+    """The monthly spread with its publication lag, spread over the days: red at the red level while still rising, or +0.5 pp in 3 months."""
     R = RULES_LOCAL["sovereign"]
-    red = (spread >= R["red_pp"]) | (spread.diff(3) >= R["red_3m_pp"])
+    d3 = spread.diff(3)
+    red = ((spread >= R["red_pp"]) & (d3 > 0)) | (d3 >= R["red_3m_pp"])
     shifted = pd.Series(red.values, index=red.index + pd.DateOffset(months=LAG_MONTHS)).astype(bool)
     return shifted.reindex(shifted.index.union(daily_index)).ffill().reindex(daily_index).fillna(False).astype(bool)
 
@@ -139,16 +145,19 @@ def run_backtest() -> dict:
     rets = rets.where(rets.abs() < 0.5)                    # drop a split/reverse-split artefact the adjusted series still shows
     basket = (1 + rets.mean(axis=1).fillna(0)).cumprod() * 100
     basket = basket[basket.index >= rets.dropna(how="all").index[0]]
-    flags = {"trend": trend_red(idx), "banks": banks_red(basket).reindex(idx.index).ffill().fillna(False).astype(bool)}
+    flags = {"trend": trend_red(idx), "banks": banks_red(basket, idx).reindex(idx.index).ffill().fillna(False).astype(bool)}
     have_sov = False
     key = ENV_CONFIG.get("fred_api_key", "")
     if p.get("euro", True) and p.get("fred") and key:
         spread = (_fred_all(f"IRLTLT01{p['fred']}M156N") - _fred_all("IRLTLT01DEM156N")).dropna()
+        spread = spread[spread.index >= pd.Timestamp(p.get("euro_from", "1999-01-01"))]          # the euro era only
         flags["sovereign"] = sovereign_red(spread, idx.index)
         have_sov = True
     flags["trend"] = flags["trend"].astype(bool)
-    stack = pd.concat(flags, axis=1).astype(int)
-    flags["banner"] = (stack.sum(axis=1) >= 2)
+    # trend and banks are ONE equity indicator; the banner needs a second, independent confirmation (here the sovereign spread; breadth has no history)
+    flags["equity"] = (flags["trend"] | flags["banks"].astype(bool))
+    if have_sov:
+        flags["banner"] = flags["equity"] & flags["sovereign"].reindex(idx.index).fillna(False).astype(bool)
     eps = drawdown_episodes(idx)
     out_rules = {}
     for k, f in flags.items():
@@ -161,9 +170,11 @@ def run_backtest() -> dict:
                    "sovereign_from": str(spread.index[0].date()) if have_sov else None, "sovereign_lag_months": LAG_MONTHS},
         "drawdowns": [{"peak": str(e["peak"].date()), "trough": str(e["trough"].date()), "depth_pct": -e["depth"]} for e in eps],
         "min_depth": MIN_DEPTH, "rules": out_rules, "log": log_section(cc),
-        "banner_legs": [k for k in ("trend", "banks", "sovereign") if k in flags],
+        "data_date": f"{idx.index[-1].date()}|{spread.index[-1].strftime('%Y-%m') if have_sov else '-'}",
+        "banner_legs": ["equity (trend or banks)"] + (["sovereign"] if have_sov else []),
         "notes": ["Banks that no longer exist (merged or delisted) are missing from Yahoo, so the bank basket is survivors-only and flatters the banks.",
-                  f"The sovereign spread is used with a {LAG_MONTHS}-month lag — the monthly figure is published about 6 weeks late." if have_sov else
+                  f"The sovereign spread is used from {p.get('euro_from', '1999-01-01')[:4]} (the euro era) and with a {LAG_MONTHS}-month lag — the monthly figure is published about 6 weeks late. "
+                  "The banner here is the equity indicator (trend or banks) plus the sovereign spread; breadth, the other confirmation, has no history." if have_sov else
                   "No sovereign-spread leg for this country (not a euro country, the euro benchmark itself, or no FRED key).",
                   "Breadth has no free history; the daily log will test it."],
     }

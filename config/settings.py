@@ -40,6 +40,9 @@ def get_env_config():
         'eodhd_api_key': os.getenv("EODHD_API_KEY", ""),
         # Optional — only for interest-rate series with provider FRED (e.g. JPY/GBP rates).
         'fred_api_key': os.getenv("FRED_API_KEY", ""),
+        # Optional — Telegram alerts for Market Watch / Local Market Watch turning red (database/notify.py).
+        'telegram_bot_token': os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        'telegram_chat_id': os.getenv("TELEGRAM_CHAT_ID", ""),
         # First login account, bootstrapped once on startup if the Users table is
         # empty — see api/main.py's lifespan hook and database/queries.py's
         # bootstrap_admin_user(). Empty here means no account gets auto-created;

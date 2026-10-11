@@ -461,6 +461,7 @@ def _record(prev: dict, data: dict) -> None:
     from database.connection import get_db
     levels = {k: data[k].get("status") for k in ("fcf", "spreads", "ten_year", "breadth", "france", "erp")}
     levels["overall"] = data["overall"]["level"]
+    transition = None
     try:
         with get_db() as conn:
             cur = conn.cursor()
@@ -480,8 +481,21 @@ def _record(prev: dict, data: dict) -> None:
                     if frm and to and frm != to and to != "na" and frm != "na":
                         cur.execute("INSERT INTO Market_Watch_Events (Indicator, From_Status, To_Status, Message) VALUES (%s, %s, %s, %s)",
                                     (k, frm, to, f"{_LABELS[k]}: {_NAMES.get(frm, frm)} → {_NAMES.get(to, to)}"))
+                        if k == "overall":
+                            transition = (frm, to)
     except Exception as e:
         log.warning("Market Watch: could not record the log/events: %s", e)
+    if transition and (transition[1] == "bad" or transition[0] == "bad"):          # the two moments that call for action: into red, out of red
+        try:
+            from database.notify import notify
+            reds = [_LABELS[k] for k in ("fcf", "spreads", "ten_year", "breadth") if data[k].get("status") == "bad"]
+            plan = get_playbook()["text"]
+            if transition[1] == "bad":
+                notify(f"🔴 Market Watch is RED — the crash rules are on\nIn warning: {', '.join(reds)}\n\nYour playbook:\n{plan}")
+            else:
+                notify(f"🟢 Market Watch is out of red\n{data['overall']['verdict']}\n\nYour playbook says when to resume the normal plan:\n{plan}")
+        except Exception as e:
+            log.warning("Market Watch: Telegram alert failed: %s", e)
 
 
 def refresh_cache() -> dict:
@@ -615,7 +629,7 @@ LOG_READY_DAYS = 180
 
 def _summary(res: dict) -> dict:
     """What is compared between runs: the share of red days, the number of red spells and when each named crash was first caught."""
-    out = {"share_red": {}, "spells": {}, "episodes": {}, "log_days": (res.get("log") or {}).get("days", 0)}
+    out = {"share_red": {}, "spells": {}, "episodes": {}, "log_days": (res.get("log") or {}).get("days", 0), "data_date": res.get("data_date")}
     for k in ("credit_live", "credit_surrogate", "ten_year"):
         v = res.get(k) or {}
         out["share_red"][k] = v.get("share_red_pct")
@@ -662,6 +676,9 @@ def run_and_store(trigger: str = "manual") -> dict:
         cur = conn.cursor()
         cur.execute("SELECT Rule_Version, Summary FROM Market_Watch_Backtests WHERE Scope = 'market' ORDER BY Run_At DESC LIMIT 1")
         last = cur.fetchone()
+        if last and last[0] == ver and (last[1] or {}).get("data_date") == summ["data_date"]:
+            res["skipped"], res["material_change"] = True, None              # same rule version, same data: nothing new to store
+            return res
         change = _material(last[1] if last else None, summ, last[0] if last else None, ver)
         cur.execute("INSERT INTO Market_Watch_Backtests (Trigger, Rule_Version, Summary, Result, Material_Change) VALUES (%s, %s, %s, %s, %s)",
                     (trigger, ver, json.dumps(summ), json.dumps(res), change))

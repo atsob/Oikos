@@ -39,6 +39,8 @@ services:
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
       - FRED_API_KEY=${FRED_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       # First-login account, created once if the Users table is empty — see .env.example.
       - ADMIN_USERNAME=${ADMIN_USERNAME:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
@@ -94,6 +96,8 @@ services:
       - PERSIST_DIR=/app/storage_rag
       - EODHD_API_KEY=${EODHD_API_KEY:-}
       - FRED_API_KEY=${FRED_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro

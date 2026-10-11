@@ -2,9 +2,11 @@
 // Country of usage): benchmark index trend, breadth of its large caps, the systemic banks and the 10-year spread to Germany, plus
 // context (liquidity, how much of YOUR portfolio is in the country). api/routers/local_watch.py.
 import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { usePersist } from '@/lib/hooks'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
-import { getLocalWatch, getLocalWatchSummary, getLocalWatchBacktest, getLocalWatchBacktestHistory, runLocalWatchBacktest } from '@/lib/api'
+import { getLocalWatch, getLocalWatchSummary, getLocalWatchExposure, getPortfolioPresets, getLocalWatchBacktest, getLocalWatchBacktestHistory, runLocalWatchBacktest } from '@/lib/api'
 import { Card, CardBody, Spinner, Button, Tooltip } from '@/components/ui'
 import { fmtNum, fmtEur } from '@/lib/utils'
 import { Chip, Stat, Lines, Shell, Playbook, RecentChanges, Grid, SPELL_COLS, signed, tone } from '@/components/MarketWatch'
@@ -45,7 +47,7 @@ function BanksCard({ d, p }: { d: Ind; p: Profile }) {
   const banks = (d.banks ?? []) as { name: string; ticker: string; ret_3m_pct: number; below_high_pct: number }[]
   return (
     <Shell title={`${p.name} banks`} why={`${p.banks.join(', ')}${p.bank_note ? ` — ${p.bank_note}` : ''}`} good="above the 200-day average, near the high"
-      warn="20% or more below the 52-week high and under the 200-day average" ind={d}>
+      warn="30% or more below the 52-week high and under the 200-day average — or lagging the index by 10 points over 3 months (the real sign of bank stress)" ind={d}>
       <div className="grid grid-cols-4 gap-3">
         <Stat label="Below their high" value={`−${fmtNum(d.below_high_pct, 1)}%`} tone={d.below_high_pct >= 20 ? 'text-red-600' : d.below_high_pct >= 10 ? 'text-amber-600' : ''} />
         <Stat label="1 month" value={signed(d.ret_1m_pct, 1, '%')} tone={tone(d.ret_1m_pct)} />
@@ -70,7 +72,7 @@ function BanksCard({ d, p }: { d: Ind; p: Profile }) {
 function SovereignCard({ d, p }: { d: Ind; p: Profile }) {
   return (
     <Shell title={`${p.name} sovereign spread`} why={`${p.name} minus German 10-year yield — monthly, about a 6-week lag, so a slow, lagging leg`} good="below 1.0 pp"
-      warn="1.8 pp or more, or up 0.5 pp in 3 months" ind={d}>
+      warn="1.8 pp or more and still rising, or up 0.5 pp in 3 months" ind={d}>
       <div className="grid grid-cols-4 gap-3">
         <Stat label="Spread to Germany" value={`${fmtNum(d.spread_pp, 2)} pp`} tone={d.spread_pp >= 1.8 ? 'text-red-600' : d.spread_pp >= 1 ? 'text-amber-600' : ''} sub={`as of ${d.as_of}`} />
         <Stat label="3 months" value={signed(d.chg_3m, 2, ' pp')} tone={tone(d.chg_3m, true)} />
@@ -96,24 +98,43 @@ function LiquidityCard({ d }: { d: Ind }) {
 }
 
 function ExposureCard({ d, p }: { d: Ind; p: Profile }) {
-  const cats = (d.categories ?? []) as { category: string; value_eur: number; pct: number }[]
+  // The household is every account (kids' T-bills, deposits …); "own portfolio" is a Portfolio Preset the user picks (the same presets as Reports → Inv. Portfolio).
+  const { data: presets = [] } = useQuery({ queryKey: ['portfolio-presets', 'inv_positions'], queryFn: () => getPortfolioPresets('inv_positions'), staleTime: 5 * 60 * 1000 })
+  const [presetId, setPresetId] = usePersist<number>('local_watch_own_preset', 0)
+  const preset = (presets as { preset_id: number; preset_name: string; account_ids: number[] }[]).find(x => x.preset_id === presetId)
+  const { data: own } = useQuery({ queryKey: ['local-watch-exposure', preset?.preset_id ?? 0], queryFn: () => getLocalWatchExposure(preset?.account_ids), enabled: !!preset, staleTime: 5 * 60 * 1000 })
+  const hh = (d.categories ?? []) as { category: string; value_eur: number; pct: number }[]
+  const ow = ((own?.categories ?? []) as { category: string; value_eur: number; pct: number }[])
+  const cats = [...new Set([...hh.map(c => c.category), ...ow.map(c => c.category)])]
+  const find = (list: { category: string; value_eur: number; pct: number }[], c: string) => list.find(x => x.category === c)
   return (
     <Card>
       <CardBody className="space-y-3">
         <div>
           <div className="font-semibold">Your {p.name} exposure</div>
-          <div className="text-xs text-slate-500">From Reports → Inv. Portfolio → Country Exposure: stocks, bonds, cash and the {p.name} share of your funds. Context for the playbook, not an indicator.</div>
+          <div className="text-xs text-slate-500">From Reports → Inv. Portfolio → Country Exposure: stocks, bonds, cash and the {p.name} share of your funds. The <b>household</b> is every account (including, say, children's T-bills and deposits); pick a Portfolio Preset for your <b>own portfolio</b>. Context for the playbook, not an indicator.</div>
         </div>
         {d.value_eur == null ? <p className="text-sm text-slate-400">{d.note ?? 'No data.'}</p> : (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <Stat label={`${p.name} assets`} value={fmtEur(d.value_eur)} />
-              <Stat label="Share of the portfolio" value={`${fmtNum(d.pct, 1)}%`} sub={`of ${fmtEur(d.total_eur)}`} tone={d.pct > 50 ? 'text-amber-600' : ''} />
+              <Stat label={`Household — ${p.name} assets`} value={fmtEur(d.value_eur)} sub={`${fmtNum(d.pct, 1)}% of ${fmtEur(d.total_eur)}`} tone={d.pct > 50 ? 'text-amber-600' : ''} />
+              <div>
+                <select className="border border-slate-200 rounded px-2 py-1 text-xs mb-1 max-w-full" value={presetId} onChange={e => setPresetId(Number(e.target.value))}>
+                  <option value={0}>Own portfolio — choose a preset…</option>
+                  {(presets as { preset_id: number; preset_name: string }[]).map(x => <option key={x.preset_id} value={x.preset_id}>{x.preset_name}</option>)}
+                </select>
+                {own?.value_eur != null ? <Stat label={`Own portfolio — ${p.name} assets`} value={fmtEur(own.value_eur)} sub={`${fmtNum(own.pct, 1)}% of ${fmtEur(own.total_eur)}`} tone={own.pct > 50 ? 'text-amber-600' : ''} />
+                  : <p className="text-xs text-slate-400">{preset ? (own?.note ?? 'Loading…') : 'No preset chosen.'}</p>}
+              </div>
             </div>
             <table className="w-full text-xs">
-              <thead><tr className="text-slate-400 text-right border-b border-slate-100"><th className="text-left font-normal py-1">Category</th><th className="font-normal">Value</th><th className="font-normal">% of portfolio</th></tr></thead>
+              <thead><tr className="text-slate-400 text-right border-b border-slate-100"><th className="text-left font-normal py-1">Category</th><th className="font-normal">Household</th><th className="font-normal">% of it</th>{preset && <><th className="font-normal">Own portfolio</th><th className="font-normal">% of it</th></>}</tr></thead>
               <tbody>{cats.map(c => (
-                <tr key={c.category} className="text-right border-b border-slate-50"><td className="text-left py-1">{c.category}</td><td className="tabular-nums">{fmtEur(c.value_eur)}</td><td className="tabular-nums">{fmtNum(c.pct, 1)}%</td></tr>))}
+                <tr key={c} className="text-right border-b border-slate-50">
+                  <td className="text-left py-1">{c}</td>
+                  <td className="tabular-nums">{find(hh, c) ? fmtEur(find(hh, c)!.value_eur) : '—'}</td><td className="tabular-nums">{find(hh, c) ? `${fmtNum(find(hh, c)!.pct, 1)}%` : ''}</td>
+                  {preset && <><td className="tabular-nums">{find(ow, c) ? fmtEur(find(ow, c)!.value_eur) : '—'}</td><td className="tabular-nums">{find(ow, c) ? `${fmtNum(find(ow, c)!.pct, 1)}%` : ''}</td></>}
+                </tr>))}
               </tbody>
             </table>
           </>
@@ -125,15 +146,19 @@ function ExposureCard({ d, p }: { d: Ind; p: Profile }) {
 
 const FALL_COLS: [string, string][] = [['Fall (peak → trough)', 'episode'], ['Depth', 'depth_pct'], ['Red first fired', 'first_red'], ['Days vs peak', 'days_vs_peak'],
   ['Carried over', 'carried_txt'], ['Index vs peak then', 'from_peak_pct'], ['Further fall to the trough', 'further_pct']]
-const RULE_NAMES: Record<string, string> = { trend: 'Index trend', banks: 'Banks', sovereign: 'Sovereign spread (2-month publication lag)', banner: 'Banner rule — two or more of these red at once' }
+const RULE_NAMES: Record<string, string> = { trend: 'Index trend', banks: 'Banks (30% below the high under the 200-day, or 10 points behind the index over 3 months)', equity: 'Equity — index trend or banks, as ONE indicator', sovereign: 'Sovereign spread (euro era only, 2-month publication lag; red at 1.8 pp and rising, or +0.5 pp in 3 months)', banner: 'Banner rule — equity red AND the sovereign spread red (breadth, the other confirmation, has no history)' }
 
 function BacktestCard({ p }: { p: Profile }) {
   const qc = useQueryClient()
   const { data: r } = useQuery({ queryKey: ['local-watch-backtest', p.code], queryFn: getLocalWatchBacktest, staleTime: Infinity })
   const { data: history = [] } = useQuery({ queryKey: ['local-watch-backtest-history', p.code], queryFn: getLocalWatchBacktestHistory, staleTime: 5 * 60 * 1000 })
+  const [skippedNote, setSkippedNote] = useState('')
   const run = useMutation({
     mutationFn: runLocalWatchBacktest,
-    onSuccess: d => { qc.setQueryData(['local-watch-backtest', p.code], d); qc.invalidateQueries({ queryKey: ['local-watch-backtest-history', p.code] }) },
+    onSuccess: d => {
+      setSkippedNote(d.skipped ? `Nothing new: the rule version (${d.rule_version}) and the data (to ${String(d.data_date).split('|')[0]}) are the same as in the last stored run, so nothing was stored.` : '')
+      if (!d.skipped) { qc.setQueryData(['local-watch-backtest', p.code], d); qc.invalidateQueries({ queryKey: ['local-watch-backtest-history', p.code] }) }
+    },
   })
   const err = run.error as { response?: { data?: { detail?: string } }; message?: string } | null
   return (
@@ -149,6 +174,7 @@ function BacktestCard({ p }: { p: Profile }) {
           </Button>
         </div>
         {run.isError && <p className="text-sm text-red-600">{err?.response?.data?.detail ?? err?.message ?? 'The back-test failed.'}</p>}
+        {skippedNote && <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded px-3 py-2">{skippedNote}</p>}
         {r && (
           <div className="space-y-5">
             <p className="text-[11px] text-slate-400">Run {new Date(r.generated_at).toLocaleString()} · rule version <code>{r.rule_version}</code> · reason: {r.trigger} · index from {r.ranges.index_from}, banks from {r.ranges.banks_from}{r.ranges.sovereign_from ? `, spread from ${r.ranges.sovereign_from}` : ''}</p>
@@ -214,7 +240,7 @@ export function LocalWatchTab() {
       <div className={`flex items-center justify-between gap-3 border rounded-lg px-4 py-3 ${banner}`}>
         <div>
           <div className="font-semibold">{o.verdict}</div>
-          <div className="text-xs opacity-80">Local market: {p.name} ({p.index_name}). {o.improving} improving · {o.worsening} worsening · {o.warn} on watch · {o.bad} in warning. ▼ means moving toward the red line, ▲ away from it. Red when two or more indicators are in Warning (a daily indicator must stay red for 3 days in a row and clears only once well back past its line); amber when all are worsening together. Thresholds are starting values — rule version <code>{data.rule_version}</code>. Change the country in Tools → App Settings.</div>
+          <div className="text-xs opacity-80">Local market: {p.name} ({p.index_name}). {o.improving} improving · {o.worsening} worsening · {o.warn} on watch · {o.bad} in warning. ▼ means moving toward the red line, ▲ away from it. Index trend and banks count as one equity indicator: red when equities are in Warning AND breadth or the sovereign spread confirms it (a daily indicator must stay red for 3 days in a row and clears only once well back past its line); amber when all are worsening together. Thresholds are starting values — rule version <code>{data.rule_version}</code>. Change the country in Tools → App Settings.</div>
         </div>
         <Tooltip text={`Computed ${new Date(data.generated_at).toLocaleString()}; the scheduler refreshes it every few hours.`}>
           <Button size="sm" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
