@@ -471,6 +471,15 @@ def _run_startup_migrations():
         # X-Ray Style Box: manual category override for funds Yahoo doesn't
         # supply a Morningstar-style category for (mostly non-US ETFs).
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Category_Override VARCHAR(50)",
+        # Morningstar Style Box (Large Value … Small Growth for equity funds, "Medium Quality / Moderate Duration" … for bond funds)
+        # and Morningstar Category, fetched by ISIN (data/morningstar.py). Category_Override above stays the manual Style Box;
+        # Morningstar_Category_Override is the manual category, for a fund Morningstar does not cover.
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Style_Box VARCHAR(50)",
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Category VARCHAR(100)",
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Category_Override VARCHAR(100)",
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Broad_Category VARCHAR(100)",
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Id VARCHAR(20)",
+        "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Updated TIMESTAMPTZ",
         # X-Ray Asset Allocation: manual asset-class override for funds Yahoo's
         # generic 6-bucket asset_classes split can't classify correctly (e.g.
         # physical commodity ETCs land 100% in "other" — Yahoo has no

@@ -104,6 +104,9 @@ FUND_COMPOSITION_MINUTE  = 30
 FUND_COUNTRIES_DAY       = 5  # 5th of month at 07:30 — after fund_composition (2nd) and fundamentals (3rd)
 FUND_COUNTRIES_HOUR      = 7
 FUND_COUNTRIES_MINUTE    = 30
+MORNINGSTAR_DAY          = 6  # 6th of month at 07:30 — after fund_countries (5th)
+MORNINGSTAR_HOUR         = 7
+MORNINGSTAR_MINUTE       = 30
 FUNDAMENTALS_DAY         = 3  # 3rd of month at 07:30 — avoids colliding with fund_composition (day 2)
 FUNDAMENTALS_HOUR        = 7
 FUNDAMENTALS_MINUTE      = 30
@@ -235,7 +238,7 @@ DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
     "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
-    "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60,
+    "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60, "morningstar": 30,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
 # Market-data sub-steps are also limited one by one, so a stuck Yahoo call does not cost the
@@ -426,6 +429,19 @@ def _fund_composition_job():
     except Exception as e:
         logging.error(f"Fund composition refresh failed: {e}", exc_info=True)
         _record_job("fund_composition", "error", str(e))
+
+
+def _morningstar_job():
+    """Refresh every ETF's / fund's Morningstar Category and Style Box (by ISIN), once a month — they change rarely."""
+    logging.info("Running Morningstar category / style box refresh…")
+    try:
+        from data.morningstar import download_morningstar
+        res = download_morningstar()
+        msg = f"{res['updated']} updated, {res['not_found']} not found, {res['errors']} failed"
+        _record_job("morningstar", "error" if res["errors"] else "success", msg)
+    except Exception as e:
+        logging.error(f"Morningstar refresh failed: {e}", exc_info=True)
+        _record_job("morningstar", "error", str(e))
 
 
 def _fund_countries_job():
@@ -790,6 +806,9 @@ if __name__ == "__main__":
     # Fund country exposure: skip if already ran this month
     _last_fund_countries_month: int = -1
 
+    # Morningstar category / style box: skip if already ran this month
+    _last_morningstar_month: int = -1
+
     # Fund composition: skip if already ran this month
     _last_fund_composition_month: int = -1
 
@@ -895,6 +914,12 @@ if __name__ == "__main__":
         if now.day == fx_d and _in_window(now, fx_h, fx_m) and _last_fund_countries_month != now.month:
             _guard('fund_countries', _fund_countries_job)
             _last_fund_countries_month = now.month
+
+        # ── Morningstar category / style box: monthly ─────────────────────────
+        ms_d, ms_h, ms_m = _parse_monthly(sc.get('morningstar', ''), MORNINGSTAR_DAY, MORNINGSTAR_HOUR, MORNINGSTAR_MINUTE)
+        if now.day == ms_d and _in_window(now, ms_h, ms_m) and _last_morningstar_month != now.month:
+            _guard('morningstar', _morningstar_job)
+            _last_morningstar_month = now.month
 
         # ── Fund composition (Portfolio X-Ray): monthly ───────────────────────
         fc_d, fc_h, fc_m = _parse_monthly(sc.get('fund_composition', ''), FUND_COMPOSITION_DAY, FUND_COMPOSITION_HOUR, FUND_COMPOSITION_MINUTE)

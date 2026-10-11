@@ -4194,20 +4194,72 @@ def save_xray_asset_allocation_targets(payload: dict):
     return {"ok": True}
 
 
+# Morningstar's two 3x3 grids, as stored in Fund_Composition.Morningstar_Style_Box / Category_Override (data/morningstar.py).
+_STYLE_GRID = {
+    "Large Value", "Large Blend", "Large Growth", "Mid-Cap Value", "Mid-Cap Blend", "Mid-Cap Growth",
+    "Small Value", "Small Blend", "Small Growth",
+    "High Quality / Limited Duration", "High Quality / Moderate Duration", "High Quality / Extensive Duration",
+    "Medium Quality / Limited Duration", "Medium Quality / Moderate Duration", "Medium Quality / Extensive Duration",
+    "Low Quality / Limited Duration", "Low Quality / Moderate Duration", "Low Quality / Extensive Duration",
+}
+
+
+def _fund_style_row(r) -> dict:
+    """One fund's place in the Style Box report: its grid square (None when it has no grid — commodity and money-market funds), the bucket
+    it falls into otherwise, and its Morningstar category. A square or category set by hand wins over Morningstar's."""
+    def num(k):
+        v = r.get(k)
+        return 0.0 if v is None or pd.isna(v) else float(v)
+
+    def txt(k):                                   # pandas hands a missing text back as NaN, which is truthy
+        v = r.get(k)
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) or v == "" else v
+
+    box = txt("category_override") or txt("morningstar_style_box")
+    grid = box if box in _STYLE_GRID else None
+    cat = txt("morningstar_category_override") or txt("morningstar_category") or txt("category_name")
+    text = f"{box or ''} {cat or ''}".lower()
+    ac = txt("asset_class_override")
+    if grid:
+        other = None
+    elif "commodit" in text or ac == "Commodities":
+        other = "Commodities"
+    elif "money market" in text or ac == "Cash" or num("asset_cash_pct") >= 0.7:
+        other = "Cash & money market"
+    elif "allocation" in text:
+        other = "Allocation funds"
+    else:
+        other = "No Style Box"
+    if not cat:                                  # no category anywhere: say what the fund is made of
+        if num("asset_stock_pct") >= 0.7:
+            cat = "Equity Fund (Uncategorized)"
+        elif num("asset_bond_pct") >= 0.7:
+            cat = "Bond Fund (Uncategorized)"
+        elif num("asset_cash_pct") >= 0.7:
+            cat = "Cash Fund (Uncategorized)"
+        elif num("asset_stock_pct") > 0 and num("asset_bond_pct") > 0:
+            cat = "Allocation Fund (Uncategorized)"
+        else:
+            cat = "N/A (no data)"
+    return {
+        "style_box": grid, "other": other, "category": cat,
+        "broad_category": txt("morningstar_broad_category") or cat,
+        "manual_style": bool(txt("category_override")),
+        "manual_category": bool(txt("morningstar_category_override")),
+    }
+
+
 @router.get("/xray/style-box")
 def get_xray_style_box(account_ids: Optional[str] = Query(None), compare_date: Optional[str] = Query(None)):
-    """Style-box summary, plus a per-security detail breakdown for the UI's
-    click-to-drill-down. A fund with no Morningstar category (and no manual
-    override) is bucketed by its own dominant asset mix (e.g. 'Equity Fund
-    (Uncategorized)') instead of a single opaque 'N/A' bucket, using the same
-    Fund_Composition asset-class data the Asset Allocation X-Ray already has;
-    only funds with no asset-mix data at all fall to 'N/A (no data)'. Cash &
-    Savings accounts in the preset also contribute to a 'Cash' bucket, same
+    """Style Box report, as one flat list of holdings ("items") that the page groups two ways:
+    - by Morningstar Style Box — the 3x3 equity grid (size x style) and the 3x3 bond grid (credit quality x duration); what has no grid
+      (direct stocks/bonds, cash, commodity and money-market funds) goes to a few plain buckets (item.other);
+    - by Morningstar Category (item.category, or item.broad_category for Morningstar's coarser group).
+    Each item is a direct holding, a cash account or a fund, with its EUR value. A Style Box / category set by hand on the fund's Security
+    Detail page wins over Morningstar's (data/morningstar.py). Cash & Savings accounts in the preset contribute a 'Cash' item, same
     account-type exclusion list the Asset Allocation X-Ray's cash bucket uses.
-    compare_date, when given, additionally computes the same breakdown as of that
-    past date (point-in-time holdings/prices/cash balances — see _pit_ctes/
-    _pit_cash_balance_expr) under "compare"/"compare_date". Category/asset-mix
-    data itself always reflects today's fund data (no historical version exists)."""
+    compare_date, when given, additionally computes the same list as of that past date (point-in-time holdings/prices/cash balances — see
+    _pit_ctes/_pit_cash_balance_expr) under "compare"/"compare_date". Category data itself always reflects today's fund data."""
     parsed_acct_ids = _parse_account_ids(account_ids)
     acct_clause = _acct_clause(parsed_acct_ids, "h.Accounts_Id")
     cash_clause = _acct_clause(parsed_acct_ids, "a.Accounts_Id")
@@ -4230,71 +4282,47 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None), compare_date: O
         GROUP BY h.Securities_Id, s.Securities_Type
     )
     """
-        detail_cte = f"""
+        holdings_query = holdings_cte + """
+    SELECT hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.sec_type, hv.value_eur,
+           fc.Category_Override AS category_override, fc.Morningstar_Style_Box AS morningstar_style_box,
+           fc.Morningstar_Category_Override AS morningstar_category_override, fc.Morningstar_Category AS morningstar_category,
+           fc.Morningstar_Broad_Category AS morningstar_broad_category, fc.Category_Name AS category_name,
+           fc.Asset_Stock_Pct AS asset_stock_pct, fc.Asset_Bond_Pct AS asset_bond_pct, fc.Asset_Cash_Pct AS asset_cash_pct,
+           fc.Asset_Class_Override AS asset_class_override
+    FROM holdings_value hv
+    JOIN Securities s ON s.Securities_Id = hv.Securities_Id
+    LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
+    """
+        cash_query = holdings_cte + f"""
     , direct_cash AS (
-        SELECT 'Cash' AS style, NULL::integer AS securities_id, a.Accounts_Name AS name, NULL::text AS ticker,
-               {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur
+        SELECT a.Accounts_Name AS name, {cash_balance_expr} * COALESCE(fx.FX_Rate,1) AS value_eur
         FROM Accounts a
         LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
         WHERE a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
           AND a.Is_Active = TRUE AND a.Accounts_Balance != 0{cash_clause}
-    ),
-    direct_detail AS (
-        SELECT CASE
-                 WHEN hv.sec_type = 'Stock' THEN 'Direct Stocks'
-                 WHEN hv.sec_type = 'Bond' THEN 'Direct Bonds'
-                 ELSE 'Direct Other'
-               END AS style,
-               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
-        FROM holdings_value hv JOIN Securities s ON s.Securities_Id = hv.Securities_Id
-        WHERE hv.sec_type NOT IN ('ETF','Mutual Fund')
-    ),
-    fund_detail AS (
-        SELECT COALESCE(
-                 fc.Category_Override, fc.Category_Name,
-                 CASE
-                   WHEN GREATEST(COALESCE(fc.Asset_Stock_Pct,0), COALESCE(fc.Asset_Bond_Pct,0), COALESCE(fc.Asset_Cash_Pct,0),
-                                 COALESCE(fc.Asset_Preferred_Pct,0), COALESCE(fc.Asset_Convertible_Pct,0), COALESCE(fc.Asset_Other_Pct,0)) = 0
-                        AND fc.Asset_Class_Override IS NULL THEN 'N/A (no data)'
-                   WHEN fc.Asset_Class_Override IS NOT NULL THEN fc.Asset_Class_Override || ' Fund (Uncategorized)'
-                   WHEN COALESCE(fc.Asset_Stock_Pct,0) >= 0.7 THEN 'Equity Fund (Uncategorized)'
-                   WHEN COALESCE(fc.Asset_Bond_Pct,0) >= 0.7 THEN 'Bond Fund (Uncategorized)'
-                   WHEN COALESCE(fc.Asset_Cash_Pct,0) >= 0.7 THEN 'Cash Fund (Uncategorized)'
-                   WHEN COALESCE(fc.Asset_Stock_Pct,0) > 0 AND COALESCE(fc.Asset_Bond_Pct,0) > 0 THEN 'Allocation Fund (Uncategorized)'
-                   ELSE 'Other Fund (Uncategorized)'
-                 END
-               ) AS style,
-               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker, hv.value_eur
-        FROM holdings_value hv
-        JOIN Securities s ON s.Securities_Id = hv.Securities_Id
-        LEFT JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
-        WHERE hv.sec_type IN ('ETF','Mutual Fund')
-    ),
-    detail_combined AS (
-        SELECT * FROM direct_cash
-        UNION ALL SELECT * FROM direct_detail
-        UNION ALL SELECT * FROM fund_detail
     )
-    """
-        summary_query = holdings_cte + detail_cte + """
-    , totals AS (SELECT SUM(value_eur) AS grand_total FROM detail_combined)
-    SELECT style, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
-           ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct
-    FROM detail_combined GROUP BY style ORDER BY value_eur DESC
-    """
-        detail_query = holdings_cte + detail_cte + """
-    , style_totals AS (SELECT style, SUM(value_eur) AS style_total FROM detail_combined GROUP BY style)
-    SELECT dc.style, dc.securities_id, dc.name, dc.ticker,
-           ROUND(SUM(dc.value_eur)::numeric,2) AS value_eur,
-           ROUND((SUM(dc.value_eur)/NULLIF(st.style_total,0)*100)::numeric,2) AS pct
-    FROM detail_combined dc JOIN style_totals st ON st.style = dc.style
-    GROUP BY dc.style, dc.securities_id, dc.name, dc.ticker, st.style_total
-    ORDER BY dc.style, value_eur DESC
+    SELECT name, value_eur FROM direct_cash
     """
         with get_db() as conn:
-            summary_df = pd.read_sql(summary_query, conn, params=pit_params)
-            detail_df = pd.read_sql(detail_query, conn, params=pit_params)
-        return {"summary": _df_to_list(summary_df), "detail": _df_to_list(detail_df)}
+            hold_df = pd.read_sql(holdings_query, conn, params=pit_params)
+            cash_df = pd.read_sql(cash_query, conn, params=pit_params)
+        items = []
+        for r in hold_df.to_dict(orient="records"):
+            value = float(r["value_eur"] or 0)
+            base = {"securities_id": int(r["securities_id"]), "name": r["name"], "ticker": r["ticker"], "value_eur": round(value, 2)}
+            if r["sec_type"] in ("ETF", "Mutual Fund"):
+                items.append({**base, "kind": "Fund", **_fund_style_row(r)})
+            else:
+                kind = {"Stock": "Direct Stocks", "Bond": "Direct Bonds"}.get(r["sec_type"], "Direct Other")
+                items.append({**base, "kind": kind, "style_box": None, "other": kind, "category": kind, "broad_category": kind,
+                              "manual_style": False, "manual_category": False})
+        for r in cash_df.to_dict(orient="records"):
+            if r["value_eur"] is None or pd.isna(r["value_eur"]):
+                continue
+            items.append({"securities_id": None, "name": r["name"], "ticker": None, "value_eur": round(float(r["value_eur"]), 2), "kind": "Cash",
+                          "style_box": None, "other": "Cash", "category": "Cash", "broad_category": "Cash",
+                          "manual_style": False, "manual_category": False})
+        return {"items": [i for i in items if i["value_eur"]]}
 
     result = _run(None)
     if compare_date:

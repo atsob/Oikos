@@ -785,13 +785,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           it fetches that security's Yahoo metadata and creates the row in one click, no form to fill in.
         </Note>
         <Note>
-          Funds Yahoo doesn't report a Morningstar category for no longer collapse into one opaque "N/A" bucket
-          in Style Box — instead they're bucketed by their own dominant asset mix (e.g. <b>"Equity Fund (Uncategorized)"</b>,
-          "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
-          <b>"N/A (no data)"</b> only when the fund has no cached composition at all. To assign a real category,
-          open that fund's Security Detail → <b>Composition</b> tab and pick one from the dropdown
-          there — besides the US style-box squares it offers bond types (Money Market, Inflation-Linked, Corporate, Government …), regional equity
-          (Europe, Emerging Markets, China Region …) and sector or thematic equity (Technology, Utilities, Natural Resources, Equity Precious Metals …);
+          <b>Style Box</b> has two views. <b>Style Box</b> shows Morningstar's two 3×3 grids — equity funds by size (large, mid, small) and
+          style (value, blend, growth), bond funds by credit quality (high, medium, low) and duration (limited, moderate, extensive) —
+          each square with its value, its weight and, with a compare date, the change in points; a table below holds what has no grid
+          (direct stocks and bonds, cash, commodity and money-market funds, funds Morningstar does not cover). <b>Category</b> shows
+          Morningstar's Category of each fund (<i>Global Large-Cap Blend Equity</i>, <i>EUR Corporate Bond</i> …), or its coarser broad
+          group with the <b>Broad groups</b> box. Click a square, a row or a bar to list the securities in it, with their Style Box and
+          Category (a ✎ marks one set by hand). Morningstar's Style Box and Category are fetched by ISIN (Market Data → Downloads →
+          <b>Morningstar</b>, or the monthly <b>Morningstar Category &amp; Style Box</b> scheduler job), together with a bond fund's
+          <b>Duration</b> and <b>Maturity</b> (effective, in years — Yahoo's figures for these are not used). To set one yourself — for a
+          fund Morningstar does not cover — open that fund's Security Detail → <b>Composition</b> tab → <b>Morningstar</b> section: pick a
+          Style Box from the dropdown or type a Category; yours wins over Morningstar's and is never overwritten.
           Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
           Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
           physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it

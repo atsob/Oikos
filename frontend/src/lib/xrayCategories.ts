@@ -1,21 +1,14 @@
-// Manual category-override options for Portfolio X-Ray's Style Box view —
-// used when Yahoo doesn't supply a Morningstar-style category (mostly
-// non-US ETFs). Standard Morningstar equity style box + bond categories
-// (incl. money market and inflation-linked) + regional and sector equity
-// categories + catch-alls. The category is free text to the Style Box, which
-// simply groups funds by it, so adding an option here needs nothing else.
+// Manual Style Box options for Portfolio X-Ray's Style Box view — for a fund Morningstar's own Style Box (fetched by ISIN, see
+// data/morningstar.py) does not cover. The same 3x3 grids Morningstar uses: size by style for equity funds, credit quality by
+// interest-rate sensitivity for bond funds; plus catch-alls for funds with no grid (commodities, allocation funds).
 export const STYLE_BOX_CATEGORIES = [
   'Large Value', 'Large Blend', 'Large Growth',
   'Mid-Cap Value', 'Mid-Cap Blend', 'Mid-Cap Growth',
   'Small Value', 'Small Blend', 'Small Growth',
-  'Money Market', 'Ultrashort Bond', 'Short-Term Bond', 'Intermediate Core Bond', 'Intermediate Core-Plus Bond', 'Long-Term Bond',
-  'High Yield Bond', 'Inflation-Linked Bond', 'Corporate Bond', 'Government Bond', 'World Bond', 'Emerging Markets Bond',
-  // Regional equity — Morningstar's own categories are mostly regional, not just the US style box
-  'Global Stock', 'Europe Stock', 'Eurozone Stock', 'Emerging Markets Stock', 'China Region Stock', 'Latin America Stock', 'Asia Pacific Stock',
-  // Sector / thematic equity
-  'Technology', 'Health', 'Financial', 'Communications', 'Consumer Cyclical', 'Consumer Defensive', 'Industrials', 'Utilities', 'Real Estate',
-  'Equity Energy', 'Natural Resources', 'Equity Precious Metals', 'Infrastructure', 'Miscellaneous Sector',
-  'Commodities', 'Allocation', 'Other',
+  'High Quality / Limited Duration', 'High Quality / Moderate Duration', 'High Quality / Extensive Duration',
+  'Medium Quality / Limited Duration', 'Medium Quality / Moderate Duration', 'Medium Quality / Extensive Duration',
+  'Low Quality / Limited Duration', 'Low Quality / Moderate Duration', 'Low Quality / Extensive Duration',
+  'Money Market', 'Commodities', 'Allocation', 'Other',
 ]
 
 // Manual asset-class override options for X-Ray's Asset Allocation view — for

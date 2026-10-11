@@ -218,6 +218,20 @@ def set_security_category_override(sec_id: int, data: dict):
     return {"id": sec_id}
 
 
+@router.patch("/{sec_id}/fund-composition/morningstar-category-override")
+def set_security_morningstar_category_override(sec_id: int, data: dict):
+    """Manual Morningstar Category, for a fund Morningstar does not cover (data/morningstar.py never touches it)."""
+    category = (str(data.get("category") or "").strip() or None)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO Fund_Composition (Securities_Id, Morningstar_Category_Override)
+            VALUES (%s, %s)
+            ON CONFLICT (Securities_Id) DO UPDATE SET Morningstar_Category_Override = EXCLUDED.Morningstar_Category_Override
+        """, (sec_id, category))
+    return {"id": sec_id}
+
+
 @router.patch("/{sec_id}/fund-composition/asset-class-override")
 def set_security_asset_class_override(sec_id: int, data: dict):
     """Manually pin a fund's entire value to one X-Ray asset class — for funds

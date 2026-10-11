@@ -935,99 +935,161 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
   )
 }
 
+// One holding of the Style Box report (api/routers/reports.py::get_xray_style_box): a direct holding, a cash account or a fund.
+type StyleItem = {
+  securities_id: number | null; name: string; ticker: string | null; value_eur: number; kind: string
+  style_box: string | null; other: string; category: string; broad_category: string; manual_style: boolean; manual_category: boolean
+}
+
+// Morningstar's two 3x3 grids. Equity: size (rows) by style (columns). Bond: credit quality (rows) by interest-rate sensitivity (columns).
+const EQUITY_GRID = {
+  rows: [{ name: 'Large', label: 'Large' }, { name: 'Mid-Cap', label: 'Mid' }, { name: 'Small', label: 'Small' }],
+  cols: ['Value', 'Blend', 'Growth'],
+  cell: (r: string, c: string) => `${r} ${c}`,
+}
+const BOND_GRID = {
+  rows: [{ name: 'High', label: 'High quality' }, { name: 'Medium', label: 'Medium quality' }, { name: 'Low', label: 'Low quality' }],
+  cols: ['Limited', 'Moderate', 'Extensive'],
+  cell: (r: string, c: string) => `${r} Quality / ${c} Duration`,
+}
+
 function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data, isLoading } = useQuery({ queryKey: ['xray', 'style-box', accountIds, compareDate], queryFn: () => getXrayStyleBox(accountIds, compareDate), refetchInterval: liveRefetchMs })
-  const resp = data as { summary: Row[]; detail: Row[]; compare?: { summary: Row[] }; compare_date?: string } | undefined
-  const rows = resp?.summary ?? []
-  const detail = resp?.detail ?? []
-  const compareMap = useMemo(() => {
-    const m: Record<string, Row> = {}
-    for (const r of resp?.compare?.summary ?? []) m[String(r.style)] = r
-    return m
-  }, [resp])
-  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows, 'value_eur', 'desc')
-  const [selectedStyle, setSelectedStyle] = useState<string | null>(null)
-  const detailRows = selectedStyle ? detail.filter(r => String(r.style) === selectedStyle) : []
+  const resp = data as { items: StyleItem[]; compare?: { items: StyleItem[] }; compare_date?: string } | undefined
+  const items = useMemo(() => resp?.items ?? [], [resp])
+  const [view, setView] = usePersist<'grid' | 'category'>('xray_stylebox_view', 'grid')
+  const [broad, setBroad] = usePersist<boolean>('xray_stylebox_broad', false)
+  const [selected, setSelected] = useState<string | null>(null)
 
-  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
-  return (
-    <div className="space-y-4">
-      <Plot
-        data={[
-          {
-            x: rows.map(r => Number(r.value_eur)), y: rows.map(r => String(r.style)),
-            type: 'bar', orientation: 'h', text: rows.map(r => fmtEur(Number(r.value_eur))), textposition: 'outside',
-            name: 'Current',
-            marker: { color: rows.map(r => String(r.style) === selectedStyle ? '#047857' : '#10b981') },
-          },
-          ...(compareDate ? [{
-            x: rows.map(r => { const c = compareMap[String(r.style)]; return c ? Number(c.value_eur) : null }),
-            y: rows.map(r => String(r.style)),
-            type: 'bar' as const, orientation: 'h' as const,
-            text: rows.map(r => { const c = compareMap[String(r.style)]; return c ? fmtEur(Number(c.value_eur)) : '' }),
-            textposition: 'outside' as const,
-            name: `As of ${compareDate}`,
-            marker: { color: '#a3a3a3' },
-          }] : []),
-        ]}
-        layout={{ height: Math.max(280, rows.length * 32), margin: { t: 10, r: 100, b: 40, l: 220 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, barmode: 'group', showlegend: !!compareDate, legend: { orientation: 'h', y: -0.1 }, ...plotLayout(isDark) }}
-        config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
-        onClick={(e: { points?: { y?: string }[] }) => {
-          const label = e?.points?.[0]?.y
-          if (label) setSelectedStyle(c => c === label ? null : label)
-        }} />
-      <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-slate-50">
-            <tr className="bg-slate-50 text-xs text-slate-500">
-              <ColHeader label="Category" sortKey="style" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
-              {compareDate && <>
-                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
-                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
-                <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ pp</th>
-              </>}
-            </tr>
+  const groupOf = (i: StyleItem) => view === 'grid' ? (i.style_box ?? i.other) : (broad ? i.broad_category : i.category)
+  const summarize = (list: StyleItem[]) => {
+    const m: Record<string, number> = {}
+    for (const i of list) { const g = groupOf(i); m[g] = (m[g] ?? 0) + i.value_eur }
+    return m
+  }
+  const total = items.reduce((s, i) => s + i.value_eur, 0)
+  const cmpTotal = (resp?.compare?.items ?? []).reduce((s, i) => s + i.value_eur, 0)
+  const cur = useMemo(() => summarize(items), [items, view, broad])           // eslint-disable-line react-hooks/exhaustive-deps
+  const cmp = useMemo(() => summarize(resp?.compare?.items ?? []), [resp, view, broad])   // eslint-disable-line react-hooks/exhaustive-deps
+  const pctOf = (v: number, t: number) => t ? v / t * 100 : 0
+  const rows = Object.keys({ ...cur, ...cmp }).map(g => ({ style: g, value_eur: cur[g] ?? 0, pct: pctOf(cur[g] ?? 0, total), cmpValue: cmp[g] ?? null, cmpPct: cmp[g] != null ? pctOf(cmp[g], cmpTotal) : null }))
+  const { sorted, sortKey, sortDir, toggleSort } = useSortTable(rows.filter(r => r.value_eur || r.cmpValue), 'value_eur', 'desc')
+  const gridLabels = new Set<string>([...EQUITY_GRID.rows.flatMap(r => EQUITY_GRID.cols.map(c => EQUITY_GRID.cell(r.name, c))), ...BOND_GRID.rows.flatMap(r => BOND_GRID.cols.map(c => BOND_GRID.cell(r.name, c)))])
+  const otherRows = sorted.filter(r => !gridLabels.has(r.style))
+  const detailRows = selected ? items.filter(i => groupOf(i) === selected).sort((a, b) => b.value_eur - a.value_eur) : []
+  const detailTotal = detailRows.reduce((s, i) => s + i.value_eur, 0)
+  const pick = (g: string) => setSelected(c => c === g ? null : g)
+
+  const delta = (g: string) => {
+    if (!compareDate) return null
+    const d = pctOf(cur[g] ?? 0, total) - pctOf(cmp[g] ?? 0, cmpTotal)
+    return Math.abs(d) < 0.05 ? null : d
+  }
+
+  const Grid = ({ title, grid, rowHead, colHead }: { title: string; grid: typeof EQUITY_GRID; rowHead: string; colHead: string }) => {
+    const labels = grid.rows.flatMap(r => grid.cols.map(c => grid.cell(r.name, c)))
+    const max = Math.max(1, ...labels.map(l => cur[l] ?? 0))
+    const sum = labels.reduce((s, l) => s + (cur[l] ?? 0), 0)
+    return (
+      <div className="flex-1 min-w-[300px]">
+        <div className="flex items-baseline justify-between mb-1">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
+          <p className="text-xs text-slate-400">{fmtEur(sum)} · {fmtPct(pctOf(sum, total))}</p>
+        </div>
+        <table className="w-full border-collapse text-xs table-fixed">
+          <thead>
+            <tr><th className="w-24 text-left px-1 py-1 text-slate-400 font-normal">{rowHead} ↓ / {colHead} →</th>
+              {grid.cols.map(c => <th key={c} className="px-1 py-1 text-slate-500 font-medium text-center">{c}</th>)}</tr>
           </thead>
           <tbody>
-            {sorted.map((r, i) => {
-              const style = String(r.style)
-              const cmp = compareMap[style]
-              const cmpValue = cmp ? Number(cmp.value_eur) : null
-              const cmpDeltaValue = cmpValue != null ? Number(r.value_eur) - cmpValue : null
-              const cmpDeltaPct = cmp ? Number(r.pct) - Number(cmp.pct) : null
-              return (
-                <tr key={i} onClick={() => setSelectedStyle(c => c === style ? null : style)}
-                  className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selectedStyle === style ? 'bg-emerald-50' : ''}`}>
-                  <td className="px-2 py-1.5">{style}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
-                  {compareDate && <>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{cmpValue != null ? fmtEur(cmpValue) : '—'}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaValue != null && cmpDeltaValue > 0 ? 'text-green-600' : cmpDeltaValue != null && cmpDeltaValue < 0 ? 'text-red-500' : ''}`}>
-                      {cmpDeltaValue != null ? `${cmpDeltaValue > 0 ? '+' : ''}${fmtEur(cmpDeltaValue)}` : '—'}
+            {grid.rows.map(r => (
+              <tr key={r.name}>
+                <th className="px-1 py-1 text-left text-slate-500 font-medium">{r.label}</th>
+                {grid.cols.map(c => {
+                  const l = grid.cell(r.name, c); const v = cur[l] ?? 0; const d = delta(l)
+                  return (
+                    <td key={c} onClick={() => v || cmp[l] ? pick(l) : undefined} title={l}
+                      className={`border border-slate-200 text-center align-middle h-16 ${v || cmp[l] ? 'cursor-pointer hover:ring-2 hover:ring-emerald-400' : ''} ${selected === l ? 'ring-2 ring-emerald-600' : ''}`}
+                      style={{ backgroundColor: v ? `rgba(16,185,129,${(0.1 + 0.55 * v / max).toFixed(2)})` : undefined }}>
+                      {v ? <>
+                        <div className="font-semibold tabular-nums">{fmtEur(v)}</div>
+                        <div className="text-[11px] opacity-70 tabular-nums">{fmtPct(pctOf(v, total))}</div>
+                      </> : <span className="text-slate-300">{cmp[l] ? '€0' : '—'}</span>}
+                      {d != null && <div className={`text-[10px] tabular-nums ${d > 0 ? 'text-green-700' : 'text-red-600'}`}>{d > 0 ? '+' : ''}{d.toFixed(1)} pp</div>}
                     </td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${cmpDeltaPct != null && cmpDeltaPct > 0 ? 'text-green-600' : cmpDeltaPct != null && cmpDeltaPct < 0 ? 'text-red-500' : ''}`}>
-                      {cmpDeltaPct != null ? `${cmpDeltaPct > 0 ? '+' : ''}${cmpDeltaPct.toFixed(2)}%` : '—'}
-                    </td>
-                  </>}
-                </tr>
-              )
-            })}
+                  )
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      </WithCopy>
+    )
+  }
 
-      {selectedStyle && (
+  if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+  const catRows = sorted
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <div className="inline-flex rounded-md border border-slate-200 overflow-hidden">
+          {([['grid', 'Style Box'], ['category', 'Category']] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => { setView(k); setSelected(null) }}
+              className={`px-3 py-1.5 ${view === k ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>{label}</button>
+          ))}
+        </div>
+        {view === 'category' && (
+          <label className="flex items-center gap-1.5 text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={broad} onChange={e => { setBroad(e.target.checked); setSelected(null) }} className="rounded" />
+            Broad groups (Morningstar's coarser category)
+          </label>
+        )}
+        <span className="text-slate-400">{view === 'grid'
+          ? "Morningstar's Style Box: size × style for equity funds, credit quality × duration for bond funds — worked out from each fund's holdings."
+          : "Morningstar's Category of each fund — what the fund is."}</span>
+      </div>
+
+      {view === 'grid' ? (
+        <>
+          <div className="flex flex-wrap gap-6">
+            <Grid title="Equity funds" grid={EQUITY_GRID} rowHead="Size" colHead="Style" />
+            <Grid title="Bond funds" grid={BOND_GRID} rowHead="Credit" colHead="Duration" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Without a grid</p>
+            <p className="text-xs text-slate-400 mb-2">Direct holdings, cash, and funds Morningstar gives no Style Box (commodity and money-market funds, funds it does not cover).</p>
+            <StyleTable rows={otherRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head="Group" />
+          </div>
+        </>
+      ) : (
+        <>
+          <Plot
+            data={[
+              {
+                x: catRows.map(r => r.value_eur), y: catRows.map(r => r.style),
+                type: 'bar', orientation: 'h', text: catRows.map(r => fmtEur(r.value_eur)), textposition: 'outside', name: 'Current',
+                marker: { color: catRows.map(r => r.style === selected ? '#047857' : '#10b981') },
+              },
+              ...(compareDate ? [{
+                x: catRows.map(r => r.cmpValue), y: catRows.map(r => r.style), type: 'bar' as const, orientation: 'h' as const,
+                text: catRows.map(r => r.cmpValue != null ? fmtEur(r.cmpValue) : ''), textposition: 'outside' as const,
+                name: `As of ${compareDate}`, marker: { color: '#a3a3a3' },
+              }] : []),
+            ]}
+            layout={{ height: Math.max(280, catRows.length * 32), margin: { t: 10, r: 100, b: 40, l: 260 }, xaxis: { tickformat: ',.0f', tickprefix: '€' }, yaxis: { autorange: 'reversed' }, barmode: 'group', showlegend: !!compareDate, legend: { orientation: 'h', y: -0.1 }, ...plotLayout(isDark) }}
+            config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }}
+            onClick={(e: { points?: { y?: string }[] }) => { const label = e?.points?.[0]?.y; if (label) pick(label) }} />
+          <StyleTable rows={catRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head={broad ? 'Broad category' : 'Category'} />
+        </>
+      )}
+
+      {selected && (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selectedStyle}"</p>
-            <button onClick={() => setSelectedStyle(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Securities in "{selected}"</p>
+            <button onClick={() => setSelected(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy scrollKey="xray-style-box-securities">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
@@ -1035,16 +1097,20 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200">Security</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Style Box</th>
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200">Category</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200">Value (€)</th>
-                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selectedStyle})</th>
+                  <th className="text-right px-2 py-1.5 border-b border-slate-200">Weight % (of {selected})</th>
                 </tr>
               </thead>
               <tbody>
                 {detailRows.map((r, i) => (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="px-2 py-1.5"><SecLink id={r.securities_id}>{String(r.name)}</SecLink></td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.value_eur))}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(Number(r.pct))}</td>
+                    <td className="px-2 py-1.5">{r.securities_id != null ? <SecLink id={r.securities_id}>{r.name}</SecLink> : r.name}</td>
+                    <td className="px-2 py-1.5 text-slate-600">{r.kind === 'Fund' ? (r.style_box ?? '—') : ''}{r.manual_style && <span title="Set by hand on the fund's page" className="ml-1 text-slate-400">✎</span>}</td>
+                    <td className="px-2 py-1.5 text-slate-600">{r.kind === 'Fund' ? (broad && view === 'category' ? r.broad_category : r.category) : ''}{r.manual_category && <span title="Set by hand on the fund's page" className="ml-1 text-slate-400">✎</span>}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(r.value_eur)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(pctOf(r.value_eur, detailTotal))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1054,6 +1120,51 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
         </div>
       )}
     </div>
+  )
+}
+
+function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected, pick, head }: {
+  rows: { style: string; value_eur: number; pct: number; cmpValue: number | null; cmpPct: number | null }[]
+  sortKey: string | null; sortDir: 'asc' | 'desc'; toggleSort: (k: string) => void; compareDate?: string; selected: string | null; pick: (g: string) => void; head: string
+}) {
+  return (
+    <WithCopy>
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <table className="w-full border-collapse">
+        <thead className="sticky top-0 z-10 bg-slate-50">
+          <tr className="bg-slate-50 text-xs text-slate-500">
+            <ColHeader label={head} sortKey="style" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Value (€)" sortKey="value_eur" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            <ColHeader label="Weight %" sortKey="pct" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} align="right" className="px-2 py-1.5 border-b border-slate-200" />
+            {compareDate && <>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">As of {compareDate} (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ Value (€)</th>
+              <th className="text-right px-2 py-1.5 border-b border-slate-200 bg-amber-50">Δ pp</th>
+            </>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const dv = r.cmpValue != null ? r.value_eur - r.cmpValue : r.value_eur
+            const dp = r.cmpPct != null ? r.pct - r.cmpPct : r.pct
+            return (
+              <tr key={r.style} onClick={() => pick(r.style)}
+                className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selected === r.style ? 'bg-emerald-50' : ''}`}>
+                <td className="px-2 py-1.5">{r.style}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(r.value_eur)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtPct(r.pct)}</td>
+                {compareDate && <>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-500 bg-amber-50/50">{r.cmpValue != null ? fmtEur(r.cmpValue) : '—'}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${dv > 0 ? 'text-green-600' : dv < 0 ? 'text-red-500' : ''}`}>{dv > 0 ? '+' : ''}{fmtEur(dv)}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium bg-amber-50/50 ${dp > 0 ? 'text-green-600' : dp < 0 ? 'text-red-500' : ''}`}>{dp > 0 ? '+' : ''}{dp.toFixed(2)}%</td>
+                </>}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+    </WithCopy>
   )
 }
 

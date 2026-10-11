@@ -413,6 +413,9 @@ export const downloadStockSplits = (securityId?: number) =>
 export const downloadFundComposition = (securityId?: number) =>
   api.post('/market-data/download/fund-composition', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
+export const downloadMorningstar = (securityId?: number) =>
+  api.post('/market-data/download/morningstar', securityId ? { security_id: securityId } : {}).then(r => r.data)
+
 export const downloadFundamentals = (securityId?: number) =>
   api.post('/market-data/download/fundamentals', securityId ? { security_id: securityId } : {}).then(r => r.data)
 
@@ -633,6 +636,9 @@ export const getSecurityFundMembership = (secId: number) =>
 
 export const setSecurityCategoryOverride = (secId: number, categoryOverride: string | null) =>
   api.patch(`/securities/${secId}/fund-composition/category-override`, { category_override: categoryOverride }).then(r => r.data)
+
+export const setSecurityMorningstarCategory = (secId: number, category: string | null) =>
+  api.patch(`/securities/${secId}/fund-composition/morningstar-category-override`, { category }).then(r => r.data)
 
 export const setSecurityAssetClassOverride = (secId: number, assetClassOverride: string | null) =>
   api.patch(`/securities/${secId}/fund-composition/asset-class-override`, { asset_class_override: assetClassOverride }).then(r => r.data)

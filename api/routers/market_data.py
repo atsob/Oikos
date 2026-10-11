@@ -717,6 +717,17 @@ def download_fund_composition_endpoint(data: dict = {}):
         raise HTTPException(500, str(e))
 
 
+@router.post("/download/morningstar")
+def download_morningstar_endpoint(data: dict = {}):
+    """Morningstar Category and Style Box of the active ETFs / funds, by ISIN (also runs after Download Fund Composition)."""
+    try:
+        from data.morningstar import download_morningstar
+        r = download_morningstar(target_sec_id=data.get("security_id"))
+        return {"ok": True, "message": f"Morningstar: {r['updated']} updated, {r['not_found']} not found, {r['errors']} error(s)"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/download/fundamentals")
 def download_fundamentals_endpoint(data: dict = {}):
     """Download stock financial statements from Yahoo Finance (Piotroski F-Score /

@@ -1600,7 +1600,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "local_watch_backtest", "fund_countries", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "local_watch_backtest", "fund_countries", "morningstar", "news_fetch", "fund_composition",
     "fundamentals", "shiller_cape", "interest_rates",
 }
 
@@ -1614,6 +1614,7 @@ _SEED_JOBS = [
     ("dividend_history",   "Dividend History",       "Downloads full historical dividend records for all tracked securities (heavy — runs weekly).",                     "Sunday at 06:30",                True),
     ("stock_splits",       "Stock Splits",           "Downloads stock split history for all tracked securities from Yahoo Finance and raises a dashboard alert for any newly discovered split.", "Sunday at 07:00", True),
     ("fund_countries",     "Fund Country Exposure",  "Refreshes the country breakdown of every held fund from its provider (iShares daily holdings, Vanguard market allocation, justETF) — funds whose breakdown was typed in by hand are left alone.", "5th of month at 07:30", True),
+    ("morningstar",        "Morningstar Category & Style Box", "Fetches the Morningstar Category and Style Box of every ETF and fund from Morningstar's public screener, by ISIN — values set by hand on the Security Detail page are left alone.", "6th of month at 07:30", True),
     ("credit_card_payments", "Credit Card Payment Amounts", "Recalculates the amount of every credit-card payment template from the card's balance at its latest statement date, so forecasts and drafts use the current figure.", "Daily at 05:45", True),
     ("saxo_token_refresh", "Saxo Login Keep-alive", "Refreshes the Saxo OpenAPI token every few minutes so the importer never needs re-authorising (Importers → Saxo Bank: connect once). Does nothing until Saxo is connected.", "Every 10 min, 24×7", True),
     ("market_watch",       "Market Watch",           "Refreshes the Market Watch snapshot — hyperscaler free cash flow, credit spreads, the 10-year Treasury yield and market breadth (Yahoo Finance, TradingView; FRED if a key is set).", "Every 360 min, 24×7", True),
@@ -1706,6 +1707,11 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "stock_splits":
             from data.downloaders import download_stock_splits
             download_stock_splits()
+        elif job_id == "morningstar":
+            from data.morningstar import download_morningstar
+            res = download_morningstar()
+            if res["errors"]:
+                raise RuntimeError(f"{res['errors']} fund(s) failed")
         elif job_id == "fund_countries":
             from data.country_exposure_downloader import download_country_exposure
             res = download_country_exposure()

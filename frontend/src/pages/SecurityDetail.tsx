@@ -17,7 +17,8 @@ import type { FundCountryRow } from '@/lib/api'
 import {
   getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
-  getSecurityFundComposition, getSecurityFundMembership, getFundCountryExposure, saveFundCountryExposure, clearFundCountryExposure, parseCountryText, getCountryList, getFundCountrySource, setFundCountrySource, downloadCountryExposure, getFundCurrencyExposure, saveFundCurrencyExposure, clearFundCurrencyExposure, setSecurityCategoryOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
+  getSecurityFundComposition, getSecurityFundMembership, getFundCountryExposure, saveFundCountryExposure, clearFundCountryExposure, parseCountryText, getCountryList, getFundCountrySource, setFundCountrySource, downloadCountryExposure, getFundCurrencyExposure, saveFundCurrencyExposure, clearFundCurrencyExposure, setSecurityCategoryOverride,
+  setSecurityMorningstarCategory, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
   getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
@@ -3096,6 +3097,15 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
       qc.invalidateQueries({ queryKey: ['xray'] })
     } finally { setSaving(false) }
   }
+  const [savingMsCategory, setSavingMsCategory] = useState(false)
+  const handleMsCategorySave = async (value: string) => {
+    setSavingMsCategory(true)
+    try {
+      await setSecurityMorningstarCategory(secId, value.trim() || null)
+      qc.invalidateQueries({ queryKey: ['sec-fund-composition', secId] })
+      qc.invalidateQueries({ queryKey: ['xray'] })
+    } finally { setSavingMsCategory(false) }
+  }
   const [savingAssetClass, setSavingAssetClass] = useState(false)
   const handleAssetClassChange = async (value: string) => {
     setSavingAssetClass(true)
@@ -3129,21 +3139,35 @@ function CompositionHoldingsTab({ secId }: { secId: number }) {
 
   return (
     <div className="p-5 space-y-4 max-w-4xl">
-      <CompositionSection title="Category">
-        <OverviewRow label="Morningstar / Manual Category" value={
+      <CompositionSection title="Morningstar">
+        <OverviewRow label="Morningstar Style Box" value={
           <select
             className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-            value={String(composition?.category_override ?? composition?.category_name ?? '')}
+            value={String(composition?.category_override ?? '')}
             disabled={saving}
             onChange={e => handleCategoryChange(e.target.value)}
           >
-            <option value="">— {composition?.category_name ? String(composition.category_name) : 'N/A (no Morningstar category)'} —</option>
+            <option value="">— {composition?.morningstar_style_box ? String(composition.morningstar_style_box) : composition?.category_name ? String(composition.category_name) : 'N/A (no Style Box)'} —</option>
             {STYLE_BOX_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         } />
         {composition && Boolean(composition.category_override) && (
-          <p className="text-xs text-slate-400 pb-1.5">Manually set — overrides Yahoo's category ({composition.category_name ? String(composition.category_name) : 'none reported'}) in Portfolio Analysis's Style Box.</p>
+          <p className="text-xs text-slate-400 pb-1.5">Set by hand — used in Portfolio Analysis's Style Box instead of Morningstar's ({composition.morningstar_style_box ? String(composition.morningstar_style_box) : 'none on file'}). Pick the first entry to go back to Morningstar's.</p>
         )}
+        <OverviewRow label="Morningstar Category" value={
+          <input
+            key={String(composition?.morningstar_category_override ?? '')}
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs w-72"
+            defaultValue={String(composition?.morningstar_category_override ?? '')}
+            placeholder={composition?.morningstar_category ? String(composition.morningstar_category) : composition?.category_name ? String(composition.category_name) : 'N/A — type one to set it by hand'}
+            disabled={savingMsCategory}
+            onBlur={e => { if (e.target.value.trim() !== String(composition?.morningstar_category_override ?? '')) handleMsCategorySave(e.target.value) }}
+          />
+        } />
+        <p className="text-xs text-slate-400 pb-1.5">
+          {composition?.morningstar_updated ? `Fetched from Morningstar ${String(composition.morningstar_updated).slice(0, 10)} (monthly job or Market Data → Downloads). ` : 'Fetched from Morningstar by ISIN (monthly job or Market Data → Downloads). '}
+          The Style Box is worked out from the fund's holdings — size and style for equity funds, credit quality and duration for bond funds; cash and commodity funds have a Category only. Leave the category blank to use Morningstar's.
+        </p>
       </CompositionSection>
 
       <CompositionSection title="Asset Allocation Class">

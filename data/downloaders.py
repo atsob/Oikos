@@ -1056,8 +1056,9 @@ _FUND_COMPOSITION_COLUMNS = [
     "Asset_Cash_Pct", "Asset_Stock_Pct", "Asset_Bond_Pct", "Asset_Preferred_Pct",
     "Asset_Convertible_Pct", "Asset_Other_Pct", "Sector_Weightings", "Category_Name",
     "Fund_Family", "Legal_Type", "Expense_Ratio_Pct", "Category_Avg_Expense_Ratio_Pct",
-    "Total_Net_Assets", "Holdings_Turnover_Pct", "Bond_Ratings", "Bond_Duration",
-    "Bond_Maturity", "Equity_PE", "Equity_PB", "Equity_PS", "Equity_PCF",
+    "Total_Net_Assets", "Holdings_Turnover_Pct", "Bond_Ratings",
+    # Bond_Duration / Bond_Maturity are no longer taken from Yahoo (often wrong for UCITS ETFs): data/morningstar.py fills them.
+    "Equity_PE", "Equity_PB", "Equity_PS", "Equity_PCF",
     "Equity_Median_Market_Cap", "Equity_3yr_Earnings_Growth_Pct",
 ]
 
@@ -1145,8 +1146,6 @@ def download_fund_composition(target_sec_id=None):
                 "Total_Net_Assets":          _df_val(ops_df, "Total Net Assets", own_col=True),
                 "Holdings_Turnover_Pct":     _df_val(ops_df, "Annual Holdings Turnover", own_col=True),
                 "Bond_Ratings":          Json(bond_ratings) if bond_ratings else None,
-                "Bond_Duration":         _df_val(bond_h_df, "Duration", own_col=True),
-                "Bond_Maturity":         _df_val(bond_h_df, "Maturity", own_col=True),
                 "Equity_PE":             _df_val(eq_h_df, "Price/Earnings", own_col=True),
                 "Equity_PB":             _df_val(eq_h_df, "Price/Book", own_col=True),
                 "Equity_PS":             _df_val(eq_h_df, "Price/Sales", own_col=True),
