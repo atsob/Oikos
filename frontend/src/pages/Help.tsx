@@ -790,7 +790,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "Bond Fund (Uncategorized)", "Allocation Fund (Uncategorized)"), falling back to{' '}
           <b>"N/A (no data)"</b> only when the fund has no cached composition at all. To assign a real category,
           open that fund's Security Detail → <b>Composition</b> tab and pick one from the dropdown
-          there; Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
+          there — besides the US style-box squares it offers bond types (Money Market, Inflation-Linked, Corporate, Government …), regional equity
+          (Europe, Emerging Markets, China Region …) and sector or thematic equity (Technology, Utilities, Natural Resources, Equity Precious Metals …);
+          Portfolio Analysis reflects it immediately. The same tab also has an <b>Asset Class Override</b> for Asset
           Allocation — useful when Yahoo's generic stock/bond/cash/other split misclassifies a fund (e.g. a
           physical commodity ETC lands 100% in "Other" since Yahoo has no commodity-specific bucket); setting it
           routes the fund's whole value to the class you pick instead. Similarly, direct bonds land in Bond
