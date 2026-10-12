@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-10-12
 
+### Changed
+- **Crypto Sector and Industry completed and tidied.** The three cryptos that had none now have one — EURC *Stablecoin / Fiat-pegged*, Solana *Smart Contract Platform / Layer 1* — and two that did not fit were reclassified: Dogecoin (uncapped supply, a meme coin used for tipping, not a store of value) is *Meme Coin / Peer-to-peer payments / tipping*, and DigiByte (a payments chain) is *Financial Infrastructure / Payments chain (UTXO Layer 1)*. Data only — no code change.
+
 ### Fixed
 - **Dashboard: YTD on Net Worth and Investments was far too high (+€95,853 and +€77,493 instead of about +€24,900 and +€6,400).** The year-end baseline was computed over the *active* accounts only, so what accounts that are now switched off (closed brokerage accounts, matured time deposits — about €71k of investments at the end of 2025) had held counted for nothing, and every euro that had moved to another account looked like new money. A switched-off account that now holds (almost) nothing is now kept in the history baseline; one that still holds something stays out, to match the current total. This also corrects the Net Worth Breakdown/Trend charts' past values when switched-off accounts are hidden.
 
