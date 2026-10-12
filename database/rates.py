@@ -26,7 +26,7 @@ from psycopg2.extras import execute_values
 from database.connection import get_db
 
 RATE_TYPES = ("Overnight", "Policy", "Target Upper", "Target Lower", "Other")
-PROVIDERS = ("ECB", "NYFED", "FRED", "MANUAL")
+PROVIDERS = ("ECB", "NYFED", "FRED", "BOE", "SNB", "BOC", "BOJ", "RBA", "MANUAL")
 
 # A policy-rate change stays an active insight for this many days.
 CHANGE_ALERT_DAYS = 14
@@ -38,6 +38,11 @@ MOVE_AVG_DAYS = 30
 _REVIEW_HINTS = {
     "EUR": "cash / money-market vs. short-bond split, bond-fund duration and any T-bill rollover maturities",
     "USD": "USD holdings (US stocks, USD cash/T-bills), EUR/USD exposure and gold",
+    "GBP": "GBP cash and holdings (UK stocks and gilts), and your EUR/GBP exposure",
+    "CHF": "CHF cash and holdings, and your EUR/CHF exposure (the franc is a safe-haven currency)",
+    "JPY": "JPY cash and holdings, and your exposure to the yen (a funding currency for carry trades)",
+    "CAD": "CAD cash and holdings, and your exposure to the Canadian dollar",
+    "AUD": "AUD cash and holdings, and your exposure to the Australian dollar",
 }
 
 

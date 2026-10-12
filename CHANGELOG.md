@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-13
+
+### Added
+- **Rates for GBP, CHF, CAD, JPY and AUD.** Market Data → Rates (and the Dashboard rate alerts) covered only EUR and USD. Each of the other main currencies now has its overnight benchmark and its policy rate, straight from the central bank — free, no API key: **GBP** *SONIA* and *Bank of England Bank Rate* (Bank of England database), **CHF** *SARON* and the *SNB policy rate* (SNB data portal), **CAD** *CORRA* and the *Bank of Canada target rate* (Bank of Canada Valet), **JPY** *TONA* and the *BoJ basic loan rate* (Bank of Japan time-series API; the policy rate itself is a target for the call rate, not a published series, so the basic loan rate — which moves with it — stands in for change alerts) and **AUD** *AONIA* and the *RBA cash rate target* (RBA statistical table). Each currency gets its own tile pair and chart, and the same alerts as EUR and USD (a policy-rate change in the last 14 days — today the RBA's raise to 4.60% on 30 Sep — and an overnight rate 0.15 pp or more from its 30-day average). Five new providers on a rate series (**BOE, SNB, BOC, BOJ, RBA**) alongside ECB, NYFED, FRED and MANUAL, so another central-bank rate is just a new series; any other currency (SEK, NOK, NZD …) can use FRED or MANUAL. The existing *Interest Rates* job picks the new series up; 12,600 rows back to January 2022 were downloaded. Restart the app and scheduler containers (the new providers and series are added at startup). A new install gets all of them too: the series are created with the other default rate series at startup, and the Australian dollar, which the starter data lacked, was added to its currencies so the AUD series is filed under it.
+
 ## 2026-10-12
 
 ### Added

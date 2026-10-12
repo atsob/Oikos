@@ -835,7 +835,7 @@ def _run_startup_migrations():
                Rate_Type       VARCHAR(20)  NOT NULL DEFAULT 'Overnight'
                                CHECK (Rate_Type IN ('Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other')),
                Provider        VARCHAR(20)  NOT NULL DEFAULT 'MANUAL'
-                               CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'MANUAL')),
+                               CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'BOE', 'SNB', 'BOC', 'BOJ', 'RBA', 'MANUAL')),
                Provider_Key    VARCHAR(200),
                Provider_Field  VARCHAR(50),
                Is_Active       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -861,6 +861,14 @@ def _run_startup_migrations():
                Is_Active           BOOLEAN NOT NULL DEFAULT TRUE,
                UNIQUE (Securities_Id, Rate_Series_Id)
            )""",
+        # The central-bank sources added for GBP, CHF, CAD, JPY and AUD (an existing install had the narrower list)
+        """DO $$ BEGIN
+               IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rate_series_provider_check' AND pg_get_constraintdef(oid) LIKE '%BOE%') THEN
+                   ALTER TABLE Rate_Series DROP CONSTRAINT IF EXISTS rate_series_provider_check;
+                   ALTER TABLE Rate_Series ADD CONSTRAINT rate_series_provider_check
+                       CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'BOE', 'SNB', 'BOC', 'BOJ', 'RBA', 'MANUAL'));
+               END IF;
+           END $$""",
         # Default series. ON CONFLICT only fills a missing currency, so it never overwrites an edit
         # (rename, deactivate, re-key) made from the UI.
         """INSERT INTO Rate_Series (Code, Name, Currencies_Id, Rate_Type, Provider, Provider_Key, Provider_Field, Sort_Order, Notes)
@@ -871,7 +879,17 @@ def _run_startup_migrations():
                ('SOFR',      'Secured overnight financing rate (SOFR)', 'USD', 'Overnight', 'NYFED', 'secured/sofr',        'percentRate',    30, 'U.S. dollar counterpart of €STR, based on overnight Treasury repo.'),
                ('EFFR',      'Effective federal funds rate (EFFR)',     'USD', 'Overnight', 'NYFED', 'unsecured/effr',     'percentRate',    40, 'Volume-weighted median of overnight unsecured interbank lending.'),
                ('FED_UPPER', 'Fed funds target (upper bound)',  'USD', 'Target Upper', 'NYFED', 'unsecured/effr',            'targetRateTo',   50, 'FOMC target range, from the targetRateTo field of the NY Fed EFFR feed.'),
-               ('FED_LOWER', 'Fed funds target (lower bound)',  'USD', 'Target Lower', 'NYFED', 'unsecured/effr',            'targetRateFrom', 60, 'FOMC target range, from the targetRateFrom field of the NY Fed EFFR feed.')
+               ('FED_LOWER', 'Fed funds target (lower bound)',  'USD', 'Target Lower', 'NYFED', 'unsecured/effr',            'targetRateFrom', 60, 'FOMC target range, from the targetRateFrom field of the NY Fed EFFR feed.'),
+               ('SONIA',     'Sterling Overnight Index Average (SONIA)', 'GBP', 'Overnight', 'BOE',   'IUDSOIA',                NULL::text,       70, 'Bank of England: the sterling overnight benchmark (unsecured), published each London business day.'),
+               ('BOE_BANK',  'Bank of England Bank Rate',       'GBP', 'Policy',       'BOE',   'IUDBEDR',                    NULL::text,       80, 'The Bank of England policy rate.'),
+               ('SARON',     'Swiss Average Rate Overnight (SARON)', 'CHF', 'Overnight', 'SNB',  'snbgwdzid/SARON',         NULL::text,       90, 'Swiss National Bank data portal: the Swiss franc overnight benchmark (secured, repo-based).'),
+               ('SNB_POLICY', 'SNB policy rate',                'CHF', 'Policy',       'SNB',   'snbgwdzid/LZ',               NULL::text,      100, 'The Swiss National Bank policy rate (Leitzins).'),
+               ('CORRA',     'Canadian Overnight Repo Rate Average (CORRA)', 'CAD', 'Overnight', 'BOC', 'AVG.INTWO',          NULL::text,      110, 'Bank of Canada Valet: the Canadian dollar overnight benchmark (repo-based).'),
+               ('BOC_TARGET', 'Bank of Canada target rate',     'CAD', 'Policy',       'BOC',   'V39079',                     NULL::text,      120, 'The Bank of Canada target for the overnight rate.'),
+               ('TONA',      'Tokyo Overnight Average rate (TONA)', 'JPY', 'Overnight', 'BOJ',  'FM01/STRDCLUCON',            NULL::text,      130, 'Bank of Japan: uncollateralised overnight call rate (daily average) — the yen overnight benchmark.'),
+               ('BOJ_BASIC', 'BoJ basic loan rate',             'JPY', 'Policy',       'BOJ',   'IR01/MADR1Z@D',              NULL::text,      140, 'The Bank of Japan basic discount / loan rate: it moves with the policy rate, so it shows when the BoJ changes it (the policy rate itself is a target for the call rate, not a published series).'),
+               ('AONIA',     'Australian overnight cash rate (AONIA)', 'AUD', 'Overnight', 'RBA',  'f1-data/FIRMMCRID',       NULL::text,      150, 'Reserve Bank of Australia: interbank overnight cash rate.'),
+               ('RBA_CASH',  'RBA cash rate target',            'AUD', 'Policy',       'RBA',   'f1-data/FIRMMCRTD',          NULL::text,      160, 'The Reserve Bank of Australia cash rate target.')
            ) AS v(code, name, ccy, rate_type, provider, pkey, pfield, ord, notes)
            LEFT JOIN Currencies c ON c.Currencies_ShortName = v.ccy
            ON CONFLICT (Code) DO UPDATE

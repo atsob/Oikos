@@ -3,6 +3,7 @@ import math
 import yfinance as yf
 import pdfplumber
 import requests
+import csv
 import io
 import re
 import time
@@ -2700,7 +2701,12 @@ def download_interest_rates(codes=None, backfill_from: str = "2022-01-01"):
              Provider_Field the JSON field to store (default percentRate; targetRateTo /
              targetRateFrom give the Fed target range). Series sharing a path are fetched once.
       FRED   Provider_Key is a FRED series id; needs FRED_API_KEY (free at fred.stlouisfed.org).
-             This is the route for other currencies (e.g. JPY, GBP).
+      BOE    Bank of England statistical database; Provider_Key a series code (IUDBEDR Bank Rate, IUDSOIA SONIA).
+      SNB    Swiss National Bank data portal; Provider_Key "cube/series" (snbgwdzid/SARON, snbgwdzid/LZ policy rate).
+      BOC    Bank of Canada Valet API; Provider_Key a series code (V39079 target rate, AVG.INTWO CORRA).
+      BOJ    Bank of Japan time-series API; Provider_Key "db/code" (FM01/STRDCLUCON call rate, IR01/MADR1Z@D basic loan rate).
+      RBA    Reserve Bank of Australia statistical table; Provider_Key "table/series id" (f1-data/FIRMMCRTD cash rate target).
+      All of these are free and keyless; a series in any other currency is a FRED or MANUAL series.
       MANUAL values are typed in on Market Data -> Rates; never downloaded.
     Each series fetches only from a few days before its latest stored date (an overlap, so a
     revised print is picked up), or from `backfill_from` the first time. A failure in one source
@@ -2735,6 +2741,23 @@ def download_interest_rates(codes=None, backfill_from: str = "2022-01-01"):
                     raise
                 time.sleep(3 * attempt)
 
+    snb_cache: dict = {}        # one download per SNB cube (it holds every series)
+    rba_cache: dict = {}        # one download per RBA table
+
+    def _snb_cube(cube):
+        if cube not in snb_cache:
+            resp = _get(f"https://data.snb.ch/api/cube/{cube}/data/csv/en", None, "SNB")
+            snb_cache[cube] = pd.read_csv(io.StringIO(resp.text), sep=";", skiprows=3, quotechar='"')
+        return snb_cache[cube]
+
+    def _rba_table(name):
+        if name not in rba_cache:
+            # The RBA's site refuses a browser-like User-Agent from a script, and serves a plain one
+            resp = requests.get(f"https://www.rba.gov.au/statistics/tables/csv/{name}.csv", timeout=90, headers={"User-Agent": "curl/8.4.0"})
+            resp.raise_for_status()
+            rba_cache[name] = list(csv.reader(io.StringIO(resp.text)))
+        return rba_cache[name]
+
     # NY Fed: group series by path so a feed shared by several series (EFFR + the Fed target
     # range) is requested once, from the earliest start any of them needs.
     nyfed_cache: dict = {}
@@ -2759,6 +2782,63 @@ def download_interest_rates(codes=None, backfill_from: str = "2022-01-01"):
                 for r in nyfed_cache[key][1]:
                     if r.get(field) is not None and r["effectiveDate"] >= start:
                         rows.append((int(d.id), r["effectiveDate"], float(r[field]), "NY Fed"))
+
+            elif d.provider == "BOE":
+                start = datetime.strptime(_start(d), "%Y-%m-%d")
+                resp = _get("https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp",
+                            {"csv.x": "yes", "Datefrom": start.strftime("%d/%b/%Y"), "Dateto": "now", "SeriesCodes": d.provider_key,
+                             "CSVF": "TN", "UsingCodes": "Y", "VPD": "Y", "VFD": "N"}, "BOE")
+                df = pd.read_csv(io.StringIO(resp.text))
+                for day, val in zip(df["DATE"], df[d.provider_key]):
+                    if pd.notna(val):
+                        rows.append((int(d.id), datetime.strptime(str(day).strip(), "%d %b %Y").date().isoformat(), float(val), "Bank of England"))
+
+            elif d.provider == "SNB":
+                cube, series = d.provider_key.split("/", 1)
+                df = _snb_cube(cube)
+                df = df[(df["D0"] == series) & (df["Date"].astype(str) >= _start(d))]
+                for day, val in zip(df["Date"], df["Value"]):
+                    if pd.notna(val) and len(str(day)) == 10:         # daily rows only (a cube can mix in monthly ones)
+                        rows.append((int(d.id), str(day), float(val), "SNB"))
+
+            elif d.provider == "BOC":
+                resp = _get(f"https://www.bankofcanada.ca/valet/observations/{d.provider_key}/json", {"start_date": _start(d)}, "BOC")
+                for o in resp.json().get("observations", []):
+                    v = (o.get(d.provider_key) or {}).get("v")
+                    if v not in (None, ""):
+                        rows.append((int(d.id), o["d"], float(v), "Bank of Canada"))
+
+            elif d.provider == "BOJ":
+                db, code = d.provider_key.split("/", 1)
+                start = _start(d)
+                position = None
+                while True:                                           # the API pages long series (NEXTPOSITION)
+                    params = {"format": "json", "lang": "en", "db": db, "code": code, "startDate": start[:4] + start[5:7]}
+                    if position:
+                        params["startPosition"] = position
+                    j = _get("https://www.stat-search.boj.or.jp/api/v1/getDataCode", params, "BOJ").json()
+                    for rs in j.get("RESULTSET", []):
+                        vals = rs.get("VALUES") or {}
+                        for day, val in zip(vals.get("SURVEY_DATES", []), vals.get("VALUES", [])):
+                            if val is not None:
+                                iso = f"{str(day)[:4]}-{str(day)[4:6]}-{str(day)[6:8]}"
+                                if iso >= start:
+                                    rows.append((int(d.id), iso, float(val), "Bank of Japan"))
+                    position = j.get("NEXTPOSITION")
+                    if not position:
+                        break
+
+            elif d.provider == "RBA":
+                table, series = d.provider_key.split("/", 1)
+                grid = _rba_table(table)
+                head = next(r for r in grid if r and r[0].strip() == "Series ID")
+                col = head.index(series)
+                start = _start(d)
+                for r in grid:
+                    if len(r) > col and r[col].strip() and re.match(r"\d{2}-[A-Za-z]{3}-\d{4}$", r[0].strip()):
+                        iso = datetime.strptime(r[0].strip(), "%d-%b-%Y").date().isoformat()
+                        if iso >= start:
+                            rows.append((int(d.id), iso, float(r[col]), "RBA"))
 
             elif d.provider == "FRED":
                 api_key = ENV_CONFIG.get("fred_api_key", "")

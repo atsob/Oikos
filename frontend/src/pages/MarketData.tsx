@@ -1081,11 +1081,16 @@ interface RateTrackingDef {
 }
 
 const RATE_TYPES = ['Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other']
-const RATE_PROVIDERS = ['ECB', 'NYFED', 'FRED', 'MANUAL']
+const RATE_PROVIDERS = ['ECB', 'NYFED', 'FRED', 'BOE', 'SNB', 'BOC', 'BOJ', 'RBA', 'MANUAL']
 const KEY_HINTS: Record<string, string> = {
   ECB: 'ECB Data Portal key, e.g. EST/B.EU000A2X2A25.WT',
   NYFED: 'NY Fed path, e.g. secured/sofr or unsecured/effr',
   FRED: 'FRED series id, e.g. IRSTCI01JPM156N (needs FRED_API_KEY)',
+  BOE: 'Bank of England series code, e.g. IUDBEDR (Bank Rate) or IUDSOIA (SONIA)',
+  SNB: 'SNB cube/series, e.g. snbgwdzid/SARON or snbgwdzid/LZ (policy rate)',
+  BOC: 'Bank of Canada Valet series, e.g. V39079 (target rate) or AVG.INTWO (CORRA)',
+  BOJ: 'Bank of Japan db/code, e.g. FM01/STRDCLUCON (call rate) or IR01/MADR1Z@D (basic loan rate)',
+  RBA: 'RBA table/series id, e.g. f1-data/FIRMMCRTD (cash rate target)',
   MANUAL: '',
 }
 const SERIES_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6']
@@ -1336,8 +1341,9 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
               </table>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              To follow another rate — in any currency — add a series: ECB (an ECB Data Portal key), NYFED (a NY Fed Markets API path), FRED (a series id; needs a free
-              FRED_API_KEY in the server environment — the route for JPY, GBP and others) or MANUAL (type values in with “+ value”). Set the type to Policy
+              To follow another rate — in any currency — add a series: ECB (an ECB Data Portal key), NYFED (a NY Fed Markets API path), BOE / SNB / BOC / BOJ / RBA (the Bank of
+              England, Swiss National Bank, Bank of Canada, Bank of Japan and Reserve Bank of Australia — free, no key), FRED (a series id; needs a free
+              FRED_API_KEY in the server environment — the route for any other currency) or MANUAL (type values in with “+ value”). Set the type to Policy
               or Target Upper for a rate that changes at meetings (raises a change alert), Overnight for a daily market rate (raises a move alert).
             </p>
           </div>

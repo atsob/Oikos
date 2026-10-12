@@ -783,7 +783,7 @@ CREATE TABLE IF NOT EXISTS Rate_Series (
     Rate_Type       VARCHAR(20)  NOT NULL DEFAULT 'Overnight'
                     CHECK (Rate_Type IN ('Overnight', 'Policy', 'Target Upper', 'Target Lower', 'Other')),
     Provider        VARCHAR(20)  NOT NULL DEFAULT 'MANUAL'
-                    CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'MANUAL')),
+                    CHECK (Provider IN ('ECB', 'NYFED', 'FRED', 'BOE', 'SNB', 'BOC', 'BOJ', 'RBA', 'MANUAL')),
     Provider_Key    VARCHAR(200),                                  -- ECB series key / NY Fed path / FRED series id
     Provider_Field  VARCHAR(50),                                   -- NY Fed JSON field (default percentRate)
     Is_Active       BOOLEAN NOT NULL DEFAULT TRUE,
