@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-12
+
+### Fixed
+- **Dashboard: YTD on Net Worth and Investments was far too high (+€95,853 and +€77,493 instead of about +€24,900 and +€6,400).** The year-end baseline was computed over the *active* accounts only, so what accounts that are now switched off (closed brokerage accounts, matured time deposits — about €71k of investments at the end of 2025) had held counted for nothing, and every euro that had moved to another account looked like new money. A switched-off account that now holds (almost) nothing is now kept in the history baseline; one that still holds something stays out, to match the current total. This also corrects the Net Worth Breakdown/Trend charts' past values when switched-off accounts are hidden.
+
+### Changed
+- **Dashboard KPI cards: "vs prev month" and "daily" on every card.** Investments had only the daily and YTD changes, the other four only previous month and YTD. Each of the five cards now reads *+€… vs prev month  +€… daily* on one line, then *YTD* (each figure keeps its own green/red colour); daily is the change against yesterday's value.
+
 ## 2026-10-11
 
 ### Added

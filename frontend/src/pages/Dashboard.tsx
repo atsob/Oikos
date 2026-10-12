@@ -984,10 +984,15 @@ export default function Dashboard() {
   // a different set of accounts than the current total, producing a mismatched delta.
   const accsForNw = accounts as Record<string, unknown>[]
   const visibleAccsForNw = opts.showDisabled ? accsForNw : accsForNw.filter(a => a.is_active !== false)
-  const nwAccountIds = (opts.includedAccounts === 'all'
-    ? visibleAccsForNw
-    : visibleAccsForNw.filter(a => (opts.includedAccounts as number[]).includes(Number(a.id)))
-  ).map(a => Number(a.id)).sort((a, b) => a - b)
+  // An account that is switched off but now holds (almost) nothing — a closed brokerage, matured time deposits — adds nothing to the "now"
+  // total whether or not it is counted, but its balance in the past is part of the history: leaving it out of the baseline made
+  // "YTD" look like new money (Investments +€77k instead of +€6k) because what those accounts held at year end counted for nothing.
+  // Only a switched-off account that still holds something is left out, to match the "now" total.
+  const holdsNothing = (a: Record<string, unknown>) => Math.abs(Number(a.balance_eur ?? a.balance ?? 0)) < 0.5
+  const nwAccountIds = accsForNw
+    .filter(a => opts.showDisabled || a.is_active !== false || holdsNothing(a))
+    .filter(a => opts.includedAccounts === 'all' || (opts.includedAccounts as number[]).includes(Number(a.id)))
+    .map(a => Number(a.id)).sort((a, b) => a - b)
 
   const { data: netWorth = [], isLoading: nwLoading } = useQuery({
     queryKey: ['net-worth', nwPeriod, nwAccountIds.join(',')],
@@ -1103,22 +1108,27 @@ export default function Dashboard() {
   // Net Worth deltas
   const deltaPrevMonth = prevMonthPoint != null ? totalNetWorth - Number(prevMonthPoint.total_net_worth) : null
   const deltaYTD       = ytdPoint       != null ? totalNetWorth - Number(ytdPoint.total_net_worth)       : null
+  const deltaDaily     = yesterdayPoint != null ? totalNetWorth - Number(yesterdayPoint.total_net_worth) : null
 
   // Cash deltas
   const deltaCashPrevMonth = prevMonthPoint != null ? totalCash - Number(prevMonthPoint.total_cash) : null
   const deltaCashYTD       = ytdPoint       != null ? totalCash - Number(ytdPoint.total_cash)       : null
+  const deltaCashDaily     = yesterdayPoint != null ? totalCash - Number(yesterdayPoint.total_cash) : null
 
   // Investments deltas
+  const deltaInvPrevMonth = prevMonthPoint != null ? totalInv - Number(prevMonthPoint.total_invested) : null
   const deltaInvDaily = yesterdayPoint != null ? totalInv - Number(yesterdayPoint.total_invested) : null
   const deltaInvYTD   = ytdPoint       != null ? totalInv - Number(ytdPoint.total_invested)       : null
 
   // Pension & Savings deltas
   const deltaPenPrevMonth = prevMonthPoint != null ? totalPension - Number(prevMonthPoint.total_pension) : null
   const deltaPenYTD       = ytdPoint       != null ? totalPension - Number(ytdPoint.total_pension)       : null
+  const deltaPenDaily     = yesterdayPoint != null ? totalPension - Number(yesterdayPoint.total_pension) : null
 
   // Assets deltas
   const deltaAssetsPrevMonth = prevMonthPoint != null ? totalAssets - Number(prevMonthPoint.total_assets) : null
   const deltaAssetsYTD       = ytdPoint       != null ? totalAssets - Number(ytdPoint.total_assets)       : null
+  const deltaAssetsDaily     = yesterdayPoint != null ? totalAssets - Number(yesterdayPoint.total_assets) : null
 
   // Build period lists for AI summaries
   const monthPeriods: string[] = []
@@ -1174,7 +1184,10 @@ export default function Dashboard() {
             label="Net Worth"
             value={fmtEur(totalNetWorth)}
             subs={[
-              deltaPrevMonth != null ? { text: `${fmtDelta(deltaPrevMonth)} vs prev month`, color: deltaColor(deltaPrevMonth) } : { text: '— vs prev month' },
+              { text: '', parts: [
+                deltaPrevMonth != null ? { text: `${fmtDelta(deltaPrevMonth)} vs prev month`, color: deltaColor(deltaPrevMonth) } : { text: '— vs prev month', color: 'text-slate-400' },
+                deltaDaily != null ? { text: `${fmtDelta(deltaDaily)} daily`, color: deltaColor(deltaDaily) } : { text: '— daily', color: 'text-slate-400' },
+              ] },
               deltaYTD != null ? { text: `${fmtDelta(deltaYTD)} YTD`, color: deltaColor(deltaYTD) } : { text: '— YTD' },
             ]}
             onClick={() => { setPref('reports_active_tab', 'net-worth'); navigate('/reports') }}
@@ -1184,7 +1197,10 @@ export default function Dashboard() {
             label="Cash"
             value={fmtEur(totalCash)}
             subs={[
-              deltaCashPrevMonth != null ? { text: `${fmtDelta(deltaCashPrevMonth)} vs prev month`, color: deltaColor(deltaCashPrevMonth) } : { text: '— vs prev month' },
+              { text: '', parts: [
+                deltaCashPrevMonth != null ? { text: `${fmtDelta(deltaCashPrevMonth)} vs prev month`, color: deltaColor(deltaCashPrevMonth) } : { text: '— vs prev month', color: 'text-slate-400' },
+                deltaCashDaily != null ? { text: `${fmtDelta(deltaCashDaily)} daily`, color: deltaColor(deltaCashDaily) } : { text: '— daily', color: 'text-slate-400' },
+              ] },
               deltaCashYTD != null ? { text: `${fmtDelta(deltaCashYTD)} YTD`, color: deltaColor(deltaCashYTD) } : { text: '— YTD' },
             ]}
             onClick={() => navigate('/register')}
@@ -1194,7 +1210,10 @@ export default function Dashboard() {
             label="Investments"
             value={fmtEur(totalInv)}
             subs={[
-              deltaInvDaily != null ? { text: `${fmtDelta(deltaInvDaily)} daily`, color: deltaColor(deltaInvDaily) } : { text: '— daily' },
+              { text: '', parts: [
+                deltaInvPrevMonth != null ? { text: `${fmtDelta(deltaInvPrevMonth)} vs prev month`, color: deltaColor(deltaInvPrevMonth) } : { text: '— vs prev month', color: 'text-slate-400' },
+                deltaInvDaily != null ? { text: `${fmtDelta(deltaInvDaily)} daily`, color: deltaColor(deltaInvDaily) } : { text: '— daily', color: 'text-slate-400' },
+              ] },
               deltaInvYTD != null ? { text: `${fmtDelta(deltaInvYTD)} YTD`, color: deltaColor(deltaInvYTD) } : { text: '— YTD' },
             ]}
             onClick={() => { setPref('reports_active_tab', 'inv-performance'); setPref('inv_perf_tab', 'P&L'); navigate('/reports') }}
@@ -1204,7 +1223,10 @@ export default function Dashboard() {
             label="Pension & Savings"
             value={fmtEur(totalPension)}
             subs={[
-              deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month' },
+              { text: '', parts: [
+                deltaPenPrevMonth != null ? { text: `${fmtDelta(deltaPenPrevMonth)} vs prev month`, color: deltaColor(deltaPenPrevMonth) } : { text: '— vs prev month', color: 'text-slate-400' },
+                deltaPenDaily != null ? { text: `${fmtDelta(deltaPenDaily)} daily`, color: deltaColor(deltaPenDaily) } : { text: '— daily', color: 'text-slate-400' },
+              ] },
               deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
             ]}
             onClick={pensionAccount ? () => navigate(`/investments?accountsId=${Number(pensionAccount.id)}&tab=transactions&from=report`) : undefined}
@@ -1214,7 +1236,10 @@ export default function Dashboard() {
             label="Assets"
             value={fmtEur(totalAssets)}
             subs={[
-              deltaAssetsPrevMonth != null ? { text: `${fmtDelta(deltaAssetsPrevMonth)} vs prev month`, color: deltaColor(deltaAssetsPrevMonth) } : { text: '— vs prev month' },
+              { text: '', parts: [
+                deltaAssetsPrevMonth != null ? { text: `${fmtDelta(deltaAssetsPrevMonth)} vs prev month`, color: deltaColor(deltaAssetsPrevMonth) } : { text: '— vs prev month', color: 'text-slate-400' },
+                deltaAssetsDaily != null ? { text: `${fmtDelta(deltaAssetsDaily)} daily`, color: deltaColor(deltaAssetsDaily) } : { text: '— daily', color: 'text-slate-400' },
+              ] },
               deltaAssetsYTD != null ? { text: `${fmtDelta(deltaAssetsYTD)} YTD`, color: deltaColor(deltaAssetsYTD) } : { text: '— YTD' },
             ]}
             onClick={() => navigate('/register')}

@@ -551,13 +551,16 @@ export function PricesUpdated({ at, detail, className }: { at?: string | null; d
 // ── Stat card ─────────────────────────────────────────────────────────────────
 export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
   label: string; value: string; sub?: string; color?: string
-  subs?: { text: string; color?: string }[]; compact?: boolean; onClick?: () => void
+  subs?: { text: string; color?: string; parts?: { text: string; color?: string }[] }[]   // `parts`: several figures, each in its own colour, on one line
+  compact?: boolean; onClick?: () => void
 }) {
   const content = (
     <>
       <p className={cn('font-medium text-slate-500 uppercase tracking-wide', compact ? 'text-xs' : 'text-xs')}>{label}</p>
       <p className={cn('font-bold mt-1', compact ? 'text-lg' : 'text-2xl', color ?? 'text-slate-900')}>{value}</p>
-      {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs truncate' : 'text-xs', s.color ?? 'text-slate-400')}>{s.text}</p>)}
+      {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs truncate' : 'text-xs', s.color ?? 'text-slate-400')}>
+        {s.parts ? s.parts.map((p, j) => <span key={j} className={cn(j > 0 && 'ml-2', p.color)}>{p.text}</span>) : s.text}
+      </p>)}
       {!subs && sub && <p className={cn('mt-0.5 text-slate-400 text-xs')}>{sub}</p>}
     </>
   )

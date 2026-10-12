@@ -159,9 +159,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H3>KPI cards</H3>
         <P>
           Net Worth, Cash, Investments, Pension &amp; Savings, and Assets, each with a "vs prev month" and
-          "YTD" (or "daily" for Investments) change. Net Worth is the sum of the other four. Savings accounts
+          "YTD" change, plus the "daily" change (against yesterday's value) on the same line as "vs prev month". Net Worth is the sum of the other four. Savings accounts
           are grouped into <b>Pension &amp; Savings</b>, not Cash — same as the Net Worth Breakdown and Trend
-          charts below.
+          charts below. The "vs prev month", "daily" and "YTD" figures compare with the history of the same accounts; an account that is switched off but now holds nothing (a closed brokerage, matured time deposits) still counts in that history, so money that moved between accounts does not show up as growth.
         </P>
         <Note>
           Each card is a shortcut to where that number comes from: <b>Net Worth</b> opens Reports → Net Worth,{' '}
