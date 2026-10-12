@@ -612,7 +612,8 @@ CREATE TABLE IF NOT EXISTS Corporate_Actions (
     Corporate_Actions_Id  SERIAL PRIMARY KEY,
     Securities_Id         INTEGER      NOT NULL REFERENCES Securities(Securities_Id),
     Action_Type           corporate_action_type NOT NULL,
-    Effective_Date        DATE         NOT NULL,
+    Effective_Date        DATE         NOT NULL,      -- the payment date for a dividend / return of capital
+    Ex_Date               DATE,                       -- dividend / return of capital: holdings before this date are eligible
     Ratio_New             NUMERIC,
     Ratio_Old             NUMERIC,
     Gross_Per_Share       NUMERIC(18, 8),

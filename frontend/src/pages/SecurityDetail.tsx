@@ -1108,7 +1108,12 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     queryFn: () => getSecurityDividends(secId),
   })
   const dividends = data as Record<string, unknown>[]
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
+  // A dividend row is kept in step with its corporate action (and the amounts on its transactions), so refresh those too
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
+    qc.invalidateQueries({ queryKey: ['sec-corporate-actions', secId] })
+    qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+  }
 
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [msg, setMsg] = useState<string | null>(null)
@@ -1165,6 +1170,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
     { field: 'pay_date', headerName: 'Pay Date', width: 130 },
     { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+    { field: 'ca_id', headerName: 'Corp. Action', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? `✓ #${p.value}` : '—' },
     {
       colId: 'actions', headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -1264,7 +1270,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             )}
             {msg && <span className="text-xs text-slate-500">{msg}</span>}
           </div>
-          <p className="text-xs text-slate-400">Select rows with the checkboxes to bulk-delete, or click the pencil to edit a single record. Amounts should be per-share, in the security's own currency.</p>
+          <p className="text-xs text-slate-400">Select rows with the checkboxes to bulk-delete, or click the pencil to edit a single record. Amounts should be per-share, in the security's own currency. A row with a ✓ is booked as a Dividend on the Corporate Actions tab — editing its ex-date, pay date or amount updates that action and its transactions too.</p>
 
           {editRow && (
             <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 flex items-end gap-2 flex-wrap">
@@ -1353,7 +1359,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const invalidateCA = () => qc.invalidateQueries({ queryKey: ['sec-corporate-actions', secId] })
 
   const deleteMut = useMutation({ mutationFn: (id: number) => deleteCorporateAction(secId, id), onSuccess: () => { invalidateCA(); setDeleteId('') } })
-  const updateMut = useMutation({ mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateCorporateAction(secId, id, d), onSuccess: () => { invalidateCA(); setEditRow(null) } })
+  const updateMut = useMutation({ mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateCorporateAction(secId, id, d), onSuccess: () => { invalidateCA(); qc.invalidateQueries({ queryKey: ['sec-dividends', secId] }); setEditRow(null) } })
 
   // ── edit-flow: preview + apply transactions for a not-yet-applied split ────
   const [editPreview, setEditPreview] = useState<Record<string, unknown>[] | null>(null)
@@ -1396,15 +1402,16 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     const shouldApply = isBareEditSplit
     setEditApplyMsg(null)
     updateMut.mutate(
-      { id: caId, d: { type: editForm.type, date: editForm.date, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } },
+      { id: caId, d: { type: editForm.type, date: editForm.date, ex_date: editForm.ex_date || null, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } },
       { onSuccess: () => { if (shouldApply) applySplitMut.mutate(caId) } },
     )
   }
 
   // ── new CA form ───────────────────────────────────────────────────────────
-  const [eventGroup, setEventGroup] = useState<EventGroup>('split')
+  const [eventGroup, setEventGroup] = useState<EventGroup>('dividend')
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
-  const [date, setDate] = useState(TODAY)
+  const [date, setDate] = useState(TODAY)               // effective date; the payment date for a dividend / return of capital
+  const [exDate, setExDate] = useState('')                // dividend / return of capital: holdings before this date are eligible
   // split
   const [ratioNew, setRatioNew] = useState('2')
   const [ratioOld, setRatioOld] = useState('1')
@@ -1413,6 +1420,26 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   // dividend
   const [grossPerShare, setGrossPerShare] = useState('0')
   const [taxRate, setTaxRate] = useState(defaultTaxRate)
+
+  // The Dividends tab's rows: a dividend that is already known there (ex-date, pay date, amount per share) is offered here instead of being retyped
+  const { data: divData } = useQuery({ queryKey: ['sec-dividends', secId], queryFn: () => getSecurityDividends(secId) })
+  const divRows = useMemo(() => ((divData ?? []) as { id: number; ex_date: string; pay_date: string | null; amount: number; ca_id: number | null }[]), [divData])
+  const applyDividendRow = (r: { ex_date: string; pay_date: string | null; amount: number }) => {
+    setExDate(r.ex_date)
+    if (r.pay_date) setDate(r.pay_date)
+    setGrossPerShare(String(r.amount))
+    setPreview(null)
+  }
+  // Start from the latest dividend that is not booked yet (if it is recent) — the usual case is booking what the Dividends tab just showed
+  const divAutoFilled = React.useRef(false)
+  React.useEffect(() => {
+    if (divAutoFilled.current || !divRows.length) return
+    divAutoFilled.current = true
+    const cutoff = toLocalISODate(new Date(Date.now() - 120 * 86400000))
+    const next = divRows.find(r => r.ca_id == null)
+    if (next && next.ex_date >= cutoff) applyDividendRow(next)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [divRows])
 
   // Keep taxRate in sync when tax rules load or security changes
   React.useEffect(() => { setTaxRate(defaultTaxRate) }, [defaultTaxRate])
@@ -1450,6 +1477,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     event_group: eventGroup,
     account_names: selectedAccounts.length ? selectedAccounts : null,
     date,
+    ex_date: (eventGroup === 'dividend' || eventGroup === 'return_of_capital') ? (exDate || null) : null,
     description: autoDesc,
     // split
     ratio_new: eventGroup === 'split' ? ratioNew : null,
@@ -1485,6 +1513,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       invalidateCA()
       qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
       qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
+      qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })      // the Dividends tab shows the same ex-date, pay date and amount
     },
     onError: (e: Error) => setExecuteMsg({ ok: false, text: e.message }),
   })
@@ -1519,7 +1548,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 
   const actionsColDefs = [
     { field: 'id', headerName: 'ID', width: 65 },
-    { field: 'date', headerName: 'Date', width: 120 },
+    { field: 'ex_date', headerName: 'Ex-Date', width: 120, valueFormatter: (p: { value: unknown }) => p.value ? String(p.value) : '—' },
+    { field: 'date', headerName: 'Date / Pay Date', width: 130 },
     { field: 'type', headerName: 'Type', width: 140 },
     { field: 'ratio_new', headerName: 'Ratio New', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
     { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
@@ -1530,7 +1560,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     {
       colId: 'actions', headerName: '', width: 75, pinned: 'right' as const,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
-        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }); setEditPreview(null); setEditApplyMsg(null) }}
+        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ex_date: String(p.data.ex_date ?? ''), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }); setEditPreview(null); setEditApplyMsg(null) }}
           className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
           <Pencil size={11} /> Edit
         </button>
@@ -1577,11 +1607,15 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 <p className="text-sm font-semibold text-slate-700">Edit Corporate Action #{String(editRow.id)} — <span className="text-blue-600">{editRow.type as string}</span></p>
                 {['Dividend', 'Return of Capital'].includes(editForm.type) && (
                   <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                    Saving will update the gross amount, withholding tax, and totals on all linked investment transactions.
+                    Saving will update the gross amount, withholding tax, and totals on all linked investment transactions. For a Dividend, the Dividends tab row with this ex-date is updated too (ex-date, pay date, amount per share).
                   </p>
                 )}
                 <div className="flex flex-wrap gap-3">
-                  <div><label className="text-xs text-slate-500 block mb-1">Date</label>
+                  {['Dividend', 'Return of Capital'].includes(editForm.type) && (
+                    <div><label className="text-xs text-slate-500 block mb-1">Ex-Date</label>
+                      <Input type="date" className="w-36" value={editForm.ex_date ?? ''} onChange={e => setEditForm(f => ({ ...f, ex_date: e.target.value }))} /></div>
+                  )}
+                  <div><label className="text-xs text-slate-500 block mb-1">{['Dividend', 'Return of Capital'].includes(editForm.type) ? 'Payment date' : 'Date'}</label>
                     <Input type="date" className="w-36" value={editForm.date} onChange={e => { setEditForm(f => ({ ...f, date: e.target.value })); setEditPreview(null) }} /></div>
                   {['Split', 'Reverse Split'].includes(editForm.type) && <>
                     <div><label className="text-xs text-slate-500 block mb-1">Ratio New</label>
@@ -1741,13 +1775,14 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         )}
         {eventGroup === 'dividend' && (
           <p className="text-xs text-slate-500">
-            Records a dividend payment by inserting a <strong>Dividend</strong> entry per account based on current holdings.
-            Enter the gross amount per share and the applicable withholding tax rate; the net amount is computed automatically.
+            Records a dividend payment by inserting a <strong>Dividend</strong> entry, dated on the payment date, for each account that held the shares
+            <strong>before the ex-date</strong>. Enter the gross amount per share and the applicable withholding tax rate; the net amount is computed
+            automatically. A dividend already on the Dividends tab can be picked below, and the Dividends tab is updated with what you record.
           </p>
         )}
         {eventGroup === 'return_of_capital' && (
           <p className="text-xs text-slate-500">
-            Records a return of capital by inserting a <strong>RtrnCap</strong> entry per account based on current holdings.
+            Records a return of capital by inserting a <strong>RtrnCap</strong> entry per account that held the shares before the ex-date.
             No shares are created or destroyed — only a cash inflow per share held is recorded.
           </p>
         )}
@@ -1831,7 +1866,34 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
           </div>
         )}
 
-        {/* Effective/Payment date */}
+        {/* Ex-date (dividend / return of capital) and Effective / Payment date */}
+        {eventGroup === 'dividend' && divRows.length > 0 && (
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Use a dividend from the Dividends tab</label>
+            <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm w-full max-w-md"
+              value={String(divRows.find(r => r.ex_date === exDate)?.id ?? '')}
+              onChange={e => { const r = divRows.find(x => String(x.id) === e.target.value); if (r) applyDividendRow(r) }}>
+              <option value="">— enter manually —</option>
+              {divRows.slice(0, 40).map(r => (
+                <option key={r.id} value={String(r.id)}>
+                  Ex {r.ex_date} · pay {r.pay_date ?? '—'} · {Number(r.amount).toFixed(4)}{r.ca_id != null ? ' · already recorded' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {(eventGroup === 'dividend' || eventGroup === 'return_of_capital') && (
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Ex-date <span className="text-slate-400">(who was holding before this day gets it)</span></label>
+            <Input type="date" className="w-36" value={exDate} onChange={e => {
+              const v = e.target.value
+              setExDate(v); setPreview(null)
+              const r = eventGroup === 'dividend' ? divRows.find(x => x.ex_date === v) : undefined      // known on the Dividends tab: bring its pay date and amount
+              if (r) { if (r.pay_date) setDate(r.pay_date); setGrossPerShare(String(r.amount)) }
+            }} />
+            {!exDate && <p className="text-xs text-amber-600 mt-1">No ex-date: the holdings on the payment date are used.</p>}
+          </div>
+        )}
         <div>
           <label className="text-xs text-slate-500 block mb-1">{(eventGroup === 'dividend' || eventGroup === 'return_of_capital') ? 'Payment date' : 'Effective date'}</label>
           <Input type="date" className="w-36" value={date} onChange={e => { setDate(e.target.value); setPreview(null) }} />

@@ -1369,6 +1369,17 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           securities instead get an <b>In Funds</b> tab, all for that one security.
         </P>
         <Note>
+          <b>Recording a dividend</b> (Security Detail → Corporate Actions; <b>Dividend</b> is the default event type). Give the
+          <b>ex-date</b> and the <b>payment date</b>: the dividend goes to every account that held the shares <i>before the ex-date</i>
+          (shares bought on the ex-date itself do not get it, shares sold on it still do), and the transactions are booked on the
+          payment date. A dividend the <b>Dividends</b> tab already knows (Yahoo's history, or typed there) can be picked from a list —
+          the latest one not yet booked is filled in for you — or just type its ex-date to bring its pay date and amount per share.
+          The two tabs are kept in step: recording a dividend writes its ex-date, pay date and amount to the Dividends tab, and editing
+          a Dividends row (marked ✓ when it is booked) updates its corporate action, the amounts on its transactions and, if the pay date
+          changed, their date (a cash transaction already matched in bank reconciliation keeps its date). Older dividend actions got
+          their ex-date from the matching Dividends row.
+        </Note>
+        <Note>
           A security's <b>Benchmark</b> tab (ETFs/ETCs only) compares that security's own price performance
           against any number of other ETFs/ETCs, Market Indexes, and/or your own Accounts (their holdings-weighted
           performance) — same "Compare vs" chip picker, indexed-to-100 chart, and return % cards as Reports → Inv.

@@ -478,6 +478,8 @@ def _run_startup_migrations():
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Category VARCHAR(100)",
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Category_Override VARCHAR(100)",
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Broad_Category VARCHAR(100)",
+        # a dividend corporate action: Effective_Date is the payment date (when the transactions are booked); Ex_Date decides who is eligible
+        "ALTER TABLE Corporate_Actions ADD COLUMN IF NOT EXISTS Ex_Date DATE",
         # date of the portfolio Morningstar's asset mix / sector weights are from (data/morningstar.py)
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Portfolio_Date DATE",
         "ALTER TABLE Fund_Composition ADD COLUMN IF NOT EXISTS Morningstar_Id VARCHAR(20)",

@@ -518,19 +518,128 @@ def delete_security_top_holding(sec_id: int, holding_id: int):
     return {"id": holding_id}
 
 
+# ── Dividends tab <-> Dividend corporate actions ─────────────────────────────
+# One dividend is a row on the Dividends tab (Securities_Dividends: ex-date, pay date, amount per share) and, once booked, a Dividend corporate
+# action (Ex_Date, Effective_Date = payment date, Gross_Per_Share). The two are kept in step: recording an action writes/updates the Dividends
+# row, and editing a Dividends row updates its action (and the amounts on the transactions it created).
+
+def _cascade_dividend_amount(cur, ca_id: int, sec_id: int, gross_per_share, tax_rate, fallback_date) -> None:
+    """Re-price the investment transactions (and their linked cash transactions) a Dividend / Return of Capital action created."""
+    if not gross_per_share:
+        return
+    tr = float(tax_rate or 0) / 100
+    cur.execute("SELECT Currencies_Id FROM Securities WHERE Securities_Id = %s", (sec_id,))
+    sec_cur_row = cur.fetchone()
+    sec_cid = sec_cur_row[0] if sec_cur_row else None
+    cur.execute("""
+        SELECT i.investments_id, i.quantity, i.accounts_id, i.transactions_id,
+               a.currencies_id AS acc_cid, i.date::text AS inv_date
+        FROM investments i
+        JOIN accounts a ON a.accounts_id = i.accounts_id
+        WHERE i.corporate_actions_id = %s
+    """, (ca_id,))
+    for inv_id, qty, acct_id, linked_tx_id, acc_cid, inv_date in cur.fetchall():
+        qty = float(qty)
+        gross_total = round(qty * gross_per_share, 6)
+        tax_amt = -round(gross_total * tr, 6) if tr else None
+        if sec_cid and acc_cid and sec_cid != acc_cid:
+            cur.execute("""
+                SELECT FX_Rate FROM Historical_FX
+                WHERE Currencies_Id_1 = %s AND Date <= %s
+                ORDER BY Date DESC LIMIT 1
+            """, (sec_cid, inv_date or fallback_date))
+            fx_row = cur.fetchone()
+            fx = float(fx_row[0]) if fx_row else 1.0
+        else:
+            fx = 1.0
+        gross_acccur = round(gross_total * fx, 6)
+        tax_acccur = round(tax_amt * fx, 6) if tax_amt is not None else None
+        net_acccur = gross_acccur + (tax_acccur or 0)
+        cur.execute("""
+            UPDATE investments
+            SET price_per_share=%s, total_amount_acccur=%s, total_amount_seccur=%s,
+                fx_rate=%s, tax_amount=%s
+            WHERE investments_id=%s
+        """, (gross_per_share, gross_acccur, gross_total, fx, tax_acccur, inv_id))
+        if linked_tx_id:
+            cur.execute("UPDATE transactions SET total_amount=%s WHERE transactions_id=%s", (net_acccur, linked_tx_id))
+            cur.execute("SELECT accounts_id FROM transactions WHERE transactions_id=%s", (linked_tx_id,))
+            tx_row = cur.fetchone()
+            if tx_row:
+                _refresh_balance(cur, tx_row[0])
+
+
+def _move_dividend_transactions(cur, ca_id: int, new_date) -> None:
+    """The payment date of a dividend / return of capital changed: move the transactions it booked to the new date. A cash transaction the
+    bank reconciliation has already matched to a statement keeps its date."""
+    if not new_date:
+        return
+    cur.execute("UPDATE investments SET date = %s WHERE corporate_actions_id = %s AND date <> %s", (new_date, ca_id, new_date))
+    cur.execute("""UPDATE transactions SET date = %s
+                   WHERE transactions_id IN (SELECT transactions_id FROM investments WHERE corporate_actions_id = %s AND transactions_id IS NOT NULL)
+                     AND date <> %s AND NOT COALESCE(reconciled, FALSE)""", (new_date, ca_id, new_date))
+
+
+def _sync_ca_to_dividend_row(cur, sec_id: int, prev_ex, ex_date, pay_date, amount) -> None:
+    """A Dividend corporate action was recorded/edited: make the Dividends tab show the same ex-date, pay date and amount per share."""
+    if not ex_date or not amount:
+        return
+    cur.execute("SELECT Dividend_Id FROM Securities_Dividends WHERE Securities_Id = %s AND Ex_Date = %s", (sec_id, ex_date))
+    hit = cur.fetchone()
+    if hit:
+        cur.execute("UPDATE Securities_Dividends SET Pay_Date = %s, Amount = %s WHERE Dividend_Id = %s", (pay_date, amount, hit[0]))
+        return
+    if prev_ex and str(prev_ex) != str(ex_date):            # the ex-date was corrected: move the existing row instead of adding a second one
+        cur.execute("""UPDATE Securities_Dividends SET Ex_Date = %s, Pay_Date = %s, Amount = %s
+                       WHERE Securities_Id = %s AND Ex_Date = %s""", (ex_date, pay_date, amount, sec_id, prev_ex))
+        if cur.rowcount:
+            return
+    cur.execute("INSERT INTO Securities_Dividends (Securities_Id, Ex_Date, Pay_Date, Amount) VALUES (%s, %s, %s, %s)", (sec_id, ex_date, pay_date, amount))
+
+
+def _sync_dividend_row_to_ca(cur, sec_id: int, match_ex, match_pay, ex_date, pay_date, amount) -> None:
+    """A Dividends-tab row was added/edited: bring the Dividend corporate action recorded for it (matched by its previous ex-date, or by
+    the pay date for an older action with no ex-date) to the same ex-date, pay date and amount per share, and re-price its transactions."""
+    cur.execute("""
+        SELECT corporate_actions_id, tax_rate FROM corporate_actions
+        WHERE securities_id = %s AND action_type = 'Dividend'
+          AND (ex_date = %s OR (ex_date IS NULL AND effective_date IN (%s, %s)))
+        ORDER BY corporate_actions_id LIMIT 1
+    """, (sec_id, match_ex, match_ex, match_pay or match_ex))
+    row = cur.fetchone()
+    if not row:
+        return
+    ca_id, tax_rate = row
+    cur.execute("""
+        UPDATE corporate_actions SET ex_date = %s, effective_date = COALESCE(%s, effective_date), gross_per_share = %s
+        WHERE corporate_actions_id = %s
+    """, (ex_date, pay_date, amount, ca_id))
+    _move_dividend_transactions(cur, ca_id, pay_date)
+    _cascade_dividend_amount(cur, ca_id, sec_id, float(amount), tax_rate, pay_date or ex_date)
+
+
 # ── Dividend History ──────────────────────────────────────────────────────────
 
 @router.get("/{sec_id}/dividends")
 def get_security_dividends(sec_id: int):
     with get_db() as conn:
         df = pd.read_sql("""
-            SELECT dividend_id AS id,
-                   ex_date::text AS ex_date,
-                   pay_date::text AS pay_date,
-                   amount
-            FROM securities_dividends
-            WHERE securities_id = %(sid)s
-            ORDER BY ex_date DESC
+            SELECT sd.dividend_id AS id,
+                   sd.ex_date::text AS ex_date,
+                   sd.pay_date::text AS pay_date,
+                   sd.amount,
+                   ca.corporate_actions_id AS ca_id
+            FROM securities_dividends sd
+            LEFT JOIN LATERAL (
+                -- the Dividend corporate action recorded for this ex-date (an older one without an ex-date: matched by its date and amount)
+                SELECT c.corporate_actions_id FROM corporate_actions c
+                WHERE c.securities_id = sd.securities_id AND c.action_type = 'Dividend'
+                  AND (c.ex_date = sd.ex_date
+                       OR (c.ex_date IS NULL AND c.effective_date IN (sd.ex_date, sd.pay_date) AND ABS(COALESCE(c.gross_per_share, 0) - sd.amount) < 0.000001))
+                ORDER BY c.corporate_actions_id LIMIT 1
+            ) ca ON TRUE
+            WHERE sd.securities_id = %(sid)s
+            ORDER BY sd.ex_date DESC
         """, conn, params={"sid": sec_id})
     return _df(df)
 
@@ -548,6 +657,7 @@ def create_security_dividend(sec_id: int, data: dict):
             RETURNING Dividend_Id
         """, (sec_id, data["ex_date"], data.get("pay_date") or None, float(data["amount"])))
         new_id = cur.fetchone()[0]
+        _sync_dividend_row_to_ca(cur, sec_id, data["ex_date"], data.get("pay_date") or None, data["ex_date"], data.get("pay_date") or None, float(data["amount"]))
         conn.commit()
         return {"id": new_id}
     except Exception as e:
@@ -562,11 +672,15 @@ def update_security_dividend(sec_id: int, dividend_id: int, data: dict):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        cur.execute("SELECT Ex_Date, Pay_Date FROM Securities_Dividends WHERE Dividend_Id = %s AND Securities_Id = %s", (dividend_id, sec_id))
+        old = cur.fetchone()
         cur.execute("""
             UPDATE Securities_Dividends
             SET Ex_Date = %s, Pay_Date = %s, Amount = %s
             WHERE Dividend_Id = %s AND Securities_Id = %s
         """, (data["ex_date"], data.get("pay_date") or None, float(data["amount"]), dividend_id, sec_id))
+        if old:
+            _sync_dividend_row_to_ca(cur, sec_id, old[0], old[1], data["ex_date"], data.get("pay_date") or None, float(data["amount"]))
         conn.commit()
         return {"ok": True}
     except Exception as e:
@@ -627,6 +741,7 @@ def get_corporate_actions(sec_id: int):
         df = pd.read_sql("""
             SELECT ca.corporate_actions_id AS id,
                    ca.effective_date::text AS date,
+                   ca.ex_date::text AS ex_date,
                    ca.action_type AS type,
                    ca.ratio_new,
                    ca.ratio_old,
@@ -651,11 +766,11 @@ def create_corporate_action(sec_id: int, data: dict):
         cur = conn.cursor()
         cur.execute("""
             INSERT INTO corporate_actions
-                (securities_id, action_type, effective_date, ratio_new, ratio_old, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (securities_id, action_type, effective_date, ex_date, ratio_new, ratio_old, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING corporate_actions_id
         """, (
-            sec_id, data["type"], data["date"],
+            sec_id, data["type"], data["date"], data.get("ex_date") or None,
             data.get("ratio_new") or None,
             data.get("ratio_old") or None,
             data.get("description") or None,
@@ -679,13 +794,17 @@ def update_corporate_action(sec_id: int, ca_id: int, data: dict):
         gross_per_share = float(data["gross_per_share"]) if data.get("gross_per_share") not in (None, "", 0) else None
         tax_rate = float(data["tax_rate"]) if data.get("tax_rate") not in (None, "") else None
 
+        cur.execute("SELECT ex_date, effective_date FROM corporate_actions WHERE corporate_actions_id=%s AND securities_id=%s", (ca_id, sec_id))
+        prev = cur.fetchone()
+        prev_ex, prev_date = (prev[0], prev[1]) if prev else (None, None)
+        ex_date = data.get("ex_date") or None
         cur.execute("""
             UPDATE corporate_actions
-            SET action_type=%s, effective_date=%s, ratio_new=%s, ratio_old=%s,
+            SET action_type=%s, effective_date=%s, ex_date=%s, ratio_new=%s, ratio_old=%s,
                 gross_per_share=%s, tax_rate=%s, description=%s
             WHERE corporate_actions_id=%s AND securities_id=%s
         """, (
-            ca_type, data["date"],
+            ca_type, data["date"], ex_date,
             data.get("ratio_new") or None,
             data.get("ratio_old") or None,
             gross_per_share, tax_rate,
@@ -694,55 +813,13 @@ def update_corporate_action(sec_id: int, ca_id: int, data: dict):
         ))
 
         # Cascade to linked investment transactions (Dividend / RtrnCap only)
+        if ca_type in ("Dividend", "Return of Capital") and prev_date and str(prev_date) != str(data["date"]):
+            _move_dividend_transactions(cur, ca_id, data["date"])         # a corrected payment date moves the transactions it booked
         if ca_type in ("Dividend", "Return of Capital") and gross_per_share:
-            tr = float(tax_rate or 0) / 100
-            # Look up security currency once
-            cur.execute("SELECT Currencies_Id FROM Securities WHERE Securities_Id = %s", (sec_id,))
-            sec_cur_row = cur.fetchone()
-            sec_cid = sec_cur_row[0] if sec_cur_row else None
-            cur.execute("""
-                SELECT i.investments_id, i.quantity, i.accounts_id, i.transactions_id,
-                       a.currencies_id AS acc_cid, i.date::text AS inv_date
-                FROM investments i
-                JOIN accounts a ON a.accounts_id = i.accounts_id
-                WHERE i.corporate_actions_id = %s
-            """, (ca_id,))
-            rows = cur.fetchall()
-            for inv_id, qty, acct_id, linked_tx_id, acc_cid, inv_date in rows:
-                qty = float(qty)
-                gross_total = round(qty * gross_per_share, 6)
-                tax_amt = -round(gross_total * tr, 6) if tr else None
-                net_total = gross_total + (tax_amt or 0)
-                # Resolve FX rate for this account
-                if sec_cid and acc_cid and sec_cid != acc_cid:
-                    cur.execute("""
-                        SELECT FX_Rate FROM Historical_FX
-                        WHERE Currencies_Id_1 = %s AND Date <= %s
-                        ORDER BY Date DESC LIMIT 1
-                    """, (sec_cid, inv_date or data["date"]))
-                    fx_row = cur.fetchone()
-                    fx = float(fx_row[0]) if fx_row else 1.0
-                else:
-                    fx = 1.0
-                gross_acccur = round(gross_total * fx, 6)
-                tax_acccur = round(tax_amt * fx, 6) if tax_amt is not None else None
-                net_acccur = gross_acccur + (tax_acccur or 0)
-                cur.execute("""
-                    UPDATE investments
-                    SET price_per_share=%s, total_amount_acccur=%s, total_amount_seccur=%s,
-                        fx_rate=%s, tax_amount=%s
-                    WHERE investments_id=%s
-                """, (gross_per_share, gross_acccur, gross_total, fx, tax_acccur, inv_id))
-                # Update linked cash transaction amount to net (in account currency)
-                if linked_tx_id:
-                    cur.execute(
-                        "UPDATE transactions SET total_amount=%s WHERE transactions_id=%s",
-                        (net_acccur, linked_tx_id),
-                    )
-                    cur.execute("SELECT accounts_id FROM transactions WHERE transactions_id=%s", (linked_tx_id,))
-                    tx_row = cur.fetchone()
-                    if tx_row:
-                        _refresh_balance(cur, tx_row[0])
+            _cascade_dividend_amount(cur, ca_id, sec_id, gross_per_share, tax_rate, data["date"])
+        # A dividend is one thing: keep the Dividends tab's ex-date, pay date and amount the same
+        if ca_type == "Dividend":
+            _sync_ca_to_dividend_row(cur, sec_id, prev_ex, ex_date, data["date"], gross_per_share)
 
         conn.commit()
         return {"ok": True}
@@ -773,8 +850,9 @@ def delete_corporate_action(sec_id: int, ca_id: int):
 
 # ── Corporate Action Preview & Execute ───────────────────────────────────────
 
-def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_date: str | None = None):
-    """Return per-account holdings as of a given date (or current if None)."""
+def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_date: str | None = None, before: bool = False):
+    """Return per-account holdings as of a given date (or current if None). before=True counts only what was held BEFORE that date —
+    the ex-date rule for a dividend: shares bought on the ex-date itself do not get it, shares sold on it still do."""
     params: dict = {"sid": sec_id}
     clauses = []
     if account_names:
@@ -783,7 +861,7 @@ def _get_holdings_for_ca(conn, sec_id: int, account_names: list | None, as_of_da
         for i, name in enumerate(account_names):
             params[f"an{i}"] = name
     if as_of_date:
-        clauses.append("i.date <= %(as_of)s")
+        clauses.append("i.date < %(as_of)s" if before else "i.date <= %(as_of)s")
         params["as_of"] = as_of_date
     where_extra = ("AND " + " AND ".join(clauses)) if clauses else ""
     df = pd.read_sql(f"""
@@ -895,10 +973,12 @@ def preview_corporate_action(sec_id: int, data: dict):
     """Preview investment transactions that a corporate action would generate."""
     event_group = data.get("event_group")  # 'split' | 'default_delisting' | 'dividend' | 'return_of_capital'
     account_names = data.get("account_names") or None
-    as_of_date = data.get("date") or None
+    as_of_date = data.get("date") or None           # payment date for a dividend: used for the FX rate
+    # A dividend / return of capital goes to whoever held the shares before the ex-date, not on the payment date
+    ex_date = (data.get("ex_date") or None) if event_group in ("dividend", "return_of_capital") else None
 
     with get_db() as conn:
-        df = _get_holdings_for_ca(conn, sec_id, account_names, as_of_date)
+        df = _get_holdings_for_ca(conn, sec_id, account_names, ex_date or as_of_date, before=bool(ex_date))
 
         # Pre-fetch FX rate if security currency differs from any account currency
         fx_cache: dict[int, float] = {}  # sec_currencies_id → fx_rate (to EUR or acc currency)
@@ -1007,7 +1087,8 @@ def execute_corporate_action(sec_id: int, data: dict):
     """Record the corporate action and insert the resulting investment transactions."""
     event_group = data.get("event_group")
     account_names = data.get("account_names") or None
-    date = data.get("date")
+    date = data.get("date")                          # effective date; the payment date for a dividend / return of capital
+    ex_date = (data.get("ex_date") or None) if event_group in ("dividend", "return_of_capital") else None
     description = data.get("description") or ""
 
     # Map UI event group → DB action_type
@@ -1027,10 +1108,10 @@ def execute_corporate_action(sec_id: int, data: dict):
         if account_names:
             placeholders = ", ".join(["%s"] * len(account_names))
             name_clause = f"AND a.accounts_name IN ({placeholders})"
-            params_list = [sec_id] + list(account_names) + [date]
+            params_list = [sec_id] + list(account_names) + [ex_date or date]
         else:
             name_clause = ""
-            params_list = [sec_id, date]
+            params_list = [sec_id, ex_date or date]
         cur.execute(f"""
             SELECT a.accounts_id,
                    COALESCE(SUM(CASE
@@ -1040,7 +1121,7 @@ def execute_corporate_action(sec_id: int, data: dict):
             FROM investments i
             JOIN accounts a ON a.accounts_id = i.accounts_id
             WHERE i.securities_id = %s {name_clause}
-              AND i.date <= %s
+              AND i.date {"<" if ex_date else "<="} %s
             GROUP BY a.accounts_id
         """, params_list)
         holdings = [(row[0], float(row[1])) for row in cur.fetchall() if row[1] != 0]
@@ -1050,18 +1131,20 @@ def execute_corporate_action(sec_id: int, data: dict):
         _tr  = float(data["tax_rate"]) if data.get("tax_rate") not in (None, "") else None
         cur.execute("""
             INSERT INTO corporate_actions
-                (securities_id, action_type, effective_date, ratio_new, ratio_old,
+                (securities_id, action_type, effective_date, ex_date, ratio_new, ratio_old,
                  gross_per_share, tax_rate, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING corporate_actions_id
         """, (
-            sec_id, db_action_type, date,
+            sec_id, db_action_type, date, ex_date,
             data.get("ratio_new") or None,
             data.get("ratio_old") or None,
             _gps, _tr,
             description or None,
         ))
         ca_id = cur.fetchone()[0]
+        if db_action_type == "Dividend":                 # the Dividends tab shows the same ex-date, pay date and amount
+            _sync_ca_to_dividend_row(cur, sec_id, None, ex_date, date, _gps)
 
         # 3. Look up linked cash accounts and account currencies in one query
         acct_ids = [a for a, _ in holdings]
