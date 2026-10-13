@@ -929,7 +929,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Benchmark</b>'s "Compare vs" is a set of removable chips, not a single dropdown — add as many market
           indexes and/or other accounts as you like via <b>+ Add comparison…</b>, freely mixing both kinds. Each
           comparison gets its own color-coded line on the chart and its own return % card, all indexed to 100 at
-          the same start date as your portfolio. Lookback runs YTD/3M/6M/1Y/2Y/3Y/5Y/All, clamped to whenever the
+          the same start date as your portfolio. Lookback runs YTD/3M/6M/1Y/2Y/3Y/5Y/10Y/All, clamped to whenever the
           account scope actually started investing — <b>All</b> means "since inception," not further back.
         </Note>
         <Note>
@@ -1348,7 +1348,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           against 120) and <b>your exposure to the country</b> from the Country Exposure report. The index trend and the banks count as <b>one equity indicator</b>; the banner turns red only when
           equity is in Warning <i>and</i> breadth or the sovereign spread confirms it. Same persistence as Market Watch: 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
           editable playbook per country, a daily log and a change list, and a Dashboard alert only when the banner turns
-          red or leaves red. The thresholds are starting values to tune with the daily log. The <b>Back-test</b> card at the bottom of
+          red or leaves red. Once the index trend or the banks are On watch they stay there until clearly back inside the amber line (2 points of drawdown, 1% above the 200-day average, 1.5 points of lag behind the index), so a reading sitting on the line does not flip back and forth. The Market Watch tab's <b>Recent changes</b> lists only the US indicators; the Local Market Watch tab lists its own. The thresholds are starting values to tune with the daily log. The <b>Back-test</b> card at the bottom of
           the tab (button <b>Run back-test</b>) tests the index-trend, bank and sovereign-spread rules — and the banner rule on
           those three (equity and sovereign for the banner) — over every major fall of the country's index, shows when each went red against the peak and how much
           more the index fell, marks a red that was merely carried over from an earlier fall, and keeps every run with its

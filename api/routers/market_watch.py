@@ -80,14 +80,18 @@ def rule_version() -> str:
     return hashlib.sha1(json.dumps(RULES, sort_keys=True).encode()).hexdigest()[:8]
 
 
-def _decide(red_days: list[bool], amber: bool, prev_bad: bool, stay_red: bool) -> tuple[str, bool]:
-    """-> (status, red_pending). red_days = the red condition on each of the last PERSIST_DAYS days, newest first."""
+def _decide(red_days: list[bool], amber: bool, prev_bad: bool, stay_red: bool, prev_warn: bool = False, stay_warn: bool = True) -> tuple[str, bool]:
+    """-> (status, red_pending). red_days = the red condition on each of the last PERSIST_DAYS days, newest first.
+    prev_warn / stay_warn: the same hysteresis for the amber line — a reading sitting right on it (a bank basket 10.2% below its high against a
+    10% line) would otherwise flip between Healthy and On watch with every price tick."""
     if all(red_days):
         return "bad", False
     if prev_bad and stay_red:                          # hysteresis: not clear until well back past the line
         return "bad", False
     if red_days[0] or amber:
         return "warn", bool(red_days[0])               # red today but not yet confirmed by the 3-day rule
+    if prev_warn and stay_warn:                        # still within the margin around the amber line: stay on watch
+        return "warn", False
     return "good", False
 
 
@@ -550,7 +554,7 @@ def get_market_watch_summary():
     try:
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM Market_Watch_Events WHERE Event_At > NOW() - INTERVAL '7 days' AND Indicator <> 'overall'")
+            cur.execute("SELECT COUNT(*) FROM Market_Watch_Events WHERE Event_At > NOW() - INTERVAL '7 days' AND Indicator <> 'overall' AND Indicator NOT LIKE 'local%'")
             recent = cur.fetchone()[0]
     except Exception:
         pass
@@ -563,7 +567,8 @@ def get_market_watch_events(limit: int = 15):
     from database.connection import get_db
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Event_At, Indicator, From_Status, To_Status, Message FROM Market_Watch_Events ORDER BY Event_At DESC LIMIT %s", (limit,))
+        # the Local Market Watch's changes ('local_*') live in the same table; they belong to its own tab
+        cur.execute("SELECT Event_At, Indicator, From_Status, To_Status, Message FROM Market_Watch_Events WHERE Indicator NOT LIKE 'local%%' ORDER BY Event_At DESC LIMIT %s", (limit,))
         return [{"at": r[0].isoformat(timespec="seconds"), "indicator": r[1], "from": r[2], "to": r[3], "message": r[4]} for r in cur.fetchall()]
 
 

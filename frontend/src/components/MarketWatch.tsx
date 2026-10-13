@@ -327,7 +327,7 @@ export function RecentChanges({ scope = 'market' }: { scope?: 'market' | 'local'
         <div className="font-semibold text-sm">Recent changes</div>
         <ul className="text-xs text-slate-600 space-y-0.5">
           {data.map((e, i) => (
-            <li key={i}><span className="text-slate-400 tabular-nums">{new Date(e.at).toLocaleDateString()}</span> {e.message}</li>
+            <li key={i}><span className="text-slate-400 tabular-nums">{new Date(e.at).toLocaleDateString()} {new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</span> {e.message}</li>
           ))}
         </ul>
         <p className="text-[11px] text-slate-400">Only changes of status are listed — green → amber, amber → red, red → clear — not every refresh.</p>

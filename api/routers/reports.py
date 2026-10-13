@@ -5139,7 +5139,8 @@ def get_risk_metrics(
     n_days    = len(port_returns)
     date_from = port_returns.index.min().strftime("%Y-%m-%d")
     date_to   = port_returns.index.max().strftime("%Y-%m-%d")
-    insufficient = n_days < lookback_days * 0.5
+    # "All" (36500 days) asks for whatever history there is: it is thin only when there are under 30 days of it
+    insufficient = n_days < (30 if lookback_days >= 36500 else lookback_days * 0.5)
 
     rolling_sharpe = port_returns.rolling(30).apply(
         lambda x: (x.mean() * 252 - rf_rate) / (x.std() * np.sqrt(252)) if x.std() > 0 else 0,

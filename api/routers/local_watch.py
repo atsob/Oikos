@@ -31,6 +31,9 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 CACHE_KEY, CACHE_HOURS = "local_watch_cache", 6
+# Once On watch, an index or bank basket stays on watch until it is this far back inside the amber line (not part of the back-tested red rules,
+# so it does not change the rule version): 2 points of drawdown, 1% above the 200-day average, 1.5 points of lag behind the index.
+AMBER_MARGIN_DD, AMBER_MARGIN_200D, AMBER_MARGIN_PTS = 2.0, 0.01, 1.5
 
 # Starting thresholds — to be tuned by the user, and by the daily log in a few months. Same idea as Market Watch's RULES.
 RULES_LOCAL = {
@@ -83,8 +86,10 @@ def _trend(p: dict, prev: dict | None = None) -> dict:
         return bool(dd(x) >= R["red_drawdown"] and x.iloc[-1] < x.rolling(200).mean().iloc[-1])
     now, d = float(s.iloc[-1]), dd(s)
     below = bool(now < sma.iloc[-1])
-    status, pending = _decide([red(k) for k in range(PERSIST_DAYS)], bool(below or d >= R["amber_drawdown"]), (prev or {}).get("status") == "bad",
-                              not (d < R["clear_drawdown"] and not below))
+    prev_status = (prev or {}).get("status")
+    status, pending = _decide([red(k) for k in range(PERSIST_DAYS)], bool(below or d >= R["amber_drawdown"]), prev_status == "bad",
+                              not (d < R["clear_drawdown"] and not below),
+                              prev_status == "warn", bool(now < float(sma.iloc[-1]) * (1 + AMBER_MARGIN_200D) or d >= R["amber_drawdown"] - AMBER_MARGIN_DD))
     d20 = dd(_upto(s, 20))
     trend = "worsening" if d - d20 >= R["worse_pts_20d"] else ("improving" if d20 - d >= R["worse_pts_20d"] else "flat")
     try:
@@ -151,8 +156,11 @@ def _banks(p: dict, prev: dict | None = None) -> dict:
         x = _upto(basket, k)
         return bool((dd(x) >= R["red_drawdown"] and x.iloc[-1] < x.rolling(200).mean().iloc[-1]) or under(k) <= -R["red_underperf_pts"])
     d, below, lag = dd(basket), bool(basket.iloc[-1] < sma.iloc[-1]), under(0)
+    prev_status = (prev or {}).get("status")
     status, pending = _decide([red(k) for k in range(PERSIST_DAYS)], bool(below or d >= R["amber_drawdown"] or lag <= -R["amber_underperf_pts"]),
-                              (prev or {}).get("status") == "bad", not (d < R["clear_drawdown"] and not below and lag > -R["clear_underperf_pts"]))
+                              prev_status == "bad", not (d < R["clear_drawdown"] and not below and lag > -R["clear_underperf_pts"]),
+                              prev_status == "warn", bool(basket.iloc[-1] < sma.iloc[-1] * (1 + AMBER_MARGIN_200D) or d >= R["amber_drawdown"] - AMBER_MARGIN_DD
+                                                          or lag <= -(R["amber_underperf_pts"] - AMBER_MARGIN_PTS)))
     d20 = dd(_upto(basket, 20))
     trend = "worsening" if d - d20 >= 1.5 else ("improving" if d20 - d >= 1.5 else "flat")
     rel = lag / 100

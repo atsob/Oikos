@@ -2728,16 +2728,22 @@ function PnlReport() {
   )
 }
 
+// A lookback of "YTD" is stored as -1 and means the days since 1 January of this year, so it follows the calendar; "All" is 36500 days.
+const LB_YTD = -1, LB_ALL = 36500
+const lookbackDaysOf = (l: number) => l === LB_YTD ? Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1 : l
+const lookbackLabel = (d: number) => d === LB_YTD ? 'YTD' : d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : d === 3650 ? '10Y' : 'All'
+
 function TwrTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('twr_lookback', 730)
+  const lb = lookbackDaysOf(lookback)
   const [cfOpen, setCfOpen] = useState(false)
   const [cfScope, setCfScope] = useState<'window' | 'all'>('window')
 
   const { data, isLoading } = useQuery({
-    queryKey: ['twr', lookback, accountIds],
-    queryFn: () => getTwr(lookback, accountIds),
+    queryKey: ['twr', lb, accountIds],
+    queryFn: () => getTwr(lb, accountIds),
     refetchInterval: liveRefetchMs,
   })
 
@@ -2771,10 +2777,10 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
           <Tooltip text="How many calendar days to measure. Sets the TWR window and the windowed MWR; the all-time MWR card always uses every recorded cash flow regardless of this setting.">TWR Lookback</Tooltip>
         </label>
         <div className="flex gap-2">
-          {([91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
+          {([LB_YTD, 91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
             <button key={d} onClick={() => setLookback(d)}
               className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : '10Y'}
+              {lookbackLabel(d)}
             </button>
           ))}
         </div>
@@ -2787,7 +2793,7 @@ function TwrTab({ accountIds }: { accountIds?: number[] }) {
           {/* KPI cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <KpiCard
-              label={`TWR (${lookback}-day window)`}
+              label={`TWR (${lb}-day window)`}
               value={`${d.twr_window_pct >= 0 ? '+' : ''}${d.twr_window_pct.toFixed(2)}%`}
               color={d.twr_window_pct >= 0 ? 'text-green-700' : 'text-red-600'}
               tooltip="Total Time-Weighted Return over the selected lookback window. Eliminates the distortion caused by deposit/withdrawal timing." />
@@ -2944,6 +2950,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const [lookback, setLookback] = usePersist('risk_lookback', 730)
+  const lb = lookbackDaysOf(lookback)
   const [benchSecId, setBenchSecId] = usePersist<number | null>('risk_bench_sec_id', null)
 
   const { data: bmCandidates = [] } = useQuery({
@@ -2952,8 +2959,8 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
   const bms = bmCandidates as Row[]
 
   const { data, isLoading } = useQuery({
-    queryKey: ['risk-metrics', lookback, benchSecId, accountIds],
-    queryFn: () => getRiskMetrics(lookback, benchSecId, accountIds),
+    queryKey: ['risk-metrics', lb, benchSecId, accountIds],
+    queryFn: () => getRiskMetrics(lb, benchSecId, accountIds),
     refetchInterval: liveRefetchMs,
   })
 
@@ -2981,10 +2988,10 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
             <Tooltip text="How many calendar days of price history to use. Longer windows smooth out short-term noise but may include outdated market regimes.">Lookback</Tooltip>
           </label>
           <div className="flex gap-2">
-            {([91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
+            {([LB_YTD, 91, 182, 365, 730, 1095, 1825, 3650, LB_ALL] as const).map(d => (
               <button key={d} onClick={() => setLookback(d)}
                 className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-                {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : '10Y'}
+                {lookbackLabel(d)}
               </button>
             ))}
           </div>
@@ -3007,10 +3014,10 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
           {/* Data range info / warning */}
           {d.insufficient
             ? <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded px-3 py-2">
-                ⚠️ Only <strong>{d.trading_days} trading days</strong> of data available ({d.date_from} → {d.date_to}), covering less than half the requested {lookback} calendar-day window. Download more historical prices to extend the analysis.
+                ⚠️ Only <strong>{d.trading_days} trading days</strong> of data available ({d.date_from} → {d.date_to}), covering less than half the requested {lookback === LB_ALL ? 'history' : `${lb} calendar-day window`}. Download more historical prices to extend the analysis.
               </div>
             : d.trading_days > 0
-              ? <p className="text-xs text-slate-500">Using <strong>{d.trading_days} trading days</strong> of return data ({d.date_from} → {d.date_to}) within a {lookback}-calendar-day window.</p>
+              ? <p className="text-xs text-slate-500">Using <strong>{d.trading_days} trading days</strong> of return data ({d.date_from} → {d.date_to}){lookback === LB_ALL ? ' over all available history.' : ` within a ${lb}-calendar-day window.`}</p>
               : <p className="text-xs text-slate-400">Insufficient price history — need at least 30 days of data for current holdings.</p>
           }
 
@@ -4551,15 +4558,15 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
           )}
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="Lookback window: YTD = since Jan 1 this year, 3M = 91 days, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095, 5Y = 1825, All = full available history. All series are indexed to 100 at the start date.">Lookback</Tooltip></label>
+          <label className="text-xs text-slate-500"><Tooltip text="Lookback window: YTD = since Jan 1 this year, 3M = 91 days, 6M = 182, 1Y = 365, 2Y = 730, 3Y = 1095, 5Y = 1825, 10Y = 3650, All = full available history. All series are indexed to 100 at the start date.">Lookback</Tooltip></label>
           <button onClick={() => setYtd(true)}
             className={`px-2 py-1 text-xs rounded border ${ytd ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
             YTD
           </button>
-          {([91, 182, 365, 730, 1095, 1825, 36500] as const).map(d => (
+          {([91, 182, 365, 730, 1095, 1825, 3650, 36500] as const).map(d => (
             <button key={d} onClick={() => { setYtd(false); setLookback(d) }}
               className={`px-2 py-1 text-xs rounded border ${!ytd && lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : 'All'}
+              {d === 91 ? '3M' : d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : d === 3650 ? '10Y' : 'All'}
             </button>
           ))}
         </div>
@@ -4895,10 +4902,10 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
         <div>
           <label className="text-xs text-slate-500 block mb-1"><Tooltip text="Historical window used to estimate expected return and volatility for the simulation. Shorter windows react faster to recent market conditions.">Calibration Window</Tooltip></label>
           <div className="flex gap-2 flex-wrap">
-            {([182, 365, 730, 1095, 1825] as const).map(d => (
+            {([182, 365, 730, 1095, 1825, 3650] as const).map(d => (
               <button key={d} onClick={() => setLookbackMc(d)}
                 className={`px-2 py-1 text-xs rounded border ${lookbackMc === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-                {d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : '5Y'}
+                {d === 182 ? '6M' : d === 365 ? '1Y' : d === 730 ? '2Y' : d === 1095 ? '3Y' : d === 1825 ? '5Y' : '10Y'}
               </button>
             ))}
           </div>
