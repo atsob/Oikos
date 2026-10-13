@@ -4619,12 +4619,16 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
 
 function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
   const liveRefetchMs = useLiveRefetchInterval()
-  const [lookback, setLookback] = usePersist('corr_lookback', 252)
+  // The window is in calendar days (the backend's price query is). It used to be saved as 60 / 126 / 252 / 504 "trading days", which the backend
+  // read as calendar days — a "1Y" window was really 252 days; a saved old value is read as the calendar window its label promised.
+  const [lookbackRaw, setLookback] = usePersist('corr_lookback', 365)
+  const lookback = ({ 60: 91, 126: 182, 252: 365, 504: 730 } as Record<number, number>)[lookbackRaw] ?? lookbackRaw
+  const lb = lookbackDaysOf(lookback)
   const [maxH, setMaxH] = usePersist('corr_max', 20)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['correlation', lookback, maxH, accountIds],
-    queryFn: () => getCorrelation(lookback, maxH, accountIds),
+    queryKey: ['correlation', lb, maxH, accountIds],
+    queryFn: () => getCorrelation(lb, maxH, accountIds),
     refetchInterval: liveRefetchMs,
   })
   const result = data as { tickers: string[]; matrix: (number | null)[][] } | undefined
@@ -4641,11 +4645,11 @@ function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500"><Tooltip text="Number of trading days of daily price returns used to compute pairwise correlations. Shorter windows are more reactive to recent market regimes.">Lookback</Tooltip></label>
-          {([60, 126, 252, 504] as const).map(d => (
+          <label className="text-xs text-slate-500"><Tooltip text="Calendar window of daily price returns used to compute pairwise correlations (YTD = since 1 January). Shorter windows are more reactive to recent market regimes.">Lookback</Tooltip></label>
+          {([LB_YTD, 91, 182, 365, 730, 1095, 1825, 3650] as const).map(d => (
             <button key={d} onClick={() => setLookback(d)}
               className={`px-2 py-1 text-xs rounded border ${lookback === d ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
-              {d === 60 ? '3M' : d === 126 ? '6M' : d === 252 ? '1Y' : '2Y'}
+              {lookbackLabel(d)}
             </button>
           ))}
         </div>
