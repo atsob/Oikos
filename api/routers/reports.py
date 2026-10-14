@@ -6671,14 +6671,14 @@ def get_benchmark(
             sec_names = dict(zip(df2["securities_id"], df2["securities_name"]))
 
         series_meta: list = []
-        combined = pd.DataFrame({"portfolio": port_idx})
+        raw = {"portfolio": port_idx}                    # every series on its own, before they are lined up
 
         for aid in (cmp_acct_ids or []):
             idx = _account_weighted_index(conn, [aid], lookback_days)
             if idx is None:
                 continue
             key = f"acct_{aid}"
-            combined[key] = _normalize_to_port(idx, port_idx.index)
+            raw[key] = idx
             series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account"})
 
         for bid in (bench_ids or []):
@@ -6692,8 +6692,31 @@ def get_benchmark(
             bench_df["date"] = pd.to_datetime(bench_df["date"])
             idx = bench_df.set_index("date")["close"]
             key = f"idx_{bid}"
-            combined[key] = _normalize_to_port(idx, port_idx.index)
+            raw[key] = idx
             series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index"})
+
+    # One common window: it starts on the LATEST first price of any line. A security with a shorter history than the lookback used to be drawn
+    # flat at 100 before its first price and then rebased to 100 at that first price, so it was never on the same footing as the others (a fund
+    # launched in 2023 read -4.9% against +25.8% for one that had been there all five years). Now every line is rebased to 100 on that common
+    # first day, nothing is invented before a price exists, and the response says which line set the start.
+    from datetime import date as _date, timedelta as _td
+    firsts = {k: v.dropna().index[0] for k, v in raw.items() if not v.dropna().empty}
+    common_start = max(firsts.values())
+    port_index = port_idx.index[port_idx.index >= common_start]
+    if len(port_index) < 2:                               # nothing left to compare over: fall back to the base line's own window
+        common_start, port_index = firsts["portfolio"], port_idx.index
+    combined = pd.DataFrame(index=port_index)
+    for k, v in raw.items():
+        aligned = v.reindex(v.index.union(port_index)).ffill().reindex(port_index)
+        first = aligned.dropna().iloc[0] if not aligned.dropna().empty else None
+        combined[k] = aligned / first * 100 if first else float("nan")
+    for m in series_meta:
+        m["first_date"] = firsts[m["key"]].strftime("%Y-%m-%d") if m["key"] in firsts else None
+    requested_from = _date.today() - _td(days=lookback_days)
+    limited_by = None
+    if common_start.date() > requested_from + _td(days=7):
+        k = max(firsts, key=firsts.get)
+        limited_by = base_label if k == "portfolio" else next((m["label"] for m in series_meta if m["key"] == k), None)
 
     resample_map = {"Daily": None, "Weekly": "W", "Monthly": "ME"}
     freq = resample_map.get(resample)
@@ -6711,7 +6734,8 @@ def get_benchmark(
             entry[s["key"]] = round(float(v), 4) if v is not None and not pd.isna(v) else None
         rows.append(entry)
 
-    return {"base_label": base_label, "series": series_meta, "rows": rows}
+    return {"base_label": base_label, "series": series_meta, "rows": rows,
+            "from_date": common_start.strftime("%Y-%m-%d"), "requested_from": requested_from.strftime("%Y-%m-%d"), "limited_by": limited_by}
 
 
 # ── Correlation matrix ─────────────────────────────────────────────────────────

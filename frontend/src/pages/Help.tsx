@@ -930,7 +930,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           indexes and/or other accounts as you like via <b>+ Add comparison…</b>, freely mixing both kinds. Each
           comparison gets its own color-coded line on the chart and its own return % card, all indexed to 100 at
           the same start date as your portfolio. Lookback runs YTD/3M/6M/1Y/2Y/3Y/5Y/10Y/All, clamped to whenever the
-          account scope actually started investing — <b>All</b> means "since inception," not further back.
+          account scope actually started investing — <b>All</b> means "since inception," not further back. If a comparison has fewer prices than the
+          lookback, every line starts on the latest first price among them (a note says which line set it), so all lines and returns cover the same period.
         </Note>
         <Note>
           The <b>portfolio</b> line reflects what you actually held on each day in the window — reconstructed from

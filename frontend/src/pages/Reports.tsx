@@ -4508,7 +4508,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
     enabled: effectiveTargets.length > 0,
     refetchInterval: liveRefetchMs,
   })
-  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account' }[]; rows: Record<string, unknown>[] } | undefined
+  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account'; first_date?: string | null }[]; rows: Record<string, unknown>[]; from_date?: string; requested_from?: string; limited_by?: string | null } | undefined
   const series = result?.series ?? []
   const rows = result?.rows ?? []
   const portLabel = result?.base_label ?? baseLabel ?? 'Portfolio'
@@ -4579,6 +4579,12 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
           </select>
         </div>
       </div>
+      {result?.limited_by && result.from_date && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          All lines start on <strong>{result.from_date}</strong>, not {result.requested_from}: <strong>{result.limited_by}</strong> has no prices before then, so every line is
+          indexed to 100 on that day and the returns below cover the same period. Choose a shorter lookback, or remove that line, to see the earlier history of the others.
+        </p>
+      )}
       {portReturn != null && (
         <div className="flex flex-wrap gap-3">
           <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
