@@ -132,6 +132,19 @@ _GENERIC_NAME_WORDS = {
 }
 
 
+# Ordinary English words that company names are built from: a first word like these does not identify a company on its own.
+_EVERYDAY_NAME_WORDS = {
+    "real", "performance", "consulting", "technologies", "technology", "energy", "power", "public", "national", "space", "exploration",
+    "metals", "athens", "hellenic", "greek", "european", "global", "general", "united", "first", "financial", "services", "solutions",
+    "capital", "resources", "media", "development", "trade", "sports", "motor", "health", "medical", "food", "foods", "water", "electric",
+    "american", "british", "german", "french", "alpha", "alter", "premium", "prime", "central", "northern", "southern", "western", "eastern",
+    # industry nouns: a company called "... Airport" or "... Cement" is not identified by that word, any more than by "bank" (see above)
+    "airport", "airlines", "airways", "cement", "insurance", "tobacco", "pharma", "pharmaceuticals", "shipping", "marine", "mining", "steel",
+    "paper", "sewerage", "supply", "construction", "investment", "investments", "properties", "estate", "company", "engineering", "industrial",
+    "telecommunications", "communications", "electronics", "chemicals", "minerals", "logistics", "transport", "retail", "stores",
+}
+
+
 def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
     """yfinance's per-ticker news feed isn't reliably scoped to that company —
     observed in practice: a Thomson Reuters (TRI) feed included Intuit (INTU)
@@ -143,6 +156,11 @@ def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
     or summary, rather than trusting Yahoo's own per-ticker scoping.
     """
     text = f"{item.get('title') or ''} {item.get('summary') or ''}".lower()
+    # Read as written, and with apostrophes dropped: "Bally's Intralot" is "Ballys Intralot" in the company's name, while "Nvidia's" must stay a match.
+    return _text_mentions_security(text, ticker, name) or _text_mentions_security(re.sub(r"[’'`]", "", text), ticker, name)
+
+
+def _text_mentions_security(text: str, ticker: str, name: str) -> bool:
     ticker_base = re.sub(r"\..*$", "", ticker).lower()
     if ticker_base and re.search(rf"\b{re.escape(ticker_base)}\b", text):
         return True
@@ -154,7 +172,16 @@ def _is_relevant_to_security(item: dict, ticker: str, name: str) -> bool:
     # same common corporate suffix (e.g. "Altisource Portfolio Solutions S.A.").
     name_words = [re.sub(r"[.,()]", "", w) for w in re.split(r"\s+", name.lower())]
     name_words = [w for w in name_words if len(w) > 2 and w not in _GENERIC_NAME_WORDS]
-    return any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words[:3])
+    if len(name_words) < 2:
+        return any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words)
+    # Several distinguishing words: the company is named by its first two together (up to two words between, so "Athens International Airport"
+    # and "National Bank of Greece" still match), not by either alone — "real" and "performance" are everyday words, and "Real Consulting S.A."
+    # and "Performance Technologies S.A." picked up articles on real estate and a "high-performance" roadster. A brand-like word of 5+ letters
+    # ("Metlen", "Eurobank", "Elecnor", "Titan") is distinctive enough to count on its own.
+    phrase = r"\b" + r"\W+(?:\w+\W+){0,2}?".join(re.escape(w) for w in name_words[:2]) + r"\b"
+    if re.search(phrase, text):
+        return True
+    return any(w not in _EVERYDAY_NAME_WORDS and len(w) >= 5 and re.search(rf"\b{re.escape(w)}\b", text) for w in name_words)
 
 
 def _clean_company_name(name: str) -> str:

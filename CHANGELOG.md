@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-14
+
+### Fixed
+- **News for Real Consulting and Performance Technologies was mostly about something else.** A security's news is kept only if its ticker or a word of the company's name appears in the title or summary, and the name check accepted *any* of the first three words — so "Real Consulting S.A." collected articles on *real* estate, and "Performance Technologies S.A." a Tesla roadster story about a *high-performance* car. A name of several words now has to appear as its first two words together (with up to two words between: *Athens International Airport*, *National Bank of Greece*), unless it has a distinctive word of its own of five letters or more (*Metlen*, *Eurobank*, *Elecnor*, *Titan*, *Aegean*) — ordinary words (*real*, *performance*, *energy*, *airport* …) no longer count alone. An apostrophe is read both ways (*Bally's Intralot* / *Ballys*; *Nvidia's* still matches *Nvidia*). Of the 6,332 stored security news items, 343 failed the new check (36 for Performance Technologies, 23 for Real Consulting, 196 for Space Exploration Technologies …) and were removed. Restart the app and scheduler containers for the stricter check to apply to new fetches.
+
 ## 2026-10-13
 
 ### Added

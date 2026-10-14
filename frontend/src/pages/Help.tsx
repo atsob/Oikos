@@ -1503,6 +1503,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           own <b>News</b> tab shows the same feed pre-filtered to just that security.
         </P>
         <Note>
+          A news item is kept for a security only if the ticker, or the company's name, appears in its title or summary. A name
+          made of several words has to appear as its first two words together (<i>Real Consulting</i>, <i>Performance
+          Technologies</i>) unless it has a distinctive word of its own (<i>Metlen</i>, <i>Eurobank</i>, <i>Elecnor</i>) — an everyday
+          word on its own (<i>real</i>, <i>performance</i>, <i>energy</i>) matches too much.
+        </Note>
+        <Note>
           Each item's source badge is its own link, separate from clicking the row (which opens the article) — a{' '}
           <b>Security</b> badge goes to that security's Security Detail page; an <b>Institution</b> or{' '}
           <b>Company</b> badge opens Static Data on the matching tab with that row's edit modal already open.
