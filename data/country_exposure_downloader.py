@@ -281,6 +281,68 @@ def fetch_vanguard(url: str, kind_hint: str | None = None):
     return rows, as_of, "the countries Vanguard lists"
 
 
+# Bloomberg exchange codes (as VanEck prints a holding: "CCJ US", "6504 JP") -> the Yahoo suffix, so a holding links to a security you track.
+_YAHOO_SUFFIX = {
+    "US": "", "UN": "", "UW": "", "UQ": "", "UA": "", "UR": "", "CN": ".TO", "CT": ".TO", "CV": ".V", "JP": ".T", "KS": ".KS", "KQ": ".KQ",
+    "AU": ".AX", "LN": ".L", "GY": ".DE", "GR": ".DE", "FP": ".PA", "NA": ".AS", "IM": ".MI", "SM": ".MC", "SS": ".ST", "NO": ".OL",
+    "DC": ".CO", "FH": ".HE", "HK": ".HK", "SW": ".SW", "SJ": ".JO", "TT": ".TW", "BB": ".BR", "ID": ".IR", "LS": ".LS", "PW": ".WA",
+}
+_YAHOO_SPECIAL = {"U-U CN": "U-UN.TO"}                   # Sprott Physical Uranium Trust units
+
+
+def _yahoo_symbol(label: str) -> str:
+    """"CCJ US" -> "CCJ", "6504 JP" -> "6504.T", "028260 KS" -> "028260.KS"; an unknown exchange keeps the bare ticker."""
+    label = (label or "").strip()
+    if label in _YAHOO_SPECIAL:
+        return _YAHOO_SPECIAL[label]
+    parts = label.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].isalpha():
+        return parts[0].replace(" ", "-") + _YAHOO_SUFFIX.get(parts[1].upper(), "")
+    return label.replace(" ", "-")
+
+
+def fetch_vaneck_holdings(url: str):
+    """-> (holdings, as_of): every position VanEck lists for a fund — [{"symbol", "name", "weight_pct"}] heaviest first (weight in percent),
+    cash left out. The same holdings dataset fetch_vaneck sums for currencies; here it is kept as the list itself."""
+    m = re.search(r"(https?://[^/]+/([a-z]{2})/[a-z]{2}/investments/[^/?#]+)", url)
+    if not m:
+        raise ValueError("Not a VanEck fund page")
+    s = requests.Session()
+    s.headers.update(UA)
+    html = s.get(m.group(1) + "/holdings/", timeout=TIMEOUT).text
+    tk = re.search(r"<ve-fundticker[^>]*>\s*([A-Za-z0-9.]+)\s*</ve-fundticker>", html)
+    hb = re.search(r'<ve-holdingsblock[^>]*data-blockid="(\d+)"[^>]*data-pageid="(\d+)"', html)
+    if not tk or not hb:
+        raise NoData("VanEck lists no holdings for that fund")
+    ds = s.get(VANECK_DATASET.format(b=hb.group(1), p=hb.group(2), t=tk.group(1)), timeout=TIMEOUT).json()
+    out = []
+    for h in ds.get("Holdings") or []:
+        w = _num(h.get("Weight"))
+        if w is None or w <= 0 or str(h.get("AssetClass") or "").lower() == "cash":
+            continue
+        out.append({"symbol": _yahoo_symbol(str(h.get("Label") or "")), "name": str(h.get("HoldingName") or h.get("Label") or "")[:200], "weight_pct": w})
+    out.sort(key=lambda x: -x["weight_pct"])
+    return out, _vaneck_date(ds.get("AsOfDate"))
+
+
+def _save_vaneck_holdings(cur, sid: int, url: str) -> int:
+    """Store a VanEck fund's full holdings as its Fund_Top_Holdings (Source 'vaneck'), for a fund Yahoo has no holdings for. Rows sit at Rank
+    200+ so they can never collide with Yahoo's (1-10) or the manual ones (100+); a fund with Yahoo holdings is left alone. Returns the rows
+    written (0 when nothing was done)."""
+    cur.execute("SELECT 1 FROM Fund_Top_Holdings WHERE Securities_Id = %s AND Source = 'yahoo' LIMIT 1", (sid,))
+    if cur.fetchone():
+        return 0
+    holdings, _ = fetch_vaneck_holdings(url)
+    if not holdings:
+        return 0
+    cur.execute("DELETE FROM Fund_Top_Holdings WHERE Securities_Id = %s AND Source = 'vaneck'", (sid,))
+    for i, h in enumerate(holdings):
+        cur.execute("""INSERT INTO Fund_Top_Holdings (Securities_Id, Rank, Symbol, Holding_Name, Weight_Pct, Source)
+                       VALUES (%s, %s, %s, %s, %s, 'vaneck') ON CONFLICT (Securities_Id, Rank) DO NOTHING""",
+                    (sid, 200 + i, h["symbol"][:20], h["name"], round(h["weight_pct"] / 100.0, 4)))
+    return len(holdings)
+
+
 _W_HEADS = ("weight", "% of net", "% of fund", "% of nav", "% net", "percentage", "pct", "allocation", "% of")
 _C_HEADS = ("country of risk", "country", "location", "domicile", "incorporation")
 
@@ -463,8 +525,14 @@ def download_country_exposure(target_sec_id=None, force: bool = False, only_held
                                    VALUES (%s, %s, %s, %s, %s, %s, %s)""", (sid, k, c, round(w, 4), f"{label} ({note})"[:100], as_of or date.today(), provider))
                 if ccy:
                     _save_currencies(cur, sid, name, ccy, provider, as_of, force)
+                held = 0
+                if provider == "vaneck":                       # VanEck publishes the whole holdings list: keep it as the fund's holdings
+                    try:
+                        held = _save_vaneck_holdings(cur, sid, src[1])
+                    except Exception as e:                      # the countries are saved either way
+                        log.info("VanEck holdings not saved for %s: %s", name, e)
                 conn.commit()
-                done("updated", f"{len(merged)} countries from {label}{f', as of {as_of}' if as_of else ''}; {note}")
+                done("updated", f"{len(merged)} countries from {label}{f', as of {as_of}' if as_of else ''}; {note}" + (f"; {held} holdings" if held else ""))
             except NoData as e:
                 conn.rollback()
                 done("skipped", str(e))

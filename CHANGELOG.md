@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-15
+
+### Added
+- **A VanEck fund's holdings, when Yahoo has none.** The VanEck Uranium and Nuclear Technologies UCITS ETF (NUKL) had no *Top Holdings* on its Composition tab — Yahoo returns no fund data for it. The VanEck page used as its country source also lists every position, so the country update now keeps that list as the fund's holdings (source *vaneck*, kept apart from Yahoo's and from rows typed by hand; a fund Yahoo does have holdings for is left alone): 25 holdings from the 14 Oct 2026 list — Cameco 15.2%, Sprott Physical Uranium Trust 7.6%, Fuji Electric 6.9%, NexGen 6.8%, Hitachi 6.7% … — each with a Yahoo-style symbol (*CCJ*, *6504.T*, *U-UN.TO*) so a holding you track yourself (Oklo, NuScale, Uranium Energy, Paladin, Centrus) is linked. It refreshes with the monthly *Fund Country Exposure* job or *Update now* on the fund's Country Exposure panel.
+
 ## 2026-10-14
 
 ### Fixed
