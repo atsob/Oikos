@@ -164,11 +164,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           charts below. The "vs prev month", "daily" and "YTD" figures compare with the history of the same accounts; an account that is switched off but now holds nothing (a closed brokerage, matured time deposits) still counts in that history, so money that moved between accounts does not show up as growth.
         </P>
         <Note>
-          Each card is a shortcut to where that number comes from: <b>Net Worth</b> opens Reports → Net Worth,{' '}
-          <b>Investments</b> opens Reports → Inv. Performance → P&amp;L, <b>Cash</b> and{' '}
-          <b>Assets</b> open Cash Register, and <b>Pension &amp; Savings</b> opens Investments → Transactions,
-          scoped to the pension account — with a <b>Back</b> button to return here, same as any other account
-          link (see below).
+          <b>Net Worth</b> opens Reports → Net Worth. <b>Cash</b>, <b>Investments</b>, <b>Pension &amp; Savings</b> and
+          <b>Assets</b> each open a page with the same card for every account that makes the number up — its value, the
+          change vs the previous month and today on one line, and YTD below, so the accounts add up to the card. It counts
+          the accounts the Dashboard counts (see Options below, including a closed account that held something earlier in
+          the year); the accounts are grouped by account type, each type with its own subtotal; accounts that are empty and did not move are hidden behind a tick-box, and the Investments page has a
+          <b>Performance (P&amp;L)</b> button to the report the card used to open. Click an account to open its transactions —
+          Cash Register for cash, savings and asset accounts, Investments → Transactions for brokerage, margin and pension
+          accounts — with a <b>Back</b> button to return, same as any other account link (see below).
         </Note>
         <Note>
           The <b>Options &amp; Account Selection</b> panel lets you include/exclude specific accounts and

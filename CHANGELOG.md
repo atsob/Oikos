@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-17
+
+### Added
+- **Dashboard: Cash, Investments, Pension & Savings and Assets open an account-by-account view.** Clicking one of these KPI cards used to jump to the Cash Register, the P&L report or a single pension account. It now opens a page (`/dashboard/cash`, `/investments`, `/pension`, `/assets`) with the same card for **every account in that KPI** — its value, *vs prev month* and *daily* on one line and *YTD* below, plus an all-accounts card on top that matches the Dashboard's — and **clicking an account opens its transactions**: the Cash Register for cash, savings and asset accounts, Investments → Transactions for brokerage, margin and pension accounts. The accounts are the ones the Dashboard counts (its Options, including a switched-off account that held something earlier in the year, so a closed account's fall shows up), accounts that are empty and did not move are hidden behind a tick-box, and the Investments page keeps a **Performance (P&L)** button to the report the card used to open. The accounts are **grouped by account type** (Checking, Cash, Credit Card, Loan … ; Brokerage, Margin …; Pension, Savings; Real Estate, Vehicle …), each type with its own subtotal and changes. A past value is worked out per account the way the net-worth history is (balance less what was booked later; holdings valued at that day's prices and FX), converted at that day's rate. New endpoint `GET /api/dashboard/account-breakdown`; the Dashboard's own options moved to a shared module so both pages count alike. Restart the app container.
+
 ## 2026-10-15
 
 ### Added

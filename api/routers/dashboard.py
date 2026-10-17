@@ -268,6 +268,97 @@ def get_accounts(include_future: bool = Query(False)):
     return _df_to_list(df)
 
 
+# The four Dashboard KPI groups, by account type — the same split the Dashboard page uses for its KPI cards.
+_KPI_GROUPS = {
+    "cash":        ("Cash", ("Cash", "Checking", "Credit Card", "Loan", "Other")),
+    "investments": ("Investments", ("Brokerage", "Margin", "Other Investment")),
+    "pension":     ("Pension & Savings", ("Pension", "Savings")),
+    "assets":      ("Assets", ("Real Estate", "Vehicle", "Asset", "Liability")),
+}
+
+
+@router.get("/account-breakdown")
+def get_account_breakdown(group: str = Query(...), account_ids: Optional[str] = Query(None), include_future: bool = Query(False)):
+    """One Dashboard KPI (cash / investments / pension / assets) split by account: for each account its value in EUR now and the change since
+    yesterday ("daily"), since the end of last month and since the end of last year ("YTD") — the three comparisons the KPI cards show, so the
+    accounts add up to the card. account_ids limits it to the accounts the Dashboard currently counts (its options; the Dashboard also counts switched-off accounts that now hold nothing, so a closed account's past is not lost from the comparison).
+
+    The value at a past date is worked out the way the net-worth history is: a cash / savings / asset account's balance less what was booked
+    after that date, a pension's the same from its Investments cash movements, an investment account's holdings valued at that day's prices
+    and FX — each converted at that day's rate.
+    """
+    if group not in _KPI_GROUPS:
+        raise HTTPException(400, f"group must be one of {sorted(_KPI_GROUPS)}")
+    label, types = _KPI_GROUPS[group]
+    ids_filter = {int(x) for x in account_ids.split(",") if x.strip()} if account_ids else None
+    def counts(a):                 # without a list: the active accounts, plus switched-off ones that now hold nothing (their past still moved the total)
+        if ids_filter is not None:
+            return a["id"] in ids_filter
+        return a.get("is_active") is not False or abs(float(a.get("balance_eur") or 0)) < 0.5
+    accounts = [a for a in get_accounts(include_future) if a["type"] in types and counts(a)]
+    ids = [int(a["id"]) for a in accounts]
+    from datetime import date, timedelta
+    today = date.today()
+    dates = {"daily": today - timedelta(days=1), "prev_month": today.replace(day=1) - timedelta(days=1), "ytd": date(today.year, 1, 1) - timedelta(days=1)}
+    hist: dict = {}
+    if ids:
+        params = {"ids": ids, "dates": list(dates.values())}
+        fx = """CASE WHEN cur.Currencies_ShortName = 'EUR' THEN 1 ELSE COALESCE((
+                    SELECT FX_Rate FROM Historical_FX WHERE Date <= dt.d AND Currencies_Id_1 = a.Currencies_Id ORDER BY Date DESC LIMIT 1), 1) END"""
+        query = f"""
+        WITH dates AS (SELECT unnest(%(dates)s::date[]) AS d)
+        -- cash, savings, assets, loans, cards: the balance less what was booked after that day
+        SELECT dt.d AS d, a.Accounts_Id AS id,
+               (a.Accounts_Balance - COALESCE((SELECT SUM(Total_Amount) FROM Transactions t WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > dt.d), 0)) * {fx} AS v
+        FROM dates dt CROSS JOIN Accounts a JOIN Currencies cur ON cur.Currencies_Id = a.Currencies_Id
+        WHERE a.Accounts_Id = ANY(%(ids)s) AND a.Accounts_Type NOT IN ('Brokerage', 'Margin', 'Other Investment', 'Pension')
+        UNION ALL
+        -- pension: the balance less the cash movements booked after that day
+        SELECT dt.d, a.Accounts_Id,
+               (a.Accounts_Balance - COALESCE((SELECT SUM(CASE WHEN Action IN ('CashIn','IntInc') THEN Total_Amount_AccCur
+                                                               WHEN Action IN ('CashOut') THEN -Total_Amount_AccCur ELSE 0 END)
+                                               FROM Investments WHERE Accounts_Id = a.Accounts_Id AND Date > dt.d), 0)) * {fx}
+        FROM dates dt CROSS JOIN Accounts a JOIN Currencies cur ON cur.Currencies_Id = a.Currencies_Id
+        WHERE a.Accounts_Id = ANY(%(ids)s) AND a.Accounts_Type = 'Pension'
+        UNION ALL
+        -- investment accounts: the holdings as they stood, at that day's prices and FX
+        SELECT dt.d, h.Accounts_Id,
+               SUM((h.Quantity - COALESCE((SELECT SUM(CASE WHEN i.Action IN ('Buy','Reinvest','ShrIn') THEN i.Quantity
+                                                          WHEN i.Action IN ('Sell','ShrOut') THEN -i.Quantity ELSE 0 END)
+                                           FROM Investments i WHERE i.Securities_Id = h.Securities_Id AND i.Accounts_Id = h.Accounts_Id AND i.Date > dt.d), 0))
+                   * COALESCE((SELECT Close FROM Historical_Prices p WHERE p.Date <= dt.d AND p.Securities_Id = h.Securities_Id ORDER BY p.Date DESC LIMIT 1), 0)
+                   * CASE WHEN cs.Currencies_ShortName = 'EUR' THEN 1 ELSE COALESCE((
+                         SELECT FX_Rate FROM Historical_FX WHERE Date <= dt.d AND Currencies_Id_1 = s.Currencies_Id ORDER BY Date DESC LIMIT 1), 1) END)
+        FROM dates dt CROSS JOIN Holdings h
+        JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
+        JOIN Securities s ON s.Securities_Id = h.Securities_Id
+        JOIN Currencies cs ON cs.Currencies_Id = s.Currencies_Id
+        WHERE h.Accounts_Id = ANY(%(ids)s) AND a.Accounts_Type IN ('Brokerage', 'Margin', 'Other Investment')
+        GROUP BY dt.d, h.Accounts_Id
+        """
+        with get_db() as conn:
+            df = pd.read_sql(query, conn, params=params)
+        names = {v: k for k, v in dates.items()}
+        for d, i, v in zip(df["d"], df["id"], df["v"]):
+            hist[(int(i), names[pd.Timestamp(d).date()])] = float(v) if v is not None and not pd.isna(v) else 0.0
+
+    out = []
+    for a in accounts:
+        now = float(a.get("balance_eur") or 0)
+        row = {"id": int(a["id"]), "name": a["name"], "type": a["type"], "currency": a["currency"], "institution": a.get("institution"),
+               "is_active": a.get("is_active") is not False, "balance_eur": round(now, 2)}
+        for k in ("daily", "prev_month", "ytd"):
+            past = hist.get((int(a["id"]), k), 0.0)
+            row[f"{k}_eur"] = round(past, 2)
+            row[f"delta_{k}"] = round(now - past, 2)
+        out.append(row)
+    out.sort(key=lambda r: -abs(r["balance_eur"]))
+    total = {"balance_eur": round(sum(r["balance_eur"] for r in out), 2)}
+    for k in ("daily", "prev_month", "ytd"):
+        total[f"delta_{k}"] = round(sum(r[f"delta_{k}"] for r in out), 2)
+    return {"group": group, "label": label, "accounts": out, "total": total, "as_of": today.isoformat()}
+
+
 @router.get("/alerts")
 def get_alerts():
     """Triggered user-defined alerts (price, allocation drift, signal changes, etc.)."""

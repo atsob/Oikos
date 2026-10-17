@@ -69,6 +69,15 @@ export const getNetWorth = (startDate = '2020-01-01', accountIds?: number[]) =>
 export const getAccounts = (includeFuture = false) =>
   api.get('/dashboard/accounts', { params: { include_future: includeFuture } }).then(r => r.data)
 
+// One Dashboard KPI split by account (api/routers/dashboard.py::get_account_breakdown)
+export type KpiAccount = {
+  id: number; name: string; type: string; currency: string; institution: string | null; is_active: boolean; balance_eur: number
+  delta_daily: number; delta_prev_month: number; delta_ytd: number
+}
+export type KpiBreakdown = { group: string; label: string; accounts: KpiAccount[]; total: { balance_eur: number; delta_daily: number; delta_prev_month: number; delta_ytd: number }; as_of: string }
+export const getAccountBreakdown = (group: string, accountIds: number[], includeFuture = false) =>
+  api.get('/dashboard/account-breakdown', { params: { group, account_ids: accountIds.join(','), include_future: includeFuture } }).then(r => r.data as KpiBreakdown)
+
 export const getMonthlySummaries = (limit = 24) =>
   api.get('/dashboard/monthly-summaries', { params: { limit } }).then(r => r.data)
 

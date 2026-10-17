@@ -7,6 +7,7 @@ import { getCurrenciesMaster } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
 import RequireAuth from '@/components/RequireAuth'
 import Login from '@/pages/Login'
+import DashboardAccounts from '@/pages/DashboardAccounts'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null }
@@ -71,6 +72,7 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route element={<Layout />}>
               <Route index element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+              <Route path="dashboard/:group" element={<ErrorBoundary><DashboardAccounts /></ErrorBoundary>} />
               <Route path="register" element={<ErrorBoundary><Register /></ErrorBoundary>} />
               <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
               <Route path="investments" element={<ErrorBoundary><Investments /></ErrorBoundary>} />

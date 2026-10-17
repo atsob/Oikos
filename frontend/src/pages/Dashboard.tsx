@@ -19,6 +19,7 @@ import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hook
 import { MarketWatchPanel } from '@/components/MarketWatch'
 import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
+import { loadOpts, saveOpts, historyAccountIds, type DashOpts } from '@/lib/dashboardOpts'
 import { getKWaveOverlay, KWAVE_DISCLAIMER, DEFAULT_KWAVE_PHASES } from '@/lib/kwave'
 import type { KWavePhase, KWaveSeason } from '@/lib/kwave'
 import {
@@ -30,15 +31,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-const OPTS_KEY = 'oikos-dashboard-opts'
-interface DashOpts { includedAccounts: number[] | 'all'; includeFuture: boolean; showDisabled: boolean }
-const defaultOpts = (): DashOpts => ({ includedAccounts: 'all', includeFuture: false, showDisabled: false })
-function loadOpts(): DashOpts {
-  try { return { ...defaultOpts(), ...JSON.parse(localStorage.getItem(OPTS_KEY) || '{}') } }
-  catch { return defaultOpts() }
-}
-function saveOpts(o: DashOpts) { localStorage.setItem(OPTS_KEY, JSON.stringify(o)) }
+// (the Dashboard options live in '@/lib/dashboardOpts', shared with the account pages the KPI cards open)
 
 // ── Insights panel (financial only) ──────────────────────────────────────────
 type InsightType = 'warning' | 'danger' | 'success' | 'info'
@@ -984,15 +977,7 @@ export default function Dashboard() {
   // a different set of accounts than the current total, producing a mismatched delta.
   const accsForNw = accounts as Record<string, unknown>[]
   const visibleAccsForNw = opts.showDisabled ? accsForNw : accsForNw.filter(a => a.is_active !== false)
-  // An account that is switched off but now holds (almost) nothing — a closed brokerage, matured time deposits — adds nothing to the "now"
-  // total whether or not it is counted, but its balance in the past is part of the history: leaving it out of the baseline made
-  // "YTD" look like new money (Investments +€77k instead of +€6k) because what those accounts held at year end counted for nothing.
-  // Only a switched-off account that still holds something is left out, to match the "now" total.
-  const holdsNothing = (a: Record<string, unknown>) => Math.abs(Number(a.balance_eur ?? a.balance ?? 0)) < 0.5
-  const nwAccountIds = accsForNw
-    .filter(a => opts.showDisabled || a.is_active !== false || holdsNothing(a))
-    .filter(a => opts.includedAccounts === 'all' || (opts.includedAccounts as number[]).includes(Number(a.id)))
-    .map(a => Number(a.id)).sort((a, b) => a - b)
+  const nwAccountIds = historyAccountIds(accsForNw, opts)
 
   const { data: netWorth = [], isLoading: nwLoading } = useQuery({
     queryKey: ['net-worth', nwPeriod, nwAccountIds.join(',')],
@@ -1065,7 +1050,6 @@ export default function Dashboard() {
   // Aggregate KPIs from included accounts (grouped by type)
   const CASH_TYPES = new Set(['Cash', 'Checking', 'Credit Card', 'Loan', 'Other'])
   const INV_TYPES  = new Set(['Brokerage', 'Margin', 'Other Investment'])
-  const PEN_TYPES  = new Set(['Pension'])
   // Savings is grouped with Pension for the Dashboard KPIs/charts ("Pension & Savings"),
   // not with Cash — see database.dashboard's historical_pension query for the matching
   // backend grouping.
@@ -1080,13 +1064,6 @@ export default function Dashboard() {
   const totalPension  = sumByType(PEN_SAVINGS_TYPES)
   const totalAssets   = sumByType(ASSET_TYPES)
 
-  // The account carrying the largest balance among actual Pension-type accounts (not
-  // Savings, even though Savings shares the KPI total) — there can be several (old/
-  // inactive plans with a zero balance), but only one is ever the one this KPI's value
-  // is really about, so that's the one the KPI links through to.
-  const pensionAccount = included
-    .filter(a => PEN_TYPES.has(String(a.type)))
-    .sort((a, b) => Math.abs(Number(b.balance_eur ?? b.balance ?? 0)) - Math.abs(Number(a.balance_eur ?? a.balance ?? 0)))[0]
   const totalNetWorth = totalCash + totalInv + totalPension + totalAssets
 
   // For trend chart — use backend data (all accounts)
@@ -1203,7 +1180,7 @@ export default function Dashboard() {
               ] },
               deltaCashYTD != null ? { text: `${fmtDelta(deltaCashYTD)} YTD`, color: deltaColor(deltaCashYTD) } : { text: '— YTD' },
             ]}
-            onClick={() => navigate('/register')}
+            onClick={() => navigate('/dashboard/cash')}
           />
           <StatCard
             compact
@@ -1216,7 +1193,7 @@ export default function Dashboard() {
               ] },
               deltaInvYTD != null ? { text: `${fmtDelta(deltaInvYTD)} YTD`, color: deltaColor(deltaInvYTD) } : { text: '— YTD' },
             ]}
-            onClick={() => { setPref('reports_active_tab', 'inv-performance'); setPref('inv_perf_tab', 'P&L'); navigate('/reports') }}
+            onClick={() => navigate('/dashboard/investments')}
           />
           <StatCard
             compact
@@ -1229,7 +1206,7 @@ export default function Dashboard() {
               ] },
               deltaPenYTD != null ? { text: `${fmtDelta(deltaPenYTD)} YTD`, color: deltaColor(deltaPenYTD) } : { text: '— YTD' },
             ]}
-            onClick={pensionAccount ? () => navigate(`/investments?accountsId=${Number(pensionAccount.id)}&tab=transactions&from=report`) : undefined}
+            onClick={() => navigate('/dashboard/pension')}
           />
           <StatCard
             compact
@@ -1242,7 +1219,7 @@ export default function Dashboard() {
               ] },
               deltaAssetsYTD != null ? { text: `${fmtDelta(deltaAssetsYTD)} YTD`, color: deltaColor(deltaAssetsYTD) } : { text: '— YTD' },
             ]}
-            onClick={() => navigate('/register')}
+            onClick={() => navigate('/dashboard/assets')}
           />
         </div>
 
