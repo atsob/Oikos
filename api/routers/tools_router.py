@@ -1622,7 +1622,7 @@ _SEED_JOBS = [
     ("local_watch_backtest", "Local Market Watch Back-test", "Re-runs the back-test of the Local Market Watch red rules for the country of usage (index trend, banks, sovereign spread, and the banner rule on those) when a rule changes, on the first Sunday of the month, and once the daily log reaches six months. Every run is stored with its rule version; a Dashboard alert only for a material change. Never edits a threshold.", "On a rule change · 1st Sunday monthly · log at 6 months", True),
     ("market_watch_backtest", "Market Watch Back-test", "Re-runs the back-test of the Market Watch red rules (credit spreads, 10-year yield, plus the daily log) when a rule or threshold changes, on the first Sunday of the month, in mid Feb/May/Aug/Nov after earnings season, and once the daily log reaches six months. Every run is stored with its rule version; a Dashboard alert only for a material change. Never edits a threshold.", "On a rule change · 1st Sunday monthly · mid Feb/May/Aug/Nov", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
-    ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications.", "Every 30 min, 24×7", True),
+    ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications. Then sends new Dashboard alerts of the groups switched on under App Settings → Telegram Alerts.", "Every 30 min, 24×7", True),
     ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
     ("fund_composition",    "Fund Composition (X-Ray)", "Downloads ETF/Mutual Fund look-through data (sector weights, top holdings, asset mix, expense ratio) from Yahoo Finance for Portfolio X-Ray.", "2nd of month at 07:30", True),
     ("fundamentals",        "Securities Fundamentals", "Downloads stock financial statements (balance sheet, income statement, cash flow) from Yahoo Finance, feeding the Piotroski F-Score and Altman Z-Score in Securities Analysis.", "3rd of month at 07:30", True),
@@ -1742,6 +1742,8 @@ def _run_scheduler_job_fn(job_id: str):
             from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
             refresh_signal_notifications()
             refresh_fundamentals_notifications()
+            from database.alert_groups import send_new_alert_telegrams
+            send_new_alert_telegrams()
         elif job_id == "news_fetch":
             from ai.news_fetch import run as run_news_fetch
             run_news_fetch()

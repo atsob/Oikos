@@ -6,7 +6,7 @@ import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
-  generateMonthlySummary, generateWeeklySummary, getAlerts, acknowledgeSignal, acknowledgeSplit, dismissTrendAlert, acknowledgeZoneChange,
+  generateMonthlySummary, generateWeeklySummary, getAlerts, dismissAlert, dismissAlertGroup,
   getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip } from '@/components/ui'
@@ -173,6 +173,25 @@ function MarketValuationPanel() {
 
 type AlertRow = Record<string, unknown>
 
+// Alert groups, in display order — the same groups as database/alert_groups.py. Each has
+// its own header, count, collapse state and "Dismiss group".
+const ALERT_GROUPS: { id: string; label: string; hint: string }[] = [
+  { id: 'sr', label: 'Support / Resistance', hint: 'Holdings, Watchlist and the currencies you are exposed to approaching or breaking a support or resistance level (1-year daily closes).' },
+  { id: 'price', label: 'Price Alerts', hint: 'Your own above/below thresholds (Market Data → Alerts). Dismissing one silences it until the price crosses back and triggers again.' },
+  { id: 'signals', label: 'Signals', hint: 'Signal changes, golden/death cross, trailing stop and Altman Z-Score zone changes.' },
+  { id: 'events', label: 'Upcoming Events', hint: 'Bond maturities and coupons, dividend payments and loan payments due soon. Dismissing one silences that event only.' },
+  { id: 'corporate', label: 'Corporate Actions & Data', hint: 'Stock splits and split-amount mismatches.' },
+  { id: 'portfolio', label: 'Portfolio', hint: 'Allocation drift beyond your thresholds.' },
+]
+const LEVEL_RANK: Record<string, number> = { error: 0, warning: 1, info: 2 }
+const SCOPE_LABEL: Record<string, string> = { holding: 'Holding', watchlist: 'Watchlist', currency: 'Currency' }
+
+// Messages mark emphasis with **…** — render it as bold instead of showing the asterisks.
+function AlertText({ text }: { text: string }) {
+  const parts = text.split(/\*\*(.+?)\*\*/g)
+  return <>{parts.map((p, i) => (i % 2 ? <b key={i}>{p}</b> : <React.Fragment key={i}>{p.replace(/(^|\s)_(.+?)_(?=\s|$)/g, '$1$2')}</React.Fragment>))}</>
+}
+
 function SecuritiesAlertsPanel() {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -184,83 +203,39 @@ function SecuritiesAlertsPanel() {
   })
   // Dismissing removes the just-dismissed row(s) from the cached list directly
   // instead of invalidating/refetching — /dashboard/alerts recomputes several
-  // live checks (Golden/Death Cross, Trailing Stop, etc.) that take several
-  // seconds, and a dismiss doesn't change any of that, only which rows are
-  // acknowledged. The 5-minute refetchInterval above still keeps the list
+  // live checks (Golden/Death Cross, Trailing Stop, Support / Resistance, etc.) that
+  // take several seconds, and a dismiss doesn't change any of that, only which rows
+  // are dismissed. The 5-minute refetchInterval above still keeps the list
   // eventually consistent with the server.
   const removeAlerts = (predicate: (a: AlertRow) => boolean) => {
     qc.setQueryData<AlertRow[]>(['triggered-alerts'], (old) => (old ?? []).filter(a => !predicate(a)))
   }
-  const ackMut = useMutation({
-    mutationFn: (sid: number) => acknowledgeSignal(sid),
-    onSuccess: (_data, sid) => removeAlerts(a => a.type === 'signal_change' && Number(a.securities_id) === sid),
+  const dismissOne = useMutation({
+    mutationFn: (a: AlertRow) => dismissAlert(a),
+    onSuccess: (_d, a) => removeAlerts(x => x.key === a.key),
   })
-  const ackSplitMut = useMutation({
-    mutationFn: (caId: number) => acknowledgeSplit(caId),
-    onSuccess: (_data, caId) => removeAlerts(a => a.type === 'stock_split' && Number(a.corporate_actions_id) === caId),
-  })
-  // Golden/death cross and trailing-stop alerts are live-computed (not stored,
-  // unlike Signal Change/Stock Split) — dismissing one silences it until its own
-  // condition actually resolves and re-triggers fresh (see Live_Alert_Dismissals'
-  // docstring server-side), rather than a one-time acknowledgment.
-  const dismissTrendMut = useMutation({
-    mutationFn: ({ sid, type }: { sid: number; type: 'ma_cross' | 'trailing_stop' }) => dismissTrendAlert(sid, type),
-    onSuccess: (_data, vars) => removeAlerts(a => a.type === vars.type && Number(a.securities_id) === vars.sid),
-  })
-  // Altman Z-Score zone change is a one-off acknowledgment like Signal Change
-  // (re-triggers only on the next actual zone move), not a self-healing live
-  // condition like the trend alerts above.
-  const ackZoneMut = useMutation({
-    mutationFn: (sid: number) => acknowledgeZoneChange(sid),
-    onSuccess: (_data, sid) => removeAlerts(a => a.type === 'zone_change' && Number(a.securities_id) === sid),
-  })
-  // Signal Change alerts are per-security and re-trigger on the next algo/analyst
-  // move, unlike Price Alerts (no dismiss here — those clear on their own once the
-  // price crosses back, and are managed as standing alerts under Market Data).
-  const signalSecIds = React.useMemo(() => [...new Set(
-    (alerts as Record<string, unknown>[])
-      .filter(a => a.type === 'signal_change' && a.securities_id != null)
-      .map(a => Number(a.securities_id)),
-  )], [alerts])
-  // Split alerts are one-off historical notifications (not standing, re-triggering
-  // conditions like Signal Changes) — still worth clearing in bulk since a newly
-  // added security can arrive with dozens of them (its full split history at once).
-  const splitCaIds = React.useMemo(() => [...new Set(
-    (alerts as Record<string, unknown>[])
-      .filter(a => a.type === 'stock_split' && a.corporate_actions_id != null)
-      .map(a => Number(a.corporate_actions_id)),
-  )], [alerts])
-  const trendKeys = React.useMemo(() => (alerts as Record<string, unknown>[])
-    .filter(a => (a.type === 'ma_cross' || a.type === 'trailing_stop') && a.securities_id != null)
-    .map(a => ({ sid: Number(a.securities_id), type: a.type as 'ma_cross' | 'trailing_stop' })),
-  [alerts])
-  // Zone Change alerts are per-security and re-trigger on the next actual Altman
-  // Z-Score zone move (Safe/Grey/Distress) — same one-off-acknowledgment shape as
-  // Signal Change above.
-  const zoneChangeSecIds = React.useMemo(() => [...new Set(
-    (alerts as Record<string, unknown>[])
-      .filter(a => a.type === 'zone_change' && a.securities_id != null)
-      .map(a => Number(a.securities_id)),
-  )], [alerts])
-  const dismissAllMut = useMutation({
-    mutationFn: () => Promise.all([
-      ...signalSecIds.map(sid => acknowledgeSignal(sid)),
-      ...splitCaIds.map(caId => acknowledgeSplit(caId)),
-      ...trendKeys.map(({ sid, type }) => dismissTrendAlert(sid, type)),
-      ...zoneChangeSecIds.map(sid => acknowledgeZoneChange(sid)),
-    ]),
-    onSuccess: () => removeAlerts(a =>
-      (a.type === 'signal_change' && signalSecIds.includes(Number(a.securities_id))) ||
-      (a.type === 'stock_split' && splitCaIds.includes(Number(a.corporate_actions_id))) ||
-      trendKeys.some(k => k.type === a.type && k.sid === Number(a.securities_id)) ||
-      (a.type === 'zone_change' && zoneChangeSecIds.includes(Number(a.securities_id)))),
+  const dismissGroup = useMutation({
+    mutationFn: (group: string) => dismissAlertGroup(group),
+    onSuccess: (_d, group) => removeAlerts(x => x.group === group),
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
-  // /dashboard/alerts recomputes several live checks (Golden/Death Cross,
-  // Trailing Stop, etc. — see the dismiss comment above) and can take a few
-  // seconds, during which `alerts` is still just its `[]` default — without
-  // this, the whole panel silently renders nothing the entire time, which
-  // reads as "no alerts" rather than "still checking".
+  const [groupOpen, setGroupOpen] = usePersist<Record<string, boolean>>('dashboard_alert_groups_open', {})
+
+  const rows = alerts as AlertRow[]
+  const byGroup = React.useMemo(() => {
+    const m = new Map<string, AlertRow[]>()
+    for (const a of rows) {
+      const g = ALERT_GROUPS.some(x => x.id === a.group) ? String(a.group) : 'portfolio'
+      m.set(g, [...(m.get(g) ?? []), a])
+    }
+    for (const list of m.values()) list.sort((x, y) => (LEVEL_RANK[String(x.level)] ?? 3) - (LEVEL_RANK[String(y.level)] ?? 3))
+    return m
+  }, [rows])
+
+  // /dashboard/alerts recomputes several live checks and can take a few seconds,
+  // during which `alerts` is still just its `[]` default — without this, the whole
+  // panel silently renders nothing the entire time, which reads as "no alerts"
+  // rather than "still checking".
   if (isLoading) {
     return (
       <Card>
@@ -270,7 +245,7 @@ function SecuritiesAlertsPanel() {
       </Card>
     )
   }
-  if (!(alerts as unknown[]).length) return null
+  if (!rows.length) return null
 
   const levelStyle = (level: string) => {
     if (level === 'error') return 'bg-red-50 border-red-300'
@@ -282,74 +257,75 @@ function SecuritiesAlertsPanel() {
     if (level === 'warning') return <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
     return <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
   }
+  const worst = (list: AlertRow[]) => list.reduce((w, a) => Math.min(w, LEVEL_RANK[String(a.level)] ?? 3), 3)
+  const dot = (rank: number) => rank === 0 ? 'bg-red-500' : rank === 1 ? 'bg-amber-500' : 'bg-blue-500'
+  const target = (a: AlertRow) => a.securities_id != null ? `/securities/${a.securities_id}`
+    : a.currencies_id != null ? `/currencies/${a.currencies_id}` : null
 
   return (
     <Card>
-      <div className="w-full flex items-center justify-between px-4 py-3">
-        <button className="flex-1 flex items-center gap-2 text-left" onClick={() => setOpen(!open)}>
-          <span className="text-sm font-semibold text-orange-700">
-            🔔 {(alerts as unknown[]).length} triggered alert{(alerts as unknown[]).length !== 1 ? 's' : ''}
+      <button className="w-full flex items-center gap-2 px-4 py-3 text-left flex-wrap" onClick={() => setOpen(!open)}>
+        <span className="text-sm font-semibold text-orange-700">
+          🔔 {rows.length} triggered alert{rows.length !== 1 ? 's' : ''}
+        </span>
+        {ALERT_GROUPS.filter(g => byGroup.has(g.id)).map(g => (
+          <span key={g.id} className="inline-flex items-center gap-1 text-xs text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${dot(worst(byGroup.get(g.id)!))}`} />{g.label} {byGroup.get(g.id)!.length}
           </span>
-          {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
-        </button>
-        {signalSecIds.length + splitCaIds.length + trendKeys.length + zoneChangeSecIds.length > 1 && (
-          <button
-            className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline ml-3"
-            disabled={dismissAllMut.isPending}
-            onClick={() => dismissAllMut.mutate()}
-            title="Dismiss all Signal Change, Stock Split, Cross, Trailing Stop, and Zone Change alerts">
-            {dismissAllMut.isPending ? 'Dismissing…' : 'Dismiss All'}
-          </button>
-        )}
-      </div>
+        ))}
+        <span className="ml-auto">{open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}</span>
+      </button>
       {open && (
-        <CardBody className="pt-0 space-y-2">
-          {(alerts as Record<string, unknown>[]).map((a, i) => {
-            const level = String(a.level ?? 'info')
-            const secId = a.securities_id != null ? Number(a.securities_id) : null
-            const isSignal = a.type === 'signal_change' && secId != null
-            const caId = a.corporate_actions_id != null ? Number(a.corporate_actions_id) : null
-            const isSplit = a.type === 'stock_split' && caId != null
-            const isTrend = (a.type === 'ma_cross' || a.type === 'trailing_stop') && secId != null
-            const isZoneChange = a.type === 'zone_change' && secId != null
+        <CardBody className="pt-0 space-y-3">
+          {ALERT_GROUPS.filter(g => byGroup.has(g.id)).map(g => {
+            const list = byGroup.get(g.id)!
+            const isOpen = groupOpen[g.id] ?? true
             return (
-              <div key={i}
-                className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${secId != null ? 'cursor-pointer hover:brightness-95' : ''}`}
-                onClick={secId != null ? () => navigate(`/securities/${secId}`) : undefined}
-                title={secId != null ? 'View security details' : undefined}>
-                {levelIcon(level)}
-                <p className="text-sm text-slate-700 flex-1">{String(a.message ?? '')}</p>
-                {isSignal && (
+              <div key={g.id} className="rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-t-lg">
+                  <button className="flex-1 flex items-center gap-2 text-left" onClick={() => setGroupOpen({ ...groupOpen, [g.id]: !isOpen })}>
+                    <span className={`w-2 h-2 rounded-full ${dot(worst(list))}`} />
+                    <span className="text-sm font-semibold text-slate-700"><Tooltip text={g.hint}>{g.label}</Tooltip></span>
+                    <span className="text-xs text-slate-400">{list.length}</span>
+                    {isOpen ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+                  </button>
                   <button
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={(e) => { e.stopPropagation(); ackMut.mutate(secId!) }}
-                    title="Dismiss this notification">
-                    Dismiss
+                    disabled={dismissGroup.isPending}
+                    onClick={() => dismissGroup.mutate(g.id)}
+                    title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
+                    {dismissGroup.isPending && dismissGroup.variables === g.id ? 'Dismissing…' : list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
                   </button>
-                )}
-                {isSplit && (
-                  <button
-                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={(e) => { e.stopPropagation(); ackSplitMut.mutate(caId!) }}
-                    title="Dismiss this notification">
-                    Dismiss
-                  </button>
-                )}
-                {isTrend && (
-                  <button
-                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={(e) => { e.stopPropagation(); dismissTrendMut.mutate({ sid: secId!, type: a.type as 'ma_cross' | 'trailing_stop' }) }}
-                    title="Dismiss until this condition resolves and re-triggers fresh">
-                    Dismiss
-                  </button>
-                )}
-                {isZoneChange && (
-                  <button
-                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={(e) => { e.stopPropagation(); ackZoneMut.mutate(secId!) }}
-                    title="Dismiss this notification">
-                    Dismiss
-                  </button>
+                </div>
+                {isOpen && (
+                  <div className="p-2 space-y-2">
+                    {list.map(a => {
+                      const level = String(a.level ?? 'info')
+                      const to = target(a)
+                      return (
+                        <div key={String(a.key)}
+                          className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${to ? 'cursor-pointer hover:brightness-95' : ''}`}
+                          onClick={to ? () => navigate(to) : undefined}
+                          title={to ? (a.currencies_id != null ? 'View currency details' : 'View security details') : undefined}>
+                          {levelIcon(level)}
+                          <p className="text-sm text-slate-700 flex-1">
+                            {a.scope != null && (
+                              <span className="mr-1.5 text-[10px] uppercase tracking-wide font-semibold text-slate-500 bg-white/70 border border-slate-200 rounded px-1 py-px">
+                                {SCOPE_LABEL[String(a.scope)] ?? String(a.scope)}
+                              </span>
+                            )}
+                            <AlertText text={String(a.message ?? '')} />
+                          </p>
+                          <button
+                            className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline self-start"
+                            onClick={(e) => { e.stopPropagation(); dismissOne.mutate(a) }}
+                            title="Dismiss this alert — it comes back only if the event happens afresh">
+                            Dismiss
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
               </div>
             )

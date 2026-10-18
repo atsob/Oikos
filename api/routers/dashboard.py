@@ -369,6 +369,32 @@ def get_alerts():
         raise HTTPException(500, str(e))
 
 
+@router.post("/alerts/dismiss")
+def dismiss_alert(alert: dict):
+    """Dismiss one alert (as returned by GET /alerts), by its own type's mechanism —
+    see database/alert_groups.py."""
+    try:
+        from database.alert_groups import dismiss
+        return {"dismissed": dismiss([alert])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/alerts/dismiss-group/{group}")
+def dismiss_alert_group(group: str):
+    """Dismiss every current alert in one group (sr, price, signals, events, corporate,
+    portfolio) — the other groups are untouched."""
+    from database.alert_groups import GROUPS, dismiss
+    if group not in {g for g, _ in GROUPS}:
+        raise HTTPException(400, "Unknown alert group")
+    try:
+        from database.queries import check_triggered_alerts
+        current = [a for a in check_triggered_alerts() if a.get("group") == group]
+        return {"dismissed": dismiss(current)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/alerts/acknowledge-signal/{securities_id}")
 def acknowledge_signal(securities_id: int):
     """Dismiss a signal-change notification for a security."""

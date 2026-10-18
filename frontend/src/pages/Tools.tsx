@@ -2203,7 +2203,7 @@ function AppSettingsPanel() {
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
 
-  const set = (k: keyof AppSettings, v: string | number | boolean) => {
+  const set = (k: keyof AppSettings, v: string | number | boolean | Record<string, boolean>) => {
     setForm(f => ({ ...f, [k]: v }))
     setDirty(true)
     setSaved_(false)
@@ -2301,6 +2301,18 @@ function AppSettingsPanel() {
               <input type="checkbox" checked={form.telegramAlerts} onChange={e => set('telegramAlerts', e.target.checked)} className="rounded" />
               Message me when Market Watch or Local Market Watch turns red, or leaves red
             </label>
+            <p className="mt-3 text-xs font-medium text-slate-500">Also send new Dashboard alerts from these groups (each alert once):</p>
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 max-w-md">
+              {([['sr', 'Support / Resistance'], ['price', 'Price Alerts'], ['signals', 'Signals'], ['events', 'Upcoming Events'],
+                ['corporate', 'Corporate Actions & Data'], ['portfolio', 'Portfolio']] as const).map(([g, label]) => (
+                <label key={g} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="rounded" disabled={!form.telegramAlerts}
+                    checked={!!form.telegramAlertGroups?.[g]}
+                    onChange={e => set('telegramAlertGroups', { ...(form.telegramAlertGroups ?? {}), [g]: e.target.checked })} />
+                  {label}
+                </label>
+              ))}
+            </div>
             <div className="mt-2 flex items-center gap-3">
               <button type="button" className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-50" disabled={!notifyStatus?.configured}
                 onClick={() => { setTgMsg(null); sendNotifyTest().then(() => setTgMsg({ ok: true, text: 'Sent — check Telegram.' })).catch((e: { response?: { data?: { detail?: string } } }) => setTgMsg({ ok: false, text: e.response?.data?.detail ?? 'Could not send.' })) }}>
@@ -2416,6 +2428,19 @@ function AppSettingsPanel() {
               trips, shown on Securities Analysis → Portfolio Action Signals and on a Security Detail's Overview and
               Prices tabs. A trend-following exit rule — 15–25% is typical for individual equities, tighter for
               lower-volatility names, wider for small-caps or crypto.
+            </p>
+          </div>
+
+          {/* Support / Resistance alerts */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Support / Resistance Alerts</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Minimum position or currency exposure (EUR)</label>
+            <input type="number" min={0} step={100} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+              value={form.srAlertMinValue} onChange={e => set('srAlertMinValue', Math.max(0, Number(e.target.value) || 0))} />
+            <p className="mt-2 text-xs text-slate-400">
+              The Dashboard's Support / Resistance alerts cover your holdings, your Watchlist and the currencies you are
+              exposed to; a holding or a currency exposure worth less than this is left out, so small positions don't
+              generate alerts. Watchlist securities are always included.
             </p>
           </div>
 

@@ -674,7 +674,17 @@ def _signal_notifications_job():
         refresh_signal_notifications()
         refresh_fundamentals_notifications()
         logging.info("Signal notifications refreshed.")
-        _record_job("signal_notifications", "success", "Completed OK")
+        msg = "Completed OK"
+        # New Dashboard alerts of the groups switched on for Telegram (App Settings).
+        try:
+            from database.alert_groups import send_new_alert_telegrams
+            sent = send_new_alert_telegrams()
+            if sent:
+                msg += f"; {sent} alert(s) sent to Telegram"
+        except Exception as e:
+            logging.warning(f"Alert Telegram dispatch failed: {e}")
+            msg += f"; Telegram dispatch failed: {str(e)[:120]}"
+        _record_job("signal_notifications", "success", msg)
     except Exception as e:
         logging.error(f"Signal notification refresh failed: {e}", exc_info=True)
         _record_job("signal_notifications", "error", str(e))

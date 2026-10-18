@@ -126,6 +126,44 @@ def get_currency_history(cid: int, quote: Optional[str] = Query(None), from_date
     return [{"date": str(d), "rate": round(float(v), 10)} for d, v in series.items()]
 
 
+@router.get("/technical/levels")
+def get_technical_levels(
+    kind: str = Query(..., pattern="^(security|currency|currency_stored)$"),
+    id: int = Query(...),
+    from_date: str = Query("1900-01-01"),
+    quote: Optional[str] = Query(None),
+    per_side: int = Query(3, ge=1, le=10),
+):
+    """Support / resistance levels of the series a chart plots (database/technical.py):
+    a security's prices (with daily high/low), a currency's rate in the quote currency
+    (Currency Detail → Overview), or its stored rates (Currency Detail → Prices). The
+    Dashboard's Support / Resistance alerts use the same calculation."""
+    from database import technical
+    with get_db() as conn:
+        if kind == "security":
+            df = pd.read_sql("""
+                SELECT Date::text AS date, Close::float AS close, High::float AS high, Low::float AS low
+                FROM Historical_Prices WHERE Securities_Id = %(id)s AND Date >= %(f)s AND Close IS NOT NULL
+                ORDER BY Date
+            """, conn, params={"id": id, "f": from_date})
+            points = df.to_dict("records")
+        elif kind == "currency_stored":
+            series = _stored_rates(conn, id)
+            cutoff = pd.Timestamp(from_date).date()
+            points = [{"date": str(d), "close": float(v)} for d, v in series.items() if d >= cutoff]
+        else:
+            base_id = _storage_base_id(conn)
+            quote_id, _ = _resolve_quote(conn, quote, base_id)
+            series = _cross_rates(conn, id, quote_id, base_id) if quote_id is not None else pd.Series(dtype=float)
+            cutoff = pd.Timestamp(from_date).date()
+            points = [{"date": str(d), "close": float(v)} for d, v in series.items() if d >= cutoff]
+    for p in points:  # NaN high/low (not stored) → None, so the close is used
+        for k in ("high", "low"):
+            if k in p and p[k] is not None and math.isnan(p[k]):
+                p[k] = None
+    return technical.levels(points, per_side)
+
+
 @router.get("/currencies/{cid}/fx-effect")
 def get_currency_fx_effect(cid: int, period: str = Query("YTD")):
     """Currency effect on P&L over a period (DTD, WTD, MTD, QTD, YTD, 1Y, 3Y, 5Y, All).
