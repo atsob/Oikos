@@ -19,6 +19,8 @@ import type { CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosi
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { CurrencyLink } from '@/components/CurrencyLink'
+import { SrSummary } from '@/components/SupportResistance'
+import { supportResistance, srTraces } from '@/lib/technical'
 
 // Currency counterpart of Security Detail: one currency's rate in your reporting currency
 // (Tools → App Settings), its stored rate history (moved here from the former Market
@@ -220,12 +222,17 @@ function FxChart({ label, fetch, queryKey }: {
   const h = history as Record<string, unknown>[]
   const first = h.length > 1 ? Number(h[0].rate) : 0
   const pct = first ? (Number(h[h.length - 1].rate) / first - 1) * 100 : null
+  // Support / resistance from the plotted rates (rates have no daily high/low, so closes).
+  const [showSr, setShowSr] = usePersist('chart_sr_show', true)
+  const srLevels = useMemo(() => supportResistance(h.map(r => ({ date: String(r.date), close: Number(r.rate) }))), [h])
+  const srLineTraces = showSr && h.length ? srTraces(srLevels, String(h[0].date), String(h[h.length - 1].date), v => fmtNum(v, 4)) : []
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3 flex-wrap">
         <PeriodSelector value={period} onChange={setPeriod} />
         {pct != null && !isLoading && <span className={`text-sm font-semibold tabular-nums ${signColor(pct)}`}>{signed(pct)}</span>}
       </div>
+      {!isLoading && h.length > 0 && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : h.length === 0 ? (
         <p className="text-sm text-slate-400 py-6">No rates for this period.</p>
       ) : (
@@ -233,8 +240,9 @@ function FxChart({ label, fetch, queryKey }: {
           data={[{
             x: h.map(r => r.date), y: h.map(r => r.rate),
             type: 'scatter', mode: 'lines', line: { color: '#10b981', width: 1.5 }, name: label,
-          }]}
-          layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f', title: label }), hovermode: 'x unified', ...plotLayout(isDark) }}
+          }, ...srLineTraces]}
+          layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f', title: label }), hovermode: 'x unified',
+            legend: { orientation: 'h', y: -0.15, x: 0 }, ...plotLayout(isDark) }}
           config={{ displayModeBar: true, responsive: true }}
           style={{ width: '100%' }}
         />

@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-18
+
+### Added
+- **Support / resistance on the price charts.** Security Detail's Overview and Prices charts and Currency Detail's rate charts (Overview, in the reporting currency, and Prices, the stored rates) draw up to three support (green) and three resistance (red) levels nearest the last price, as legend-toggleable lines labelled with their touches ("S1 111.34 · 2 touches", "R1 114.03 · period high"), plus a "Support … (−2.16%) · Resistance … (+0.21%)" summary and a Support / Resistance checkbox (one setting for every chart) above the chart. Computed in the browser from exactly the series plotted, so it follows the selected period (`frontend/src/lib/technical.ts`, `frontend/src/components/SupportResistance.tsx`). Turning points come from a zig-zag: a peak or trough counts once the price has reversed from it by 5× the series' average daily move (clamped to 1–15%), ignoring noise; turning points within half that reversal of each other form one level (the zone is measured from its lowest point, so zones can't chain into one wide band), weighted by how many there are; the period's high and low always count; the first bars of the window aren't treated as turns. Securities use their stored daily high/low, currencies their rates. Checked with synthetic series (range-bound, trending, too short, noisy stock and FX) and rendered in a browser with stubbed data — Security Detail Overview and Prices, Currency Detail Overview, the toggle — no page errors. The frontend type-checks; lint shows no new errors.
+
 ## 2026-10-17
 
 ### Added

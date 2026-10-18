@@ -1415,6 +1415,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "warm up" first.
         </Note>
         <Note>
+          <b>Support / Resistance</b> — the price charts on a security's <b>Overview</b> and <b>Prices</b> tabs, and a
+          currency's rate charts on Currency Detail (<b>Overview</b>, in your reporting currency, and <b>Prices</b>, the
+          stored rates), draw support (green) and resistance (red) levels for the period shown, with the nearest level on
+          each side and its distance from the last price above the chart. Levels come from turning points: a peak or
+          trough counts once the price has moved away from it by a real reversal — about 5× the series' average daily move
+          (between 1% and 15%, so roughly 2% for a currency and 5–8% for a typical stock), which ignores day-to-day noise.
+          Turning points at about the same price (within half that reversal) form one level, and the more of them
+          ("touches"), the thicker its line; the period's own high and low always count. Below the last price is support,
+          above it resistance, and the three nearest on each side are drawn — each is a legend entry ("S1 … · 2 touches",
+          "R1 … · period high") that can be hidden. Securities use their daily high/low where stored, currencies their
+          rates. Levels follow the period selected; the <b>Support / Resistance</b> checkbox turns them off on every
+          chart. They show where the price has turned before — a guide, not a forecast.
+        </Note>
+        <Note>
           The <b>Prices</b> tab is also where a security's stored prices are maintained: its table (search, filters,
           Columns, Copy to Excel) can delete any selected rows in one go; <b>Import from File</b> loads a
           tab-separated TXT/CSV/TSV price file (the <b>Date</b> header row is found automatically), skipping or

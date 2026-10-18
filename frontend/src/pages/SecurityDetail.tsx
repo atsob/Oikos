@@ -42,6 +42,8 @@ import type { NewsItem } from '@/pages/News'
 import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
+import { SrSummary } from '@/components/SupportResistance'
+import { supportResistance, srTraces } from '@/lib/technical'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
@@ -291,6 +293,15 @@ function PricesTab({ secId }: { secId: number }) {
     hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
   }, [trailingStopPrice, historyDates])
 
+  // Support / resistance from the plotted period (daily high/low where stored).
+  const [showSr, setShowSr] = usePersist('chart_sr_show', true)
+  const srLevels = useMemo(() => supportResistance((history as Record<string, unknown>[]).map(r => ({
+    date: String(r.date), close: Number(r.close),
+    high: r.high != null ? Number(r.high) : null, low: r.low != null ? Number(r.low) : null,
+  }))), [history])
+  const srLineTraces = useMemo(() => showSr && historyDates.length ? srTraces(srLevels, historyDates[0], historyDates[1], v => fmtNum(v, 4)) : [],
+    [showSr, srLevels, historyDates])
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
@@ -322,6 +333,7 @@ function PricesTab({ secId }: { secId: number }) {
         <span className="text-xs text-slate-400">plus the fixed MA50/MA200 trend lines below</span>
       </div>
 
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <Plot
           data={[
@@ -356,6 +368,7 @@ function PricesTab({ secId }: { secId: number }) {
             ...(avgCostTrace ? [avgCostTrace] : []),
             ...(trailingStopTrace ? [trailingStopTrace] : []),
             ...alertTraces,
+            ...srLineTraces,
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
@@ -2160,6 +2173,15 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
   }, [trailingStopPrice, historyDates])
 
+  // Support / resistance from the plotted period (daily high/low where stored).
+  const [showSr, setShowSr] = usePersist('chart_sr_show', true)
+  const srLevels = useMemo(() => supportResistance((history as Record<string, unknown>[]).map(r => ({
+    date: String(r.date), close: Number(r.close),
+    high: r.high != null ? Number(r.high) : null, low: r.low != null ? Number(r.low) : null,
+  }))), [history])
+  const srLineTraces = useMemo(() => showSr && historyDates.length ? srTraces(srLevels, historyDates[0], historyDates[1], v => fmtNum(v, 4)) : [],
+    [showSr, srLevels, historyDates])
+
   const txMarkers = useMemo(() => {
     const h = history as Record<string, unknown>[]
     const closeByDate = new Map(h.map(r => [String(r.date).slice(0, 10), Number(r.close)]))
@@ -2195,6 +2217,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
         </div>
       }
     >
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <Plot
           data={[
@@ -2222,6 +2245,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
             ...(avgCostTrace ? [avgCostTrace] : []),
             ...(trailingStopTrace ? [trailingStopTrace] : []),
             ...alertTraces,
+            ...srLineTraces,
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.volume != null ? Number(r.volume) : null),
