@@ -1378,7 +1378,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           @BotFather (<code>/newbot</code>), put its token in <code>TELEGRAM_BOT_TOKEN</code> and your chat id in
           <code>TELEGRAM_CHAT_ID</code> in <code>.env</code> (see <code>.env.example</code> for how to find the chat id), restart
           the app and scheduler containers, then press <b>Send test message</b> in Tools → App Settings → Telegram Alerts. The
-          same section has the on/off checkbox. The token is a secret, so it lives only in <code>.env</code>.
+          same section has the on/off checkbox, and a switch per Dashboard alert group (Support / Resistance, Price
+          Alerts, Signals, Upcoming Events, Corporate Actions &amp; Data, Portfolio — all off by default) to also be sent
+          new alerts from those groups, each once, every 30 minutes (see the Dashboard section). The token is a secret,
+          so it lives only in <code>.env</code>.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
@@ -1699,7 +1702,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           </li>
           <li>
             <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting
-            currency, default transfer payee name, trailing stop %) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
+            currency, default transfer payee name, trailing stop %, Support / Resistance alert minimum, Telegram alerts
+            and which Dashboard alert groups go to Telegram) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
             AI summaries). App Settings — and every other saved preference across the app (report filters,
             last-used tabs, account selections, etc.) — are stored server-side, so they follow you across
             browsers, devices, and however you access Oikos (LAN IP, hostname, or remotely), instead of being
