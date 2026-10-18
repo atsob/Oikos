@@ -208,6 +208,14 @@ ENDPOINTS = {
         "path": "/api/dashboard/accounts", "params": ["include_future"],
         "description": "Every account with balance (native currency + EUR-equivalent), currency, institution, type.",
     },
+    "alerts": {
+        "path": "/api/dashboard/alerts", "params": [],
+        "description": "Triggered Dashboard alerts, each with a group (sr = support/resistance, price, signals, events, corporate, portfolio), level, message and stable key: support/resistance events on holdings/Watchlist/exposed currencies, price alerts, signal changes, crosses, trailing stops, upcoming bond/dividend/loan events, splits, allocation drift.",
+    },
+    "technical_levels": {
+        "path": "/api/market-data/technical/levels", "params": ["kind (security|currency|currency_stored, required)", "id (required)", "from_date", "quote", "per_side"],
+        "description": "Nearest support/resistance levels of a security's prices or a currency's rates (in the quote currency, or as stored vs EUR) since from_date, with touches and distance from the last price.",
+    },
     "insights": {
         "path": "/api/dashboard/insights", "params": [],
         "description": "Auto-generated observations: overspending, negative balances, credit limits nearly reached, upcoming bond/dividend/loan events.",

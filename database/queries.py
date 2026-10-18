@@ -7218,7 +7218,7 @@ def _get_loan_payment_alerts() -> list:
             'level': 'info',
             'message': (f"🏦 **Loan Payment** — {row['name']} payment due {when} "
                         f"({due_date.strftime('%d %b %Y')}){amount_note}."),
-            'type': 'loan_payment',
+            'type': 'loan_payment', 'accounts_id': int(row['id']),
         })
     return results
 
@@ -7392,7 +7392,7 @@ def check_triggered_alerts() -> list:
                                     f"**{cur_px:,.4f}**, above your threshold "
                                     f"of {thr:,.4f}.{suffix}"),
                         'securities_id': sid,
-                        'type': 'price_alert',
+                        'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
                     })
                 elif row['alert_type'] == 'price_below' and cur_px < thr:
                     results.append({
@@ -7401,7 +7401,7 @@ def check_triggered_alerts() -> list:
                                     f"**{cur_px:,.4f}**, below your threshold "
                                     f"of {thr:,.4f}.{suffix}"),
                         'securities_id': sid,
-                        'type': 'price_alert',
+                        'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
                     })
 
         # ── allocation drift alerts ───────────────────────────────────────────
@@ -7425,6 +7425,7 @@ def check_triggered_alerts() -> list:
                             'message': (f"⚖️ **Allocation Drift** — {at} is "
                                         f"**{delta:.1f}%** off target "
                                         f"(threshold: {thr:.1f}%).{suffix}"),
+                            'type': 'allocation_drift', 'key': f"allocation_drift:{at}",
                         })
 
         # ── final signal change notifications (pre-computed by scheduler) ───────
@@ -7576,36 +7577,31 @@ def check_triggered_alerts() -> list:
         except Exception:
             pass
 
-        # ── bond maturity/coupon heads-up (live-computed, no per-bond setup) ───
-        try:
-            results.extend(_get_bond_event_alerts())
-        except Exception:
-            pass
+        # Live-computed sources. `sources_ok` records which ran cleanly, so a dismissal
+        # is only forgotten as stale when its own source actually produced this list.
+        sources_ok = {'main'}
 
-        # ── dividend payment heads-up (live-computed, no per-security setup) ───
-        try:
-            results.extend(_get_dividend_alerts())
-        except Exception:
-            pass
+        def _source(name, fn):
+            try:
+                results.extend(fn())
+                sources_ok.add(name)
+            except Exception:
+                pass
 
-        # ── split amount mismatches (live-computed, clears once actually fixed) ─
-        try:
-            results.extend(_get_split_mismatch_alerts())
-        except Exception:
-            pass
+        # bond maturity/coupon, dividend payment and loan payment heads-ups, split amount
+        # mismatches (clear once fixed), golden/death cross and trailing stop
+        _source('bond', _get_bond_event_alerts)
+        _source('dividend', _get_dividend_alerts)
+        _source('split_mismatch', _get_split_mismatch_alerts)
+        _source('trend', _get_trend_alerts)
+        _source('loan', _get_loan_payment_alerts)
 
-        # ── trend-following: golden/death cross, trailing stop (live-computed) ──
-        try:
-            results.extend(_get_trend_alerts())
-        except Exception:
-            pass
+        # ── support / resistance: holdings, Watchlist, exposed currencies ─────
+        from database.sr_alerts import get_sr_alerts
+        _source('sr', get_sr_alerts)
 
-        # ── loan payment heads-up (live-computed, clears once the date passes) ──
-        try:
-            results.extend(_get_loan_payment_alerts())
-        except Exception:
-            pass
-
+        from database.alert_groups import finalize
+        return finalize(results, sources_ok)
         return results
     except Exception:
         return []

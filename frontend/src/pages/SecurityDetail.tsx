@@ -15,7 +15,7 @@ import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODat
 import { useTheme } from '@/lib/theme'
 import type { FundCountryRow } from '@/lib/api'
 import {
-  getSecurities, getPriceHistory, addPrice, deletePrice, deletePricesBulk,
+  getSecurities, getPriceHistory, getTechnicalLevels, addPrice, deletePrice, deletePricesBulk,
   getSecurityTransactions, getSecurityHoldings,
   getSecurityFundComposition, getSecurityFundMembership, getFundCountryExposure, saveFundCountryExposure, clearFundCountryExposure, parseCountryText, getCountryList, getFundCountrySource, setFundCountrySource, downloadCountryExposure, getFundCurrencyExposure, saveFundCurrencyExposure, clearFundCurrencyExposure, setSecurityCategoryOverride,
   setSecurityMorningstarCategory,
@@ -43,7 +43,7 @@ import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCa
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { SrSummary } from '@/components/SupportResistance'
-import { supportResistance, srTraces } from '@/lib/technical'
+import { srTraces } from '@/lib/technical'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
@@ -295,10 +295,12 @@ function PricesTab({ secId }: { secId: number }) {
 
   // Support / resistance from the plotted period (daily high/low where stored).
   const [showSr, setShowSr] = usePersist('chart_sr_show', true)
-  const srLevels = useMemo(() => supportResistance((history as Record<string, unknown>[]).map(r => ({
-    date: String(r.date), close: Number(r.close),
-    high: r.high != null ? Number(r.high) : null, low: r.low != null ? Number(r.low) : null,
-  }))), [history])
+  const { data: srLevels = [] } = useQuery({
+    queryKey: ['sr-levels', 'security', secId, fromDate],
+    queryFn: () => getTechnicalLevels({ kind: 'security', id: secId }, fromDate),
+    enabled: showSr,
+    refetchInterval: liveRefetchMs,
+  })
   const srLineTraces = useMemo(() => showSr && historyDates.length ? srTraces(srLevels, historyDates[0], historyDates[1], v => fmtNum(v, 4)) : [],
     [showSr, srLevels, historyDates])
 
@@ -2175,10 +2177,12 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
 
   // Support / resistance from the plotted period (daily high/low where stored).
   const [showSr, setShowSr] = usePersist('chart_sr_show', true)
-  const srLevels = useMemo(() => supportResistance((history as Record<string, unknown>[]).map(r => ({
-    date: String(r.date), close: Number(r.close),
-    high: r.high != null ? Number(r.high) : null, low: r.low != null ? Number(r.low) : null,
-  }))), [history])
+  const { data: srLevels = [] } = useQuery({
+    queryKey: ['sr-levels', 'security', secId, fromDate],
+    queryFn: () => getTechnicalLevels({ kind: 'security', id: secId }, fromDate),
+    enabled: showSr,
+    refetchInterval: liveRefetchMs,
+  })
   const srLineTraces = useMemo(() => showSr && historyDates.length ? srTraces(srLevels, historyDates[0], historyDates[1], v => fmtNum(v, 4)) : [],
     [showSr, srLevels, historyDates])
 

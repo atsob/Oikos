@@ -17,7 +17,7 @@ export function SrSummary({ levels, show, onToggle, fmt }: {
     <span className={`text-xs px-2 py-0.5 rounded ${kind === 'support' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
       {kind === 'support' ? 'Support' : 'Resistance'}{' '}
       {l ? <b className="tabular-nums">{fmt(l.price)}</b> : <span>—</span>}
-      {l && <span className="tabular-nums opacity-80"> ({l.distancePct >= 0 ? '+' : ''}{l.distancePct.toFixed(2)}%)</span>}
+      {l && <span className="tabular-nums opacity-80"> ({l.distance_pct >= 0 ? '+' : ''}{l.distance_pct.toFixed(2)}%)</span>}
       {!l && <span className="opacity-80"> {kind === 'support' ? 'none below' : 'none above — at the period high'}</span>}
     </span>
   )

@@ -243,22 +243,33 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           statements are cached — see the Fundamentals note under Securities Analysis below.
         </Note>
         <Note>
-          Any triggered alert tied to a specific security — <b>Price Alert</b>, <b>Signal Change</b>, <b>Bond
-          Maturity/Coupon</b>, <b>Dividend Payment</b>, <b>Golden/Death Cross</b>, <b>Trailing Stop</b>,{' '}
-          <b>Financial Health Change</b> — is clickable through to that security's Security Detail page.{' '}
-          <b>Allocation Drift</b> alerts aren't tied to one security and stay non-clickable. A Signal Change's,
-          Golden/Death Cross's, Trailing Stop's, or Financial Health Change's <b>Dismiss</b> button still works on
-          its own without triggering navigation. When there's more than one Signal Change, Stock Split, Cross,
-          Trailing Stop, or Financial Health Change alert (combined), a <b>Dismiss All</b> button next to the panel
-          header clears all of them in one click — handy since a newly-added security can arrive with dozens of
-          Stock Split notifications (its full split history) at once. Unlike Signal Change, Stock Split, and
-          Financial Health Change (one-off, acknowledged until the next real change), dismissing a Cross or
-          Trailing Stop only silences it while its condition stays true — a Trailing Stop reappears once price
-          first recovers back above the stop and then falls below it again, not just because time passes. Price
-          Alerts don't have a dismiss (individually or in bulk) since they clear on their own once the price
-          crosses back. Dismissing — single or <b>Dismiss All</b> — clears the row(s) immediately rather than
-          waiting on a fresh alerts computation from the server; the panel re-syncs in the background on its normal
-          5-minute refresh.
+          Triggered alerts are shown in <b>groups</b>, each with its own header, count, collapse state and{' '}
+          <b>Dismiss</b> / <b>Dismiss all N</b> button that leaves the other groups alone: <b>Support / Resistance</b>,{' '}
+          <b>Price Alerts</b>, <b>Signals</b> (Signal Change, Golden/Death Cross, Trailing Stop, Financial Health
+          Change), <b>Upcoming Events</b> (bond maturities/coupons, dividend and loan payments), <b>Corporate Actions
+          &amp; Data</b> (stock splits, split mismatches) and <b>Portfolio</b> (allocation drift). Within a group the most
+          serious alerts come first. Every alert has a <b>Dismiss</b> button, and what it does depends on the kind:
+          Signal Change, Stock Split and Financial Health Change are acknowledged until the next real change; a Cross or
+          Trailing Stop is silenced while its condition stays true; everything else — price alerts included — is
+          silenced for that event only (that threshold, that level, that payment date) and comes back if the event
+          happens afresh, e.g. a price that recovers and then falls below your threshold again. An alert tied to a
+          security opens its Security Detail when clicked, a currency alert its Currency Detail. Dismissing clears the
+          row(s) immediately; the panel re-syncs in the background on its normal 5-minute refresh.
+        </Note>
+        <Note>
+          <b>Support / Resistance alerts</b> cover your <b>holdings</b>, your <b>Watchlist</b> (Market Data → Watchlist —
+          add a security there to be told about it without holding it) and the <b>currencies you are exposed to</b>{' '}
+          (non-EUR cash or securities), each tagged Holding / Watchlist / Currency. They use the same levels the price
+          charts draw, over a fixed 1-year window of daily closes, and only meaningful ones (two or more touches, or the
+          1-year high/low). Four events: <b>support broken</b> / <b>resistance broken</b> — two consecutive closes beyond a
+          level within the last 10 trading days, still beyond it — and <b>near support</b> / <b>near resistance</b> — the
+          last close within about a quarter of the reversal size (at least 0.75%) of the nearest level. For a holding the
+          alert carries your unrealized P&amp;L: a broken support while at a loss is red, near resistance while 30% or more
+          up suggests taking profit or rebalancing. A Watchlist security gets entry wording (near support — a possible
+          entry; a breakout above resistance), a currency the euro value of your exposure. Holdings and currency
+          exposures below Tools → App Settings → Support / Resistance Alerts → minimum (€500 by default) are left out.
+          New alerts of any group can also go to <b>Telegram</b>: tick the groups under App Settings → Telegram Alerts
+          (all off by default) — each alert is sent once, on the Signal Notifications job's 30-minute cadence.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
@@ -1426,7 +1437,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           above it resistance, and the three nearest on each side are drawn — each is a legend entry ("S1 … · 2 touches",
           "R1 … · period high") that can be hidden. Securities use their daily high/low where stored, currencies their
           rates. Levels follow the period selected; the <b>Support / Resistance</b> checkbox turns them off on every
-          chart. They show where the price has turned before — a guide, not a forecast.
+          chart. They are computed on the server, the same calculation the Dashboard's Support / Resistance alerts use. They show where the price has turned before — a guide, not a forecast.
         </Note>
         <Note>
           The <b>Prices</b> tab is also where a security's stored prices are maintained: its table (search, filters,

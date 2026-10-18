@@ -14,13 +14,13 @@ import {
 import { plotLayout, plotAxis, fmt, fmtNum, fmtPct, fmtEur, todayLocal } from '@/lib/utils'
 import { getReportingFx } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
-import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
-import type { CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosition } from '@/lib/api'
+import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getTechnicalLevels, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
+import type { SrSource, CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosition } from '@/lib/api'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { CurrencyLink } from '@/components/CurrencyLink'
 import { SrSummary } from '@/components/SupportResistance'
-import { supportResistance, srTraces } from '@/lib/technical'
+import { srTraces } from '@/lib/technical'
 
 // Currency counterpart of Security Detail: one currency's rate in your reporting currency
 // (Tools → App Settings), its stored rate history (moved here from the former Market
@@ -197,7 +197,8 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
 
       {!detail.is_quote && (
         <FxChart label={`${q} per 1 ${detail.code}`}
-          fetch={from => getCurrencyHistory(detail.id, q, from)} queryKey={['currency-history', detail.id, q]} />
+          fetch={from => getCurrencyHistory(detail.id, q, from)} queryKey={['currency-history', detail.id, q]}
+          srSource={{ kind: 'currency', id: detail.id, quote: q }} />
       )}
     </div>
   )
@@ -205,10 +206,11 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
 
 // Rate chart with a period selector. `fetch` decides what is plotted: Overview plots the
 // rate in the reporting currency, Prices the stored rate against the storage base.
-function FxChart({ label, fetch, queryKey }: {
+function FxChart({ label, fetch, queryKey, srSource }: {
   label: string
   fetch: (fromDate: string) => Promise<unknown>
   queryKey: unknown[]
+  srSource: SrSource // the same series, for its support / resistance levels
 }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -224,7 +226,12 @@ function FxChart({ label, fetch, queryKey }: {
   const pct = first ? (Number(h[h.length - 1].rate) / first - 1) * 100 : null
   // Support / resistance from the plotted rates (rates have no daily high/low, so closes).
   const [showSr, setShowSr] = usePersist('chart_sr_show', true)
-  const srLevels = useMemo(() => supportResistance(h.map(r => ({ date: String(r.date), close: Number(r.rate) }))), [h])
+  const { data: srLevels = [] } = useQuery({
+    queryKey: ['sr-levels', srSource.kind, srSource.id, srSource.quote ?? null, fromDate],
+    queryFn: () => getTechnicalLevels(srSource, fromDate),
+    enabled: showSr,
+    refetchInterval: liveRefetchMs,
+  })
   const srLineTraces = showSr && h.length ? srTraces(srLevels, String(h[0].date), String(h[h.length - 1].date), v => fmtNum(v, 4)) : []
   return (
     <div className="space-y-2">
@@ -340,7 +347,8 @@ function PricesTab({ curId, code, base }: { curId: number; code: string; base: s
     <div className="p-4 space-y-5">
       <p className="text-xs text-slate-500">The rates Oikos stores for {code}, as {base} per 1 {code} — every amount in {code} is converted with these.</p>
       <FxChart label={`${base} per 1 ${code} (stored)`}
-        fetch={from => getFxRates(curId, from)} queryKey={['fx-history', curId]} />
+        fetch={from => getFxRates(curId, from)} queryKey={['fx-history', curId]}
+        srSource={{ kind: 'currency_stored', id: curId }} />
 
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <div className="space-y-2">

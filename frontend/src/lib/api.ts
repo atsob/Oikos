@@ -105,6 +105,12 @@ export const acknowledgeSignal = (securitiesId: number) =>
   api.post(`/dashboard/alerts/acknowledge-signal/${securitiesId}`).then(r => r.data)
 export const acknowledgeSplit = (corporateActionsId: number) =>
   api.post(`/dashboard/alerts/acknowledge-split/${corporateActionsId}`).then(r => r.data)
+// Dismiss one alert (the row as GET /dashboard/alerts returned it) or a whole group —
+// each alert by its own type's mechanism, see database/alert_groups.py.
+export const dismissAlert = (alert: Record<string, unknown>) =>
+  api.post('/dashboard/alerts/dismiss', alert).then(r => r.data)
+export const dismissAlertGroup = (group: string) =>
+  api.post(`/dashboard/alerts/dismiss-group/${group}`).then(r => r.data)
 export const dismissTrendAlert = (securitiesId: number, alertType: 'ma_cross' | 'trailing_stop') =>
   api.post(`/dashboard/alerts/dismiss-trend/${securitiesId}/${alertType}`).then(r => r.data)
 export const acknowledgeZoneChange = (securitiesId: number) =>
@@ -367,6 +373,12 @@ export const getCurrencyDetail = (currencyId: number, quote?: string) =>
 
 // Rate history of one currency in the quote (reporting) currency, converted through the
 // storage base — unlike getFxRates, which returns the stored rates themselves.
+// Support / resistance levels of the series a chart plots — see database/technical.py.
+export type SrSource = { kind: 'security' | 'currency' | 'currency_stored'; id: number; quote?: string }
+export const getTechnicalLevels = (src: SrSource, fromDate: string) =>
+  api.get('/market-data/technical/levels', { params: { kind: src.kind, id: src.id, quote: src.quote, from_date: fromDate } })
+    .then(r => r.data as import('@/lib/technical').SrLevel[])
+
 export const getCurrencyHistory = (currencyId: number, quote?: string, fromDate = '1900-01-01') =>
   api.get(`/market-data/currencies/${currencyId}/history`, { params: { quote, from_date: fromDate } })
     .then(r => r.data as { date: string; rate: number }[])
