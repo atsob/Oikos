@@ -1435,7 +1435,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Turning points at about the same price (within half that reversal) form one level, and the more of them
           ("touches"), the thicker its line; the period's own high and low always count. Below the last price is support,
           above it resistance, and the three nearest on each side are drawn — each is a legend entry ("S1 … · 2 touches",
-          "R1 … · period high") that can be hidden. Securities use their daily high/low where stored, currencies their
+          "R1 … · period high") that can be hidden. The legend is laid out in groups under the chart — Price (the close, its moving
+          averages, volume, buys and sells) and Reference lines (average cost, trailing stop, your price alerts) on top,
+          Support and Resistance side by side below — and the lines are drawn thicker, in distinct colours (the nearest level of each kind the darkest). Securities use their daily high/low where stored, currencies their
           rates. Levels follow the period selected; the <b>Support / Resistance</b> checkbox turns them off on every
           chart. They are computed on the server, the same calculation the Dashboard's Support / Resistance alerts use. They show where the price has turned before — a guide, not a forecast.
         </Note>

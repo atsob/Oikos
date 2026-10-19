@@ -43,7 +43,7 @@ import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCa
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { SrSummary } from '@/components/SupportResistance'
-import { srTraces } from '@/lib/technical'
+import { srTraces, groupLegends } from '@/lib/technical'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
@@ -271,7 +271,7 @@ function PricesTab({ secId }: { secId: number }) {
     const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
       x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
-      line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+      line: { color: isAbove ? '#0d9488' : '#db2777', width: 2, dash: 'dash' as const },
       hovertemplate: `${label}<extra></extra>`,
     }
   }), [priceAlerts, historyDates])
@@ -279,7 +279,7 @@ function PricesTab({ secId }: { secId: number }) {
   const avgCostTrace = useMemo(() => avgCostPerShare == null || !historyDates.length ? null : {
     x: historyDates, y: [avgCostPerShare, avgCostPerShare], type: 'scatter' as const, mode: 'lines' as const,
     name: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`,
-    line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
+    line: { color: '#6d28d9', width: 2.4, dash: 'dot' as const },
     hovertemplate: `Avg Cost ${fmtNum(avgCostPerShare, 4)}<extra></extra>`,
   }, [avgCostPerShare, historyDates])
 
@@ -289,7 +289,7 @@ function PricesTab({ secId }: { secId: number }) {
   const trailingStopTrace = useMemo(() => trailingStopPrice == null || !historyDates.length ? null : {
     x: historyDates, y: [trailingStopPrice, trailingStopPrice], type: 'scatter' as const, mode: 'lines' as const,
     name: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`,
-    line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
+    line: { color: '#b45309', width: 2.4, dash: 'dashdot' as const },
     hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
   }, [trailingStopPrice, historyDates])
 
@@ -304,66 +304,32 @@ function PricesTab({ secId }: { secId: number }) {
   const srLineTraces = useMemo(() => showSr && historyDates.length ? srTraces(srLevels, historyDates[0], historyDates[1], v => fmtNum(v, 4)) : [],
     [showSr, srLevels, historyDates])
 
-  return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <PeriodSelector value={period} onChange={setPeriod} />
-        {pctChange != null && !isLoading && (
-          <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-            {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
-          </span>
-        )}
-        {signal?.ma_trend != null && (
-          <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-            {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
-          </span>
-        )}
-        {trailingStopTriggered != null && (
-          <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-            {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
-          </span>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2">
-        <label className="text-xs font-medium text-slate-500">MA Days</label>
-        <input
-          type="number" min={2} max={200} value={maDays}
-          onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
-          className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
-        />
-        <span className="text-xs text-slate-400">plus the fixed MA50/MA200 trend lines below</span>
-      </div>
-
-      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
-      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
-        <Plot
-          data={[
+  const chartTraces = [
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.close),
               type: 'scatter', mode: 'lines', name: 'Close',
-              line: { color: '#3b82f6', width: 1.5 },
+              line: { color: '#2563eb', width: 2 },
               yaxis: 'y',
             },
             {
               x: maData.x, y: maData.y,
               type: 'scatter', mode: 'lines', name: `MA${maDays}`,
-              line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
+              line: { color: '#f59e0b', width: 2, dash: 'dot' },
               yaxis: 'y',
               connectgaps: false,
             },
             {
               x: ma50Trace.x, y: ma50Trace.y,
               type: 'scatter', mode: 'lines', name: 'MA50',
-              line: { color: '#0ea5e9', width: 1.5 },
+              line: { color: '#06b6d4', width: 2 },
               yaxis: 'y',
               connectgaps: false,
             },
             {
               x: ma200Trace.x, y: ma200Trace.y,
               type: 'scatter', mode: 'lines', name: 'MA200',
-              line: { color: '#db2777', width: 1.5 },
+              line: { color: '#c026d3', width: 2 },
               yaxis: 'y',
               connectgaps: false,
             },
@@ -410,15 +376,52 @@ function PricesTab({ secId }: { secId: number }) {
               text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
-          ]}
+  ]
+  const lg = groupLegends(chartTraces, isDark, 340)
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center gap-3 flex-wrap">
+        <PeriodSelector value={period} onChange={setPeriod} />
+        {pctChange != null && !isLoading && (
+          <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
+          </span>
+        )}
+        {signal?.ma_trend != null && (
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+            {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
+          </span>
+        )}
+        {trailingStopTriggered != null && (
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+            {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-medium text-slate-500">MA Days</label>
+        <input
+          type="number" min={2} max={200} value={maDays}
+          onChange={e => setMaDays(Math.max(2, Math.min(200, Number(e.target.value) || 5)))}
+          className="w-16 rounded border border-slate-300 px-2 py-0.5 text-xs text-center"
+        />
+        <span className="text-xs text-slate-400">plus the fixed MA50/MA200 trend lines below</span>
+      </div>
+
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
+        <Plot
+          data={lg.data}
           layout={{
-            height: 340,
-            margin: { t: 10, r: 60, b: 40, l: 70 },
+            height: 340 + lg.extra,
+            margin: { t: 10, r: 60, b: 40 + lg.extra, l: 70, autoexpand: false },
             hovermode: 'x unified',
             yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
             yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
-            legend: { orientation: 'h', y: -0.15, x: 0 },
+            ...lg.layout,
             bargap: 0.1,
             ...plotLayout(isDark),
           }}
@@ -2154,7 +2157,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
       x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
-      line: { color: isAbove ? '#22c55e' : '#ef4444', width: 1.5, dash: 'dash' as const },
+      line: { color: isAbove ? '#0d9488' : '#db2777', width: 2, dash: 'dash' as const },
       hovertemplate: `${label}<extra></extra>`,
     }
   }), [priceAlerts, historyDates])
@@ -2162,7 +2165,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   const avgCostTrace = useMemo(() => avgCostPerShare == null || !historyDates.length ? null : {
     x: historyDates, y: [avgCostPerShare, avgCostPerShare], type: 'scatter' as const, mode: 'lines' as const,
     name: `Avg Cost ${fmtNum(avgCostPerShare, 4)}`,
-    line: { color: '#8b5cf6', width: 1.5, dash: 'dot' as const },
+    line: { color: '#6d28d9', width: 2.4, dash: 'dot' as const },
     hovertemplate: `Avg Cost ${fmtNum(avgCostPerShare, 4)}<extra></extra>`,
   }, [avgCostPerShare, historyDates])
 
@@ -2171,7 +2174,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   const trailingStopTrace = useMemo(() => trailingStopPrice == null || !historyDates.length ? null : {
     x: historyDates, y: [trailingStopPrice, trailingStopPrice], type: 'scatter' as const, mode: 'lines' as const,
     name: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}`,
-    line: { color: '#dc2626', width: 2, dash: 'dashdot' as const },
+    line: { color: '#b45309', width: 2.4, dash: 'dashdot' as const },
     hovertemplate: `Trailing Stop ${fmtNum(trailingStopPrice, 4)}<extra></extra>`,
   }, [trailingStopPrice, historyDates])
 
@@ -2197,52 +2200,25 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
     return { buys: pts(BUY_LIKE), reinvests: pts(REINVEST_LIKE), sells: pts(SELL_LIKE) }
   }, [history, txHistory, fromDate])
 
-  return (
-    <OverviewPanel
-      title="Price History"
-      actions={
-        <div className="flex items-center gap-3">
-          {signal?.ma_trend != null && (
-            <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-              {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
-            </span>
-          )}
-          {trailingStopTriggered != null && (
-            <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-              {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
-            </span>
-          )}
-          {pctChange != null && !isLoading && (
-            <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-              {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
-            </span>
-          )}
-          <PeriodSelector value={period} onChange={setPeriod} />
-        </div>
-      }
-    >
-      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
-      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
-        <Plot
-          data={[
+  const chartTraces = [
             {
               x: (history as Record<string, unknown>[]).map(r => r.date),
               y: (history as Record<string, unknown>[]).map(r => r.close),
               type: 'scatter', mode: 'lines', name: 'Close',
-              line: { color: '#3b82f6', width: 1.5 },
+              line: { color: '#2563eb', width: 2 },
               yaxis: 'y',
             },
             {
               x: ma50Trace.x, y: ma50Trace.y,
               type: 'scatter', mode: 'lines', name: 'MA50',
-              line: { color: '#0ea5e9', width: 1.5 },
+              line: { color: '#06b6d4', width: 2 },
               yaxis: 'y',
               connectgaps: false,
             },
             {
               x: ma200Trace.x, y: ma200Trace.y,
               type: 'scatter', mode: 'lines', name: 'MA200',
-              line: { color: '#db2777', width: 1.5 },
+              line: { color: '#c026d3', width: 2 },
               yaxis: 'y',
               connectgaps: false,
             },
@@ -2285,15 +2261,45 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               text: txMarkers.sells.map(p => `${p.action}: ${fmt(p.quantity, 4)} @ ${fmt(p.price)}${p.fills > 1 ? ` (${p.fills} fills, avg)` : ''}`),
               hovertemplate: '%{text}<extra></extra>',
             },
-          ]}
+  ]
+  const lg = groupLegends(chartTraces, isDark, 280)
+
+  return (
+    <OverviewPanel
+      title="Price History"
+      actions={
+        <div className="flex items-center gap-3">
+          {signal?.ma_trend != null && (
+            <span className={`text-xs font-semibold px-2 py-1 rounded ${signal.ma_trend === 'Golden' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {signal.ma_trend === 'Golden' ? '▲' : '▼'} {String(signal.ma_trend)} Cross
+            </span>
+          )}
+          {trailingStopTriggered != null && (
+            <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+              {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
+            </span>
+          )}
+          {pctChange != null && !isLoading && (
+            <span className={`text-sm font-semibold tabular-nums ${pctChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+              {pctChange >= 0 ? '+' : ''}{fmtPctLocal(pctChange)}
+            </span>
+          )}
+          <PeriodSelector value={period} onChange={setPeriod} />
+        </div>
+      }
+    >
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
+      {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
+        <Plot
+          data={lg.data}
           layout={{
-            height: 280,
-            margin: { t: 10, r: 60, b: 40, l: 70 },
+            height: 280 + lg.extra,
+            margin: { t: 10, r: 60, b: 40 + lg.extra, l: 70, autoexpand: false },
             hovermode: 'x unified',
             yaxis: plotAxis(isDark, { tickformat: '.4f', title: 'Price' }),
             yaxis2: { overlaying: 'y', side: 'right', showgrid: false, tickformat: '.2s',
               title: 'Volume', color: isDark ? '#94a3b8' : '#64748b', tickfont: { size: 10 } },
-            legend: { orientation: 'h', y: -0.2, x: 0 },
+            ...lg.layout,
             bargap: 0.1,
             ...plotLayout(isDark),
           }}

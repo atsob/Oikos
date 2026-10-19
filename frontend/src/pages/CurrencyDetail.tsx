@@ -20,7 +20,7 @@ import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { CurrencyLink } from '@/components/CurrencyLink'
 import { SrSummary } from '@/components/SupportResistance'
-import { srTraces } from '@/lib/technical'
+import { srTraces, groupLegends } from '@/lib/technical'
 
 // Currency counterpart of Security Detail: one currency's rate in your reporting currency
 // (Tools → App Settings), its stored rate history (moved here from the former Market
@@ -233,6 +233,10 @@ function FxChart({ label, fetch, queryKey, srSource }: {
     refetchInterval: liveRefetchMs,
   })
   const srLineTraces = showSr && h.length ? srTraces(srLevels, String(h[0].date), String(h[h.length - 1].date), v => fmtNum(v, 4)) : []
+  const lg = groupLegends([{
+    x: h.map(r => r.date), y: h.map(r => r.rate),
+    type: 'scatter', mode: 'lines', line: { color: '#10b981', width: 2 }, name: label,
+  }, ...srLineTraces], isDark, 320)
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3 flex-wrap">
@@ -244,12 +248,9 @@ function FxChart({ label, fetch, queryKey, srSource }: {
         <p className="text-sm text-slate-400 py-6">No rates for this period.</p>
       ) : (
         <Plot
-          data={[{
-            x: h.map(r => r.date), y: h.map(r => r.rate),
-            type: 'scatter', mode: 'lines', line: { color: '#10b981', width: 1.5 }, name: label,
-          }, ...srLineTraces]}
-          layout={{ height: 320, margin: { t: 10, r: 10, b: 40, l: 70 }, yaxis: plotAxis(isDark, { tickformat: '.4f', title: label }), hovermode: 'x unified',
-            legend: { orientation: 'h', y: -0.15, x: 0 }, ...plotLayout(isDark) }}
+          data={lg.data}
+          layout={{ height: 320 + lg.extra, margin: { t: 10, r: 10, b: 40 + lg.extra, l: 70, autoexpand: false }, yaxis: plotAxis(isDark, { tickformat: '.4f', title: label }), hovermode: 'x unified',
+            ...lg.layout, ...plotLayout(isDark) }}
           config={{ displayModeBar: true, responsive: true }}
           style={{ width: '100%' }}
         />
