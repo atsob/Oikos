@@ -262,7 +262,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           (non-EUR cash or securities), each tagged Holding / Watchlist / Currency. They use the same levels the price
           charts draw, over a fixed 1-year window of daily closes, and only meaningful ones (two or more touches, or the
           1-year high/low). Four events: <b>support broken</b> / <b>resistance broken</b> — two consecutive closes beyond a
-          level within the last 10 trading days, still beyond it — and <b>near support</b> / <b>near resistance</b> — the
+          level within the last 10 trading days, still beyond it (the levels are those from before the break, so the alert then says what the level has become — a broken support is resistance now — and names the next level that has held, which can be further away than the nearest, weaker line on the price chart) — and <b>near support</b> / <b>near resistance</b> — the
           last close within about a quarter of the reversal size (at least 0.75%) of the nearest level. For a holding the
           alert carries your unrealized P&amp;L: a broken support while at a loss is red, near resistance while 30% or more
           up suggests taking profit or rebalancing. A Watchlist security gets entry wording (near support — a possible
