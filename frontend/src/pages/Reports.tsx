@@ -754,6 +754,21 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
 // on MarketData/SecurityDetail Downloads tabs) blended with direct stock/bond
 // holdings — see api/routers/reports.py's xray/* endpoints for the blend logic.
 
+// Totals for the Portfolio Analysis summary tables: the sum of what is listed and, with a compare date, the as-of total and its change.
+const sumVal = (list: Row[]) => list.reduce((t, r) => t + Number(r.value_eur ?? 0), 0)
+function CompareTotalCells({ current, asOf, withPp = false }: { current: number; asOf: number; withPp?: boolean }) {
+  const d = current - asOf
+  return (
+    <>
+      <td className="px-2 py-1.5 text-right tabular-nums text-slate-600 bg-amber-50 border-t border-slate-200">{fmtEur(asOf)}</td>
+      <td className={`px-2 py-1.5 text-right tabular-nums bg-amber-50 border-t border-slate-200 ${d > 0 ? 'text-green-600' : d < 0 ? 'text-red-500' : ''}`}>{d > 0 ? '+' : ''}{fmtEur(d)}</td>
+      {withPp && <td className="px-2 py-1.5 bg-amber-50 border-t border-slate-200"></td>}
+    </>
+  )
+}
+const TOTAL_TR = 'font-semibold text-slate-700 bg-slate-50'
+const TOTAL_TD = 'px-2 py-1.5 border-t border-slate-200'
+
 const SECTOR_NO_INDUSTRY_BUCKET = 'Fund Look-Through (No Industry Data)'
 
 function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
@@ -865,6 +880,14 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(rows))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              {compareDate && <CompareTotalCells current={sumVal(rows)} asOf={sumVal(Object.values(compareMap))} withPp />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -992,11 +1015,12 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
     const labels = grid.rows.flatMap(r => grid.cols.map(c => grid.cell(r.name, c)))
     const max = Math.max(1, ...labels.map(l => cur[l] ?? 0))
     const sum = labels.reduce((s, l) => s + (cur[l] ?? 0), 0)
+    const sumCmp = labels.reduce((s, l) => s + (cmp[l] ?? 0), 0)
     return (
       <div className="flex-1 min-w-[300px]">
         <div className="flex items-baseline justify-between mb-1">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
-          <p className="text-xs text-slate-400">{fmtEur(sum)} · {fmtPct(pctOf(sum, total))}</p>
+          <p className="text-xs text-slate-400">Total {fmtEur(sum)} · {fmtPct(pctOf(sum, total))}{compareDate ? ` · as of ${compareDate}: ${fmtEur(sumCmp)} (${sum - sumCmp >= 0 ? '+' : ''}${fmtEur(sum - sumCmp)})` : ''}</p>
         </div>
         <table className="w-full border-collapse text-xs table-fixed">
           <thead>
@@ -1060,7 +1084,7 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Without a grid</p>
             <p className="text-xs text-slate-400 mb-2">Direct holdings, cash, and funds Morningstar gives no Style Box (commodity and money-market funds, funds it does not cover).</p>
-            <StyleTable rows={otherRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head="Group" />
+            <StyleTable rows={otherRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head="Group" totalLabel="Total without a grid" />
           </div>
         </>
       ) : (
@@ -1123,9 +1147,9 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
   )
 }
 
-function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected, pick, head }: {
+function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected, pick, head, totalLabel = 'Total' }: {
   rows: { style: string; value_eur: number; pct: number; cmpValue: number | null; cmpPct: number | null }[]
-  sortKey: string | null; sortDir: 'asc' | 'desc'; toggleSort: (k: string) => void; compareDate?: string; selected: string | null; pick: (g: string) => void; head: string
+  sortKey: string | null; sortDir: 'asc' | 'desc'; toggleSort: (k: string) => void; compareDate?: string; selected: string | null; pick: (g: string) => void; head: string; totalLabel?: string
 }) {
   return (
     <WithCopy>
@@ -1162,6 +1186,14 @@ function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected,
             )
           })}
         </tbody>
+        <tfoot className="sticky bottom-0 z-10">
+          <tr className={TOTAL_TR}>
+            <td className={TOTAL_TD}>{totalLabel}</td>
+            <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(rows.reduce((t, r) => t + r.value_eur, 0))}</td>
+            <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + r.pct, 0))}</td>
+            {compareDate && <CompareTotalCells current={rows.reduce((t, r) => t + r.value_eur, 0)} asOf={rows.reduce((t, r) => t + (r.cmpValue ?? 0), 0)} withPp />}
+          </tr>
+        </tfoot>
       </table>
     </div>
     </WithCopy>
@@ -1361,7 +1393,8 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
               <td className="px-2 py-1.5 border-t border-slate-200">Total</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">{fmtEur(total)}</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">100.0%</td>
-              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={compareDate ? 6 : 3}></td>
+              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={3}></td>
+              {compareDate && <CompareTotalCells current={total} asOf={sumVal(Object.values(compareMap))} withPp />}
             </tr>
           </tfoot>
         </table>
@@ -1496,6 +1529,15 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
               )
             })}
           </tbody>
+          <tfoot>
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(rows))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              <td className={TOTAL_TD}></td>
+              {compareDate && <CompareTotalCells current={sumVal(rows)} asOf={sumVal(Object.values(compareMap))} withPp />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -1664,6 +1706,15 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD} colSpan={2}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(bySymbol.reduce((t, [, v]) => t + v.total, 0))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(totalPortfolio > 0 ? bySymbol.reduce((t, [, v]) => t + v.total, 0) / totalPortfolio * 100 : 0)}</td>
+              <td className={TOTAL_TD} colSpan={2}></td>
+              {compareDate && <CompareTotalCells current={bySymbol.reduce((t, [, v]) => t + v.total, 0)} asOf={Object.values(compareBySymbol).reduce((t, v) => t + v, 0)} />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -1800,6 +1851,15 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(funds))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(funds.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{summary?.weighted_expense_ratio_pct != null ? fmtPct(Number(summary.weighted_expense_ratio_pct), 3) : ''}</td>
+              {compareDate && <CompareTotalCells current={sumVal(funds)} asOf={sumVal(resp?.compare?.funds ?? [])} />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>

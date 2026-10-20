@@ -688,7 +688,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           date and Net Worth's history already use. Sector weights, asset mix %, credit ratings, category, and
           expense ratio always reflect today's fund data regardless of the comparison date — Oikos only ever
           stores a fund's current internal composition, not a historical version of it — so the Δ you see reflects
-          what you bought/sold and price/FX moves since then, not the fund's own rebalancing.
+          what you bought/sold and price/FX moves since then, not the fund's own rebalancing. Each table ends in a <b>Total</b> row that also
+          totals the as-of column and its change in value.
         </Note>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
