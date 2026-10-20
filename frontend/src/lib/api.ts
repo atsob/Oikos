@@ -109,8 +109,9 @@ export const acknowledgeSplit = (corporateActionsId: number) =>
 // each alert by its own type's mechanism, see database/alert_groups.py.
 export const dismissAlert = (alert: Record<string, unknown>) =>
   api.post('/dashboard/alerts/dismiss', alert).then(r => r.data)
-export const dismissAlertGroup = (group: string) =>
-  api.post(`/dashboard/alerts/dismiss-group/${group}`).then(r => r.data)
+// The group's rows are sent along so the server need not recompute every alert (several seconds) to learn which ones to dismiss.
+export const dismissAlertGroup = (group: string, alerts: Record<string, unknown>[] = []) =>
+  api.post(`/dashboard/alerts/dismiss-group/${group}`, { alerts }).then(r => r.data)
 export const dismissTrendAlert = (securitiesId: number, alertType: 'ma_cross' | 'trailing_stop') =>
   api.post(`/dashboard/alerts/dismiss-trend/${securitiesId}/${alertType}`).then(r => r.data)
 export const acknowledgeZoneChange = (securitiesId: number) =>

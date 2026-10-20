@@ -210,13 +210,25 @@ function SecuritiesAlertsPanel() {
   const removeAlerts = (predicate: (a: AlertRow) => boolean) => {
     qc.setQueryData<AlertRow[]>(['triggered-alerts'], (old) => (old ?? []).filter(a => !predicate(a)))
   }
+  // Optimistic: the row(s) leave the list the moment the button is pressed, and come back only if the server refuses.
+  const optimistic = (predicate: (a: AlertRow) => boolean) => async () => {
+    await qc.cancelQueries({ queryKey: ['triggered-alerts'] })
+    const previous = qc.getQueryData<AlertRow[]>(['triggered-alerts'])
+    removeAlerts(predicate)
+    return { previous }
+  }
+  const restore = (_e: unknown, _v: unknown, ctx?: { previous?: AlertRow[] }) => {
+    if (ctx?.previous) qc.setQueryData(['triggered-alerts'], ctx.previous)
+  }
   const dismissOne = useMutation({
     mutationFn: (a: AlertRow) => dismissAlert(a),
-    onSuccess: (_d, a) => removeAlerts(x => x.key === a.key),
+    onMutate: (a: AlertRow) => optimistic(x => x.key === a.key)(),
+    onError: restore,
   })
   const dismissGroup = useMutation({
-    mutationFn: (group: string) => dismissAlertGroup(group),
-    onSuccess: (_d, group) => removeAlerts(x => x.group === group),
+    mutationFn: ({ group, list }: { group: string; list: AlertRow[] }) => dismissAlertGroup(group, list),
+    onMutate: ({ group }) => optimistic(x => (ALERT_GROUPS.some(g => g.id === x.group) ? String(x.group) : 'portfolio') === group)(),
+    onError: restore,
   })
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   const [groupOpen, setGroupOpen] = usePersist<Record<string, boolean>>('dashboard_alert_groups_open', {})
@@ -291,10 +303,9 @@ function SecuritiesAlertsPanel() {
                   </button>
                   <button
                     className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    disabled={dismissGroup.isPending}
-                    onClick={() => dismissGroup.mutate(g.id)}
+                    onClick={() => dismissGroup.mutate({ group: g.id, list })}
                     title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
-                    {dismissGroup.isPending && dismissGroup.variables === g.id ? 'Dismissing…' : list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
+                    {list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
                   </button>
                 </div>
                 {isOpen && (

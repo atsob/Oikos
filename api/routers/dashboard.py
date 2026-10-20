@@ -381,15 +381,21 @@ def dismiss_alert(alert: dict):
 
 
 @router.post("/alerts/dismiss-group/{group}")
-def dismiss_alert_group(group: str):
+def dismiss_alert_group(group: str, body: dict | None = None):
     """Dismiss every current alert in one group (sr, price, signals, events, corporate,
-    portfolio) — the other groups are untouched."""
+    portfolio) — the other groups are untouched. The page sends the group's rows as it
+    shows them (`alerts`), which is instant; only without them are all alerts recomputed
+    (several seconds) to find out."""
     from database.alert_groups import GROUPS, dismiss
     if group not in {g for g, _ in GROUPS}:
         raise HTTPException(400, "Unknown alert group")
     try:
-        from database.queries import check_triggered_alerts
-        current = [a for a in check_triggered_alerts() if a.get("group") == group]
+        sent = (body or {}).get("alerts") or []
+        if sent:
+            current = [a for a in sent if isinstance(a, dict)]
+        else:
+            from database.queries import check_triggered_alerts
+            current = [a for a in check_triggered_alerts() if a.get("group") == group]
         return {"dismissed": dismiss(current)}
     except Exception as e:
         raise HTTPException(500, str(e))

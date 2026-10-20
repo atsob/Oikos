@@ -254,7 +254,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           silenced for that event only (that threshold, that level, that payment date) and comes back if the event
           happens afresh, e.g. a price that recovers and then falls below your threshold again. An alert tied to a
           security opens its Security Detail when clicked, a currency alert its Currency Detail. Dismissing clears the
-          row(s) immediately; the panel re-syncs in the background on its normal 5-minute refresh.
+          row(s) instantly, without waiting for the server (they reappear only if it refuses); the panel re-syncs in the
+          background on its normal 5-minute refresh.
         </Note>
         <Note>
           <b>Support / Resistance alerts</b> cover your <b>holdings</b>, your <b>Watchlist</b> (Market Data → Watchlist —
