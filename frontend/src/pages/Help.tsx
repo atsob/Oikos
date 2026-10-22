@@ -1360,7 +1360,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           200-day), <b>breadth</b> (share of about 20 large caps above their 200- and 50-day averages; same rule as Market
           Watch), the <b>banks</b> (equal-weight basket of the systemic banks; red: 30% or more below its high and under
           its 200-day, or 10 points behind the index over 3 months) and the <b>sovereign spread</b> (the country's 10-year yield minus Germany's, FRED monthly with a
-          ~6-week lag, so a slow leg; only the euro era counts; red at 1.8 pp and still rising, or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; not
+          ~6-week lag, so a slow leg; only the euro era counts; red at 1.8 pp and still rising, or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; if FRED is down for maintenance the leg keeps its last reading until the next refresh; not
           shown for Germany, the UK or the US) — plus context that doesn't: <b>liquidity</b> (the index's volume, 20 days
           against 120) and <b>your exposure to the country</b> from the Country Exposure report. The index trend and the banks count as <b>one equity indicator</b>; the banner turns red only when
           equity is in Warning <i>and</i> breadth or the sovereign spread confirms it. Same persistence as Market Watch: 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an

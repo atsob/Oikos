@@ -255,6 +255,9 @@ def compute(prev: dict | None = None) -> dict:
             return k, jobs[k]()
         except Exception as e:
             log.warning("Local Watch (%s): %s failed: %s", cc, k, e)
+            last = prev.get(k)
+            if isinstance(last, dict) and last.get("status") not in (None, "na"):      # a source that is down for a while keeps its last good reading (its as-of date shows)
+                return k, {**last, "stale": f"Refresh failed ({e})"[:200]}
             return k, {"status": "na", "note": f"Could not be fetched: {e}"[:200]}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
