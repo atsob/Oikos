@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-10-23
 
+### Added
+- **Customize the Dashboard.** A **Customize** button opens a panel listing the Dashboard's 16 blocks (key figures, Insights, Market valuation, Market Watch, Local Market Watch, Alerts, Uncategorized transactions, Pending drafts, Net Worth breakdown and trend, Options, Accounts, Upcoming bills, Unusual transactions, Weekly and Monthly AI summaries): tick to show or hide, drag a row — or use its arrows — to reorder, choose **Full** or **Half** width for each block, **Reset** for the default. It applies live and is saved with your preferences (so it follows you across devices). Two Half blocks that follow one another share a row (by default Upcoming bills + Unusual transactions, and the two AI summaries); a Half block with no Half neighbour takes the whole row; below 1024 px wide everything stacks; a block with nothing to show takes no room and its neighbour widens to fill the row. The block that used to sit beside Pending drafts (Insights … Uncategorized) is now full width, with Pending drafts below it.
+
 ### Changed
 - **Sidebar menu reordered and grouped.** Overview (Dashboard, Alerts), everyday money work (Cash Register, Investments, Recurring), analysis (Reports, Market Data, News, AI Assistant), setup & data (Static Data, Importers, Tools) and support (Help, Release Notes), with a thin line between the groups.
 

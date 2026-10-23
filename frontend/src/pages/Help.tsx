@@ -156,6 +156,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Dashboard</H2>
         <P>The landing page — a snapshot of where things stand right now. Top right, <b>Prices updated … ago</b> shows when the scheduler last finished its market-data refresh (grey, amber after 30 minutes, red after 3 hours; hover for the time and whether the run reported problems) — a quick check that prices are current. The same indicator appears wherever market prices are used: the header of <b>Investments</b>, <b>Market Data</b>, every <b>Security</b> and <b>Currency</b> page (on a security it is that security's own last download), and the top bar of the valued Reports (Net Worth, Inv. Positions, Inv. Performance, Securities Analysis, Planning, Custom).</P>
+        <H3>Customize the Dashboard</H3>
+        <P>
+          The <b>Customize</b> button (top right) opens a panel listing every block of the Dashboard — key figures, Insights, Market valuation,
+          Market Watch, Local Market Watch, Alerts, Uncategorized transactions, Pending drafts, Net Worth breakdown and trend, Options, Accounts,
+          Upcoming bills, Unusual transactions and the two AI summaries. <b>Tick</b> the ones to show, <b>drag</b> a row (or use its ▲ ▼ arrows,
+          which also work on a touch screen) to put it where you want, and choose <b>Full</b> or <b>Half</b> width for each; the Dashboard changes as you go
+          and the choice is saved with your preferences, so it follows you across devices. <b>Reset</b> brings back the default. Two <i>Half</i> blocks that
+          follow one another share a row (by default Upcoming bills and Unusual transactions, and the two AI summaries); a Half block with no Half neighbour
+          takes the whole row, and below 1024 px wide every block stacks at full width. A block that has nothing to show (no alerts, no uncategorized
+          transactions) takes no room, and its neighbour then widens to fill the row. Hiding a block only hides it — for example, hiding Options keeps
+          the account selection you made.
+        </P>
         <H3>KPI cards</H3>
         <P>
           Net Worth, Cash, Investments, Pension &amp; Savings, and Assets, each with a "vs prev month" and

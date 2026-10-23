@@ -1401,6 +1401,36 @@ CREATE TABLE IF NOT EXISTS Live_Alert_Dismissals (
     PRIMARY KEY (Securities_Id, Alert_Type)
 );
 
+-- Dismissed Dashboard alerts that are identified by a key rather than by their own table
+-- (support / resistance, price alerts, upcoming events, split mismatches, allocation drift) —
+-- see database/alert_groups.py. A row is dropped once its alert is no longer active.
+CREATE TABLE IF NOT EXISTS Alert_Dismissals (
+    Alert_Key    TEXT PRIMARY KEY,
+    Alert_Type   TEXT NOT NULL,
+    Dismissed_At TIMESTAMP DEFAULT NOW()
+);
+
+-- Dashboard alerts already sent to Telegram, so each is sent once — database/alert_groups.py::send_new_alert_telegrams.
+CREATE TABLE IF NOT EXISTS Alert_Telegram_Sent (
+    Alert_Key TEXT PRIMARY KEY,
+    Sent_At   TIMESTAMP DEFAULT NOW()
+);
+
+-- A security's Action verdict (Portfolio Action Signals): the smoothed score, its level (0 Sell/Avoid … 4 Add/Buy),
+-- the reasons, and the last move between the three outer groups (Reduce / Sell, Hold, Add) for the Action Change alert —
+-- see database/action_signal.py.
+CREATE TABLE IF NOT EXISTS Action_Signals (
+    Securities_Id    INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Level            SMALLINT NOT NULL,
+    Score            NUMERIC(6,1),
+    Why              TEXT,
+    Bucket           TEXT,
+    Previous_Bucket  TEXT,
+    Changed_At       TIMESTAMP DEFAULT NOW(),
+    Acknowledged     BOOLEAN DEFAULT TRUE,
+    Updated_At       TIMESTAMP DEFAULT NOW()
+);
+
 
 -- =============================================================================
 -- SCHEDULER

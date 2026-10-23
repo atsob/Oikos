@@ -17,6 +17,8 @@ import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODa
 import { useTheme } from '@/lib/theme'
 import { usePersist, useLiveRefetchInterval, useScrollRestore, useSettings } from '@/lib/hooks'
 import { ALERT_GROUPS, AlertItem, alertGroupOf, groupAlerts, levelDot, useTriggeredAlerts, worstLevel } from '@/components/alerts'
+import { DashboardCustomizer } from '@/components/DashboardCustomizer'
+import { DEFAULT_LAYOUT, layoutRows, resolveLayout, type DashLayout } from '@/lib/dashboardLayout'
 import { MarketWatchPanel } from '@/components/MarketWatch'
 import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
@@ -848,6 +850,8 @@ export default function Dashboard() {
   )
   const setNwPeriodSaved = (v: string) => { setNwPeriod(v); localStorage.setItem('oikos-nw-period', v) }
   const [showKWave, setShowKWave] = usePersist('nw_show_kwave', false)
+  const [savedLayout, setSavedLayout] = usePersist<DashLayout>('dashboard_layout', DEFAULT_LAYOUT)
+  const [customizing, setCustomizing] = React.useState(false)
   const [kwPhases, setKwPhases] = usePersist<KWavePhase[]>('kwave_phases', DEFAULT_KWAVE_PHASES)
 
   const NW_PERIODS: Record<string, string> = {
@@ -1022,31 +1026,10 @@ export default function Dashboard() {
     if (!weekPeriods.includes(ws)) weekPeriods.push(ws)
   })
 
-  return (
-    <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle="Net worth overview"
-        actions={
-          <>
-          <PricesUpdatedAuto />
-          <SyncBalancesButton
-            options={[
-              { label: '🏦 Bank & Cash', target: 'cash' },
-              { label: '📈 Investments', target: 'investment' },
-              { label: '🏛️ Pension', target: 'pension' },
-              { label: '📊 Holdings', target: 'holdings' },
-              { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
-            ]}
-            onSync={handleSync}
-          />
-          </>
-        }
-      />
-
-      <div className="p-6 space-y-4">
-        {/* KPI row — Net Worth gets extra width as the "hero" card; the rest stay compact
-            so all five fit on one line instead of wrapping. */}
+  // The Dashboard's blocks — each a piece of its own. Which of them show, and in what order, is the user's choice (Customize);
+  // the list and its default order are in lib/dashboardLayout.ts.
+  const blockNodes: Record<string, React.ReactNode> = {
+    kpi: (
         <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
           <StatCard
             label="Net Worth"
@@ -1113,19 +1096,14 @@ export default function Dashboard() {
             onClick={() => navigate('/dashboard/assets')}
           />
         </div>
-
-        {/* Insights + Drafts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 space-y-3">
-            <InsightsPanel insights={insights as Insight[]} />
-            <MarketValuationPanel />
-            <MarketWatchPanel />
-            <LocalWatchPanel />
-            <SecuritiesAlertsPanel />
-            <UncategorizedTransactionsPanel />
-          </div>
-
-          {/* Pending Drafts */}
+    ),
+    insights: <InsightsPanel insights={insights as Insight[]} />,
+    valuation: <MarketValuationPanel />,
+    marketwatch: <MarketWatchPanel />,
+    localwatch: <LocalWatchPanel />,
+    alerts: <SecuritiesAlertsPanel />,
+    uncategorized: <UncategorizedTransactionsPanel />,
+    drafts: (
           <Card>
             <CardHeader className="flex items-center justify-between">
               <CardTitle>Pending Drafts ({drafts.length})</CardTitle>
@@ -1167,26 +1145,8 @@ export default function Dashboard() {
               )}
             </CardBody>
           </Card>
-        </div>
-
-        {reviewDraft && (
-          <DraftReviewModal
-            draft={reviewDraft}
-            accounts={accounts as Record<string, unknown>[]}
-            payees={draftPayees as Record<string, unknown>[]}
-            categories={draftCategories as Record<string, unknown>[]}
-            onClose={() => setReviewDraft(null)}
-            onSaved={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
-            onConfirmed={() => {
-              qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
-              qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-              setReviewDraft(null)
-            }}
-            onDeleted={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
-          />
-        )}
-
-        {/* Net Worth Breakdown */}
+    ),
+    breakdown: (
         <Card>
           <CardHeader><CardTitle>Net Worth Breakdown</CardTitle></CardHeader>
           <CardBody className="p-0">
@@ -1227,9 +1187,8 @@ export default function Dashboard() {
             })()}
           </CardBody>
         </Card>
-
-        {/* Net Worth Trend */}
-        {!nwLoading && nwData.length > 1 && (() => {
+    ),
+    trend: !nwLoading && nwData.length > 1 && (() => {
           const kwFrom = nwData[0]?.date ? String(nwData[0].date).slice(0, 10) : undefined
           const kwTo = nwData[nwData.length - 1]?.date ? String(nwData[nwData.length - 1].date).slice(0, 10) : undefined
           const kwOverlay = showKWave && kwFrom && kwTo ? getKWaveOverlay(kwPhases, kwFrom, kwTo) : null
@@ -1286,22 +1245,12 @@ export default function Dashboard() {
             )}
           </Card>
           )
-        })()}
-
-        {/* Options & Account selection */}
-        <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />
-
-        {/* Accounts (collapsible, folded by default) */}
-        <AccountsPanel accounts={accsForNw} opts={opts} />
-
-        {/* Upcoming Bills + Unusual Transactions */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <UpcomingBillsPanel />
-          <AnomaliesPanel />
-        </div>
-
-        {/* AI Summaries */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        })(),
+    options: <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />,
+    accounts: <AccountsPanel accounts={accsForNw} opts={opts} />,
+    bills: <UpcomingBillsPanel />,
+    anomalies: <AnomaliesPanel />,
+    weekly: (
           <AISummaryPanel
             label="Weekly AI Summary"
             summaries={weeklySummaries as Record<string, unknown>[]}
@@ -1310,6 +1259,8 @@ export default function Dashboard() {
             queryKey="weekly-summaries"
             dateField="week_start"
           />
+    ),
+    monthly: (
           <AISummaryPanel
             label="Monthly AI Summary"
             summaries={monthlySummaries as Record<string, unknown>[]}
@@ -1318,7 +1269,69 @@ export default function Dashboard() {
             queryKey="monthly-summaries"
             dateField="month_start"
           />
+    ),
+  }
+  const layout = resolveLayout(savedLayout)
+
+  return (
+    <div>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Net worth overview"
+        actions={
+          <>
+          <PricesUpdatedAuto />
+          <SyncBalancesButton
+            options={[
+              { label: '🏦 Bank & Cash', target: 'cash' },
+              { label: '📈 Investments', target: 'investment' },
+              { label: '🏛️ Pension', target: 'pension' },
+              { label: '📊 Holdings', target: 'holdings' },
+              { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
+            ]}
+            onSync={handleSync}
+          />
+          <Button size="sm" variant="secondary" onClick={() => setCustomizing(true)} title="Choose which blocks the Dashboard shows, and in what order">
+            <SlidersHorizontal size={13} /> Customize
+          </Button>
+          </>
+        }
+      />
+
+      <div className="p-6">
+        {/* Rows of one block, or two half-width blocks side by side from 1024px up (stacked below that). A block with nothing to show
+            disappears, and its neighbour then takes the whole row; a row with nothing in it takes no room. */}
+        <div className="flex flex-col gap-4">
+          {layoutRows(layout.shown, layout.widthOf).map(row => (
+            <div key={row.join('+')} className="flex flex-col lg:flex-row gap-4 [&:not(:has(>:not(:empty)))]:hidden">
+              {row.map(id => <div key={id} className="min-w-0 lg:flex-1 empty:hidden">{blockNodes[id]}</div>)}
+            </div>
+          ))}
         </div>
+        {layout.shown.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-12">
+            Every block is hidden. <button className="text-blue-600 hover:underline" onClick={() => setCustomizing(true)}>Customize</button> to bring some back.
+          </p>
+        )}
+
+        {reviewDraft && (
+          <DraftReviewModal
+            draft={reviewDraft}
+            accounts={accounts as Record<string, unknown>[]}
+            payees={draftPayees as Record<string, unknown>[]}
+            categories={draftCategories as Record<string, unknown>[]}
+            onClose={() => setReviewDraft(null)}
+            onSaved={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+            onConfirmed={() => {
+              qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
+              qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+              setReviewDraft(null)
+            }}
+            onDeleted={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+          />
+        )}
+
+        {customizing && <DashboardCustomizer layout={savedLayout} onChange={setSavedLayout} onClose={() => setCustomizing(false)} />}
       </div>
     </div>
   )
