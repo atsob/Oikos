@@ -71,7 +71,7 @@ export const getAccounts = (includeFuture = false) =>
 
 // One Dashboard KPI split by account (api/routers/dashboard.py::get_account_breakdown)
 export type KpiAccount = {
-  id: number; name: string; type: string; currency: string; institution: string | null; is_active: boolean; balance_eur: number
+  id: number; name: string; type: string; currency: string; institution: string | null; is_active: boolean; balance_eur: number; balance_native: number | null
   delta_daily: number; delta_prev_month: number; delta_ytd: number
 }
 export type KpiBreakdown = { group: string; label: string; accounts: KpiAccount[]; total: { balance_eur: number; delta_daily: number; delta_prev_month: number; delta_ytd: number }; as_of: string }

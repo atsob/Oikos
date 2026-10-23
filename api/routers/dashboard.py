@@ -235,6 +235,7 @@ def get_accounts(include_future: bool = Query(False)):
                 a.Accounts_Balance {future_clause} AS balance,
                 a.Is_Active        AS is_active,
                 c.Currencies_ShortName AS currency,
+                COALESCE(lfx.FX_Rate, 1) AS fx_rate,
                 i.Institutions_Name    AS institution,
                 a.Institutions_Id      AS institutions_id,
                 COALESCE(a.Credit_Limit, 0) AS credit_limit,
@@ -345,8 +346,17 @@ def get_account_breakdown(group: str = Query(...), account_ids: Optional[str] = 
     out = []
     for a in accounts:
         now = float(a.get("balance_eur") or 0)
+        # the balance in the account's own currency: its booked balance, or — for an investment account, whose value is its holdings — the EUR value at today's rate
+        rate = float(a.get("fx_rate") or 1)
+        if a["currency"] == "EUR":
+            native = None
+        elif a["type"] in ("Brokerage", "Margin", "Other Investment"):
+            native = now / rate if rate else None
+        else:
+            native = float(a.get("balance") or 0)
         row = {"id": int(a["id"]), "name": a["name"], "type": a["type"], "currency": a["currency"], "institution": a.get("institution"),
-               "is_active": a.get("is_active") is not False, "balance_eur": round(now, 2)}
+               "is_active": a.get("is_active") is not False, "balance_eur": round(now, 2),
+               "balance_native": round(native, 2) if native is not None else None}
         for k in ("daily", "prev_month", "ytd"):
             past = hist.get((int(a["id"]), k), 0.0)
             row[f"{k}_eur"] = round(past, 2)

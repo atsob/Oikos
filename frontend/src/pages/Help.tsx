@@ -168,7 +168,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Assets</b> each open a page with the same card for every account that makes the number up — its value, the
           change vs the previous month and today on one line, and YTD below, so the accounts add up to the card. It counts
           the accounts the Dashboard counts (see Options below, including a closed account that held something earlier in
-          the year); the accounts are grouped by account type, each type with its own subtotal; accounts that are empty and did not move are hidden behind a tick-box, and the Investments page has a
+          the year); the accounts are grouped by account type, each type with its own subtotal; an account in a foreign currency also shows its balance in that currency under the EUR value; accounts that are empty and did not move are hidden behind a tick-box, and the Investments page has a
           <b>Performance (P&amp;L)</b> button to the report the card used to open. Click an account to open its transactions —
           Cash Register for cash, savings and asset accounts, Investments → Transactions for brokerage, margin and pension
           accounts — with a <b>Back</b> button to return, same as any other account link (see below).

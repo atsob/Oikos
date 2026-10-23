@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getAccounts, getAccountBreakdown, type KpiAccount } from '@/lib/api'
 import { PageHeader, StatCard, Button, Spinner } from '@/components/ui'
-import { fmtEur } from '@/lib/utils'
+import { fmtEur, fmtCur } from '@/lib/utils'
 import { useLiveRefetchInterval } from '@/lib/hooks'
 import { loadOpts, historyAccountIds } from '@/lib/dashboardOpts'
 import { INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -103,7 +103,7 @@ export default function DashboardAccounts() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
                   {sec.list.map(a => (
                     <StatCard key={a.id} compact label={a.name} value={fmtEur(a.balance_eur)}
-                      subs={kpiSubs(a, `${a.currency && a.currency !== 'EUR' ? a.currency : ''}${a.is_active ? '' : `${a.currency && a.currency !== 'EUR' ? ' · ' : ''}switched off`}` || undefined)}
+                      subs={kpiSubs(a, `${a.currency && a.currency !== 'EUR' ? (a.balance_native != null ? fmtCur(a.balance_native, a.currency) : a.currency) : ''}${a.is_active ? '' : `${a.currency && a.currency !== 'EUR' ? ' · ' : ''}switched off`}` || undefined)}
                       onClick={() => open(a)} />
                   ))}
                 </div>

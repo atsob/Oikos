@@ -10,6 +10,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-10-22
 
+### Changed
+- **Account pages show the balance in the account's own currency.** On the Dashboard's account-by-account pages (Cash, Investments, Pension & Savings, Assets) a foreign-currency account's card now shows its balance in its own currency under the EUR value — e.g. *£1,700.62* under €2,031.32 for a GBP savings account — instead of just the currency code. For an investment account (whose value is its holdings) it is the EUR value at today's rate.
+
 ### Fixed
 - **Market Watch / Local Market Watch when FRED is down.** During a St. Louis Fed maintenance window FRED answers with a web page instead of data, which showed up as the unreadable *Could not be fetched: Expecting value: line 1 column 1 (char 0)* on the sovereign spread (and the credit spreads). The message now says what happened — *FRED returned a web page instead of data (likely site maintenance) — try again later* — and a Local Market Watch leg that fails to refresh keeps its last good reading (its "as of" month shows how old it is) instead of turning into "No data".
 
