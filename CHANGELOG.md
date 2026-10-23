@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-24
+
+### Added
+- **The Action verdicts are readable through the API and the Claude connector.** New **`GET /api/reports/action-signals`**: every security's Action in a compact list — name, ticker, held, value, the verdict (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid otherwise), the smoothed score, the reasons behind it, the last move between Reduce / Sell, Hold and Add (what the Action Change alert reports) and the Final Signal — with `held_only`, `action` (e.g. `Reduce,Sell`) and `changed_only` filters. `portfolio-signals` (the whole grid, Action columns and MA directions included) gained `held_only`. `mcp_server.py`'s curated list, which had none of this, now has 20 more entries: `action_signals`, `portfolio_signals`, `fundamental_scores`, `watchlist`, `price_alerts`, `portfolio_summary`, `pnl_summary`, `dividends`, `dividends_forecast`, `risk_metrics`, `twr`, `holdings_snapshot`, `xray_asset_allocation` (with its siblings), `fund_composition`, `local_watch`, `bond_schedule`, `tax_loss_harvesting`, `budget_vs_actual`, `net_worth_by_account` and `account_breakdown`, and its `alerts` entry knows the new Action group. (`oikos_get` always accepted any GET path; the list only tells Claude what is there.)
+
 ## 2026-10-23
 
 ### Added

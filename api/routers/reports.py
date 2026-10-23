@@ -6906,11 +6906,15 @@ def get_monte_carlo(
 
 # ── Portfolio Signals (Securities & Portfolio Analysis) ────────────────────────
 @router.get("/portfolio-signals")
-def get_portfolio_signals_endpoint():
+def get_portfolio_signals_endpoint(held_only: bool = Query(False)):
+    """Every active security's signals — prices and changes, volatility, Sharpe, moving averages and their direction, trailing stop, analyst
+    and fair-value upside, F/Z scores, the Final Signal and the Action verdict. held_only=true limits it to open positions."""
     from database.queries import get_portfolio_signals
     df = get_portfolio_signals(None)
     if df is None or df.empty:
         return []
+    if held_only:
+        df = df[df["current_qty"].fillna(0).astype(float) > 0]
     rows = _df_to_list(df)
     # Action: the stored, smoothed verdict (database/action_signal.py), worded for held / not held
     from database.action_signal import action_map, label
@@ -6921,6 +6925,24 @@ def get_portfolio_signals_endpoint():
         r["action"] = label(a["level"], held) if a else None
         r["action_score"] = a["score"] if a else None
         r["action_why"] = a["why"] if a else ""
+    return rows
+
+
+@router.get("/action-signals")
+def get_action_signals_endpoint(held_only: bool = Query(False), action: Optional[str] = Query(None), changed_only: bool = Query(False)):
+    """The Action verdict of every security, compact: name, ticker, held, value, verdict (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid
+    otherwise), the smoothed score, the reasons behind it, the last move between Reduce / Sell, Hold and Add, and the Final Signal. Held positions
+    first, biggest first. held_only=true: open positions only. action: comma-separated verdicts to keep (e.g. "Reduce,Sell").
+    changed_only=true: those whose last move between the outer groups has not been dismissed yet (the Dashboard's Action Change alerts)."""
+    from database.action_signal import action_rows
+    rows = action_rows()
+    if held_only:
+        rows = [r for r in rows if r["held"]]
+    if action:
+        want = {a.strip().lower() for a in action.split(",") if a.strip()}
+        rows = [r for r in rows if (r["action"] or "").lower() in want]
+    if changed_only:
+        rows = [r for r in rows if r["alert_pending"]]
     return rows
 
 

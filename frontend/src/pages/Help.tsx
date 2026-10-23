@@ -1781,7 +1781,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           keys/secrets/tokens, emails, and phone numbers out of every response before Claude sees it, and blocks
           the broker-integration settings endpoints (<code>/api/bank/*</code>) outright. Fully standalone (just
           the <code>mcp</code>/<code>requests</code> Python packages — the machine running Claude Desktop doesn't
-          need a full Oikos checkout). See <b>INSTALL.md</b>'s "Optional: Connecting Claude to Oikos" section for
+          need a full Oikos checkout). Its built-in list of ready-to-use endpoints (<code>list_endpoints</code>) covers the main figures, and
+          <code>oikos_get</code> reaches any other GET path — for the Action verdicts, for example, <code>/api/reports/action-signals</code> (add
+          <code>held_only=true</code> or <code>action=Reduce,Sell</code> to narrow it). See <b>INSTALL.md</b>'s "Optional: Connecting Claude to Oikos" section for
           setup.
         </P>
       </>

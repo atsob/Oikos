@@ -312,3 +312,43 @@ def pending_changes() -> pd.DataFrame:
             ORDER BY a.Changed_At DESC""", conn)
     finally:
         conn.close()
+
+
+def action_rows() -> list[dict]:
+    """Every security's stored Action verdict with what is needed to read it: name, ticker, whether and how much is held, the verdict worded for
+    held / not held, the score, the reasons, the last move between the outer groups and the existing Final Signal. Held positions first,
+    biggest first. Backs GET /api/reports/action-signals."""
+    from database.queries import get_portfolio_signals
+    ensure_table()
+    conn = get_connection()
+    try:
+        st = pd.read_sql("""
+            SELECT a.Securities_Id AS securities_id, s.Ticker AS ticker, a.Level AS level, a.Score AS action_score, a.Why AS action_why,
+                   a.Bucket AS bucket, a.Previous_Bucket AS previous_bucket, a.Changed_At AS changed_at, a.Acknowledged AS acknowledged,
+                   a.Updated_At AS updated_at
+            FROM Action_Signals a JOIN Securities s ON s.Securities_Id = a.Securities_Id""", conn)
+    finally:
+        conn.close()
+    if st.empty:
+        return []
+    sig = get_portfolio_signals(None)[["securities_id", "securities_name", "current_qty", "current_value_eur", "final_signal", "recommendation_signal"]]
+    df = st.merge(sig, on="securities_id", how="left")
+    out = []
+    txt = lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+    for r in df.to_dict("records"):
+        qty = float(r["current_qty"]) if r.get("current_qty") is not None and not pd.isna(r["current_qty"]) else 0.0
+        held = qty > 0
+        val = float(r["current_value_eur"]) if r.get("current_value_eur") is not None and not pd.isna(r["current_value_eur"]) else 0.0
+        out.append({
+            "securities_id": int(r["securities_id"]), "name": txt(r.get("securities_name")), "ticker": txt(r.get("ticker")),
+            "held": held, "quantity": qty if held else 0.0, "value_eur": round(val, 2),
+            "action": label(int(r["level"]), held), "action_score": float(r["action_score"]) if r["action_score"] is not None and not pd.isna(r["action_score"]) else None,
+            "level": int(r["level"]), "action_why": r["action_why"] or "",
+            "bucket": txt(r["bucket"]), "previous_bucket": txt(r["previous_bucket"]),
+            "changed_at": None if r["changed_at"] is None or pd.isna(r["changed_at"]) else pd.Timestamp(r["changed_at"]).isoformat(),
+            "alert_pending": bool(r["acknowledged"] is False),
+            "updated_at": None if r["updated_at"] is None or pd.isna(r["updated_at"]) else pd.Timestamp(r["updated_at"]).isoformat(),
+            "final_signal": txt(r.get("final_signal")), "math_signal": txt(r.get("recommendation_signal")),
+        })
+    out.sort(key=lambda x: (not x["held"], -x["value_eur"], x["name"] or ""))
+    return out

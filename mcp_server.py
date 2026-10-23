@@ -210,7 +210,87 @@ ENDPOINTS = {
     },
     "alerts": {
         "path": "/api/dashboard/alerts", "params": [],
-        "description": "Triggered Dashboard alerts, each with a group (sr = support/resistance, price, signals, events, corporate, portfolio), level, message and stable key: support/resistance events on holdings/Watchlist/exposed currencies, price alerts, signal changes, crosses, trailing stops, upcoming bond/dividend/loan events, splits, allocation drift.",
+        "description": "Triggered Dashboard alerts, each with a group (sr = support/resistance, price, signals, action, events, corporate, portfolio), level, message and stable key: support/resistance events on holdings/Watchlist/exposed currencies, price alerts, signal changes, crosses, trailing stops, upcoming bond/dividend/loan events, splits, allocation drift, and Action changes (a held security's verdict moving between Reduce / Sell, Hold and Add).",
+    },
+    "action_signals": {
+        "path": "/api/reports/action-signals", "params": ["held_only", "action (comma-separated, e.g. Reduce,Sell)", "changed_only"],
+        "description": "The Action verdict of every security, compact: name, ticker, held, value_eur, action (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid otherwise), action_score (5-day average of the points), action_why (each factor with its points), bucket / previous_bucket / changed_at of the last move between Reduce / Sell, Hold and Add, alert_pending, and the older final_signal / math_signal. Held positions first, biggest first. held_only=true for open positions; changed_only=true for the unacknowledged Action Change alerts.",
+    },
+    "portfolio_signals": {
+        "path": "/api/reports/portfolio-signals", "params": ["held_only"],
+        "description": "The full Portfolio Action Signals grid, one row per security (large — use held_only=true or action_signals first): prices and 1D-3Y changes, volatility, Sharpe, quality score, 3Y range, MA50/MA200 with their 5-day direction (ma50_chg_pct / ma200_chg_pct), Golden/Death regime and crosses, trailing stop, analyst target and upside, fair value, F-Score / Z-Score, final_signal, and action / action_score / action_why.",
+    },
+    "fundamental_scores": {
+        "path": "/api/reports/fundamental-scores", "params": [],
+        "description": "Piotroski F-Score (0-9, with the criteria passed) and Altman Z-Score (with its Safe / Grey / Distress zone) for stocks with cached financial statements.",
+    },
+    "watchlist": {
+        "path": "/api/market-data/watchlist", "params": [],
+        "description": "The Watchlist: securities you follow without holding — latest price (native and EUR), your target price and stop loss, the analyst target, dividend yield and % from target.",
+    },
+    "price_alerts": {
+        "path": "/api/market-data/alerts", "params": [],
+        "description": "Your own price alerts (configuration, not whether they have fired — see alerts for the triggered ones): security, above/below threshold, direction, active flag, note, with the current price and its date. Many rows.",
+    },
+    "portfolio_summary": {
+        "path": "/api/reports/portfolio-summary", "params": ["account_ids"],
+        "description": "Current positions, one row per account and security: quantity, last price, FX rate, value in EUR, currency. account_ids limits it to some accounts.",
+    },
+    "pnl_summary": {
+        "path": "/api/reports/pnl-summary", "params": ["start_date", "end_date"],
+        "description": "Realized gain and dividend income per month over the period (default: all). For the per-security P&L see /api/reports/pnl.",
+    },
+    "dividends": {
+        "path": "/api/reports/dividends", "params": ["start_date", "end_date"],
+        "description": "Dividends received, one row per payment (date, security, ticker, account, amount, currency, fx_rate, amount_eur) — many rows, so pass start_date / end_date.",
+    },
+    "dividends_forecast": {
+        "path": "/api/reports/dividends-forecast", "params": ["period"],
+        "description": "Expected dividends from current holdings: summary, monthly_forecast, by_security and upcoming payments (period = the horizon).",
+    },
+    "risk_metrics": {
+        "path": "/api/reports/risk-metrics", "params": ["lookback_days", "benchmark_sec_id", "account_ids"],
+        "description": "Portfolio risk over the lookback: annualised volatility, Sharpe, Sortino, max drawdown, VaR / CVaR (% and EUR), beta and alpha against the benchmark.",
+    },
+    "twr": {
+        "path": "/api/reports/twr", "params": ["lookback_days", "account_ids"],
+        "description": "Time-weighted return (window and annualised) and money-weighted return of the investment portfolio over the lookback, with the series for a chart.",
+    },
+    "holdings_snapshot": {
+        "path": "/api/reports/holdings-snapshot", "params": ["as_of", "account_ids"],
+        "description": "What was held on a past date (as_of): one row per account and security with type, currency, quantity, price, price date and value in EUR.",
+    },
+    "xray_asset_allocation": {
+        "path": "/api/reports/xray/asset-allocation", "params": ["account_ids", "compare_date"],
+        "description": "Portfolio Analysis (look-through) asset allocation: summary and detail across stocks, bonds, cash and funds' contents. Sibling endpoints with the same params: /api/reports/xray/sector-weighting, stock-overlap, expense-ratio, bond-quality, style-box (compare_date adds an as-of column).",
+    },
+    "fund_composition": {
+        "path": "/api/securities/{sec_id}/fund-composition", "params": [],
+        "description": "One fund's composition (security id in the path): composition (asset mix, sectors, countries, bond quality) and its top holdings.",
+    },
+    "local_watch": {
+        "path": "/api/local-watch/summary", "params": [],
+        "description": "Local Market Watch for your home country: overall banner status, recent changes and the indicators (index trend, breadth, banks, sovereign spread, liquidity).",
+    },
+    "bond_schedule": {
+        "path": "/api/reports/bond-schedule", "params": [],
+        "description": "The bonds held: face value, coupon rate and frequency, next coupon, annual coupon (EUR), maturity date and days to maturity.",
+    },
+    "tax_loss_harvesting": {
+        "path": "/api/reports/tax-loss-harvesting", "params": [],
+        "description": "Positions below cost: quantity, current price, cost basis, current value, unrealized loss in EUR and %.",
+    },
+    "budget_vs_actual": {
+        "path": "/api/reports/budget-vs-actual", "params": ["year", "ref_years"],
+        "description": "Per category for a year: historical average, prior year, budget, actual, variance (EUR and %) and an over-budget flag.",
+    },
+    "net_worth_by_account": {
+        "path": "/api/reports/net-worth-by-account", "params": ["start_date", "end_date", "grouping"],
+        "description": "Net worth history by account and period (balance_eur) — very large (thousands of rows); pass start_date / end_date and grouping.",
+    },
+    "account_breakdown": {
+        "path": "/api/dashboard/account-breakdown", "params": ["group (cash|investments|pension|assets, required)", "account_ids", "include_future"],
+        "description": "A Dashboard KPI split by account: value now and the change vs the previous month, today and YTD, plus the balance in the account's own currency.",
     },
     "technical_levels": {
         "path": "/api/market-data/technical/levels", "params": ["kind (security|currency|currency_stored, required)", "id (required)", "from_date", "quote", "per_side"],
