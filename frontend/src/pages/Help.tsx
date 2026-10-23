@@ -246,7 +246,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Triggered alerts are shown in <b>groups</b>, each with its own header, count, collapse state and{' '}
           <b>Dismiss</b> / <b>Dismiss all N</b> button that leaves the other groups alone: <b>Support / Resistance</b>,{' '}
           <b>Price Alerts</b>, <b>Signals</b> (Signal Change, Golden/Death Cross, Trailing Stop, Financial Health
-          Change), <b>Upcoming Events</b> (bond maturities/coupons, dividend and loan payments), <b>Corporate Actions
+          Change), <b>Action</b> (a held security's Action verdict moving between Reduce / Sell, Hold and Add), <b>Upcoming Events</b> (bond maturities/coupons, dividend and loan payments), <b>Corporate Actions
           &amp; Data</b> (stock splits, split mismatches) and <b>Portfolio</b> (allocation drift). Within a group the most
           serious alerts come first. Every alert has a <b>Dismiss</b> button, and what it does depends on the kind:
           Signal Change, Stock Split and Financial Health Change are acknowledged until the next real change; a Cross or
@@ -269,7 +269,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           up suggests taking profit or rebalancing. A Watchlist security gets entry wording (near support — a possible
           entry; a breakout above resistance), a currency the euro value of your exposure. Holdings and currency
           exposures below Tools → App Settings → Support / Resistance Alerts → minimum (€500 by default) are left out.
-          Under Tools → App Settings → <b>Dashboard Alerts</b> you choose which groups the Dashboard shows (all by default); a group you untick is only hidden there — it is still raised, so Telegram is unaffected.
+          Under Tools → App Settings → <b>Dashboard Alerts</b> you choose which groups the Dashboard shows (all by default); a group you untick is only hidden there — it is still raised, so Telegram is unaffected, and the <b>Alerts</b> page (sidebar, or <i>All alerts →</i> on the panel) still lists every group, a tab each, marking the ones hidden on the Dashboard. Dismissing works the same there.
           New alerts of any group can also go to <b>Telegram</b> — see <i>Telegram alerts</i> below.
         </Note>
         <Note>
@@ -1084,7 +1084,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Held/Cost Basis/Realized P&amp;L reflect any transaction you just saved immediately, not after a delay.
         </Note>
         <Note>
-          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. To keep it from flapping, the scheduler works it out from the 5-day average of the score, and a level changes only after the average passes a cut by a full point and stays there three days (so <b>Action Score</b> is that average); a held security that moves between <i>Reduce / Sell</i>, <i>Hold</i> and <i>Add</i> raises an <b>Action Change</b> alert on the Dashboard (Signals group). Securities with no trend or valuation data, such as Treasury bills, show no verdict. It is a rules-based screen to review, not advice, and runs alongside the Final Signal and its Signal Change alerts.
+          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. To keep it from flapping, the scheduler works it out from the 5-day average of the score, and a level changes only after the average passes a cut by a full point and stays there three days (so <b>Action Score</b> is that average); a held security that moves between <i>Reduce / Sell</i>, <i>Hold</i> and <i>Add</i> raises an <b>Action Change</b> alert on the Dashboard (its own <b>Action</b> group, so it can be shown, hidden or sent to Telegram separately from Signals). Securities with no trend or valuation data, such as Treasury bills, show no verdict. It is a rules-based screen to review, not advice, and runs alongside the Final Signal and its Signal Change alerts.
         </Note>
         <Note>
           <b>MA50 Direction</b>, <b>MA200 Direction</b> and <b>MA Rising</b> show where the averages are heading — each one's change over the last week (5 trading days),

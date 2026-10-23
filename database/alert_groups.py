@@ -5,6 +5,7 @@ Every alert from check_triggered_alerts() gets a `group` and a stable `key`:
   sr         Support / Resistance — database/sr_alerts.py
   price      Price Alerts         — your own above/below thresholds
   signals    Signals              — signal changes, golden/death cross, trailing stop, Z-Score zone changes
+  action     Action               — a held security's Action verdict moving between Reduce / Sell, Hold and Add
   events     Upcoming Events      — bond maturities/coupons, dividend payments, loan payments
   corporate  Corporate Actions & Data — stock splits, split-amount mismatches
   portfolio  Portfolio            — allocation drift
@@ -30,6 +31,7 @@ GROUPS = [
     ("sr", "Support / Resistance"),
     ("price", "Price Alerts"),
     ("signals", "Signals"),
+    ("action", "Action"),
     ("events", "Upcoming Events"),
     ("corporate", "Corporate Actions & Data"),
     ("portfolio", "Portfolio"),
@@ -38,7 +40,7 @@ GROUPS = [
 TYPE_GROUP = {
     "price_alert": "price",
     "allocation_drift": "portfolio",
-    "signal_change": "signals", "action_change": "signals", "ma_cross": "signals", "trailing_stop": "signals", "zone_change": "signals",
+    "signal_change": "signals", "action_change": "action", "ma_cross": "signals", "trailing_stop": "signals", "zone_change": "signals",
     "bond_maturity": "events", "bond_coupon": "events", "dividend_payment": "events", "loan_payment": "events",
     "stock_split": "corporate", "split_mismatch": "corporate",
 }

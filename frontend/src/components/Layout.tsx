@@ -7,7 +7,7 @@ import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
 import AccountModal from '@/components/AccountModal'
 import {
-  LayoutDashboard, BookOpen, RefreshCw, BarChart2,
+  LayoutDashboard, BookOpen, Bell, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
   Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut, UserCircle,
 } from 'lucide-react'
@@ -18,20 +18,32 @@ const THEME_OPTIONS: { value: Theme; icon: React.ReactNode; label: string }[] = 
   { value: 'dark',   icon: <Moon   size={13} />, label: 'Dark'   },
 ]
 
+// The menu, in groups separated by a thin line: overview, everyday money work, analysis, setup & data, support.
 const nav = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { to: '/register', label: 'Cash Register', icon: BookOpen },
-  { to: '/investments', label: 'Investments', icon: PieChart },
-  { to: '/recurring', label: 'Recurring', icon: RefreshCw },
-  { to: '/reports', label: 'Reports', icon: BarChart2 },
-  { to: '/static-data', label: 'Static Data', icon: Database },
-  { to: '/market-data', label: 'Market Data', icon: TrendingUp },
-  { to: '/news', label: 'News', icon: Newspaper },
-  { to: '/importers', label: 'Importers', icon: Upload },
-  { to: '/tools', label: 'Tools', icon: Wrench },
-  { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
-  { to: '/help', label: 'Help', icon: HelpCircle },
-  { to: '/releases', label: 'Release Notes', icon: History },
+  [
+    { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    { to: '/alerts', label: 'Alerts', icon: Bell },
+  ],
+  [
+    { to: '/register', label: 'Cash Register', icon: BookOpen },
+    { to: '/investments', label: 'Investments', icon: PieChart },
+    { to: '/recurring', label: 'Recurring', icon: RefreshCw },
+  ],
+  [
+    { to: '/reports', label: 'Reports', icon: BarChart2 },
+    { to: '/market-data', label: 'Market Data', icon: TrendingUp },
+    { to: '/news', label: 'News', icon: Newspaper },
+    { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
+  ],
+  [
+    { to: '/static-data', label: 'Static Data', icon: Database },
+    { to: '/importers', label: 'Importers', icon: Upload },
+    { to: '/tools', label: 'Tools', icon: Wrench },
+  ],
+  [
+    { to: '/help', label: 'Help', icon: HelpCircle },
+    { to: '/releases', label: 'Release Notes', icon: History },
+  ],
 ]
 
 export default function Layout() {
@@ -107,25 +119,29 @@ export default function Layout() {
           </button>
         )}
         <nav className="flex-1 px-2 py-3 space-y-0.5">
-          {nav.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exact}
-              title={collapsed ? label : undefined}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-                  collapsed && 'md:justify-center md:px-0',
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white',
-                )
-              }
-            >
-              <Icon size={16} />
-              <span className={collapsed ? 'md:hidden' : undefined}>{label}</span>
-            </NavLink>
+          {nav.map((group, gi) => (
+            <div key={gi} className={cn('space-y-0.5', gi > 0 && 'mt-2 pt-2 border-t border-slate-700/70')}>
+              {group.map(({ to, label, icon: Icon, ...rest }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={'exact' in rest ? rest.exact : undefined}
+                  title={collapsed ? label : undefined}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                      collapsed && 'md:justify-center md:px-0',
+                      isActive
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-300 hover:bg-slate-700 hover:text-white',
+                    )
+                  }
+                >
+                  <Icon size={16} />
+                  <span className={collapsed ? 'md:hidden' : undefined}>{label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className={cn('px-4 py-3 border-t border-slate-700 space-y-2', collapsed && 'md:hidden')}>
