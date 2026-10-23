@@ -15,7 +15,7 @@ import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hooks'
+import { usePersist, useLiveRefetchInterval, useScrollRestore, useSettings } from '@/lib/hooks'
 import { MarketWatchPanel } from '@/components/MarketWatch'
 import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
@@ -194,6 +194,7 @@ function AlertText({ text }: { text: string }) {
 
 function SecuritiesAlertsPanel() {
   const qc = useQueryClient()
+  const [appSettings] = useSettings()
   const navigate = useNavigate()
   const { data: alerts = [], isLoading } = useQuery({
     queryKey: ['triggered-alerts'],
@@ -233,7 +234,9 @@ function SecuritiesAlertsPanel() {
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   const [groupOpen, setGroupOpen] = usePersist<Record<string, boolean>>('dashboard_alert_groups_open', {})
 
-  const rows = alerts as AlertRow[]
+  // Groups switched off under Tools → App Settings → Dashboard Alerts are not shown (every group is, by default)
+  const groupOf = (a: AlertRow) => (ALERT_GROUPS.some(x => x.id === a.group) ? String(a.group) : 'portfolio')
+  const rows = (alerts as AlertRow[]).filter(a => appSettings.dashboardAlertGroups?.[groupOf(a)] !== false)
   const byGroup = React.useMemo(() => {
     const m = new Map<string, AlertRow[]>()
     for (const a of rows) {

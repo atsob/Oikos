@@ -2294,6 +2294,27 @@ function AppSettingsPanel() {
             </div>
           </div>
 
+          {/* Dashboard alerts */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Dashboard Alerts</h3>
+            <p className="text-xs font-medium text-slate-500">Show these alert groups on the Dashboard:</p>
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 max-w-md">
+              {([['sr', 'Support / Resistance'], ['price', 'Price Alerts'], ['signals', 'Signals'], ['events', 'Upcoming Events'],
+                ['corporate', 'Corporate Actions & Data'], ['portfolio', 'Portfolio']] as const).map(([g, label]) => (
+                <label key={g} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="rounded"
+                    checked={form.dashboardAlertGroups?.[g] !== false}
+                    onChange={e => set('dashboardAlertGroups', { ...(form.dashboardAlertGroups ?? {}), [g]: e.target.checked })} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              All groups are shown by default. A group you untick is hidden from the Dashboard's alert panel only — the alerts are
+              still raised, so Telegram (below) and the group's counts elsewhere are unaffected, and ticking it again brings them back.
+            </p>
+          </div>
+
           {/* Telegram alerts */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Telegram Alerts</h3>

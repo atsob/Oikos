@@ -5499,56 +5499,6 @@ const maDirFmt = (p: { value: unknown }) => {
   return d == null ? '—' : `${d === 'up' ? '▲' : d === 'down' ? '▼' : '▬'} ${Number(p.value) >= 0 ? '+' : ''}${Number(p.value).toFixed(2)}%`
 }
 
-// ── Action: one rules-based verdict from everything the grid knows ────────────────────────────────
-// Each factor adds or removes points and says so in plain words; the total decides the action. It is a transparent screen
-// built from the columns you see — not advice — so every verdict can be traced to its reasons (the "Why" column).
-// Guardrails: a triggered trailing stop or a Death Cross never reads as a buy, whatever else scores well.
-function actionFor(r: Row): { action_score: number | null; action: string | null; action_why: string } {
-  const n = (v: unknown) => (v == null || v === '' ? null : Number(v))
-  const held = Number(r.current_qty ?? 0) > 0
-  const pts: [number, string][] = []
-  const add = (p: number, why: string) => pts.push([p, why])
-
-  // trend
-  if (r.ma_trend === 'Golden') add(1, 'Golden Cross regime'); else if (r.ma_trend === 'Death') add(-1, 'Death Cross regime')
-  if (r.above_ma200 === true) add(1, 'above MA200'); else if (r.above_ma200 === false) add(-1, 'below MA200')
-  const d50 = maDir(r.ma50_chg_pct), d200 = maDir(r.ma200_chg_pct)
-  if (d50 === 'up') add(1, 'MA50 rising'); else if (d50 === 'down') add(-1, 'MA50 falling')
-  if (d200 === 'up') add(1, 'MA200 rising'); else if (d200 === 'down') add(-1, 'MA200 falling')
-  if (r.ma_cross_event === 'Golden Cross') add(1, 'fresh Golden Cross'); else if (r.ma_cross_event === 'Death Cross') add(-2, 'fresh Death Cross')
-  if (r.trailing_stop_triggered === true) add(-2, 'trailing stop triggered')
-
-  // momentum / risk-adjusted return
-  const sharpe = n(r.sharpe_ratio), quality = n(r.quality_score)
-  if (sharpe != null) { if (sharpe >= 1) add(1, `Sharpe ${sharpe.toFixed(2)}`); else if (sharpe < 0) add(-1, `negative Sharpe ${sharpe.toFixed(2)}`) }
-  if (quality != null) { if (quality > 8) add(1, 'strong momentum'); else if (quality < -5) add(-1, 'weak momentum') }
-
-  // valuation: Oikos's own fair value, and the analysts
-  const fv = n(r.fair_value_upside_pct), up = n(r.upside_pct)
-  if (fv != null) { if (fv > 20) add(1, `${fv.toFixed(0)}% below fair value`); else if (fv < -20) add(-1, `${Math.abs(fv).toFixed(0)}% above fair value`) }
-  if (up != null) { if (up > 15) add(1, `analyst target +${up.toFixed(0)}%`); else if (up < -5) add(-1, `analyst target ${up.toFixed(0)}%`) }
-  const view = String(r.wall_street_view ?? '')
-  if (view === 'buy' || view === 'strong_buy') add(1, `analysts: ${view.replace('_', ' ')}`); else if (view === 'sell' || view === 'underperform') add(-1, `analysts: ${view}`)
-
-  // fundamentals (stocks)
-  const f = n(r.f_score)
-  if (f != null) { if (f >= 7) add(1, `F-Score ${f}/${r.f_score_max ?? 9}`); else if (f <= 2) add(-1, `F-Score ${f}/${r.f_score_max ?? 9}`) }
-  if (r.z_zone === 'Distress') add(-1, 'Altman Z in Distress zone')
-
-  if (pts.length === 0) return { action_score: null, action: null, action_why: '' }
-  const score = pts.reduce((t, [p]) => t + p, 0)
-  const bearishGate = r.trailing_stop_triggered === true || r.ma_trend === 'Death'
-  let action: string
-  if (score >= 6) action = held ? 'Add' : 'Buy'
-  else if (score >= 3) action = held ? 'Hold / Add' : 'Buy'
-  else if (score >= -2) action = held ? 'Hold' : 'Watch'
-  else if (score >= -5) action = held ? 'Reduce' : 'Avoid'
-  else action = held ? 'Sell' : 'Avoid'
-  if (bearishGate && (action === 'Add' || action === 'Buy' || action === 'Hold / Add')) action = held ? 'Hold' : 'Watch'
-  const why = [...pts].sort((a, b) => Math.abs(b[0]) - Math.abs(a[0])).map(([p, w]) => `${p > 0 ? '+' : '−'}${Math.abs(p)} ${w}`).join(' · ')
-  return { action_score: score, action, action_why: why }
-}
-
 function PortfolioActionSignalsTab() {
   const navigate = useNavigate()
   const { data = [], isLoading } = usePortfolioSignals()
@@ -5598,7 +5548,7 @@ function PortfolioActionSignalsTab() {
     const change = r.price_today != null && prevClose != null ? Number(r.price_today) - prevClose : null
     const trailingStopPrice = r.trailing_high_1y != null ? Number(r.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
     const trailingStopTriggered = trailingStopPrice != null && r.price_today != null ? Number(r.price_today) < trailingStopPrice : null
-    const row = {
+    return {
       ...r,
       trailing_stop_price: trailingStopPrice,
       trailing_stop_triggered: trailingStopTriggered,
@@ -5637,7 +5587,6 @@ function PortfolioActionSignalsTab() {
       z_score: fs?.z_score ?? null,
       z_zone: fs?.z_zone ?? null,
     }
-    return { ...row, ...actionFor(row) }
   }), [data, secById, fundamentalsById, realizedById, settings.trailingStopPct])
 
   const filtered = useMemo(() => rows.filter(r => {
@@ -5693,12 +5642,12 @@ function PortfolioActionSignalsTab() {
         headerTooltip: 'Combined signal: math signal + analyst rating. Conviction signals appear when both agree.',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${signalStyle(p.value)}` },
       { field: 'action', headerName: 'Action', width: 120,
-        headerTooltip: 'A rules-based verdict from everything in this grid — trend (Golden/Death, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value and analyst target, F-Score and Z-Score. Held positions read Add / Hold / Reduce / Sell, others Buy / Watch / Avoid. A triggered trailing stop or a Death Cross never reads as a buy. A screen to review, not advice — see "Why" for the reasons.',
+        headerTooltip: 'A rules-based verdict from everything in this grid — trend (Golden/Death, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value and analyst target, F-Score and Z-Score. Held positions read Add / Hold / Reduce / Sell, others Buy / Watch / Avoid. It uses the 5-day average of the score and changes only after a clear, confirmed move, so it does not flap day to day (refreshed by the scheduler). A triggered trailing stop or a Death Cross never reads as a buy. A screen to review, not advice — see "Why" for the reasons.',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Add' || p.value === 'Buy' ? 'text-green-700' : p.value === 'Hold / Add' ? 'text-green-600' : p.value === 'Reduce' ? 'text-amber-700' : p.value === 'Sell' || p.value === 'Avoid' ? 'text-red-600' : 'text-slate-500'}`,
         valueFormatter: p => p.value ?? '—' },
       { field: 'action_score', headerName: 'Action Score', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
-        headerTooltip: 'The sum of the points behind Action: +6 or more Add/Buy, +3 to +5 Hold-Add/Buy, −2 to +2 Hold/Watch, −3 to −5 Reduce/Avoid, −6 or less Sell/Avoid.',
-        valueFormatter: p => p.value != null ? `${Number(p.value) > 0 ? '+' : ''}${p.value}` : '—',
+        headerTooltip: 'The 5-day average of the points behind Action: +6 or more Add/Buy, +3 to +5 Hold-Add/Buy, −2 to +2 Hold/Watch, −3 to −5 Reduce/Avoid, −6 or less Sell/Avoid.',
+        valueFormatter: p => p.value != null ? `${Number(p.value) > 0 ? '+' : ''}${Number(p.value).toFixed(1)}` : '—',
         cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) > 0 ? 'text-green-700' : Number(p.value ?? 0) < 0 ? 'text-red-600' : 'text-slate-500'}` },
       { field: 'action_why', headerName: 'Why', width: 360, hide: true, tooltipField: 'action_why',
         headerTooltip: 'The factors behind Action, biggest first, each with its points.' },

@@ -269,8 +269,23 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           up suggests taking profit or rebalancing. A Watchlist security gets entry wording (near support — a possible
           entry; a breakout above resistance), a currency the euro value of your exposure. Holdings and currency
           exposures below Tools → App Settings → Support / Resistance Alerts → minimum (€500 by default) are left out.
-          New alerts of any group can also go to <b>Telegram</b>: tick the groups under App Settings → Telegram Alerts
-          (all off by default) — each alert is sent once, on the Signal Notifications job's 30-minute cadence.
+          Under Tools → App Settings → <b>Dashboard Alerts</b> you choose which groups the Dashboard shows (all by default); a group you untick is only hidden there — it is still raised, so Telegram is unaffected.
+          New alerts of any group can also go to <b>Telegram</b> — see <i>Telegram alerts</i> below.
+        </Note>
+        <Note>
+          <b>Telegram alerts — setup and what is sent.</b> Oikos can message your phone through a Telegram bot of your own.
+          <b>Set-up (once):</b> (1) in Telegram talk to <b>@BotFather</b>, send <code>/newbot</code> and copy the token it gives you;
+          (2) send any message to your new bot, then open <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in a browser and copy the
+          number in <code>"chat":{'{'}"id": …{'}'}</code>; (3) put them in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code> and
+          <code> TELEGRAM_CHAT_ID</code> (the token is a secret, so it lives only there — never in the database or on screen);
+          (4) restart the app and scheduler containers; (5) press <b>Send test message</b> in Tools → App Settings → Telegram Alerts, which
+          also tells you whether the bot is configured. Leave both values empty to switch Telegram off. <b>What is sent:</b> (a) when{' '}
+          <b>Market Watch</b> or <b>Local Market Watch</b> turns red, with the indicators in Warning and your playbook, and when it leaves red — never
+          the daily readings; the checkbox at the top of Telegram Alerts switches this on or off; (b) new <b>Dashboard alerts</b> of the groups you
+          tick under <i>Also send new Dashboard alerts from these groups</i> (all off by default, and they need the checkbox above on) — one message
+          per run listing the new alerts (the first 15), each alert sent once, on the Signal Notifications job's 30-minute cadence; an alert that
+          clears or is dismissed and later fires again is sent again. Which groups the Dashboard <i>shows</i> (Tools → App Settings → Dashboard Alerts)
+          is separate: hiding a group there does not stop it going to Telegram.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
@@ -1069,7 +1084,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Held/Cost Basis/Realized P&amp;L reflect any transaction you just saved immediately, not after a delay.
         </Note>
         <Note>
-          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. It is a rules-based screen to review, not advice, and sits beside the Final Signal.
+          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. To keep it from flapping, the scheduler works it out from the 5-day average of the score, and a level changes only after the average passes a cut by a full point and stays there three days (so <b>Action Score</b> is that average); a held security that moves between <i>Reduce / Sell</i>, <i>Hold</i> and <i>Add</i> raises an <b>Action Change</b> alert on the Dashboard (Signals group). Securities with no trend or valuation data, such as Treasury bills, show no verdict. It is a rules-based screen to review, not advice, and runs alongside the Final Signal and its Signal Change alerts.
         </Note>
         <Note>
           <b>MA50 Direction</b>, <b>MA200 Direction</b> and <b>MA Rising</b> show where the averages are heading — each one's change over the last week (5 trading days),
@@ -1383,11 +1398,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>Telegram alerts.</b> Market Watch and Local Market Watch can message you when the banner turns red and when it
-          leaves red, with the indicators in Warning and your playbook — never the daily readings. Create a bot with
-          @BotFather (<code>/newbot</code>), put its token in <code>TELEGRAM_BOT_TOKEN</code> and your chat id in
-          <code>TELEGRAM_CHAT_ID</code> in <code>.env</code> (see <code>.env.example</code> for how to find the chat id), restart
-          the app and scheduler containers, then press <b>Send test message</b> in Tools → App Settings → Telegram Alerts. The
-          same section has the on/off checkbox. The token is a secret, so it lives only in <code>.env</code>.
+          leaves red, with the indicators in Warning and your playbook — never the daily readings. Set-up (a bot of your own, two
+          lines in <code>.env</code>) and the full list of what is sent are under <b>Dashboard → Insights &amp; Alerts → Telegram alerts</b>.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}

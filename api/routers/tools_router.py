@@ -1742,6 +1742,8 @@ def _run_scheduler_job_fn(job_id: str):
             from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
             refresh_signal_notifications()
             refresh_fundamentals_notifications()
+            from database.action_signal import refresh_action_signals
+            refresh_action_signals()
             from database.alert_groups import send_new_alert_telegrams
             send_new_alert_telegrams()
         elif job_id == "news_fetch":

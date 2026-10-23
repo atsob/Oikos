@@ -6911,7 +6911,17 @@ def get_portfolio_signals_endpoint():
     df = get_portfolio_signals(None)
     if df is None or df.empty:
         return []
-    return _df_to_list(df)
+    rows = _df_to_list(df)
+    # Action: the stored, smoothed verdict (database/action_signal.py), worded for held / not held
+    from database.action_signal import action_map, label
+    am = action_map()
+    for r in rows:
+        a = am.get(int(r["securities_id"]))
+        held = float(r.get("current_qty") or 0) > 0
+        r["action"] = label(a["level"], held) if a else None
+        r["action_score"] = a["score"] if a else None
+        r["action_why"] = a["why"] if a else ""
+    return rows
 
 
 @router.get("/fundamental-scores")

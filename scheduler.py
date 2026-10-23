@@ -673,6 +673,11 @@ def _signal_notifications_job():
     try:
         refresh_signal_notifications()
         refresh_fundamentals_notifications()
+        try:                      # Action verdicts (database/action_signal.py): a failure must not stop the signal refresh above
+            from database.action_signal import refresh_action_signals
+            refresh_action_signals()
+        except Exception as e:
+            logging.warning("Action signals refresh failed: %s", e)
         logging.info("Signal notifications refreshed.")
         msg = "Completed OK"
         # New Dashboard alerts of the groups switched on for Telegram (App Settings).

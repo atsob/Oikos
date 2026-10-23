@@ -38,7 +38,7 @@ GROUPS = [
 TYPE_GROUP = {
     "price_alert": "price",
     "allocation_drift": "portfolio",
-    "signal_change": "signals", "ma_cross": "signals", "trailing_stop": "signals", "zone_change": "signals",
+    "signal_change": "signals", "action_change": "signals", "ma_cross": "signals", "trailing_stop": "signals", "zone_change": "signals",
     "bond_maturity": "events", "bond_coupon": "events", "dividend_payment": "events", "loan_payment": "events",
     "stock_split": "corporate", "split_mismatch": "corporate",
 }
@@ -170,6 +170,9 @@ def dismiss(alerts: list[dict]) -> int:
             acknowledge_signal_notification(int(sid))
         elif t == "zone_change" and sid is not None:
             acknowledge_fundamentals_notification(int(sid))
+        elif t == "action_change" and sid is not None:
+            from database.action_signal import acknowledge as acknowledge_action
+            acknowledge_action(int(sid))
         elif t == "stock_split" and a.get("corporate_actions_id") is not None:
             acknowledge_split_notification(int(a["corporate_actions_id"]))
         elif t in ("ma_cross", "trailing_stop") and sid is not None:

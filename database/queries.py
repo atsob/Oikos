@@ -7470,6 +7470,23 @@ def check_triggered_alerts() -> list:
         except Exception:
             pass
 
+        # ── Action changes of held securities (pre-computed by scheduler; database/action_signal.py) ──
+        try:
+            from database.action_signal import pending_changes
+            for _, row in pending_changes().iterrows():
+                ts = pd.Timestamp(row['changed_at'])
+                sc = row['score']
+                score_txt = f" (score {sc:+.1f})" if sc is not None and not pd.isna(sc) else ''
+                results.append({
+                    'level': 'warning' if row['bucket'] == 'Reduce / Sell' else 'info',
+                    'message': (f"🧭 **Action Change** — {row['securities_name']}: "
+                                f"{row['previous_bucket'] or '—'} → **{row['bucket']}**{score_txt}, as of {ts.day} {ts.strftime('%b %Y')}"),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'action_change', 'key': f"action_change:{int(row['securities_id'])}:{row['bucket']}",
+                })
+        except Exception:
+            pass
+
         # ── Altman Z-Score zone change notifications (pre-computed by scheduler) ─
         try:
             conn2b = get_connection()
