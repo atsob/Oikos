@@ -1069,6 +1069,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Held/Cost Basis/Realized P&amp;L reflect any transaction you just saved immediately, not after a delay.
         </Note>
         <Note>
+          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. It is a rules-based screen to review, not advice, and sits beside the Final Signal.
+        </Note>
+        <Note>
+          <b>MA50 Direction</b>, <b>MA200 Direction</b> and <b>MA Rising</b> show where the averages are heading — each one's change over the last week (5 trading days),
+          ▲ rising, ▼ falling or ▬ flat (within ±0.05%); filter <b>MA Rising</b> (Both rising / MA50 rising / MA200 rising / Neither) to list the securities whose MA50 and/or MA200 points up.
+        </Note>
+        <Note>
           <b>MA Trend</b>, <b>Cross Event</b>, <b>MA50</b>/<b>MA200</b>, <b>Above MA200</b>, and <b>Trailing Stop</b>
           are trend-following signals, hidden by default except MA Trend and Trailing Stop: MA Trend is Golden
           (bullish — 50-day moving average above the 200-day) or Death (bearish — below); Cross Event is set only on

@@ -1367,9 +1367,13 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
                    ROUND(cur.ma50::numeric, 4) AS ma50,
                    CASE WHEN cur.n200 >= 200 THEN ROUND(cur.ma200::numeric, 4) ELSE NULL END AS ma200,
                    prev.ma50 AS ma50_prev,
-                   CASE WHEN prev.n200 >= 200 THEN prev.ma200 ELSE NULL END AS ma200_prev
+                   CASE WHEN prev.n200 >= 200 THEN prev.ma200 ELSE NULL END AS ma200_prev,
+                   -- the direction of each average: where it stood 5 trading days (a week) ago — a longer look-back misses a turn that is only days old
+                   CASE WHEN ago.n200 >= 50 THEN ROUND(((cur.ma50 / NULLIF(ago.ma50, 0) - 1) * 100)::numeric, 2) END AS ma50_chg_pct,
+                   CASE WHEN cur.n200 >= 200 AND ago.n200 >= 200 THEN ROUND(((cur.ma200 / NULLIF(ago.ma200, 0) - 1) * 100)::numeric, 2) END AS ma200_chg_pct
             FROM ma_series cur
             LEFT JOIN ma_series prev ON prev.Securities_Id = cur.Securities_Id AND prev.rn = cur.rn + 1
+            LEFT JOIN ma_series ago  ON ago.Securities_Id  = cur.Securities_Id AND ago.rn  = cur.rn + 5
             WHERE cur.rn = 1
         ),
         latest_only AS (
@@ -1458,6 +1462,8 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
                 ROUND(sec.Dividend_Yield::numeric, 2) as fwd_yield_pct,
                 ml.ma50,
                 ml.ma200,
+                ml.ma50_chg_pct,
+                ml.ma200_chg_pct,
                 r1.high_1y AS trailing_high_1y,
                 CASE WHEN ml.ma200 IS NULL THEN NULL
                      ELSE sig.price_today > ml.ma200 END as above_ma200,
