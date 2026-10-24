@@ -1178,7 +1178,7 @@ export const getBondSchedule = () =>
 
 export const getBenchmark = (
   benchmarkIds: number[], compareAccountIds: number[], lookbackDays = 252,
-  accountIds?: number[], resample = 'Daily', ytd = false, baseSecuritiesId?: number | null,
+  accountIds?: number[], resample = 'Daily', ytd = false, baseSecuritiesId?: number | null, totalReturn = false,
 ) =>
   api.get('/reports/benchmark', { params: {
     benchmark_ids: benchmarkIds.length ? benchmarkIds.join(',') : undefined,
@@ -1187,6 +1187,7 @@ export const getBenchmark = (
     account_ids: accountIds?.join(',') || undefined, resample,
     ytd: ytd || undefined,
     base_securities_id: baseSecuritiesId ?? undefined,
+    total_return: totalReturn || undefined,
   } }).then(r => r.data)
 
 export const getCorrelation = (lookbackDays = 252, maxHoldings = 20, accountIds?: number[]) =>

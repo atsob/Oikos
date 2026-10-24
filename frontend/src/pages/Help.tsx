@@ -1012,6 +1012,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           lookback, every line starts on the latest first price among them (a note says which line set it), so all lines and returns cover the same period.
         </Note>
         <Note>
+          <b>Total return</b> (tick box on the Benchmark tab, here and on a security's own Benchmark tab) adds the <b>distributions back</b>, from the Dividends data: each amount per share is added to the price on its ex-date and reinvested there, for every line — securities and accounts alike (for an account, the distributions of what it held the day before). Without it, a distributing fund (IUHE, AETF, EXVM…) is compared on price only and trails an accumulating one by roughly its yield every year; with it the two are on the same footing. Each card says how many distributions were added to its line. A market index has none in the data and stays a price index, so compare a fund with a <i>total-return</i> index if you have one. It is only as good as the Dividends data — a missing distribution is missing here, and a price series that already includes its distributions would be counted twice.
+        </Note>
+        <Note>
           The <b>portfolio</b> line reflects what you actually held on each day in the window — reconstructed from
           your transaction history and priced day-by-day (a missing quote falls back to the latest one available)
           — not today's holdings projected backward. A security you've since sold still counts for the real return

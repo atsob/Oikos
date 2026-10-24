@@ -6419,7 +6419,7 @@ def delete_portfolio_preset(preset_id: int):
 
 
 # ── Benchmark comparison ───────────────────────────────────────────────────────
-def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) -> Optional["pd.Series"]:
+def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int, total_return: bool = False) -> Optional["pd.Series"]:
     """A daily-linked return index for the given account scope, indexed to 100 at the
     first day it has a holding — reconstructed from the ACTUAL securities held on each
     day (replayed from Investments transactions, not today's holdings extrapolated
@@ -6445,7 +6445,12 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     a sell for a position opened before it (and hold-with-no-trade positions wouldn't
     show up in the window at all), understating quantity or driving it negative for the
     days it's still actually held — which, multiplied against that day's price, is what
-    produced a spurious four-digit-percent one-day swing on real data before this fix."""
+    produced a spurious four-digit-percent one-day swing on real data before this fix.
+
+    total_return=True adds the distributions back (Securities_Dividends): a security's amount per share on its ex-date is added to that
+    day's price in the numerator, for the quantity held the day before — the distribution is reinvested at the ex-date close, as in a
+    total-return index, so a distributing fund and an accumulating one are on the same footing. The number of distributions counted is left
+    on the result's .attrs['distributions']."""
     from datetime import date as _date, timedelta
     tx_clause = _acct_clause(acct_ids, "i.Accounts_Id")
     tx_df = pd.read_sql(f"""
@@ -6538,7 +6543,10 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     qty_daily = qty_cum.reindex(full_idx).ffill().reindex(price_wide.index).fillna(0)
 
     prior_qty = qty_daily.shift(1)
-    value_at_prior_qty_today = (prior_qty * price_ffill).sum(axis=1)
+    div_wide = None
+    if total_return:
+        div_wide, _n = _distributions_wide(conn, list(common), price_ffill.index)
+    value_at_prior_qty_today = (prior_qty * (price_ffill + div_wide if div_wide is not None else price_ffill)).sum(axis=1)
     value_at_prior_qty_yesterday = (prior_qty * price_ffill.shift(1)).sum(axis=1)
     port_ret = (value_at_prior_qty_today / value_at_prior_qty_yesterday.replace(0, pd.NA) - 1).fillna(0)
 
@@ -6551,7 +6559,56 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     port_ret = port_ret[port_ret.index >= has_basis.idxmax()]
     port_ret.iloc[0] = 0
 
-    return (1 + port_ret).cumprod() * 100
+    out = (1 + port_ret).cumprod() * 100
+    if div_wide is not None:                       # only the distributions that fell on a day the account held the security
+        held = (prior_qty > 0).reindex(div_wide.index).fillna(False)
+        out = out.copy()
+        out.attrs["distributions"] = int(((div_wide > 0) & held).to_numpy().sum())
+    return out
+
+
+def _distributions_wide(conn, tickers: list, index):
+    """Amount per share of every distribution (Securities_Dividends) of the given securities (by name), laid on the price calendar `index`:
+    each lands on the first priced day on or after its ex-date, none before the second day of the window. -> (DataFrame, count)"""
+    out = pd.DataFrame(0.0, index=index, columns=tickers)
+    if len(index) < 2 or not tickers:
+        return out, 0
+    df = pd.read_sql("""
+        SELECT s.Securities_Name AS ticker, d.Ex_Date AS ex_date, d.Amount AS amount
+        FROM Securities_Dividends d JOIN Securities s ON s.Securities_Id = d.Securities_Id
+        WHERE s.Securities_Name IN %(t)s AND d.Ex_Date > %(from)s AND d.Amount > 0
+    """, conn, params={"t": tuple(tickers), "from": index[0].date()})
+    n = 0
+    for r in df.itertuples():
+        pos = index.searchsorted(pd.Timestamp(r.ex_date))
+        if 0 < pos < len(index):
+            out.iloc[pos, out.columns.get_loc(r.ticker)] += float(r.amount)
+            n += 1
+    return out, n
+
+
+def _total_return_close(close: "pd.Series", divs: "pd.DataFrame") -> tuple:
+    """A price series turned into a total-return one: each distribution (columns ex_date, amount) is added to the price on its ex-date
+    (first priced day on or after it) and reinvested there. The first price is kept as the start, so the result is on the price's own scale.
+    -> (series, number of distributions added)"""
+    c = close.dropna()
+    if len(c) < 2 or divs is None or divs.empty:
+        return close, 0
+    extra = pd.Series(0.0, index=c.index)
+    n = 0
+    for r in divs.itertuples():
+        pos = c.index.searchsorted(pd.Timestamp(r.ex_date))
+        if 0 < pos < len(c):
+            extra.iloc[pos] += float(r.amount)
+            n += 1
+    ratio = (c + extra) / c.shift(1)
+    ratio.iloc[0] = 1.0
+    return c.iloc[0] * ratio.cumprod(), n
+
+
+def _security_distributions(conn, sec_id: int, from_date) -> "pd.DataFrame":
+    return pd.read_sql("SELECT Ex_Date AS ex_date, Amount AS amount FROM Securities_Dividends WHERE Securities_Id = %(i)s AND Ex_Date > %(f)s AND Amount > 0 ORDER BY Ex_Date",
+                       conn, params={"i": sec_id, "f": from_date})
 
 
 def _clamp_lookback_to_inception(conn, acct_ids: Optional[list], lookback_days: int) -> int:
@@ -6589,6 +6646,7 @@ def get_benchmark(
     resample: str = Query("Daily"),
     ytd: bool = Query(False),
     base_securities_id: Optional[int] = Query(None),
+    total_return: bool = Query(False),
 ):
     """Portfolio (weighted avg of holdings) vs any number of comparison series — market
     indexes/securities (benchmark_ids, comma-separated Securities_Id) and/or other
@@ -6606,6 +6664,10 @@ def get_benchmark(
     "portfolio", <key>: value, ...}, ...]} — one row per date, with a dynamically-named
     column per comparison series (rather than a single fixed "benchmark" column) since
     there can now be any number of them.
+
+    total_return=true adds distributions back (the Dividends data, Securities_Dividends) to every line — a security's price series and the
+    account lines alike — as if each were reinvested on its ex-date, so a distributing fund is compared with an accumulating one (or with an
+    index) on the same footing. Each series says how many distributions were added ("distributions"); a market index has none.
     """
     if ytd:
         from datetime import date as _date
@@ -6615,6 +6677,7 @@ def get_benchmark(
     acct_ids = _parse_account_ids(account_ids)
     bench_ids = [b for b in (_parse_account_ids(benchmark_ids) or []) if b != base_securities_id]
     cmp_acct_ids = _parse_account_ids(compare_account_ids)
+    base_dist = None
 
     with get_db() as conn:
         if base_securities_id:
@@ -6634,6 +6697,8 @@ def get_benchmark(
                 return {"base_label": base_label, "series": [], "rows": []}
             base_df["date"] = pd.to_datetime(base_df["date"])
             base_close = base_df.set_index("date")["close"]
+            if total_return:
+                base_close, base_dist = _total_return_close(base_close, _security_distributions(conn, base_securities_id, base_close.index[0].date()))
             first = base_close.iloc[0] if not pd.isna(base_close.iloc[0]) else (base_close.dropna().iloc[0] if not base_close.dropna().empty else None)
             port_idx = base_close / first * 100 if first else None
             if port_idx is None:
@@ -6641,9 +6706,11 @@ def get_benchmark(
         else:
             base_label = "Portfolio"
             lookback_days = _clamp_lookback_to_inception(conn, acct_ids, lookback_days)
-            port_idx = _account_weighted_index(conn, acct_ids, lookback_days)
+            port_idx = _account_weighted_index(conn, acct_ids, lookback_days, total_return)
             if port_idx is None:
                 return {"base_label": base_label, "series": [], "rows": []}
+            if total_return:
+                base_dist = port_idx.attrs.get("distributions", 0)
 
         acct_names: dict = {}
         if cmp_acct_ids:
@@ -6665,12 +6732,13 @@ def get_benchmark(
         raw = {"portfolio": port_idx}                    # every series on its own, before they are lined up
 
         for aid in (cmp_acct_ids or []):
-            idx = _account_weighted_index(conn, [aid], lookback_days)
+            idx = _account_weighted_index(conn, [aid], lookback_days, total_return)
             if idx is None:
                 continue
             key = f"acct_{aid}"
             raw[key] = idx
-            series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account"})
+            series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account",
+                                "distributions": idx.attrs.get("distributions", 0) if total_return else None})
 
         for bid in (bench_ids or []):
             bench_df = pd.read_sql("""
@@ -6682,9 +6750,12 @@ def get_benchmark(
                 continue
             bench_df["date"] = pd.to_datetime(bench_df["date"])
             idx = bench_df.set_index("date")["close"]
+            n_dist = None
+            if total_return:
+                idx, n_dist = _total_return_close(idx, _security_distributions(conn, bid, idx.index[0].date()))
             key = f"idx_{bid}"
             raw[key] = idx
-            series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index"})
+            series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index", "distributions": n_dist})
 
     # One common window: it starts on the LATEST first price of any line. A security with a shorter history than the lookback used to be drawn
     # flat at 100 before its first price and then rebased to 100 at that first price, so it was never on the same footing as the others (a fund
@@ -6725,7 +6796,7 @@ def get_benchmark(
             entry[s["key"]] = round(float(v), 4) if v is not None and not pd.isna(v) else None
         rows.append(entry)
 
-    return {"base_label": base_label, "series": series_meta, "rows": rows,
+    return {"base_label": base_label, "series": series_meta, "rows": rows, "total_return": total_return, "base_distributions": base_dist,
             "from_date": common_start.strftime("%Y-%m-%d"), "requested_from": requested_from.strftime("%Y-%m-%d"), "limited_by": limited_by}
 
 

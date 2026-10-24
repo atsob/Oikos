@@ -4501,6 +4501,9 @@ type BenchmarkTarget = { type: 'index' | 'account'; id: number }
 // to a single security's own price history (Security Detail's own Benchmark tab) —
 // accountIds is ignored in that mode, and the comparison-securities picker also offers
 // ETFs/ETCs (not just Market Indexes), excluding the base security itself.
+// Under a Benchmark card in Total return mode: how many distributions were added back to that line.
+const distNote = (n?: number | null) => n == null ? '' : n === 0 ? 'no distributions in the data' : `incl. ${n} distribution${n === 1 ? '' : 's'}`
+
 export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false, baseSecuritiesId, baseLabel }: {
   accountIds?: number[]; keyPrefix?: string; defaultYtd?: boolean
   baseSecuritiesId?: number; baseLabel?: string
@@ -4517,6 +4520,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const [lookback, setLookback] = usePersist(`${keyPrefix}_lookback`, 365)
   const [ytd, setYtd] = usePersist(`${keyPrefix}_ytd`, defaultYtd)
   const [resample, setResample] = usePersist(`${keyPrefix}_resample`, 'Daily')
+  const [totalReturn, setTotalReturn] = usePersist(`${keyPrefix}_total_return`, false)
   const cands = candidates as Row[]
   const otherAccounts = (allAccounts as Row[])
     .filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)))
@@ -4562,12 +4566,12 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const compareAccountIds = effectiveTargets.filter(t => t.type === 'account').map(t => t.id)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample, baseSecuritiesId],
-    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd, baseSecuritiesId),
+    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample, baseSecuritiesId, totalReturn],
+    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd, baseSecuritiesId, totalReturn),
     enabled: effectiveTargets.length > 0,
     refetchInterval: liveRefetchMs,
   })
-  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account'; first_date?: string | null }[]; rows: Record<string, unknown>[]; from_date?: string; requested_from?: string; limited_by?: string | null } | undefined
+  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account'; first_date?: string | null; distributions?: number | null }[]; rows: Record<string, unknown>[]; total_return?: boolean; base_distributions?: number | null; from_date?: string; requested_from?: string; limited_by?: string | null } | undefined
   const series = result?.series ?? []
   const rows = result?.rows ?? []
   const portLabel = result?.base_label ?? baseLabel ?? 'Portfolio'
@@ -4629,6 +4633,10 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" className="rounded" checked={totalReturn} onChange={e => setTotalReturn(e.target.checked)} />
+          <Tooltip text="Adds the distributions back, from the Dividends data (each security's Dividends tab): every amount per share is added to the price on its ex-date and reinvested there, for every line — the securities and the accounts. Use it to compare a distributing fund with an accumulating one, or with an index, on the same footing; without it a distributing fund looks worse by roughly its yield each year. A market index has no distributions in the data, so it stays as it is (a price index). Only as good as the Dividends data: a distribution missing there is missing here, and a price series that already includes its distributions would be counted twice.">Total return</Tooltip>
+        </label>
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500"><Tooltip text="Frequency at which data points are plotted. Daily shows every trading day; Weekly/Monthly reduce noise and improve readability for long windows.">Resample</Tooltip></label>
           <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={resample} onChange={e => setResample(e.target.value)}>
@@ -4649,6 +4657,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
           <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
             <p className="text-xs text-slate-500 mb-1"><Tooltip text={baseSecuritiesId ? `${portLabel}'s own total return over the selected period (indexed: end value ÷ start value − 1).` : "Portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings."}>{portLabel} Return</Tooltip></p>
             <p className={`text-xl font-bold ${portReturn >= 0 ? 'text-green-700' : 'text-red-600'}`}>{portReturn >= 0 ? '+' : ''}{portReturn.toFixed(2)}%</p>
+            {result?.total_return && <p className="text-[10px] text-slate-400 mt-0.5">{distNote(result.base_distributions)}</p>}
           </div>
           {series.map((s, i) => {
             const r = lastReturn(s.key)
@@ -4659,6 +4668,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
                   <Tooltip text={s.type === 'account' ? "This account's own total return over the same period, indexed to the same start date." : `This benchmark's total return over the same period, indexed to the same start date as ${portLabel}.`}>{s.label} Return</Tooltip>
                 </p>
                 <p className={`text-xl font-bold ${r == null ? 'text-slate-400' : r >= 0 ? 'text-green-700' : 'text-red-600'}`}>{r != null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}%` : '—'}</p>
+                {result?.total_return && <p className="text-[10px] text-slate-400 mt-0.5">{distNote(s.distributions)}</p>}
               </div>
             )
           })}
@@ -4674,7 +4684,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
               line: { color: BENCHMARK_PALETTE[i % BENCHMARK_PALETTE.length], width: 2, dash: 'dot' as const },
             })),
           ]}
-          layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
+          layout={{ height: 380, yaxis: { title: result?.total_return ? 'Total return, indexed (100 = start)' : 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}
         />
       )}
