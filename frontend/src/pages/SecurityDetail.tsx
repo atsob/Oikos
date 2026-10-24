@@ -1,17 +1,18 @@
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
-import PlotlyReact from 'react-plotly.js'
+import AppGrid from '@/components/AppGrid'
+import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
   Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
 } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
-import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, todayLocal, toLocalISODate } from '@/lib/utils'
+import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, fmtDate, todayLocal, toLocalISODate } from '@/lib/utils'
+import { usePhone } from '@/lib/useMedia'
+import { MobileCard } from '@/components/mobile'
 import { useTheme } from '@/lib/theme'
 import type { FundCountryRow } from '@/lib/api'
 import {
@@ -380,7 +381,7 @@ function PricesTab({ secId }: { secId: number }) {
   const lg = groupLegends(chartTraces, isDark, 340)
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <PeriodSelector value={period} onChange={setPeriod} />
         {pctChange != null && !isLoading && (
@@ -448,7 +449,7 @@ function PricesTab({ secId }: { secId: number }) {
         <CopyToExcelButton gridApi={gridApi} />
       </div>
       <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={rows}
@@ -625,7 +626,7 @@ function AnalysisSection({ title, cols, children }: { title: string; cols: numbe
   return (
     <div>
       <p className="text-sm font-semibold text-slate-700 mb-2">{title}</p>
-      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>{children}</div>
+      <div className="grid gap-3 grid-cols-2 sm:[grid-template-columns:var(--cols)]" style={{ ['--cols' as string]: `repeat(${cols}, minmax(0, 1fr))` }}>{children}</div>
     </div>
   )
 }
@@ -657,7 +658,7 @@ function AnalysisTab({ secId }: { secId: number }) {
   if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <AnalysisSection title="Signals" cols={4}>
         <MiniStat label="Final Signal" value={String(signal.final_signal ?? '—')} color={signalStyle(signal.final_signal)} />
         <MiniStat label="Math Signal" value={String(signal.recommendation_signal ?? '—')} color={signalStyle(signal.recommendation_signal)} />
@@ -759,7 +760,10 @@ function AnalysisTab({ secId }: { secId: number }) {
   )
 }
 
+const invActionColor = (a: string) => a === 'Buy' ? 'text-blue-700' : a === 'Sell' ? 'text-red-600' : ['Dividend', 'Reinvest', 'IntInc', 'MiscInc'].includes(a) ? 'text-green-700' : 'text-slate-600'
+
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
+  const phone = usePhone()
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
   const holdingsGridScroll = useGridScrollState('security-detail-holdings-by-account')
   const { gridApi: holdingsGridApi, onGridReady: onHoldingsGridReady } = useGridApi()
@@ -895,7 +899,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   if (txLoading || holdingsLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-6">
+    <div className="p-3 sm:p-4 space-y-6">
       {/* Stats */}
       <div className={`grid gap-3 ${hasRealized ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 md:grid-cols-4'}`}>
         <StatCard compact label="Transactions" value={String(transactions.length)} />
@@ -929,13 +933,29 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold text-slate-700">Holdings by Account</p>
-          <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2">
             <ColumnsMenu columns={holdingsGridCols.columns} onToggle={holdingsGridCols.toggleColumn} />
             <CopyToExcelButton gridApi={holdingsGridApi} />
           </div>
         </div>
+        {phone ? (
+          <div className="space-y-1.5">
+            {holdings.holdings.map((h, i) => {
+              const pnl = Number(h.unrealised_pnl ?? 0), cost = Number(h.cost_basis ?? 0), qty = Number(h.qty_held ?? 0)
+              const pct = cost ? pnl / cost * 100 : null
+              return (
+                <MobileCard key={i} title={String(h.account ?? '')}
+                  subtitle={`${fmt(qty, 8)} held · cost ${fmt(cost, 2)}${qty ? ` (${fmt(cost / qty, 4)} each)` : ''}`}
+                  amount={fmt(h.current_value, 2)}
+                  amountSub={<span className={pnl < 0 ? 'text-red-600' : 'text-green-700'}>{pnl >= 0 ? '+' : ''}{fmt(pnl, 2)}{pct != null ? ` · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%` : ''}</span>}
+                  accent={pnl < 0 ? 'red' : 'green'} />
+              )
+            })}
+            {holdings.holdings.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Not held in any account.</p>}
+          </div>
+        ) : (
         <div className="ag-theme-alpine" style={{ height: `${Math.min(holdings.holdings.length * 42 + 48, 300)}px`, width: '100%' }}>
-          <AgGridReact
+          <AppGrid
             theme="legacy"
             onGridReady={onHoldingsGridReady}
             rowData={holdings.holdings}
@@ -947,6 +967,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             defaultColDef={{ resizable: true, sortable: true }}
           />
         </div>
+        )}
       </div>
 
       {/* All Transactions */}
@@ -956,7 +977,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
+              <Input className="pl-8 w-44 sm:w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
             </div>
             <span className="text-xs text-slate-400 whitespace-nowrap">{transactions.length} transactions</span>
           </div>
@@ -965,6 +986,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
               <ArrowLeftRight size={14} /> Transfer
             </Button>
+            <div className="hidden sm:flex items-center gap-2">
             {txGridFilter.hasFilters && (
               <button onClick={() => txGridFilter.clearFilters(txGridApi)}
                 className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
@@ -973,10 +995,34 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             )}
             <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
             <CopyToExcelButton gridApi={txGridApi} />
+            </div>
           </div>
         </div>
+        {phone ? (
+          <div className="space-y-1.5 mt-2">
+            {(() => {
+              const q = txSearch.trim().toLowerCase()
+              const shown = q ? transactions.filter(r => Object.values(r).some(v => v != null && String(v).toLowerCase().includes(q))) : transactions
+              if (!shown.length) return <p className="text-sm text-slate-400 text-center py-6">No transactions.</p>
+              return shown.map(r => {
+                const action = String(r.action ?? '')
+                const trade = r.quantity != null && Number(r.quantity) !== 0
+                return (
+                  <MobileCard key={String(r.id)}
+                    title={<><span className={`font-semibold ${invActionColor(action)}`}>{action}</span> <span className="text-slate-500 font-normal">{fmtDate(String(r.date ?? '').slice(0, 10))}</span></>}
+                    subtitle={trade ? `${fmt(r.quantity, 8)} × ${r.price_per_share != null ? fmt(r.price_per_share, 4) : '—'}` : (r.description && !String(r.description).startsWith('IB|') ? String(r.description) : undefined)}
+                    meta={<><span>{String(r.account ?? '')}</span>{r.qty_held != null && <span>held after: {fmt(r.qty_held, 8)}</span>}</>}
+                    amount={fmt(r.total_acc_cur, 2)}
+                    amountSub={r.commission ? `fee ${fmt(r.commission, 2)}` : undefined}
+                    accent={action === 'Sell' ? 'red' : ['Dividend', 'Reinvest', 'IntInc', 'MiscInc'].includes(action) ? 'green' : 'slate'}
+                    onClick={() => openEdit(r)} />
+                )
+              })
+            })()}
+          </div>
+        ) : (
         <div className="ag-theme-alpine mt-2" style={{ height: '400px', width: '100%' }}>
-          <AgGridReact
+          <AppGrid
             theme="legacy"
             onGridReady={onTxGridReady}
             rowData={transactions}
@@ -992,6 +1038,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             onRowDoubleClicked={e => { if (e.data) openEdit(e.data as Record<string, unknown>) }}
           />
         </div>
+        )}
       </div>
 
       {modalOpen && (
@@ -1069,7 +1116,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <p className="text-sm text-slate-500">
         Flags prices that changed by more than the chosen threshold vs the previous or next trading day.
       </p>
@@ -1087,7 +1134,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
             </div>
           )}
           <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
-            <AgGridReact
+            <AppGrid
               theme="legacy"
               onGridReady={onGridReady}
               rowData={anomalies}
@@ -1119,6 +1166,7 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
 
 // ── Dividends Tab ─────────────────────────────────────────────────────────────
 function DividendsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const phone = usePhone()
   const qc = useQueryClient()
   const { isDark } = useTheme()
   const { data = [], isLoading } = useQuery({
@@ -1229,7 +1277,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
   }, [dividends])
 
   return (
-    <div className="p-4 space-y-5">
+    <div className="p-3 sm:p-4 space-y-5">
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Dividend Yield" value={fmtPct(security.dividend_yield != null ? Number(security.dividend_yield) : null)} />
@@ -1313,7 +1361,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             </div>
           )}
 
-          <div className="flex justify-end gap-2">
+          <div className="hidden sm:flex justify-end gap-2">
             {gridFilter.hasFilters && (
               <button onClick={() => gridFilter.clearFilters(gridApi)}
                 className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
@@ -1323,8 +1371,26 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
             <CopyToExcelButton gridApi={gridApi} />
           </div>
+          {phone ? (
+            <div className="space-y-1.5">
+              {dividends.length === 0 && <p className="text-sm text-slate-400 text-center py-6">No dividend records.</p>}
+              {dividends.map(d => (
+                <MobileCard key={String(d.id)}
+                  title={`Ex-date ${fmtDate(String(d.ex_date ?? '').slice(0, 10))}`}
+                  subtitle={d.pay_date ? `Paid ${fmtDate(String(d.pay_date).slice(0, 10))}` : 'No pay date'}
+                  meta={d.ca_id != null ? <span>✓ corporate action #{String(d.ca_id)}</span> : undefined}
+                  amount={fmt(d.amount, 8)} amountSub="per share" accent="green"
+                  footer={
+                    <div className="flex items-center gap-5 text-sm">
+                      <button onClick={() => openEdit(d)} className="flex items-center gap-1 text-blue-600 py-1"><Pencil size={14} /> Edit</button>
+                      <button onClick={() => { if (confirm('Delete this dividend record?')) deleteMut.mutate(Number(d.id)) }} className="flex items-center gap-1 text-red-600 py-1"><Trash2 size={14} /> Delete</button>
+                    </div>
+                  } />
+              ))}
+            </div>
+          ) : (
           <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
-            <AgGridReact
+            <AppGrid
               theme="legacy"
               onGridReady={onGridReady}
               rowData={dividends}
@@ -1340,6 +1406,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               onSelectionChanged={e => setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
             />
           </div>
+          )}
         </>
       )}
     </div>
@@ -1352,6 +1419,7 @@ type EventGroup = 'split' | 'default_delisting' | 'dividend' | 'return_of_capita
 const TODAY = todayLocal()
 
 function CorporateActionsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
+  const phone = usePhone()
   const qc = useQueryClient()
   const secName = String(security.name ?? '') + (security.currency ? ` (${security.currency})` : '')
 
@@ -1585,6 +1653,11 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       ),
     },
   ]
+  const startEdit = (p: Record<string, unknown>) => {
+    setEditRow(p)
+    setEditForm({ type: String(p.type), date: String(p.date), ex_date: String(p.ex_date ?? ''), ratio_new: String(p.ratio_new ?? ''), ratio_old: String(p.ratio_old ?? ''), gross_per_share: String(p.gross_per_share ?? ''), tax_rate: String(p.tax_rate ?? ''), description: String(p.description ?? '') })
+    setEditPreview(null); setEditApplyMsg(null)
+  }
   const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
   const gridScroll = useGridScrollState('security-detail-corporate-actions')
   const { gridApi, onGridReady } = useGridApi()
@@ -1592,7 +1665,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-6">
+    <div className="p-3 sm:p-4 space-y-6">
 
       {/* Existing CA list */}
       <div>
@@ -1602,12 +1675,28 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
         </p>
         {actions.length > 0 && (
           <>
-            <div className="flex justify-end gap-2 mb-2">
+            <div className="hidden sm:flex justify-end gap-2 mb-2">
               <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
               <CopyToExcelButton gridApi={gridApi} />
             </div>
+            {phone ? (
+              <div className="space-y-1.5">
+                {actions.map(r => {
+                  const type = String(r.type ?? '')
+                  const split = r.ratio_new != null && r.ratio_old != null && (type.includes('Split'))
+                  return (
+                    <MobileCard key={String(r.id)}
+                      title={type || 'Corporate action'}
+                      subtitle={split ? `${String(r.ratio_new)} for ${String(r.ratio_old)}` : (r.gross_per_share != null ? `${Number(r.gross_per_share)} per share${r.tax_rate != null ? ` · tax ${String(r.tax_rate)}%` : ''}` : (r.description ? String(r.description) : undefined))}
+                      meta={<>{r.ex_date ? <span>Ex {fmtDate(String(r.ex_date).slice(0, 10))}</span> : null}<span>{r.date ? fmtDate(String(r.date).slice(0, 10)) : ''}</span><span>#{String(r.id)}</span></>}
+                      accent="slate"
+                      footer={<button onClick={() => startEdit(r)} className="flex items-center gap-1 text-sm text-blue-600 py-1"><Pencil size={14} /> Edit</button>} />
+                  )
+                })}
+              </div>
+            ) : (
             <div className="ag-theme-alpine" style={{ height: `${Math.min(actions.length * 42 + 52, 260)}px`, width: '100%' }}>
-              <AgGridReact
+              <AppGrid
                 theme="legacy"
                 onGridReady={onGridReady}
                 rowData={actions}
@@ -1619,6 +1708,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 defaultColDef={{ resizable: true, sortable: true }}
               />
             </div>
+            )}
 
             {editRow && (
               <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-3 mt-3">
@@ -1941,7 +2031,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
               <CopyToExcelButton gridApi={previewGridApi} />
             </div>
             <div className="ag-theme-alpine" style={{ height: `${Math.min(preview.length * 42 + 52, 300)}px`, width: '100%' }}>
-              <AgGridReact theme="legacy" onGridReady={onPreviewGridReady} rowData={preview} columnDefs={previewCols} defaultColDef={{ resizable: true }} />
+              <AppGrid theme="legacy" onGridReady={onPreviewGridReady} rowData={preview} columnDefs={previewCols} defaultColDef={{ resizable: true }} />
             </div>
             <div className="flex gap-3 items-center">
               <Button onClick={() => executeMut.mutate()} disabled={executeMut.isPending}>
@@ -3601,7 +3691,7 @@ function AlertsTab({ secId }: { secId: number }) {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-slate-500">{rows.length} alert{rows.length !== 1 ? 's' : ''} for this security</p>
         <Button size="sm" onClick={openAdd}><Plus size={14} /> Add Alert</Button>
@@ -3699,6 +3789,8 @@ export default function SecurityDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [tab, setTab] = usePersist<Tab>('security_detail_tab', 'Setup')
+  const tabsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { tabsRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }) }, [tab, id])
 
   const secId = Number(id)
 
@@ -3716,6 +3808,7 @@ export default function SecurityDetail() {
     <div>
       <PageHeader
         title=""
+        phoneTitle={String(security.name ?? '')}
         actions={
           <>
             <PricesUpdatedAuto securityId={secId || undefined} />
@@ -3726,7 +3819,7 @@ export default function SecurityDetail() {
         }
       />
 
-      <div className="px-6 pb-6 space-y-4">
+      <div className="px-3 sm:px-6 pb-6 space-y-4">
         {/* Security selector */}
         <div>
           <select
@@ -3749,11 +3842,11 @@ export default function SecurityDetail() {
         ) : (
           <Card>
             {/* Sub-tabs */}
-            <div className="border-b border-slate-200 px-4">
-              <div className="flex gap-1">
+            <div className="border-b border-slate-200 px-1 sm:px-4">
+              <div ref={tabsRef} className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {TABS.filter(t => (t !== 'Composition' || isFund) && (t !== 'In Funds' || isStockOrBond) && (t !== 'Benchmark' || isEtf)).map(t => (
-                  <button key={t} onClick={() => setTab(t)}
-                    className={`px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                  <button key={t} onClick={() => setTab(t)} data-active={tab === t}
+                    className={`px-3 sm:px-4 py-3 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                     {t}
                   </button>
                 ))}

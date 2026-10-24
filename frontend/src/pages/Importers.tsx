@@ -1020,7 +1020,7 @@ function RevolutSavingsTab() {
       {parseResult && (
         <div className="space-y-4">
           {summary.rows != null && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Rows in file</p><p className="text-2xl font-bold">{summary.rows as number}</p></div>
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range from</p><p className="text-sm font-medium">{summary.date_from as string}</p></div>
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range to</p><p className="text-sm font-medium">{summary.date_to as string}</p></div>
@@ -1032,7 +1032,7 @@ function RevolutSavingsTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -1471,7 +1471,7 @@ function IBFlexTab() {
       {parseResult && (
         <div className="space-y-4">
           {Object.keys(meta).length > 0 && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {['account_id', 'from_date', 'to_date'].map(k => meta[k] != null && (
                 <div key={k} className="bg-slate-50 rounded-lg p-3">
                   <p className="text-xs text-slate-500">{k.replace('_', ' ')}</p>
@@ -1481,7 +1481,7 @@ function IBFlexTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: visibleInv.length - newInv },
@@ -1742,7 +1742,7 @@ function RevolutTradingTab() {
       {parseResult && (
         <div className="space-y-4">
           {summary.rows != null && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="bg-slate-50 rounded-lg p-3">
                 <p className="text-xs text-slate-500">Rows in file</p>
                 <p className="text-2xl font-bold">{summary.rows as number}</p>
@@ -1758,7 +1758,7 @@ function RevolutTradingTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -3080,7 +3080,7 @@ function CapitalComTab() {
 
       {parseResult && (
         <div className="space-y-4">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -3270,7 +3270,7 @@ function FxProTab() {
         <div className="space-y-4">
           {parseErrors.length > 0 && <ErrorBox msg={parseErrors.join('; ')} />}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -3956,7 +3956,7 @@ export default function Importers() {
     <div>
       <PageHeader title="Importers" subtitle="Import transactions from banks and brokers" />
 
-      <div className="px-6 py-4">
+      <div className="px-3 sm:px-6 py-4">
         {/* Section selector */}
         <div className="flex gap-2 mb-6">
           {([

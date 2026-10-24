@@ -33,7 +33,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="min-h-dvh flex items-center justify-center bg-slate-50 px-4">
       <Card className="w-full max-w-sm">
         <CardBody className="space-y-5">
           <div className="flex flex-col items-center gap-2 text-center">

@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
@@ -32,7 +32,6 @@ import {
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
 // (the Dashboard options live in '@/lib/dashboardOpts', shared with the account pages the KPI cards open)
 
@@ -146,8 +145,8 @@ function MarketValuationPanel() {
 
   return (
     <Card>
-      <CardBody className="flex items-center justify-between gap-3 py-3">
-        <div className="flex items-center gap-3">
+      <CardBody className="flex items-center justify-between gap-x-3 gap-y-1 py-3 flex-wrap">
+        <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap">
           <Tooltip text={`U.S. Shiller CAPE: S&P 500 price divided by 10 years of inflation-adjusted earnings. ${s.percentile.toFixed(0)}th percentile since 1881 (median ${s.median.toFixed(1)}×) — describes the next decade's starting valuation base rate, not a crash-timing signal.`}>
             <span className="text-sm text-slate-500">U.S. Shiller CAPE</span>
           </Tooltip>
@@ -1032,6 +1031,7 @@ export default function Dashboard() {
     kpi: (
         <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
           <StatCard
+            className="col-span-2 md:col-span-1"
             label="Net Worth"
             value={fmtEur(totalNetWorth)}
             subs={[
@@ -1298,7 +1298,7 @@ export default function Dashboard() {
         }
       />
 
-      <div className="p-6">
+      <div className="p-3 sm:p-6">
         {/* Rows of one block, or two half-width blocks side by side from 1024px up (stacked below that). A block with nothing to show
             disappears, and its neighbour then takes the whole row; a row with nothing in it takes no room. */}
         <div className="flex flex-col gap-4">

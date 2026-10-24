@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useGridApi, useSettings } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
+import AppGrid from '@/components/AppGrid'
 import type { RowClickedEvent } from 'ag-grid-community'
 import {
   api,
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
+      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92dvh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -246,7 +246,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -498,7 +498,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -831,7 +831,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1450,7 +1450,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1647,7 +1647,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1789,7 +1789,7 @@ function TaxRulesTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">
           Investment tax rates applied per security category in reports and corporate actions.
@@ -1989,7 +1989,7 @@ function InstrumentTaxTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">
           When an investment's Instrument Type has an override set here, it takes precedence over the
@@ -2102,7 +2102,7 @@ export default function StaticData() {
   return (
     <div>
       <PageHeader title="Static Data" subtitle="Master reference data" />
-      <div className="px-6 py-4 space-y-4">
+      <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)}

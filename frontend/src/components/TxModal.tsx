@@ -408,7 +408,7 @@ export function TxModal({
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[92dvh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{form.id ? 'Edit Transaction' : 'New Transaction'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -509,7 +509,7 @@ export function TxModal({
               </div>
 
               {!useSplits ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-slate-500 block mb-1">Category</label>
                     <CategorySelect value={form.categories_id} onChange={v => set('categories_id', v)}
@@ -522,18 +522,18 @@ export function TxModal({
                 </div>
               ) : (
                 <div className="space-y-2 border border-slate-200 rounded-lg p-3">
-                  <div className="text-xs font-medium text-slate-500 grid grid-cols-12 gap-2">
+                  <div className="text-xs font-medium text-slate-500 hidden sm:grid grid-cols-12 gap-2">
                     <span className="col-span-5">Category</span>
                     <span className="col-span-3">Amount</span>
                     <span className="col-span-3">Memo</span>
                   </div>
                   {splits.map((sp, i) => (
-                    <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                      <CategorySelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
+                    <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center border-b border-slate-100 pb-2 sm:border-0 sm:pb-0">
+                      <CategorySelect className="col-span-2 sm:col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
                         categories={sortedCategories} onCategoryCreated={onCategoryCreated} />
-                      <Input className="col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
-                      <Input className="col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
-                      <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>
+                      <Input className="sm:col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
+                      <Input className="sm:col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
+                      <button onClick={() => removeSplit(i)} className="col-span-2 sm:col-span-1 justify-self-end p-1 text-slate-400 hover:text-red-500" title="Remove this split"><X size={14} /></button>
                     </div>
                   ))}
                   <Button size="sm" variant="secondary" onClick={addSplit} className="mt-1"><Plus size={12} /> Add split</Button>

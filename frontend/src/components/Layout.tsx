@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
+import { PhoneTitleContext } from '@/lib/phoneTitle'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
 import AccountModal from '@/components/AccountModal'
@@ -51,11 +52,14 @@ export default function Layout() {
   const [collapsed, setCollapsed] = usePersist('sidebar_collapsed', false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
+  const [phoneTitle, setPhoneTitle] = useState('')
   const location = useLocation()
   const navigate = useNavigate()
 
   // Close the mobile drawer whenever the route changes (e.g. after tapping a nav link).
-  React.useEffect(() => { setMobileOpen(false) }, [location.pathname])
+  React.useEffect(() => { setMobileOpen(false); setPhoneTitle('') }, [location.pathname])
+  // The app bar's title: what the page's header says, else the menu entry for this address.
+  const barTitle = phoneTitle || nav.flat().find(n => n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to))?.label || 'Oikos'
 
   const handleLogout = async () => {
     try { await logout() } catch { /* revoke server-side if reachable; proceed regardless */ }
@@ -64,16 +68,14 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Mobile top bar — hamburger to open the drawer sidebar. Hidden on desktop,
-          where the sidebar is always part of the normal flex flow instead. */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        title="Open menu"
-        className="md:hidden fixed top-3 left-3 z-30 flex items-center justify-center w-9 h-9 rounded-md bg-slate-900 text-white shadow-lg"
-      >
-        <Menu size={18} />
-      </button>
+    <div className="flex h-dvh overflow-hidden">
+      {/* Phone app bar — the menu button and the page's title; hidden on desktop, where the sidebar is always part of the normal flex flow instead. */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-30 box-content h-14 pt-[env(safe-area-inset-top)] pl-[max(0.25rem,env(safe-area-inset-left))] pr-3 flex items-center gap-1 bg-slate-900 text-white shadow-md">
+        <button onClick={() => setMobileOpen(true)} title="Open menu" aria-label="Open menu" className="flex items-center justify-center w-11 h-11 rounded-md active:bg-slate-700">
+          <Menu size={20} />
+        </button>
+        <span className="text-base font-semibold truncate">{barTitle}</span>
+      </div>
 
       {/* Backdrop, mobile-only, shown while the drawer is open */}
       {mobileOpen && (
@@ -129,7 +131,7 @@ export default function Layout() {
                   title={collapsed ? label : undefined}
                   className={({ isActive }) =>
                     cn(
-                      'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+                      'flex items-center gap-2.5 px-3 py-2 pointer-coarse:py-3 rounded-md text-sm font-medium transition-colors',
                       collapsed && 'md:justify-center md:px-0',
                       isActive
                         ? 'bg-blue-600 text-white'
@@ -193,8 +195,10 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto bg-slate-50 pt-14 md:pt-0">
-        <Outlet />
+      <main className="flex-1 min-w-0 overflow-y-auto overscroll-contain bg-slate-50 pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        <PhoneTitleContext.Provider value={setPhoneTitle}>
+          <Outlet />
+        </PhoneTitleContext.Provider>
       </main>
 
       {accountOpen && <AccountModal onClose={() => setAccountOpen(false)} />}

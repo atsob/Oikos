@@ -10,7 +10,7 @@ export default function RequireAuth() {
   const { data, isLoading, isError } = useQuery({ queryKey: ['auth-me'], queryFn: getMe, retry: false })
 
   if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center"><Spinner size={28} /></div>
+    return <div className="min-h-dvh flex items-center justify-center"><Spinner size={28} /></div>
   }
   if (isError || !data) {
     return <Navigate to="/login" replace />

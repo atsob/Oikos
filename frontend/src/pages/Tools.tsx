@@ -911,7 +911,7 @@ function NormalizeInvestments() {
           <Alert type="success">No investments with dummy prices found.</Alert>
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
               {[
                 { label: 'Total flagged', value: (allRows as Row[]).length },
                 { label: 'Accounts', value: accNames.length },
@@ -1127,7 +1127,7 @@ function InvestmentDataQuality() {
         </Button>
 
         {runResult && (
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
             {[
               { label: 'Total records', value: totalRecords },
               { label: '⚠️ Anomalies', value: anomalyCount },
@@ -2179,7 +2179,7 @@ function LogViewer() {
                 · {(data as any)?.lines ?? 0} line(s) shown
               </p>
             )}
-            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-[calc(100vh-380px)] whitespace-pre-wrap">
+            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-[calc(100dvh-380px)] whitespace-pre-wrap">
               {data?.text || '(no lines match the current filters)'}
             </pre>
             {data?.text && (
@@ -2889,7 +2889,7 @@ export default function Tools() {
     <div>
       <PageHeader title="Tools" subtitle="Database maintenance and admin utilities" />
 
-      <div className="px-6 py-6 space-y-6">
+      <div className="px-3 sm:px-6 py-6 space-y-6">
         {/* Category selector */}
         <div className="flex gap-2 flex-wrap">
           {Object.keys(CATEGORIES).map(cat => (

@@ -1809,6 +1809,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           window, the sidebar hides behind a hamburger button (top-left) and slides in as an overlay when tapped,
           instead of a permanent icon-only rail.
         </P>
+        <H3>On a phone</H3>
+        <P>
+          Oikos works as a home-screen app (Safari → Share → Add to Home Screen). On a phone it fits the visible screen rather than the full-height
+          page, keeps clear of the notch and the home bar, uses tighter margins, and makes buttons, tabs and menu items bigger to hit. Fields use
+          16-pixel text so iOS no longer zooms the page in when you tap one. Charts shed their wide side margins and no longer zoom when you drag a
+          finger across them, so the page scrolls instead; tap a point for its figure. The wide report tables scroll sideways with their first column pinned.
+        </P>
+        <P>
+          The top of the screen is an app bar with the menu button and the page's title. <b>Cash Register</b> and <b>Investments</b> show their
+          transactions, holdings and cash movements as <b>cards</b> (tap one to open or edit it, <i>Load more</i> for older ones), with a floating
+          <b> +</b> button for a new transaction and a <b>⋯</b> menu for the less common actions (Clear, Reconcile, Transfer, Sync). The
+          <b> Dashboard</b> puts Net Worth across the full width; <b>Security Detail</b> scrolls its tabs sideways and lays its forms out in two
+          columns; in Security Detail the holdings by account, transactions, dividends and corporate actions are cards too; and the transaction forms stack their longer fields one under the other. Every grid (Market Data, Static Data, Security Detail, Currency Detail, the Reports grids) becomes a list of cards on a phone — the first column as the title, the next fields in two columns with <i>Show more fields</i>, a Sort choice, and Edit / Delete on the card — and nothing is wider than the screen: button rows and selectors wrap, long names break, and tables scroll with their first column pinned. On a computer none of this changes.
+        </P>
         <H3>Theme</H3>
         <P>Light / System / Dark, switchable at the bottom of the sidebar.</P>
         <H3>Currency</H3>
@@ -2027,7 +2041,7 @@ export default function Help() {
 
       <div className="flex-1 min-w-0 overflow-auto">
         <PageHeader title="Help & User Guide" subtitle="How Oikos is organized and how to use it" />
-        <div className="px-6 pt-4">
+        <div className="px-3 sm:px-6 pt-4">
           <div className="relative max-w-md">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -2038,7 +2052,7 @@ export default function Help() {
             />
           </div>
         </div>
-        <div className="px-6 py-6 max-w-3xl">
+        <div className="px-3 sm:px-6 py-6 max-w-3xl">
           {searching ? (
             <div>
               <p className="text-xs text-slate-400 mb-3">

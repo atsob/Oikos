@@ -2,11 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
+import AppGrid from '@/components/AppGrid'
 import type { ColDef, RowClickedEvent } from 'ag-grid-community'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecurity, upsertCurrency, api, downloadCountryExposure, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadMorningstar, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
@@ -36,7 +35,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
+      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92dvh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -271,8 +270,8 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
-      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-        <AgGridReact theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+      <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 220px)', width: '100%' }}>
+        <AppGrid theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
@@ -458,7 +457,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
-        <AgGridReact theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+        <AppGrid theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
@@ -750,7 +749,7 @@ function WatchlistTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-slate-500">{rows.length} securities on watchlist</p>
         <Button size="sm" onClick={openAdd}><Plus size={14} /> Add to Watchlist</Button>
@@ -1426,7 +1425,7 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
           {sForm.provider === 'NYFED' && (
             <Field label="NY Fed field (blank = percentRate)"><Input value={sForm.provider_field} onChange={e => setSForm({ ...sForm, provider_field: e.target.value })} placeholder="percentRate, targetRateTo, targetRateFrom" /></Field>
           )}
-          <div className="grid grid-cols-3 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
             <Field label="Sort order"><Input value={sForm.sort_order} onChange={e => setSForm({ ...sForm, sort_order: e.target.value })} /></Field>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.is_active} onChange={e => setSForm({ ...sForm, is_active: e.target.checked })} /> Active</label>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.alerts_enabled} onChange={e => setSForm({ ...sForm, alerts_enabled: e.target.checked })} /> Alerts</label>
@@ -1476,7 +1475,7 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
               {overnight.map(d => <option key={d.id} value={String(d.id)}>{d.name}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-3 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
             <Field label="Window (days, min 7)"><Input value={tForm.window_days} onChange={e => setTForm({ ...tForm, window_days: e.target.value })} /></Field>
             <Field label="Alert at (pp behind)"><Input value={tForm.threshold_pp} onChange={e => setTForm({ ...tForm, threshold_pp: e.target.value })} /></Field>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={tForm.is_active} onChange={e => setTForm({ ...tForm, is_active: e.target.checked })} /> Active</label>
@@ -1592,7 +1591,7 @@ function AlertsTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex justify-between items-center gap-3">
         <div className="flex items-center gap-3 flex-1">
           <div className="relative">
@@ -1741,7 +1740,7 @@ export default function MarketData() {
     <div>
       <PageHeader title="Market Data" actions={<PricesUpdatedAuto />} />
 
-      <div className="px-6 py-4 space-y-4">
+      <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {TABS.map(t => (
             <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
@@ -1769,8 +1768,8 @@ export default function MarketData() {
                     <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
                     <CopyToExcelButton gridApi={anomalyGridApi} />
                   </div>
-                  <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-                    <AgGridReact theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
+                  <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 220px)', width: '100%' }}>
+                    <AppGrid theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
                       initialState={anomalyGridScroll.initialState}
                       onStateUpdated={anomalyGridScroll.onStateUpdated}

@@ -1,11 +1,10 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
-import PlotlyReact from 'react-plotly.js'
+import AppGrid from '@/components/AppGrid'
+import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import { ArrowLeft, Plus, Trash2, Search } from 'lucide-react'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import {
@@ -72,7 +71,7 @@ export default function CurrencyDetail() {
         }
       />
 
-      <div className="px-6 pb-6 space-y-4">
+      <div className="px-3 sm:px-6 pb-6 space-y-4">
         <select
           className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium bg-white shadow-sm"
           value={curId || ''}
@@ -124,7 +123,7 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
   const rate = detail.latest_rate
   const q = detail.quote
   return (
-    <div className="p-4 space-y-5">
+    <div className="p-3 sm:p-4 space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-slate-800">{detail.name} <span className="font-mono text-slate-400">{detail.code}</span></h2>
         {detail.is_quote && (
@@ -345,7 +344,7 @@ function PricesTab({ curId, code, base }: { curId: number; code: string; base: s
   const isPending = addFxMut.isPending || delFxMut.isPending
 
   return (
-    <div className="p-4 space-y-5">
+    <div className="p-3 sm:p-4 space-y-5">
       <p className="text-xs text-slate-500">The rates Oikos stores for {code}, as {base} per 1 {code} — every amount in {code} is converted with these.</p>
       <FxChart label={`${base} per 1 ${code} (stored)`}
         fetch={from => getFxRates(curId, from)} queryKey={['fx-history', curId]}
@@ -375,7 +374,7 @@ function PricesTab({ curId, code, base }: { curId: number; code: string; base: s
             </div>
           </div>
           <div className="ag-theme-alpine" style={{ height: '360px', width: '100%' }}>
-            <AgGridReact
+            <AppGrid
               theme="legacy"
               onGridReady={onGridReady}
               rowData={rows}
@@ -483,7 +482,7 @@ function ExposureTab({ detail }: { detail: CurrencyDetailData }) {
   const { code, exposure: ex, accounts, holdings } = detail
   const th = 'px-3 py-2 text-xs font-medium text-slate-500 uppercase tracking-wide'
   return (
-    <div className="p-4 space-y-6">
+    <div className="p-3 sm:p-4 space-y-6">
       <p className="text-xs text-slate-500">
         Everything you hold in {code}, across all accounts: balances of active cash-side accounts (Brokerage and
         Margin cash excluded) and securities quoted in {code} — funds counted in the currency they are quoted in; Reports → Inv. Portfolio → Portfolio Analysis → Currency Exposure looks through them — valued
@@ -628,7 +627,7 @@ function FxEffectTab({ detail }: { detail: CurrencyDetailData }) {
   }
 
   return (
-    <div className="p-4 space-y-5">
+    <div className="p-3 sm:p-4 space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1">
           {FX_EFFECT_PERIODS.map(p => (

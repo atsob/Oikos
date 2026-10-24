@@ -206,7 +206,7 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[92dvh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
           <h2 className="text-base font-semibold">{editId ? 'Edit Investment Transaction' : 'New Investment Transaction'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -235,8 +235,8 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             🔻 Short sell (sets Action to Sell and lists all securities, not just held ones)
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className={CASH_ACTIONS.has(form.action) ? '' : 'col-span-2'}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={CASH_ACTIONS.has(form.action) ? '' : 'sm:col-span-2'}>
               <label className="text-xs font-medium text-slate-500 block mb-1">Account *</label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.accounts_id} onChange={e => onAccountChange(e.target.value)}>
                 <option value="">— select —</option>
@@ -322,7 +322,7 @@ export function InvTransactionModal({ form, onChange, accounts, allAccounts, sec
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Instrument Type</label>
               <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.instrument_type} onChange={e => set('instrument_type', e.target.value)}>

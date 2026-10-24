@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
@@ -14,6 +14,9 @@ import { fmtCur, fmtDate, toLocalISODate } from '@/lib/utils'
 import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
+import { usePhone } from '@/lib/useMedia'
+import { MoreMenu, Fab } from '@/components/mobile'
+import { TxCards, type TxRow } from '@/components/TxCards'
 
 const PAGE_SIZE = 200
 const DEFAULT_TO_DATE = '2099-12-31'   // "no upper bound" — includes future-dated/scheduled transactions
@@ -91,6 +94,8 @@ const makeColDefs = (currency: string): ColDef[] => [
 
 
 
+type TxPage = { transactions: TxRow[]; total: number }      // one page of the phone's transaction list
+
 // ── Period shortcuts ──────────────────────────────────────────────────────────
 const PERIODS = [
   { label: '1M', from: () => monthsAgo(1) },
@@ -127,12 +132,15 @@ export default function Register() {
   const [fromDate, setFromDate] = useState(monthsAgo(1))
   const [toDate, setToDate] = useState(DEFAULT_TO_DATE)
   const [activePeriod, setActivePeriod] = useState<string>('1M')
+  const phone = usePhone()
+  const [showDates, setShowDates] = useState(false)      // phone: the From / To fields stay folded until asked for
 
   // Grid refresh (server-side, so no more query-cache invalidation for transactions —
   // just tell the infinite row model's currently-loaded blocks to refetch themselves).
   const refreshGrid = useCallback(() => {
     gridRef.current?.api?.refreshInfiniteCache()
-  }, [])
+    qc.invalidateQueries({ queryKey: ['register-cards'] })      // the phone's list
+  }, [qc])
 
   const tx = useTxModal({
     onSaved: () => {
@@ -322,6 +330,20 @@ export default function Register() {
     },
   }), [accountId, search, fromDate, toDate])
 
+  // Phone: the same transactions, 50 at a time, newest first
+  const cards = useInfiniteQuery({
+    queryKey: ['register-cards', accountId, search, fromDate, toDate],
+    enabled: phone && !!accountId,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }): Promise<TxPage> => getTransactions({ account_id: accountId, search: search || undefined, from_date: fromDate, to_date: toDate, limit: 50, offset: pageParam, sort_by: 'date', sort_dir: 'desc' }),
+    getNextPageParam: (last: TxPage, all: TxPage[]) => {
+      const n = all.reduce((t, p) => t + p.transactions.length, 0)
+      return n < last.total ? n : undefined
+    },
+  })
+  const cardRows = (cards.data?.pages ?? []).flatMap(p => p.transactions as TxRow[])
+  useEffect(() => { if (phone && cards.data?.pages?.length) setTotalCount(cards.data.pages[0].total) }, [phone, cards.data])
+
   const globalQ = globalSearch.trim()
   const globalSearchQuery = useQuery({
     queryKey: ['global-search', globalQ],
@@ -374,6 +396,11 @@ export default function Register() {
     }
   }
 
+  const syncCash = async () => {
+    await syncBalances('cash')
+    await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    refreshGrid()
+  }
   const selectedAccount = (accounts as Record<string, unknown>[]).find(a => a.id === accountId)
   const selectedAccountFuture = (accountsFuture as Record<string, unknown>[]).find(a => a.id === accountId)
   const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
@@ -411,7 +438,7 @@ export default function Register() {
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
-                className="pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-300 w-40 sm:w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="pl-8 pr-3 py-1.5 text-sm rounded-md border border-slate-300 w-36 sm:w-56 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="Payee, description, category…"
                 value={globalSearch}
                 onChange={e => setGlobalSearch(e.target.value)}
@@ -425,29 +452,38 @@ export default function Register() {
             >
               <Search size={14} />
             </button>
-            <div className="w-px h-5 bg-slate-200" />
-            <Button size="sm" variant="secondary" onClick={() => { setClearMsg(null); setClearOpen(true) }} disabled={!accountId}>
+            <div className="hidden sm:block w-px h-5 bg-slate-200" />
+            <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => { setClearMsg(null); setClearOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Clear
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => { setReconcileMsg(null); setReconcileOpen(true) }} disabled={!accountId}>
+            <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => { setReconcileMsg(null); setReconcileOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Reconcile
             </Button>
-            <Button size="sm" onClick={() => tx.openNew(accountId!)} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
-            <SyncBalancesButton
-              options={[{ label: '🏦 Bank & Cash', target: 'cash' }]}
-              onSync={async target => {
-                await syncBalances(target)
-                await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-                refreshGrid()
-              }}
-            />
+            <Button size="sm" className="hidden sm:inline-flex" onClick={() => tx.openNew(accountId!)} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
+            <div className="hidden sm:block">
+              <SyncBalancesButton
+                options={[{ label: '🏦 Bank & Cash', target: 'cash' }]}
+                onSync={async target => {
+                  await syncBalances(target)
+                  await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+                  refreshGrid()
+                }}
+              />
+            </div>
+            <div className="sm:hidden">
+              <MoreMenu items={[
+                { label: 'Clear transactions…', onClick: () => { setClearMsg(null); setClearOpen(true) }, disabled: !accountId },
+                { label: 'Reconcile…', onClick: () => { setReconcileMsg(null); setReconcileOpen(true) }, disabled: !accountId },
+                { label: 'Sync bank & cash balances', onClick: () => { void syncCash() } },
+              ]} />
+            </div>
           </div>
         }
       />
 
       {/* Filters */}
-      <div className="flex items-center gap-3 px-6 py-3 bg-white border-b border-slate-200 flex-wrap">
-        <Select className="w-56" value={accountId ?? ''} onChange={e => {
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3 bg-white border-b border-slate-200 flex-wrap">
+        <Select className="w-full sm:w-56" value={accountId ?? ''} onChange={e => {
           setAccountId(Number(e.target.value) || null)
           // Same reasoning as setPeriod: don't carry over an upper bound narrowed by a
           // previous global-search jump — a fresh account should start from a normal view.
@@ -462,18 +498,20 @@ export default function Register() {
         </label>
 
         {/* Period shortcuts */}
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-1 sm:flex-none">
           {PERIODS.map(p => (
             <button
               key={p.label}
               onClick={() => setPeriod(p.label, p.from())}
-              className={`px-2.5 py-1 text-xs rounded border transition-colors ${activePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+              className={`flex-1 sm:flex-none px-2.5 py-1 pointer-coarse:py-2 text-xs rounded border transition-colors ${activePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}
             >
               {p.label}
             </button>
           ))}
         </div>
 
+        <button className="sm:hidden text-xs text-blue-600 underline px-1" onClick={() => setShowDates(v => !v)}>{showDates ? 'Hide dates' : 'Custom dates'}</button>
+        <div className={`${showDates ? 'flex' : 'hidden'} sm:flex items-center gap-2 flex-wrap`}>
         <Input type="date" className="w-36" value={fromDate} onChange={e => { setFromDate(e.target.value); setActivePeriod('') }} />
         <span className="text-slate-400 text-sm">to</span>
         <div className="flex items-center gap-2">
@@ -488,11 +526,12 @@ export default function Register() {
             <span className="text-xs text-slate-500">Today</span>
           </label>
         </div>
+        </div>
       </div>
 
       {/* Credit Card / Loan info bar */}
       {accountId && selectedAccount && (isCreditCard || String(selectedAccount.type) === 'Loan') && (
-        <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex flex-wrap gap-6 items-center">
+        <div className="px-3 sm:px-6 py-3 bg-blue-50 border-b border-blue-100 flex flex-wrap gap-6 items-center">
           {(() => {
             const balToDate = Number(selectedAccount.balance ?? 0)
             const balWithFuture = Number(selectedAccountFuture?.balance ?? selectedAccount.balance ?? 0)
@@ -544,9 +583,19 @@ export default function Register() {
       )}
 
       {/* Grid */}
-      <div className="px-6 py-4 flex-1">
+      <div className="px-3 sm:px-6 py-4 flex-1">
         {!accountId ? (
           <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Select an account to view transactions</div>
+        ) : phone ? (
+          <div>
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 w-full" placeholder="Search this account…" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <p className="text-xs text-slate-400 mt-2">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</p>
+            <TxCards rows={cardRows} currency={accountCurrency} loading={cards.isLoading} hasMore={!!cards.hasNextPage}
+              loadingMore={cards.isFetchingNextPage} onMore={() => cards.fetchNextPage()} onOpen={r => tx.openEdit(r, accountId!)} />
+          </div>
         ) : (
           <Card className="overflow-hidden">
             {batchMsg && (
@@ -581,7 +630,7 @@ export default function Register() {
             {/* Infinite row model: rows stream in as you scroll instead of clicking through
                 numbered pages — see the `datasource` above for how blocks are fetched. Copy to
                 Excel only copies whichever rows have scrolled into view and loaded so far. */}
-            <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 280px)', width: '100%' }}>
+            <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 280px)', width: '100%' }}>
               <AgGridReact
                 theme="legacy"
                 ref={gridRef}
@@ -605,6 +654,8 @@ export default function Register() {
           </Card>
         )}
       </div>
+
+      <Fab label="New transaction" onClick={() => tx.openNew(accountId!)} disabled={!accountId} />
 
       {/* Transaction Modal */}
       {tx.modalOpen && tx.form && (
@@ -653,7 +704,7 @@ export default function Register() {
       {/* Global Search Overlay */}
       {globalOpen && globalQ.length >= 2 && (
         <div className="fixed inset-0 bg-black/30 z-50 flex items-start justify-center pt-20 px-4" onClick={() => setGlobalOpen(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[70dvh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200">
               <Search size={16} className="text-slate-400 shrink-0" />
               <input
