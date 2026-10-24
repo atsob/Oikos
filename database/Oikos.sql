@@ -1443,6 +1443,21 @@ CREATE TABLE IF NOT EXISTS Action_History (
     PRIMARY KEY (Securities_Id, Log_Date)
 );
 
+-- The Plan page: dated to-do steps (a rebalancing plan, a tax-year checklist) with a morning Telegram reminder —
+-- Status is open / done / skipped; see database/plan.py.
+CREATE TABLE IF NOT EXISTS Plan_Items (
+    Plan_Items_Id SERIAL PRIMARY KEY,
+    Plan_Name     TEXT NOT NULL DEFAULT 'My plan',
+    Due_Date      DATE NOT NULL,
+    Title         TEXT NOT NULL,
+    Details       TEXT,
+    Status        TEXT NOT NULL DEFAULT 'open',
+    Done_At       TIMESTAMP,
+    Sort_Order    INTEGER NOT NULL DEFAULT 0,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open';
+
 
 -- =============================================================================
 -- SCHEDULER
