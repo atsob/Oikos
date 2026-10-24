@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
 import { PhoneTitleContext } from '@/lib/phoneTitle'
+import { useCardTables } from '@/lib/useCardTables'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
 import AccountModal from '@/components/AccountModal'
@@ -53,6 +54,7 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [phoneTitle, setPhoneTitle] = useState('')
+  useCardTables()
   const location = useLocation()
   const navigate = useNavigate()
 

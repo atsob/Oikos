@@ -2685,7 +2685,7 @@ function PnlReport() {
           </div>
           <WithCopy scrollKey="pnl-report-main">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
-              <table className="w-full text-sm">
+              <table data-cards className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." />
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
@@ -2749,7 +2749,7 @@ function PnlReport() {
         <div className="space-y-3">
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
                 <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
@@ -6692,7 +6692,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <p className="text-xs text-slate-400">Click any period cell to drill down into the underlying transactions.</p>
           <WithCopy scrollKey="income-expense-1">
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-340px)] text-xs">
-            <table className="w-full border-collapse">
+            <table data-cards className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 whitespace-nowrap">Category</th>
@@ -6752,7 +6752,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   <button onClick={() => setDrillCell(null)} className="text-blue-400 hover:text-blue-600 text-xs">✕ Close</button>
                 </div>
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                  <table className="w-full border-collapse text-xs">
+                  <table data-cards className="w-full border-collapse text-xs">
                     <thead className="sticky top-0 bg-blue-50">
                       <tr>
                         <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200 whitespace-nowrap">Date</th>
@@ -6857,7 +6857,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             <p className="text-xs font-semibold text-slate-600 mb-1">Category Detail</p>
             <WithCopy>
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-              <table className="w-full border-collapse">
+              <table data-cards className="w-full border-collapse">
                 <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="bg-slate-50">
                     <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
@@ -6898,7 +6898,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
               return (
                 <WithCopy scrollKey="income-expense-2">
                 <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-                  <table className="w-full border-collapse">
+                  <table data-cards className="w-full border-collapse">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
@@ -6976,7 +6976,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
             <p className="text-xs font-semibold text-slate-600 mb-1">Payee Summary</p>
             <WithCopy>
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-              <table className="w-full border-collapse">
+              <table data-cards className="w-full border-collapse">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Payee</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total (€)</th>
@@ -7020,7 +7020,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   )}
                   <WithCopy scrollKey="income-expense-3">
                   <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-                    <table className="w-full border-collapse">
+                    <table data-cards className="w-full border-collapse">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
@@ -7232,7 +7232,7 @@ function CashFlowAlerts({ data, isDark }: { data: CfAlerts; isDark: boolean }) {
               <p className="text-xs text-slate-400 mb-1">Each payment is what the card owes on the statement it settles — its balance at the latest statement date on or before the due date, less payments made since — projected from the card's own spending.</p>
               <WithCopy>
                 <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-                  <table className="w-full text-sm">
+                  <table data-cards className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr className="text-xs text-slate-500 uppercase tracking-wide">
                         <th className="px-3 py-2 text-left">Due</th>
@@ -7270,7 +7270,7 @@ function CashFlowAlerts({ data, isDark }: { data: CfAlerts; isDark: boolean }) {
             <div className="mt-2">
               <WithCopy>
                 <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-                  <table className="w-full text-sm">
+                  <table data-cards className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr className="text-xs text-slate-500 uppercase tracking-wide">
                         <th className="px-3 py-2 text-left">Account</th>
@@ -7533,7 +7533,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="cashflow-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Date</th>
@@ -7576,7 +7576,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="cashflow-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Due Date</th>
@@ -7622,7 +7622,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Projected Date</th>
@@ -7665,7 +7665,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="budget-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Pay Date</th>
@@ -7706,7 +7706,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Pay Date</th>
@@ -7749,7 +7749,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="budget-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Date</th>

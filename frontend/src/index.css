@@ -355,3 +355,25 @@ button, [role="button"], a { -webkit-tap-highlight-color: transparent; }
 /* A grid shown as a list of cards on a phone (components/AppGrid.tsx) takes the height its cards need instead of the fixed height set for the grid. */
 .ag-theme-alpine:has(> .phone-cards) { height: auto !important; }
 .phone-cards .truncate { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* Report tables as cards on a phone (lib/useCardTables.ts reads each table's header and labels its cells). The :where() keeps these rules weaker than
+   the utility classes on the rows themselves — a total row keeps its tint — while the cells' own padding and alignment, which would break the card
+   layout, are overridden outright. */
+@media (max-width: 767px) {
+  :where(main) :where(table[data-cards], table[data-cards] > tbody, table[data-cards] > tfoot) { display: block; width: 100%; max-width: 100%; overflow: visible; }
+  :where(main) table[data-cards] > thead { display: none; }
+  :where(main) :where(table[data-cards]) tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0.2rem 0.75rem; background-color: #fff; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin: 0.4rem 0; }
+  main table[data-cards] td { display: block; padding: 0 !important; text-align: left !important; border: 0 !important; min-width: 0; max-width: none; position: static; box-shadow: none; white-space: normal; overflow: visible; background-color: transparent; }
+  main table[data-cards] td::before { content: attr(data-label); display: block; color: #94a3b8; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.2; }
+  main table[data-cards] td:first-child { grid-column: 1 / -1; font-weight: 600; font-size: 0.875rem; }
+  main table[data-cards] td:first-child::before { display: none; }
+  /* the pinned first column of the other tables must not apply to a card's title */
+  main table[data-cards] > tbody > tr > td:first-child,
+  main table[data-cards] > tfoot > tr > td:first-child { position: static; max-width: none; overflow: visible; text-overflow: clip; box-shadow: none; background-color: transparent; }
+  main table[data-cards] td[data-wide] { grid-column: 1 / -1; }
+  main table[data-cards] td[data-empty] { display: none; }
+  main table[data-cards] td[data-label^="Total"] { font-weight: 600; }
+  html.dark :where(main) :where(table[data-cards]) tr { background-color: #1e293b; border-color: #334155; }
+  /* the box the table sat in no longer needs its own height or scrollbar: the cards simply run down the page */
+  main .overflow-x-auto:has(> table[data-cards]) { max-height: none !important; overflow: visible !important; }
+}
