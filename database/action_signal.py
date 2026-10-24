@@ -14,6 +14,12 @@ The result is stored in Action_Signals (level, smoothed score, the reasons). A h
 between the three outer groups — Reduce / Sell, Hold, Add — is recorded as an unacknowledged change, which the
 Dashboard shows as an "Action Change" alert (Signals group), same mechanism as Signal_Notifications.
 
+Three guards keep it honest:
+  * a fair value more than ±100% away from the price is ignored (it is a data problem, not a bargain) and the reasons say so;
+  * the shortlist covers the instrument types you choose (everything but indexes, CDs and employee options by default — those cannot be bought as such);
+  * every refresh also logs the day's raw and smoothed score and its reasons in Action_History, so the score — valuation, quality and analyst
+    points included — can later be tested against what the prices did next (data/action_backtest.py).
+
 It is a transparent screen to review, not advice.
 """
 from __future__ import annotations
@@ -34,6 +40,9 @@ CONFIRM_DAYS = 3
 BAND = 1.0               # points past a cut needed to move to the next level
 HISTORY_DAYS = 150       # trading days the state machine is run over
 CUTS = [-5.5, -2.5, 2.5, 5.5]
+
+FV_MAX_PCT = 100         # a fair value further than this from the price is ignored
+SHORTLIST_EXCLUDED_TYPES = {"Market Index", "CD", "Emp. Stock Opt."}   # not on the shortlist unless asked for: no way to buy the thing itself
 
 HELD_LABELS = ["Sell", "Reduce", "Hold", "Hold / Add", "Add"]
 OPEN_LABELS = ["Avoid", "Avoid", "Watch", "Buy", "Buy"]
@@ -96,7 +105,8 @@ def factors(r: dict) -> list[tuple[int, str]]:
 
     fv, up = _num(r.get("fair_value_upside_pct")), _num(r.get("upside_pct"))
     if fv is not None:
-        if fv > 20: add(1, f"{fv:.0f}% below fair value")
+        if abs(fv) > FV_MAX_PCT: add(0, f"fair value ignored ({fv:+.0f}% from the price — a data problem, not a bargain)")
+        elif fv > 20: add(1, f"{fv:.0f}% below fair value")
         elif fv < -20: add(-1, f"{abs(fv):.0f}% above fair value")
     if up is not None:
         if up > 15: add(1, f"analyst target +{up:.0f}%")
@@ -115,7 +125,7 @@ def factors(r: dict) -> list[tuple[int, str]]:
 
 
 def why_text(pts: list[tuple[int, str]]) -> str:
-    return " · ".join(f"{'+' if p > 0 else '−'}{abs(p)} {w}" for p, w in sorted(pts, key=lambda x: -abs(x[0])))
+    return " · ".join(f"{'+' if p > 0 else '−' if p < 0 else '±'}{abs(p)} {w}" for p, w in sorted(pts, key=lambda x: -abs(x[0])))
 
 
 def _level(x: float) -> int:
@@ -166,11 +176,11 @@ def _daily_frame(g: pd.Series, stop_pct: float, rfr: float) -> pd.DataFrame:
 
 def compute_all() -> pd.DataFrame:
     """Level, smoothed score and reasons for every active security with a price history.
-    Columns: securities_id, level, score, why."""
+    Columns: securities_id, level, score (smoothed), raw (today's own score), held, why."""
     from database.queries import get_portfolio_signals, get_fundamental_scores, _get_trailing_stop_pct
     sig = get_portfolio_signals(None)
     if sig is None or sig.empty:
-        return pd.DataFrame(columns=["securities_id", "level", "score", "why"])
+        return pd.DataFrame(columns=["securities_id", "level", "score", "raw", "held", "why"])
     stop_pct = _get_trailing_stop_pct()
     fs = get_fundamental_scores()
     fsm = fs.set_index("securities_id")[["f_score", "f_score_max", "z_zone"]].to_dict("index") if fs is not None and len(fs) else {}
@@ -210,8 +220,9 @@ def compute_all() -> pd.DataFrame:
         gate = _flag(last.get("trailing_stop_triggered")) is True or last.get("ma_trend") == "Death"
         if gate and level >= 3:
             level = 2
-        out.append({"securities_id": sid, "level": int(level), "score": round(score, 1), "why": why_text(last_pts)})
-    return pd.DataFrame(out, columns=["securities_id", "level", "score", "why"])
+        held = float(base.get("current_qty") or 0) > 0
+        out.append({"securities_id": sid, "level": int(level), "score": round(score, 1), "raw": float(sum(p for p, _ in last_pts)), "held": held, "why": why_text(last_pts)})
+    return pd.DataFrame(out, columns=["securities_id", "level", "score", "raw", "held", "why"])
 
 
 # ── storage and change tracking ──────────────────────────────────────────────────────────────────
@@ -231,6 +242,17 @@ def ensure_table() -> None:
                     Changed_At       TIMESTAMP DEFAULT NOW(),
                     Acknowledged     BOOLEAN DEFAULT TRUE,
                     Updated_At       TIMESTAMP DEFAULT NOW()
+                )""")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Action_History (
+                    Securities_Id  INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+                    Log_Date       DATE NOT NULL,
+                    Level          SMALLINT NOT NULL,
+                    Score          NUMERIC(6,1),
+                    Raw_Score      NUMERIC(6,1),
+                    Held           BOOLEAN,
+                    Why            TEXT,
+                    PRIMARY KEY (Securities_Id, Log_Date)
                 )""")
         conn.commit()
     finally:
@@ -265,6 +287,13 @@ def refresh_action_signals() -> int:
                 else:
                     cur.execute("UPDATE Action_Signals SET Level=%s, Score=%s, Why=%s, Updated_At=NOW() WHERE Securities_Id=%s",
                                 (lvl, float(r["score"]), r["why"], sid))
+            # the day's log — the refresh runs every 30 minutes, so the last run of the day is the one that stays
+            cur.executemany("""
+                INSERT INTO Action_History (Securities_Id, Log_Date, Level, Score, Raw_Score, Held, Why)
+                VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s)
+                ON CONFLICT (Securities_Id, Log_Date) DO UPDATE
+                SET Level = EXCLUDED.Level, Score = EXCLUDED.Score, Raw_Score = EXCLUDED.Raw_Score, Held = EXCLUDED.Held, Why = EXCLUDED.Why
+            """, [(int(r["securities_id"]), int(r["level"]), float(r["score"]), float(r["raw"]), bool(r["held"]), r["why"]) for _, r in res.iterrows()])
         conn.commit()
     finally:
         conn.close()
@@ -323,7 +352,7 @@ def action_rows() -> list[dict]:
     conn = get_connection()
     try:
         st = pd.read_sql("""
-            SELECT a.Securities_Id AS securities_id, s.Ticker AS ticker, a.Level AS level, a.Score AS action_score, a.Why AS action_why,
+            SELECT a.Securities_Id AS securities_id, s.Ticker AS ticker, s.Securities_Type::text AS type, s.Sector AS sector, a.Level AS level, a.Score AS action_score, a.Why AS action_why,
                    a.Bucket AS bucket, a.Previous_Bucket AS previous_bucket, a.Changed_At AS changed_at, a.Acknowledged AS acknowledged,
                    a.Updated_At AS updated_at
             FROM Action_Signals a JOIN Securities s ON s.Securities_Id = a.Securities_Id""", conn)
@@ -340,15 +369,59 @@ def action_rows() -> list[dict]:
         held = qty > 0
         val = float(r["current_value_eur"]) if r.get("current_value_eur") is not None and not pd.isna(r["current_value_eur"]) else 0.0
         out.append({
-            "securities_id": int(r["securities_id"]), "name": txt(r.get("securities_name")), "ticker": txt(r.get("ticker")),
+            "securities_id": int(r["securities_id"]), "name": txt(r.get("securities_name")), "ticker": txt(r.get("ticker")), "type": txt(r.get("type")), "sector": txt(r.get("sector")),
             "held": held, "quantity": qty if held else 0.0, "value_eur": round(val, 2),
             "action": label(int(r["level"]), held), "action_score": float(r["action_score"]) if r["action_score"] is not None and not pd.isna(r["action_score"]) else None,
             "level": int(r["level"]), "action_why": r["action_why"] or "",
             "bucket": txt(r["bucket"]), "previous_bucket": txt(r["previous_bucket"]),
             "changed_at": None if r["changed_at"] is None or pd.isna(r["changed_at"]) else pd.Timestamp(r["changed_at"]).isoformat(),
-            "alert_pending": bool(r["acknowledged"] is False),
+            "alert_pending": bool(r["acknowledged"] is False) and held,       # only a position you hold raises the Dashboard alert
             "updated_at": None if r["updated_at"] is None or pd.isna(r["updated_at"]) else pd.Timestamp(r["updated_at"]).isoformat(),
             "final_signal": txt(r.get("final_signal")), "math_signal": txt(r.get("recommendation_signal")),
         })
     out.sort(key=lambda x: (not x["held"], -x["value_eur"], x["name"] or ""))
+    return out
+
+
+def shortlist(rows: list[dict], min_score: float = 6.0, per_sector: int = 2, types: set[str] | None = None) -> list[dict]:
+    """Buy candidates from action_rows(): not held, verdict Buy, of the chosen types (default: all but indexes, CDs and employee options), score at
+    least min_score, best first, and at most per_sector from one sector (funds and securities with no sector are not capped), so the list is not
+    ten versions of one bet."""
+    ok = (lambda t: t in types) if types else (lambda t: t not in SHORTLIST_EXCLUDED_TYPES)
+    pool = [r for r in rows if not r["held"] and r["action"] == "Buy" and ok(r.get("type")) and (r["action_score"] if r["action_score"] is not None else -99) >= min_score]
+    pool.sort(key=lambda r: (-(r["action_score"] or 0), r["name"] or ""))
+    out, per = [], {}
+    for r in pool:
+        key = r.get("sector")
+        if key:
+            if per.get(key, 0) >= per_sector:
+                continue
+            per[key] = per.get(key, 0) + 1
+        out.append(r)
+    return out
+
+
+def history_rows(securities_id: int | None = None, from_date: str | None = None, limit: int = 5000) -> list[dict]:
+    """The daily Action log (Action_History), newest first."""
+    ensure_table()
+    where, params = [], []
+    if securities_id is not None:
+        where.append("h.Securities_Id = %s"); params.append(securities_id)
+    if from_date:
+        where.append("h.Log_Date >= %s"); params.append(from_date)
+    conn = get_connection()
+    try:
+        df = pd.read_sql(f"""
+            SELECT h.Securities_Id AS securities_id, s.Securities_Name AS name, h.Log_Date AS date, h.Level AS level, h.Score AS score,
+                   h.Raw_Score AS raw_score, h.Held AS held, h.Why AS why
+            FROM Action_History h JOIN Securities s ON s.Securities_Id = h.Securities_Id
+            {'WHERE ' + ' AND '.join(where) if where else ''}
+            ORDER BY h.Log_Date DESC, h.Securities_Id LIMIT {int(limit)}""", conn, params=params or None)
+    finally:
+        conn.close()
+    out = []
+    for r in df.to_dict("records"):
+        out.append({"securities_id": int(r["securities_id"]), "name": r["name"], "date": str(r["date"]), "level": int(r["level"]),
+                    "action": label(int(r["level"]), bool(r["held"])), "score": None if pd.isna(r["score"]) else float(r["score"]),
+                    "raw_score": None if pd.isna(r["raw_score"]) else float(r["raw_score"]), "held": bool(r["held"]), "why": r["why"] or ""})
     return out

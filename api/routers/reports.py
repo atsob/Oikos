@@ -6916,10 +6916,15 @@ def get_portfolio_signals_endpoint(held_only: bool = Query(False)):
     if held_only:
         df = df[df["current_qty"].fillna(0).astype(float) > 0]
     rows = _df_to_list(df)
-    # Action: the stored, smoothed verdict (database/action_signal.py), worded for held / not held
+    # Action: the stored, smoothed verdict (database/action_signal.py), worded for held / not held; and sector
     from database.action_signal import action_map, label
     am = action_map()
+    with get_db() as conn:
+        meta = pd.read_sql("SELECT Securities_Id AS sid, Securities_Type::text AS stype, Sector AS sector FROM Securities", conn)
+    meta_by = {int(r.sid): r for r in meta.itertuples()}
     for r in rows:
+        m = meta_by.get(int(r["securities_id"]))
+        r["sector"] = (m.sector if m is not None and isinstance(m.sector, str) else None)
         a = am.get(int(r["securities_id"]))
         held = float(r.get("current_qty") or 0) > 0
         r["action"] = label(a["level"], held) if a else None
@@ -6929,13 +6934,21 @@ def get_portfolio_signals_endpoint(held_only: bool = Query(False)):
 
 
 @router.get("/action-signals")
-def get_action_signals_endpoint(held_only: bool = Query(False), action: Optional[str] = Query(None), changed_only: bool = Query(False)):
+def get_action_signals_endpoint(held_only: bool = Query(False), action: Optional[str] = Query(None), changed_only: bool = Query(False),
+                                types: Optional[str] = Query(None), shortlist: bool = Query(False), min_score: float = Query(6.0), per_sector: int = Query(2)):
     """The Action verdict of every security, compact: name, ticker, held, value, verdict (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid
     otherwise), the smoothed score, the reasons behind it, the last move between Reduce / Sell, Hold and Add, and the Final Signal. Held positions
     first, biggest first. held_only=true: open positions only. action: comma-separated verdicts to keep (e.g. "Reduce,Sell").
-    changed_only=true: those whose last move between the outer groups has not been dismissed yet (the Dashboard's Action Change alerts)."""
-    from database.action_signal import action_rows
+    changed_only=true: those whose last move between the outer groups has not been dismissed yet (the Dashboard's Action Change alerts).
+    types: comma-separated security types to keep (e.g. "Stock,ETF"). shortlist=true: Buy candidates only — not held, verdict Buy, score at least
+    min_score (default 6), best first, at most per_sector (default 2) from one sector; of the given types, by default all but indexes, CDs and employee options."""
+    from database.action_signal import action_rows, shortlist as _shortlist
     rows = action_rows()
+    tset = {t.strip() for t in types.split(",") if t.strip()} if types else None
+    if shortlist:
+        return _shortlist(rows, min_score, per_sector, tset)
+    if tset:
+        rows = [r for r in rows if r.get("type") in tset]
     if held_only:
         rows = [r for r in rows if r["held"]]
     if action:
@@ -6944,6 +6957,33 @@ def get_action_signals_endpoint(held_only: bool = Query(False), action: Optional
     if changed_only:
         rows = [r for r in rows if r["alert_pending"]]
     return rows
+
+
+@router.post("/action-backtest")
+def start_action_backtest(data: dict):
+    """Start a back-test of the Action score against a benchmark (data/action_backtest.py) in the background; returns {job_id}.
+    Body: mode ("price" = the price-driven points since 2016, "log" = the daily Action log), scope ("all" | "holdings" | "accounts" | "security"),
+    account_ids, securities_id, benchmark_id (omit for the one set under App Settings, 0 = the average of what is tested), start."""
+    from data.action_backtest import start_job
+    return {"job_id": start_job(data or {})}
+
+
+@router.get("/action-backtest/{job_id}")
+def get_action_backtest(job_id: str):
+    """Progress and, when done, the result of a back-test started with POST /action-backtest."""
+    from data.action_backtest import job_status
+    j = job_status(job_id)
+    if j is None:
+        raise HTTPException(404, "Unknown or expired back-test")
+    return j
+
+
+@router.get("/action-history")
+def get_action_history_endpoint(securities_id: Optional[int] = Query(None), from_date: Optional[str] = Query(None), limit: int = Query(5000)):
+    """The daily log of every security's Action (score, raw score, verdict, held, the reasons), newest first — what the score is later tested against.
+    One row per security per day since logging began."""
+    from database.action_signal import history_rows
+    return history_rows(securities_id, from_date, min(max(limit, 1), 50000))
 
 
 @router.get("/fundamental-scores")

@@ -27,6 +27,7 @@ import {
   getNotifyStatus,
   sendNotifyTest,
   getPayees,
+  getSecurities,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { cn, todayLocal } from '@/lib/utils'
@@ -2200,6 +2201,7 @@ function AppSettingsPanel() {
   const [tgMsg, setTgMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const { data: countryRows = [] } = useQuery<{ code: string; name: string }[]>({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
   const { data: payeeRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: securityRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['securities'], queryFn: () => getSecurities(), staleTime: 300_000 })
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
 
@@ -2292,6 +2294,26 @@ function AppSettingsPanel() {
                 <option value={6}>Saturday</option>
               </select>
             </div>
+          </div>
+
+          {/* Benchmark */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Benchmark</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Compare against</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-md"
+              value={form.defaultBenchmarkId ?? 0} onChange={e => set('defaultBenchmarkId', Number(e.target.value))}>
+              <option value={0}>Vanguard FTSE All-World (VWCE) — the default</option>
+              {(['ETF', 'Market Index'] as const).map(t => (
+                <optgroup key={t} label={t === 'ETF' ? 'ETFs' : 'Indexes'}>
+                  {securityRows.filter(s => String(s.type) === t && s.is_active !== false).sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map(s => <option key={String(s.id)} value={Number(s.id)}>{String(s.name)}{s.ticker ? ` (${String(s.ticker)})` : ''}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              What "did it beat the market?" means: the Action backtest measures each security's return in EUR against this one, over the same
+              window. Any report can pick another for itself, and "the average of what is tested" is offered there too.
+            </p>
           </div>
 
           {/* Dashboard alerts */}

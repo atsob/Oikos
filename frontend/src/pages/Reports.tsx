@@ -5242,6 +5242,10 @@ type Signal = {
   ma_trend: string | null
   ma_cross_event: string | null
   trailing_high_1y: number | null
+  action: string | null          // the stored Action verdict (database/action_signal.py)
+  action_score: number | null
+  action_why: string | null
+  sector: string | null
 }
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
@@ -5507,7 +5511,10 @@ function PortfolioActionSignalsTab() {
   // All-time realized P&L per security, same FIFO-based figure Security Detail's
   // Overview/Investment Transactions tabs show, summed across every account.
   const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
-  const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
+  const [view, setView] = usePersist<'all' | 'open_only' | 'shortlist'>('sig_view', 'all')
+  const [minScore, setMinScore] = usePersist<number>('sig_short_min6', 6)
+  const [shortTypes, setShortTypes] = usePersist<string[] | null>('sig_short_types', null)      // null = every type except those that cannot be bought as such
+  const [perSector, setPerSector] = usePersist<number>('sig_short_cap', 2)
   const [settings] = useSettings()
 
   const secById = useMemo(() => {
@@ -5589,10 +5596,33 @@ function PortfolioActionSignalsTab() {
     }
   }), [data, secById, fundamentalsById, realizedById, settings.trailingStopPct])
 
-  const filtered = useMemo(() => rows.filter(r => {
-    if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
-    return true
-  }), [rows, view])
+  // Shortlist: Buy candidates only — not held, verdict Buy, of the instrument types you choose (all but indexes, CDs and employee options by default),
+  // a score of at least the minimum, best first, and at most N per sector so it is not ten versions of one bet (funds and securities with no sector are
+  // not capped).
+  const NOT_BOUGHT_AS_SUCH = ['Market Index', 'CD', 'Emp. Stock Opt.']
+  const shortTypeList = useMemo(() => [...new Set(rows.filter(r => r.action === 'Buy' && Number(r.current_qty ?? 0) === 0).map(r => String(r.sec_type ?? '')).filter(Boolean))].sort(), [rows])
+  const typeOn = (t: string) => shortTypes ? shortTypes.includes(t) : !NOT_BOUGHT_AS_SUCH.includes(t)
+  const toggleType = (t: string) => setShortTypes(shortTypeList.filter(x => (x === t ? !typeOn(x) : typeOn(x))))
+  const shortlist = useMemo(() => {
+    const pool = rows
+      .filter(r => Number(r.current_qty ?? 0) === 0 && r.action === 'Buy' && typeOn(String(r.sec_type ?? '')) && Number(r.action_score ?? -99) >= minScore)
+      .sort((a, b) => Number(b.action_score) - Number(a.action_score))
+    const per = new Map<string, number>()
+    const kept = pool.filter(r => {
+      const k = r.sector as string | null
+      if (!k) return true
+      if ((per.get(k) ?? 0) >= Math.max(perSector, 1)) return false
+      per.set(k, (per.get(k) ?? 0) + 1)
+      return true
+    })
+    return { kept, capped: pool.length - kept.length }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, minScore, perSector, shortTypes])
+
+  const filtered = useMemo(() => {
+    if (view === 'shortlist') return shortlist.kept
+    return rows.filter(r => view !== 'open_only' || Number(r.current_value_eur ?? 0) > 0)
+  }, [rows, view, shortlist])
 
   const [search, setSearch] = usePersist('sig_search', '')
 
@@ -5768,6 +5798,8 @@ function PortfolioActionSignalsTab() {
         valueFormatter: p => typeof p.value === 'string' ? p.value.slice(0, 10) : '—' },
       { field: 'sec_type', headerName: 'Type', width: 100, hide: true },
       { field: 'industry', headerName: 'Industry', width: 160, hide: true },
+      { field: 'sector', headerName: 'Sector', width: 150,
+        headerTooltip: "The security's sector — what the Shortlist's max per sector counts." },
       { field: 'currency', headerName: 'Currency', width: 90, hide: true, cellRenderer: CurrencyCell },
       { field: 'exchange', headerName: 'Exchange', width: 100, hide: true },
       { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
@@ -5813,6 +5845,11 @@ function PortfolioActionSignalsTab() {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
   })
 
+  // Switching to the shortlist sorts it best-first (the Action Score column, descending)
+  useEffect(() => {
+    if (view === 'shortlist' && gridApi) gridApi.applyColumnState({ state: [{ colId: 'action_score', sort: 'desc' }], defaultState: { sort: null } })
+  }, [view, gridApi])
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -5822,12 +5859,25 @@ function PortfolioActionSignalsTab() {
         {([
           ['all',       'Show All'],
           ['open_only', 'Open Positions Only'],
+          ['shortlist', 'Shortlist'],
         ] as const).map(([v, label]) => (
           <button key={v} onClick={() => setView(v)}
             className={`px-3 py-1.5 text-xs rounded border font-medium ${view === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
             {label}
           </button>
         ))}
+        {view === 'shortlist' && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500" title="Buy candidates you do not hold: verdict Buy, of the chosen types, best score first, at most N per sector">
+            score at least
+            <input type="number" step="0.5" value={minScore} onChange={e => setMinScore(Number(e.target.value))} className="w-14 px-1.5 py-1 text-xs border border-slate-300 rounded" />
+            max per sector
+            <input type="number" min={1} step={1} value={perSector} onChange={e => setPerSector(Math.max(1, Number(e.target.value)))} className="w-12 px-1.5 py-1 text-xs border border-slate-300 rounded" />
+            {shortTypeList.map(t => (
+              <label key={t} className="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" className="rounded" checked={typeOn(t)} onChange={() => toggleType(t)} />{t}</label>
+            ))}
+            <span className="text-slate-400">{shortlist.kept.length} shown{shortlist.capped ? `, ${shortlist.capped} held back by the sector cap` : ''}</span>
+          </span>
+        )}
         <input
           type="text"
           placeholder="Search…"
@@ -5867,10 +5917,172 @@ function PortfolioActionSignalsTab() {
   )
 }
 
+// ── Action Backtest Tab ───────────────────────────────────────────────────────
+// Does the Action score work? The score at each month-end (or each day of the daily log) against what the prices did next, measured against a
+// benchmark. Runs in the background on the server (data/action_backtest.py) and is polled here.
+type BtHorizon = { n: number; mean: number | null; median: number | null; hit: number | null }
+type BtGroup = { name: string; n: number; h: Record<string, BtHorizon> }
+type BtResult = {
+  mode: string; scope: string; samples: number; securities: number; from?: string; to?: string
+  benchmark: { id: number; name: string } | null; groups: BtGroup[]; by_score: { score: number; n: number; h: Record<string, BtHorizon> }[]
+  timeline: { date: string; score: number | null; '3m': number | null; '6m': number | null; '12m': number | null }[]; notes: string[]
+}
+const BT_HORIZONS = ['3m', '6m', '12m'] as const
+
+function ActionBacktestTab() {
+  const { isDark } = useTheme()
+  const [scope, setScope] = usePersist<'all' | 'holdings' | 'accounts' | 'security'>('ab_scope', 'all')
+  const [mode, setMode] = usePersist<'price' | 'log'>('ab_mode', 'price')
+  const [bench, setBench] = usePersist<string>('ab_bench', 'default')
+  const [secId, setSecId] = usePersist<number>('ab_security', 0)
+  const [secFilter, setSecFilter] = useState('')
+  const [accountIds, setAccountIds] = useState<number[] | undefined>(undefined)
+  const [result, setResult] = useState<BtResult | null>(null)
+  const [running, setRunning] = useState<{ stage: string; seconds: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  const secs = (securities as Row[]).filter(s => s.is_active !== false)
+  const byName = (a: Row, b: Row) => String(a.name).localeCompare(String(b.name))
+
+  const run = async () => {
+    setError(null); setResult(null); setRunning({ stage: 'Starting…', seconds: 0 })
+    try {
+      const body: Record<string, unknown> = { mode, scope, account_ids: scope === 'accounts' ? accountIds : undefined, securities_id: scope === 'security' ? secId : undefined }
+      if (bench !== 'default') body.benchmark_id = Number(bench)
+      const { job_id } = (await api.post('/reports/action-backtest', body)).data as { job_id: string }
+      for (;;) {
+        await new Promise(r => setTimeout(r, 1500))
+        const j = (await api.get(`/reports/action-backtest/${job_id}`)).data as { status: string; stage: string; seconds: number; result?: BtResult; error?: string }
+        if (j.status === 'running') { setRunning({ stage: j.stage, seconds: j.seconds }); continue }
+        if (j.status === 'error') setError(j.error ?? 'The back-test failed.')
+        else setResult(j.result ?? null)
+        break
+      }
+    } catch (e) {
+      setError((e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'The back-test could not be started.')
+    } finally { setRunning(null) }
+  }
+
+  const cell = (h: BtHorizon) => h.n === 0 || h.mean == null
+    ? <span className="text-slate-300">not yet</span>
+    : <span title={`${h.n} cases`}>
+        <span className="tabular-nums">{h.mean >= 0 ? '+' : ''}{h.mean.toFixed(1)}</span><span className="text-slate-400"> / </span>
+        <span className="tabular-nums">{(h.median ?? 0) >= 0 ? '+' : ''}{(h.median ?? 0).toFixed(1)}</span>
+        <span className={`ml-2 font-semibold tabular-nums ${(h.hit ?? 0) >= 55 ? 'text-green-600' : (h.hit ?? 0) < 45 ? 'text-red-600' : 'text-slate-600'}`}>{(h.hit ?? 0).toFixed(0)}%</span>
+      </span>
+
+  const filteredSecs = secs.filter(s => !secFilter || `${s.name} ${s.ticker}`.toLowerCase().includes(secFilter.toLowerCase())).sort(byName).slice(0, 300)
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500 max-w-3xl">
+        Does the Action score work? For each month-end since 2016 (or each day of the log) it takes the score the securities had and compares what they returned over
+        the next 3, 6 and 12 months with the benchmark. <b>mean / median</b> are the excess return in percentage points; the <b>%</b> is how often it beat the benchmark.
+        A score that works shows higher % in the higher groups. 50% is a coin flip.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-slate-500">Test
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
+            <option value="all">All stocks and ETFs I follow</option>
+            <option value="holdings">What I hold now</option>
+            <option value="accounts">Chosen accounts</option>
+            <option value="security">One security</option>
+          </select>
+        </label>
+        <label className="text-xs text-slate-500">Score from
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm" value={mode} onChange={e => setMode(e.target.value as typeof mode)}>
+            <option value="price">Price-driven points, since 2016 (available now)</option>
+            <option value="log">The daily log — the whole score (fills as time passes)</option>
+          </select>
+        </label>
+        <label className="text-xs text-slate-500">Benchmark
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm max-w-xs" value={bench} onChange={e => setBench(e.target.value)}>
+            <option value="default">My default (Tools → App Settings → Benchmark)</option>
+            <option value="0">The average of what is tested</option>
+            {(['ETF', 'Market Index', 'Stock'] as const).map(t => (
+              <optgroup key={t} label={t === 'ETF' ? 'ETFs' : t === 'Market Index' ? 'Indexes' : 'Stocks'}>
+                {secs.filter(s => String(s.type) === t).sort(byName).map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        {scope === 'security' && (
+          <div className="flex items-end gap-2">
+            <label className="text-xs text-slate-500">Find
+              <input className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm w-36" placeholder="name or ticker" value={secFilter} onChange={e => setSecFilter(e.target.value)} />
+            </label>
+            <select className="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-xs" value={secId || ''} onChange={e => setSecId(Number(e.target.value))}>
+              <option value="">Choose a security…</option>
+              {filteredSecs.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)}{s.ticker ? ` (${String(s.ticker)})` : ''}</option>)}
+            </select>
+          </div>
+        )}
+        <Button onClick={run} disabled={!!running || (scope === 'security' && !secId) || (scope === 'accounts' && !(accountIds && accountIds.length))}>{running ? 'Running…' : 'Run back-test'}</Button>
+      </div>
+      {scope === 'accounts' && <PortfolioPresetBar reportScope="action_backtest" eligibleTypes={INV_ACCOUNT_TYPES} onChange={setAccountIds} />}
+
+      {running && <div className="flex items-center gap-2 text-sm text-slate-500"><Spinner size={14} /> {running.stage} <span className="text-slate-400">({running.seconds}s — all securities takes a couple of minutes, one account or security a few seconds)</span></div>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {result && (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            {result.samples.toLocaleString()} observations · {result.securities} securit{result.securities === 1 ? 'y' : 'ies'}{result.from ? ` · ${result.from} → ${result.to}` : ''} · benchmark: <b>{result.benchmark?.name ?? '—'}</b>
+          </p>
+          {result.notes.length > 0 && (
+            <ul className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5 list-disc pl-5 max-w-4xl">{result.notes.map(n => <li key={n}>{n}</li>)}</ul>
+          )}
+          {result.groups.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-200">
+                    <th className="text-left py-1 pr-6">Group</th><th className="text-right px-3">Cases</th>
+                    {BT_HORIZONS.map(h => <th key={h} className="text-left px-4">{h}: mean / median · beat</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.groups.map(g => (
+                    <tr key={g.name} className={`border-b border-slate-100 ${g.name === 'All' ? 'font-semibold bg-slate-50' : ''}`}>
+                      <td className="py-1 pr-6">{g.name}</td><td className="text-right px-3 tabular-nums">{g.n.toLocaleString()}</td>
+                      {BT_HORIZONS.map(h => <td key={h} className="px-4">{cell(g.h[h])}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {result.by_score.length > 1 && (
+            <Plot
+              data={(['6m', '12m'] as const).map((h, i) => ({
+                type: 'bar', name: `${h}: beat the benchmark (%)`, x: result.by_score.map(r => `${r.score}`), y: result.by_score.map(r => r.h[h].hit),
+                marker: { color: i ? '#2563eb' : '#f59e0b' },
+                hovertemplate: result.by_score.map(r => `score ${r.score}<br>${r.n} cases<br>${r.h[h].hit ?? '—'}% beat it<extra>${h}</extra>`),
+              }))}
+              layout={{ height: 280, barmode: 'group', margin: { t: 10, r: 10, b: 40, l: 45 }, yaxis: { title: { text: '% beating the benchmark' }, range: [30, 70] }, xaxis: { title: { text: 'score' } },
+                shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 50, y1: 50, line: { color: '#94a3b8', dash: 'dot' } }], legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
+              config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} useResizeHandler />
+          )}
+          {result.timeline.length > 0 && (
+            <Plot
+              data={[
+                { type: 'bar', name: '6-month excess (pp)', x: result.timeline.map(t => t.date), y: result.timeline.map(t => t['6m']), marker: { color: '#94a3b8' }, yaxis: 'y2', opacity: 0.6 },
+                { type: 'scatter', mode: 'lines+markers', name: 'Score', x: result.timeline.map(t => t.date), y: result.timeline.map(t => t.score), line: { color: '#2563eb', width: 2 } },
+              ]}
+              layout={{ height: 300, margin: { t: 10, r: 50, b: 40, l: 45 }, yaxis: { title: { text: 'score' } }, yaxis2: { overlaying: 'y', side: 'right', title: { text: '6m excess (pp)' }, showgrid: false },
+                legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark) }}
+              config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} useResizeHandler />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Securities Section ────────────────────────────────────────────────────────
 function SecuritiesSection() {
   const [tab, setTab] = usePersist('sec_tab', 'Price Changes')
-  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals']
+  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals', 'Action Backtest']
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
@@ -5878,6 +6090,7 @@ function SecuritiesSection() {
       {tab === 'Volatility'                && <VolatilityTab />}
       {tab === 'Investment Signals'        && <InvestmentSignalsTab />}
       {tab === 'Portfolio Action Signals'  && <PortfolioActionSignalsTab />}
+      {tab === 'Action Backtest'           && <ActionBacktestTab />}
     </div>
   )
 }

@@ -1431,6 +1431,18 @@ CREATE TABLE IF NOT EXISTS Action_Signals (
     Updated_At       TIMESTAMP DEFAULT NOW()
 );
 
+-- The daily log of every security's Action — what the score is later back-tested against (data/action_backtest.py).
+CREATE TABLE IF NOT EXISTS Action_History (
+    Securities_Id  INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Log_Date       DATE NOT NULL,
+    Level          SMALLINT NOT NULL,
+    Score          NUMERIC(6,1),
+    Raw_Score      NUMERIC(6,1),
+    Held           BOOLEAN,
+    Why            TEXT,
+    PRIMARY KEY (Securities_Id, Log_Date)
+);
+
 
 -- =============================================================================
 -- SCHEDULER

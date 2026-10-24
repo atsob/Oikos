@@ -16,6 +16,7 @@ export interface AppSettings {
   telegramAlerts: boolean // send a Telegram message when Market Watch / Local Market Watch turns red or leaves red (needs TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)
   telegramAlertGroups: Record<string, boolean> // Dashboard alert groups (sr, price, signals, action, events, corporate, portfolio) also sent to Telegram when new — all off by default
   dashboardAlertGroups: Record<string, boolean> // Dashboard alert groups shown on the Dashboard — a group is shown unless it is set to false here (Telegram has its own list)
+  defaultBenchmarkId: number // security id of the benchmark that comparisons (Action backtest) use unless a report picks another — 0 = VWCE
   srAlertMinValue: number // Support / Resistance alerts only for holdings / currency exposure worth at least this many EUR
   homeCountry: string // ISO alpha-2 country of usage ('' = not set) — which market Market Data → Local Market Watch follows
 }
@@ -36,6 +37,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   telegramAlerts: true,
   telegramAlertGroups: {},
   dashboardAlertGroups: {},
+  defaultBenchmarkId: 0,
   srAlertMinValue: 500,
   homeCountry: '',
 }

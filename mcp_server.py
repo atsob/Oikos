@@ -213,8 +213,12 @@ ENDPOINTS = {
         "description": "Triggered Dashboard alerts, each with a group (sr = support/resistance, price, signals, action, events, corporate, portfolio), level, message and stable key: support/resistance events on holdings/Watchlist/exposed currencies, price alerts, signal changes, crosses, trailing stops, upcoming bond/dividend/loan events, splits, allocation drift, and Action changes (a held security's verdict moving between Reduce / Sell, Hold and Add).",
     },
     "action_signals": {
-        "path": "/api/reports/action-signals", "params": ["held_only", "action (comma-separated, e.g. Reduce,Sell)", "changed_only"],
-        "description": "The Action verdict of every security, compact: name, ticker, held, value_eur, action (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid otherwise), action_score (5-day average of the points), action_why (each factor with its points), bucket / previous_bucket / changed_at of the last move between Reduce / Sell, Hold and Add, alert_pending, and the older final_signal / math_signal. Held positions first, biggest first. held_only=true for open positions; changed_only=true for the unacknowledged Action Change alerts.",
+        "path": "/api/reports/action-signals", "params": ["held_only", "action (comma-separated, e.g. Reduce,Sell)", "changed_only", "types (comma-separated, e.g. Stock,ETF)", "shortlist", "min_score (default 6)", "per_sector (default 2)"],
+        "description": "The Action verdict of every security, compact: name, ticker, held, value_eur, action (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid otherwise), action_score (5-day average of the points), action_why (each factor with its points), bucket / previous_bucket / changed_at of the last move between Reduce / Sell, Hold and Add, alert_pending, and the older final_signal / math_signal. Also type and sector. A fair value more than 100% from the price is ignored in the score and the reasons say so. Held positions first, biggest first. held_only=true for open positions; changed_only=true for the unacknowledged Action Change alerts; types keeps only those security types; shortlist=true returns Buy candidates only — not held, verdict Buy, score at least min_score (default 6), best first, at most per_sector from one sector, of the given types (default: everything but indexes, CDs and employee options).",
+    },
+    "action_history": {
+        "path": "/api/reports/action-history", "params": ["securities_id", "from_date", "limit"],
+        "description": "The daily log of every security's Action — date, score (smoothed), raw_score, verdict, held and the reasons — one row per security per day since logging began, newest first. This is what the score is back-tested against (python -m data.action_backtest); the first 3-month results arrive when the log is 3 months old.",
     },
     "portfolio_signals": {
         "path": "/api/reports/portfolio-signals", "params": ["held_only"],
