@@ -1651,6 +1651,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           positions. Interest income
           (including Stock Yield Enhancement Program payments) is booked against one placeholder security per
           settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
+          A fee that names a security — for example an ETC's daily <i>XETRA-GOLD MAINTENANCE FEE</i> — is imported as a <b>MiscExp</b> investment
+          transaction on that security (a rebate as MiscInc) instead of a plain Cash Transaction, so it counts in the security's own P&amp;L; the cash
+          side follows through the investment account's linked cash account. IB leaves symbol and ISIN empty on these lines, so the security is found
+          from the name before the fee wording; a fee that matches no security (market-data charges, say) stays a Cash Transaction, and a fee already
+          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
           "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual
@@ -1689,7 +1694,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           URLs. After that the <b>Saxo Login Keep-alive</b> scheduler job refreshes the token every 10 minutes, so
           you normally never connect again and go straight to fetching and importing; if the login does lapse
           (the scheduler was down for a while) the page says so and one click reconnects. Saxo accounts are mapped
-          to your accounts automatically when your account's name contains the Saxo account id.
+          to your accounts automatically when your account's name contains the Saxo account id. If Saxo's login page answers <i>Invalid or
+          unknown client_id</i>, the App Key is fine but Saxo has deactivated the app after a period without use — it can still be listed as <i>Live App –
+          Approved</i>; open the Saxo developer portal → Apps → Live Apps, re-activate it, and connect again.
         </Note>
         <Note>
           A green <b>Authenticated</b> badge only means the OAuth token exchange succeeded — it does not mean

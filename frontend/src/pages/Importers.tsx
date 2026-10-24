@@ -2099,6 +2099,10 @@ function SaxoTab() {
             Redirect URL for this address: <code className="bg-slate-100 px-1 rounded select-all">{redirectUri}</code> — add it (and the one for every other
             address you open Oikos from) to your Saxo app's redirect URLs.
           </div>
+          <div className="text-xs text-slate-500">
+            If Saxo's login page answers <i>Invalid or unknown client_id</i>, the key is right but Saxo has deactivated the app (it can still be listed as
+            <i> Live App – Approved</i>): open the Saxo developer portal → Apps → Live Apps and re-activate it, then connect again.
+          </div>
           <div className="flex gap-4 text-sm">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={useSim} onChange={e => setUseSim(e.target.checked)} className="rounded" />

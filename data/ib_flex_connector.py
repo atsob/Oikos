@@ -20,6 +20,7 @@ One-time IB setup (do this once in Account Management)
 
 from __future__ import annotations
 
+import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime
@@ -532,7 +533,7 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
             })
 
         elif tx_type_key in ("fees paid", "other fees", "commission adjustments"):
-            tx_records.append({
+            rec = {
                 "record_type": "transaction",
                 "source":      "IB",
                 "desc":        key,
@@ -540,7 +541,10 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
                 "amount":      round(amount_eur, 2),
                 "description": f"IB Fee: {name or tx_type}",
                 "currency":    currency,
-            })
+            }
+            if tx_type_key in _DIVIDEND_FEE_TYPE_KEYS:      # not Commission Adjustments, which belong to a trade
+                rec["_fee"] = {"symbol": symbol, "isin": isin, "name": name, "currency": currency, "fx_rate": fx_rate, "amount_eur": amount_eur}
+            tx_records.append(rec)
 
     return inv_records, tx_records, len(all_cash_els)
 
@@ -548,6 +552,80 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
 # ---------------------------------------------------------------------------
 # Top-level parse entry point
 # ---------------------------------------------------------------------------
+
+# A fee that names a security — e.g. "XETRA-GOLD MAINTENANCE FEE FOR 2026-10-22 FOR OCT 2026", an ETC's daily custody charge — is an expense of that security,
+# not an anonymous cash movement: it is booked as a MiscExp (MiscInc for a rebate) Investments row linked to the security, so it counts in that security's
+# P&L; the investment account's linked cash account gets its cash side automatically, like any other investment row. A fee that names nothing known stays
+# a plain Cash Transaction. IB leaves symbol and ISIN empty on these lines, so the security is found from the text before the fee wording.
+_FEE_WORDS = re.compile(r"\s+(MAINTENANCE|MANAGEMENT|CUSTODY|CUSTODIAN|SAFEKEEPING|ADMINISTRATION|SERVICE|FEES?|CHARGES?)\b.*$", re.I)
+
+
+def _norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _fee_subject(description: str) -> str:
+    return _norm_name(_FEE_WORDS.sub("", description or ""))
+
+
+def _load_security_index() -> list[dict]:
+    from database.connection import get_connection as _get_conn
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT s.Securities_Id, s.Securities_Name, s.Ticker, s.ISIN,
+                   EXISTS (SELECT 1 FROM Holdings h WHERE h.Securities_Id = s.Securities_Id AND h.Quantity > 0),
+                   EXISTS (SELECT 1 FROM Investments i WHERE i.Securities_Id = s.Securities_Id)
+            FROM Securities s WHERE s.Is_Active""")
+        return [{"id": r[0], "name": r[1], "ticker": r[2], "isin": r[3] or "", "held": bool(r[4]), "traded": bool(r[5])} for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _match_fee_security(fee: dict, secs: list[dict]) -> dict | None:
+    """The one security a fee line is about, or None when there is not exactly one."""
+    if fee.get("isin"):
+        by_isin = [s for s in secs if s["isin"] == fee["isin"]]
+        if len(by_isin) == 1:
+            return by_isin[0]
+    subject = _fee_subject(fee.get("name") or "")
+    if len(subject) < 5:
+        return None
+    cands = [s for s in secs if _norm_name(s["name"]).startswith(subject)]
+    if len(cands) > 1:
+        cands = [s for s in cands if s["held"]] or [s for s in cands if s["traded"]] or cands
+    return cands[0] if len(cands) == 1 else None
+
+
+def _route_security_fees(inv_records: list, tx_records: list) -> tuple[list, list]:
+    """Move the fee lines that name a security from the cash records to the investment records (see above). Without a database (or on any
+    lookup problem) every fee stays a cash record, as before."""
+    if not any(r.get("_fee") for r in tx_records):
+        return inv_records, tx_records
+    try:
+        secs = _load_security_index()
+    except Exception:
+        return inv_records, tx_records
+    keep, moved = [], []
+    for r in tx_records:
+        fee = r.get("_fee")
+        sec = _match_fee_security(fee, secs) if fee else None
+        if not sec:
+            keep.append(r)
+            continue
+        amt = abs(fee["amount_eur"])
+        moved.append({
+            "record_type": "investment", "source": "IB", "desc": r["desc"],
+            "symbol": sec["ticker"] or "", "name": sec["name"], "isin": sec["isin"],
+            "currency": fee["currency"], "fx_rate": fee["fx_rate"], "asset_category": "STK",
+            "date": r["date"], "action": "MiscExp" if fee["amount_eur"] < 0 else "MiscInc",
+            "quantity": None, "price": None, "commission": 0.0, "total_eur": round(amt, 2),      # an expense, not a trade: only the total means anything
+            "tax_amount_eur": None, "exchange": "",
+            "legacy_cash_desc": r["desc"],       # earlier imports booked this line as a Cash Transaction with the same key — see check_existing_records
+        })
+    return inv_records + moved, keep
+
 
 def parse_flex_xml(xml_text: str) -> tuple[list, list, dict]:
     """Parse IB Flex XML into (inv_records, tx_records, meta).
@@ -589,6 +667,7 @@ def parse_flex_xml(xml_text: str) -> tuple[list, list, dict]:
             "diag_cash_els":   cash_el_count,
         }
 
+    all_inv, all_tx = _route_security_fees(all_inv, all_tx)
     return all_inv, all_tx, meta
 
 
@@ -749,6 +828,14 @@ def check_existing_records(
                 [tx_check_id] + tx_descs,
             )
             existing_tx = {row[0] for row in cur.fetchall()}
+
+        # A fee now booked as an investment expense that an earlier import booked as a Cash Transaction (same key) is already in — importing it
+        # again would count it twice (and its linked cash side too).
+        legacy = [r["desc"] for r in inv_records if r.get("legacy_cash_desc")]
+        if legacy:
+            placeholders = ",".join(["%s"] * len(legacy))
+            cur.execute(f"SELECT Description FROM Transactions WHERE Accounts_Id = %s AND Description IN ({placeholders})", [tx_check_id] + legacy)
+            existing_inv |= {row[0] for row in cur.fetchall()}
 
         return existing_inv, existing_tx
     finally:
@@ -939,7 +1026,8 @@ def run_import(
                 isin=rec.get("isin", ""),
                 _cached_mappings=_ib_mappings,
             )
-            if not replace_mode and _inv_exists(cur, account_id, rec["desc"]):
+            if not replace_mode and (_inv_exists(cur, account_id, rec["desc"])
+                                     or (rec.get("legacy_cash_desc") and _tx_exists(cur, tx_dest_id, rec["legacy_cash_desc"]))):
                 counts["investments_skip"] += 1
             else:
                 # IB supplies fxRateToBase (sec_cur → acc_cur) directly in the record.
