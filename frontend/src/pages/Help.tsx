@@ -160,7 +160,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           The <b>Customize</b> button (top right) opens a panel listing every block of the Dashboard — key figures, Insights, Market valuation,
           Market Watch, Local Market Watch, Alerts, Uncategorized transactions, Pending drafts, Net Worth breakdown and trend, Options, Accounts,
-          Upcoming bills, Unusual transactions and the two AI summaries. <b>Tick</b> the ones to show, <b>drag</b> a row (or use its ▲ ▼ arrows,
+          Plan, Upcoming bills, Unusual transactions and the two AI summaries. <b>Tick</b> the ones to show, <b>drag</b> a row (or use its ▲ ▼ arrows,
           which also work on a touch screen) to put it where you want, and choose <b>Full</b> or <b>Half</b> width for each; the Dashboard changes as you go
           and the choice is saved with your preferences, so it follows you across devices. <b>Reset</b> brings back the default. Two <i>Half</i> blocks that
           follow one another share a row (by default Upcoming bills and Unusual transactions, and the two AI summaries); a Half block with no Half neighbour
@@ -297,7 +297,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           tick under <i>Also send new Dashboard alerts from these groups</i> (all off by default, and they need the checkbox above on) — one message
           per run listing the new alerts (the first 15), each alert sent once, on the Signal Notifications job's 30-minute cadence; an alert that
           clears or is dismissed and later fires again is sent again. Which groups the Dashboard <i>shows</i> (Tools → App Settings → Dashboard Alerts)
-          is separate: hiding a group there does not stop it going to Telegram.
+          is separate: hiding a group there does not stop it going to Telegram. (c) The <b>Plan</b> page's morning reminder — see Plan.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
@@ -568,6 +568,41 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           The Templates tab has a search box, filtering by template name, account, payee, or frequency.
         </Note>
+      </>
+    ),
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    body: (
+      <>
+        <H2>Plan</H2>
+        <P>
+          A to-do list for money moves that have dates — a rebalancing plan (sell this on Monday, reinvest the maturing T-bill on the 30th), a tax-year
+          checklist, a savings schedule — with a <b>Telegram reminder every morning</b>. Each <b>step</b> has a plan name (steps of one plan are shown
+          together), a due date, what to do, and optional details (amounts, accounts, limit prices, the reason). The page groups the open steps into
+          <i> Overdue</i>, <i>Today</i> and one section per later day; a closed step moves to <i>Done and skipped</i>.
+        </P>
+        <H3>Adding steps</H3>
+        <P>
+          <b>New step</b> adds one. <b>Import</b> adds a whole plan from text — one step per line as <code>date | what to do | details</code>, with dates such as
+          <code> 2026-10-26</code>, <code>26/10/2026</code>, <code>26 Oct</code> or <code>Mon 26 Oct 2026</code>; a line starting with <code>#</code> names the plan for the
+          lines after it. Lines it cannot read are listed and the rest are added.
+        </P>
+        <H3>Ticking them off</H3>
+        <P>
+          Tick the box when a step is done, or use <b>⏭ Skip</b> for one you decided against — either removes it from the reminders. To <b>reopen</b> one, open <i>Done and skipped</i> at the bottom and untick it (or press ↩ on a skipped one); the Dashboard block offers an <b>Undo</b> right after you tick a step. The
+          Dashboard has a <b>Plan</b> block (Customize → Plan) with the overdue steps, today's and the next seven days', each with a tick box (only the box ticks — clicking the text opens the Plan page); it disappears
+          when there is nothing to do.
+        </P>
+        <H3>The reminder</H3>
+        <P>
+          Every day from 08:00 (change it under Tools → Scheduler → <b>Plan Reminders</b>) one Telegram message lists the steps <b>due today</b> with their details, the
+          open steps that are <b>overdue</b> (repeated every day until you tick or skip them), and a heads-up of tomorrow's titles. Nothing is sent on a day with nothing
+          to say, and a restart of the scheduler does not send it twice. It uses the Telegram bot set up under <i>Telegram alerts</i> (Dashboard) and its on/off switch;
+          <b> Remind me now</b> sends it immediately, which is also a way to test it. Claude, through the connector, can read the steps (<code>plan_items</code>, <code>plan_due</code>)
+          to check how far along you are.
+        </P>
       </>
     ),
   },

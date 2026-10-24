@@ -41,6 +41,7 @@ import Investments from '@/pages/Investments'
 import SecurityDetail from '@/pages/SecurityDetail'
 import CurrencyDetail from '@/pages/CurrencyDetail'
 import Alerts from '@/pages/Alerts'
+import Plan from '@/pages/Plan'
 import Help from '@/pages/Help'
 import Releases from '@/pages/Releases'
 
@@ -87,6 +88,7 @@ export default function App() {
               <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
               <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
               <Route path="alerts" element={<ErrorBoundary><Alerts /></ErrorBoundary>} />
+              <Route path="plan" element={<ErrorBoundary><Plan /></ErrorBoundary>} />
               <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
               <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
             </Route>

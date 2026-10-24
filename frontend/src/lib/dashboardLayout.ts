@@ -11,6 +11,7 @@ export const DASH_BLOCKS: DashBlock[] = [
   { id: 'marketwatch', label: 'Market Watch', hint: 'The global crash-warning banner' },
   { id: 'localwatch', label: 'Local Market Watch', hint: 'The same for your home market' },
   { id: 'alerts', label: 'Alerts', hint: 'Triggered alerts, by group' },
+  { id: 'plan', label: 'Plan', hint: 'Plan steps that are overdue, due today or due this week' },
   { id: 'uncategorized', label: 'Uncategorized transactions', hint: 'Cash transactions with no category' },
   { id: 'drafts', label: 'Pending drafts', hint: 'Draft transactions waiting for your confirmation' },
   { id: 'breakdown', label: 'Net Worth breakdown', hint: 'The split of your net worth' },

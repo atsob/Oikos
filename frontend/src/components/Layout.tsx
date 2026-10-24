@@ -9,7 +9,7 @@ import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
 import AccountModal from '@/components/AccountModal'
 import {
-  LayoutDashboard, BookOpen, Bell, RefreshCw, BarChart2,
+  LayoutDashboard, BookOpen, Bell, CalendarCheck, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
   Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut, UserCircle,
 } from 'lucide-react'
@@ -25,6 +25,7 @@ const nav = [
   [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
     { to: '/alerts', label: 'Alerts', icon: Bell },
+    { to: '/plan', label: 'Plan', icon: CalendarCheck },
   ],
   [
     { to: '/register', label: 'Cash Register', icon: BookOpen },

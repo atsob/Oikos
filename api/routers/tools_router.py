@@ -1601,7 +1601,7 @@ _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
     "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "local_watch_backtest", "fund_countries", "morningstar", "news_fetch", "fund_composition",
-    "fundamentals", "shiller_cape", "interest_rates",
+    "fundamentals", "shiller_cape", "interest_rates", "plan_reminders",
 }
 
 _SEED_JOBS = [
@@ -1621,6 +1621,7 @@ _SEED_JOBS = [
     ("local_watch",        "Local Market Watch",     "Refreshes the Local Market Watch snapshot for the country of usage (Tools → App Settings) — benchmark index trend, breadth of its large caps, the systemic banks and the 10-year spread to Germany (Yahoo Finance; FRED if a key is set).", "Every 360 min, 24×7", True),
     ("local_watch_backtest", "Local Market Watch Back-test", "Re-runs the back-test of the Local Market Watch red rules for the country of usage (index trend, banks, sovereign spread, and the banner rule on those) when a rule changes, on the first Sunday of the month, and once the daily log reaches six months. Every run is stored with its rule version; a Dashboard alert only for a material change. Never edits a threshold.", "On a rule change · 1st Sunday monthly · log at 6 months", True),
     ("market_watch_backtest", "Market Watch Back-test", "Re-runs the back-test of the Market Watch red rules (credit spreads, 10-year yield, plus the daily log) when a rule or threshold changes, on the first Sunday of the month, in mid Feb/May/Aug/Nov after earnings season, and once the daily log reaches six months. Every run is stored with its rule version; a Dashboard alert only for a material change. Never edits a threshold.", "On a rule change · 1st Sunday monthly · mid Feb/May/Aug/Nov", True),
+    ("plan_reminders",     "Plan Reminders",         "Sends the morning reminder of your Plan on Telegram: the steps due today, the open ones that are overdue and a heads-up for tomorrow. Sends nothing when there is nothing to say; a restart later in the day does not send it twice.", "Daily at 08:00", True),
     ("recurring_drafts",   "Recurring Drafts",       "Generates draft transactions for all active recurring templates due today or earlier.",                             "Once per calendar day",          True),
     ("signal_notifications", "Signal Notifications", "Computes final signals for all held securities and Altman Z-Score risk zones for all stocks, and records any changes for dashboard notifications. Then sends new Dashboard alerts of the groups switched on under App Settings → Telegram Alerts.", "Every 30 min, 24×7", True),
     ("news_fetch",          "News Fetch",            "Downloads news for held/watchlisted securities (Yahoo Finance), and for institutions and opted-in payees (DuckDuckGo search).", "Every 240 min, 24×7",  True),
@@ -1738,6 +1739,9 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "recurring_drafts":
             from database.crud import generate_draft_transactions
             generate_draft_transactions()
+        elif job_id == "plan_reminders":
+            from database.plan import send_reminders
+            send_reminders(force=True)
         elif job_id == "signal_notifications":
             from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
             refresh_signal_notifications()

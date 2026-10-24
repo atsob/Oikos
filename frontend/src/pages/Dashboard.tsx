@@ -19,6 +19,7 @@ import { usePersist, useLiveRefetchInterval, useScrollRestore, useSettings } fro
 import { ALERT_GROUPS, AlertItem, alertGroupOf, groupAlerts, levelDot, useTriggeredAlerts, worstLevel } from '@/components/alerts'
 import { DashboardCustomizer } from '@/components/DashboardCustomizer'
 import { DEFAULT_LAYOUT, layoutRows, resolveLayout, type DashLayout } from '@/lib/dashboardLayout'
+import { PlanPanel } from '@/components/PlanBlock'
 import { MarketWatchPanel } from '@/components/MarketWatch'
 import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
@@ -1248,6 +1249,7 @@ export default function Dashboard() {
         })(),
     options: <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />,
     accounts: <AccountsPanel accounts={accsForNw} opts={opts} />,
+    plan: <PlanPanel />,
     bills: <UpcomingBillsPanel />,
     anomalies: <AnomaliesPanel />,
     weekly: (

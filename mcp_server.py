@@ -220,6 +220,14 @@ ENDPOINTS = {
         "path": "/api/reports/action-history", "params": ["securities_id", "from_date", "limit"],
         "description": "The daily log of every security's Action — date, score (smoothed), raw_score, verdict, held and the reasons — one row per security per day since logging began, newest first. This is what the score is back-tested against (python -m data.action_backtest); the first 3-month results arrive when the log is 3 months old.",
     },
+    "plan_items": {
+        "path": "/api/plan/items", "params": ["plan", "status (open / done / skipped)"],
+        "description": "The steps of the user's Plan (Plan page: dated to-dos such as a rebalancing plan, each reminded on Telegram on its day): plan name, due_date, title, details, status (open / done / skipped) and done_at, ordered by due date. Use it to check progress against a plan.",
+    },
+    "plan_due": {
+        "path": "/api/plan/due", "params": ["days (default 7)"],
+        "description": "The open Plan steps that are overdue, due today, and due in the next N days.",
+    },
     "portfolio_signals": {
         "path": "/api/reports/portfolio-signals", "params": ["held_only"],
         "description": "The full Portfolio Action Signals grid, one row per security (large — use held_only=true or action_signals first): prices and 1D-3Y changes, volatility, Sharpe, quality score, 3Y range, MA50/MA200 with their 5-day direction (ma50_chg_pct / ma200_chg_pct), Golden/Death regime and crosses, trailing stop, analyst target and upside, fair value, F-Score / Z-Score, final_signal, and action / action_score / action_why.",

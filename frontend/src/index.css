@@ -75,6 +75,8 @@ html.dark .bg-slate-200    { background-color: #334155 !important; }
 html.dark .border-slate-100 { border-color: #293548 !important; }
 html.dark .border-slate-200 { border-color: #334155 !important; }
 html.dark .border-slate-300 { border-color: #475569 !important; }
+html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #293548 !important; }
+html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #334155 !important; }
 
 /* Text */
 html.dark .text-slate-900 { color: #f1f5f9 !important; }

@@ -1272,3 +1272,16 @@ export const runCustomReportDrillDown = (params: Record<string, unknown>) =>
   api.post('/reports/custom-report/drill-down', params).then(r => r.data)
 export const runCustomReportInvestmentDrillDown = (params: Record<string, unknown>) =>
   api.post('/reports/custom-report/investment-drill-down', params).then(r => r.data)
+
+// ── Plan (dated to-do steps with a morning Telegram reminder) ───────────────────
+export interface PlanItem { id: number; plan: string; due_date: string; title: string; details: string | null; status: 'open' | 'done' | 'skipped'; done_at: string | null }
+export interface PlanDue { today: string; overdue: PlanItem[]; due_today: PlanItem[]; upcoming: PlanItem[] }
+export const getPlanItems = (): Promise<PlanItem[]> => api.get('/plan/items').then(r => r.data)
+export const getPlanDue = (days = 7): Promise<PlanDue> => api.get('/plan/due', { params: { days } }).then(r => r.data)
+export const savePlanItem = (id: number | null, body: { plan: string; due_date: string; title: string; details: string }): Promise<PlanItem> =>
+  (id == null ? api.post('/plan/items', body) : api.put(`/plan/items/${id}`, body)).then(r => r.data)
+export const setPlanStatus = (id: number, status: PlanItem['status']): Promise<PlanItem> => api.post(`/plan/items/${id}/status`, { status }).then(r => r.data)
+export const deletePlanItem = (id: number) => api.delete(`/plan/items/${id}`).then(r => r.data)
+export const deletePlan = (name: string): Promise<{ deleted: number }> => api.delete('/plan/plans', { params: { name } }).then(r => r.data)
+export const importPlan = (text: string, plan: string): Promise<{ created: number; errors: string[]; plan: string }> => api.post('/plan/import', { text, plan: plan || null }).then(r => r.data)
+export const remindPlanNow = (): Promise<{ sent: boolean; detail: string }> => api.post('/plan/remind-now').then(r => r.data)
