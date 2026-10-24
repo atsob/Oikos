@@ -1377,50 +1377,41 @@ def get_pnl_summary(
     start_date: str = Query("2024-01-01"),
     end_date: str = Query("2099-12-31"),
 ):
-    """Monthly P&L summary: realized gains + dividends per month."""
-    query = """
-    WITH realized AS (
-        SELECT date_trunc('month', i.Date)::date AS month,
-               i.Quantity * (i.Price_Per_Share - COALESCE(h.simple_avg_price, 0))
+    """Monthly P&L summary: realized gains + dividends per month.
+
+    Realized gains are the FIFO figure every other realized-P&L report uses (database.queries._compute_realized_pnl_fifo): each sale is matched
+    against the lots it actually closes, in the account's currency, then converted to EUR. This endpoint used to compute it as quantity x (price -
+    the holding's *current* average cost) — and a position that had been sold out has no holding, so its average cost was 0 and the whole sale
+    proceeds counted as gain. A Treasury bill redeemed at par, or a term deposit repaid, showed up as a gain of its full face value (EUR 101k
+    in January 2026, EUR 72k in October 2024) instead of the few euros of discount earned.
+    """
+    from database.queries import _compute_realized_pnl_fifo
+    divs_query = """
+    SELECT date_trunc('month', i.Date)::date AS month,
+           SUM(ABS(i.Total_Amount_AccCur)
                * COALESCE(
                    (SELECT FX_Rate FROM Historical_FX
                     WHERE Currencies_Id_1 = c2.Currencies_Id AND Date <= i.Date
                     ORDER BY Date DESC LIMIT 1), 1
-               ) AS value
-        FROM Investments i
-        JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-        JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
-        LEFT JOIN Holdings h ON h.Securities_Id = i.Securities_Id AND h.Accounts_Id = i.Accounts_Id
-        WHERE i.Action IN ('Sell','ShrOut')
-          AND i.Date BETWEEN %(start_date)s AND %(end_date)s
-    ),
-    divs AS (
-        SELECT date_trunc('month', i.Date)::date AS month,
-               ABS(i.Total_Amount_AccCur)
-               * COALESCE(
-                   (SELECT FX_Rate FROM Historical_FX
-                    WHERE Currencies_Id_1 = c2.Currencies_Id AND Date <= i.Date
-                    ORDER BY Date DESC LIMIT 1), 1
-               ) AS value
-        FROM Investments i
-        JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-        JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
-        WHERE i.Action IN ('Dividend','Reinvest','IntInc','MiscInc','RtrnCap')
-          AND i.Date BETWEEN %(start_date)s AND %(end_date)s
-    )
-    SELECT
-        COALESCE(r.month, d.month) AS month,
-        COALESCE(SUM(r.value), 0) AS realized_gain,
-        COALESCE(SUM(d.value), 0) AS dividend_income
-    FROM (SELECT month, SUM(value) AS value FROM realized GROUP BY month) r
-    FULL OUTER JOIN (SELECT month, SUM(value) AS value FROM divs GROUP BY month) d
-        ON r.month = d.month
+               )) AS dividend_income
+    FROM Investments i
+    JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
+    JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
+    WHERE i.Action IN ('Dividend','Reinvest','IntInc','MiscInc','RtrnCap')
+      AND i.Date BETWEEN %(start_date)s AND %(end_date)s
     GROUP BY 1
-    ORDER BY 1
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"start_date": start_date, "end_date": end_date})
-    return _df_to_list(df)
+        fifo = _compute_realized_pnl_fifo(conn, start_date, end_date)
+        divs = pd.read_sql(divs_query, conn, params={"start_date": start_date, "end_date": end_date})
+    if fifo is None or fifo.empty:
+        realized = pd.DataFrame({"month": pd.Series(dtype="object"), "realized_gain": pd.Series(dtype="float")})
+    else:
+        realized = fifo.groupby("month_date")["split_amount"].sum().reset_index()
+        realized.columns = ["month", "realized_gain"]
+        realized["month"] = pd.to_datetime(realized["month"]).dt.date
+    df = realized.merge(divs, on="month", how="outer").fillna(0).sort_values("month")
+    return _df_to_list(df[["month", "realized_gain", "dividend_income"]])
 
 
 @router.get("/income-expense-detail")

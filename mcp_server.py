@@ -242,7 +242,7 @@ ENDPOINTS = {
     },
     "pnl_summary": {
         "path": "/api/reports/pnl-summary", "params": ["start_date", "end_date"],
-        "description": "Realized gain and dividend income per month over the period (default: all). For the per-security P&L see /api/reports/pnl.",
+        "description": "Realized gain (FIFO, in EUR — redeemed bills and deposits count only their gain, not their face value) and dividend / interest income per month from start_date (default 2024-01-01). For the per-security P&L see /api/reports/pnl.",
     },
     "dividends": {
         "path": "/api/reports/dividends", "params": ["start_date", "end_date"],
