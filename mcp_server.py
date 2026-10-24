@@ -249,8 +249,8 @@ ENDPOINTS = {
         "description": "Current positions, one row per account and security: quantity, last price, FX rate, value in EUR, currency. account_ids limits it to some accounts.",
     },
     "pnl_summary": {
-        "path": "/api/reports/pnl-summary", "params": ["start_date", "end_date"],
-        "description": "Realized gain (FIFO, in EUR — redeemed bills and deposits count only their gain, not their face value) and dividend / interest income per month from start_date (default 2024-01-01). For the per-security P&L see /api/reports/pnl.",
+        "path": "/api/reports/pnl-summary", "params": ["start_date", "end_date", "account_ids (comma-separated; account_id for one)"],
+        "description": "Realized gain (FIFO, in EUR — redeemed bills and deposits count only their gain, not their face value) and dividend / interest income per month from start_date (default 2024-01-01), for all accounts or only the account_ids given. For the per-security P&L see /api/reports/pnl.",
     },
     "dividends": {
         "path": "/api/reports/dividends", "params": ["start_date", "end_date"],

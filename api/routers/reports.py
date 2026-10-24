@@ -1376,8 +1376,13 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
 def get_pnl_summary(
     start_date: str = Query("2024-01-01"),
     end_date: str = Query("2099-12-31"),
+    account_ids: Optional[str] = Query(None),
+    account_id: Optional[int] = Query(None),
 ):
     """Monthly P&L summary: realized gains + dividends per month.
+
+    account_ids (comma-separated Accounts_Id; account_id for a single one) limits both figures to those investment accounts — without it
+    every account is included.
 
     Realized gains are the FIFO figure every other realized-P&L report uses (database.queries._compute_realized_pnl_fifo): each sale is matched
     against the lots it actually closes, in the account's currency, then converted to EUR. This endpoint used to compute it as quantity x (price -
@@ -1386,6 +1391,7 @@ def get_pnl_summary(
     in January 2026, EUR 72k in October 2024) instead of the few euros of discount earned.
     """
     from database.queries import _compute_realized_pnl_fifo
+    accts = _parse_account_ids(account_ids) or ([account_id] if account_id is not None else None)
     divs_query = """
     SELECT date_trunc('month', i.Date)::date AS month,
            SUM(ABS(i.Total_Amount_AccCur)
@@ -1398,12 +1404,12 @@ def get_pnl_summary(
     JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
     JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
     WHERE i.Action IN ('Dividend','Reinvest','IntInc','MiscInc','RtrnCap')
-      AND i.Date BETWEEN %(start_date)s AND %(end_date)s
+      AND i.Date BETWEEN %(start_date)s AND %(end_date)s""" + (" AND i.Accounts_Id = ANY(%(acct)s)" if accts else "") + """
     GROUP BY 1
     """
     with get_db() as conn:
-        fifo = _compute_realized_pnl_fifo(conn, start_date, end_date)
-        divs = pd.read_sql(divs_query, conn, params={"start_date": start_date, "end_date": end_date})
+        fifo = _compute_realized_pnl_fifo(conn, start_date, end_date, accts)
+        divs = pd.read_sql(divs_query, conn, params={"start_date": start_date, "end_date": end_date, "acct": accts})
     if fifo is None or fifo.empty:
         realized = pd.DataFrame({"month": pd.Series(dtype="object"), "realized_gain": pd.Series(dtype="float")})
     else:

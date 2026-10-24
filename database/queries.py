@@ -2142,7 +2142,7 @@ _REALIZED_PNL_COLUMNS = [
 _RLZD_PNL_CATEGORY = {'id': 724, 'name': '_RlzdPnL'}
 
 
-def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.DataFrame":
+def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str, account_ids: "list[int] | None" = None) -> "pd.DataFrame":
     """Realized investment P&L via FIFO lot matching — including short positions.
 
     The previous implementation (pure SQL) only matched sells against *earlier*
@@ -2172,7 +2172,11 @@ def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.Data
     account's, which this fixes as a side effect. Because Total_Amount_AccCur
     is already commission-inclusive, commission is not subtracted separately
     (the old code's separate subtraction double-counted it).
+
+    account_ids limits it to those accounts. The lots are matched per (account, security), so leaving the other accounts out changes nothing
+    for the ones kept.
     """
+    acct_sql = " AND i.Accounts_Id = ANY(%(acct)s)" if account_ids else ""
     # Explicit lowercase aliases throughout: unquoted Postgres identifiers fold
     # to lowercase regardless of how they're written in the SQL, so alias
     # everything explicitly rather than relying on that implicitly.
@@ -2191,9 +2195,9 @@ def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.Data
         JOIN Accounts a    ON i.Accounts_Id   = a.Accounts_Id
         JOIN Currencies curr_acc ON a.Currencies_Id = curr_acc.Currencies_Id
         WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
-          AND i.Date <= %(end_date)s
+          AND i.Date <= %(end_date)s""" + acct_sql + """
         ORDER BY i.Accounts_Id, i.Securities_Id, i.Date, i.Investments_Id
-    """, conn, params={"end_date": end_date})
+    """, conn, params={"end_date": end_date, "acct": list(account_ids) if account_ids else None})
 
     if tx.empty:
         return pd.DataFrame(columns=_REALIZED_PNL_COLUMNS)
