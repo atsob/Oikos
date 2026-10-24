@@ -156,7 +156,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2 border border-slate-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-slate-500 uppercase">From</p>
               <div>

@@ -154,7 +154,7 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true, idKey, li
   return (
     <WithCopy scrollKey="inv-positions-summary">
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-        <table className="w-full border-collapse">
+        <table data-matrix className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-40">{groupBy}</th>
@@ -348,7 +348,7 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
     <div className="space-y-4">
       <WithCopy scrollKey="nw-account-balances">
       <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-        <table className="w-full border-collapse">
+        <table data-matrix className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 sticky left-0 bg-slate-50 min-w-52">
@@ -1021,7 +1021,7 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
           <p className="text-xs text-slate-400">Total {fmtEur(sum)} · {fmtPct(pctOf(sum, total))}{compareDate ? ` · as of ${compareDate}: ${fmtEur(sumCmp)} (${sum - sumCmp >= 0 ? '+' : ''}${fmtEur(sum - sumCmp)})` : ''}</p>
         </div>
-        <table className="w-full border-collapse text-xs table-fixed">
+        <table data-matrix className="w-full border-collapse text-xs table-fixed">
           <thead>
             <tr><th className="w-24 text-left px-1 py-1 text-slate-400 font-normal">{rowHead} ↓ / {colHead} →</th>
               {grid.cols.map(c => <th key={c} className="px-1 py-1 text-slate-500 font-medium text-center">{c}</th>)}</tr>
@@ -3327,7 +3327,7 @@ function DividendTrackerTab() {
 
             <WithCopy scrollKey="dividend-tracker-1">
               <div className="overflow-y-auto max-h-[calc(100dvh-300px)]">
-                <table className="w-full text-sm table-fixed">
+                <table data-matrix className="w-full text-sm table-fixed">
                   <colgroup>
                     <col className="w-[20%]" />
                     <col className="w-[9%]" />
@@ -4732,7 +4732,7 @@ function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
         : !result || !result.tickers.length ? <p className="text-slate-400 text-sm py-8 text-center">No price data available.</p>
         : (
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
-            <table className="text-xs border-collapse">
+            <table data-matrix className="text-xs border-collapse">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr>
                   <th className="px-2 py-1 text-left text-slate-500 font-normal min-w-32"></th>
@@ -9196,7 +9196,7 @@ function FireCalculatorTab() {
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <div>
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">SWR Sensitivity</p>
-        <table className="text-xs border-collapse">
+        <table data-matrix className="text-xs border-collapse">
           <thead><tr className="bg-slate-50">{[3, 3.5, 4, 4.5, 5].map(s => <th key={s} className="px-3 py-1.5 border border-slate-200 text-center font-semibold">{s}% SWR</th>)}</tr></thead>
           <tbody><tr>{[3, 3.5, 4, 4.5, 5].map(s => <td key={s} className="px-3 py-1.5 border border-slate-200 text-center tabular-nums">{fmtEur(annualExpenses / (s / 100))}</td>)}</tr></tbody>
         </table>
@@ -10292,7 +10292,7 @@ function CustomReportsSection() {
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-2">{investmentMode ? 'Cashflow by Security' : 'Spending by Category'}</h3>
                 <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
-                  <table className="w-full text-sm border-collapse">
+                  <table data-matrix className="w-full text-sm border-collapse">
                     <thead className="sticky top-0 z-10 bg-white">
                       <tr className="border-b-2 border-slate-200">
                         <th className="text-left px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium sticky left-0 bg-white">{catLabel}</th>
