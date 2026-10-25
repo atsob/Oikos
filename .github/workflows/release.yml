@@ -70,11 +70,23 @@ jobs:
           fi
           echo "No forbidden files; /app is ${app_mb} MB"
 
-      - name: Secret scan (TruffleHog)
+      # Two scans, because the image is mostly other people's files (Debian package lists, Python libraries) full of strings that merely look
+      # like keys - the first run reported 180 such "unverified" results, none of them in /app and none verified as live.
+      #  a) the whole image: fails only on a secret that TruffleHog verifies as live;
+      #  b) our own files (/app): fails on any finding at all, verified or not.
+      - name: Secret scan of the whole image (TruffleHog, verified secrets only)
         run: |
           docker save oikos-scan:ci -o "$RUNNER_TEMP/image.tar"
           docker run --rm -v "$RUNNER_TEMP/image.tar:/image.tar:ro" "$TRUFFLEHOG_IMAGE" \
-            docker --image file:///image.tar --fail --no-update
+            docker --image file:///image.tar --results=verified --fail --no-update
+
+      - name: Secret scan of our own files in /app (TruffleHog, any finding)
+        run: |
+          cid=$(docker create oikos-scan:ci)
+          docker cp "$cid:/app" "$RUNNER_TEMP/app"
+          docker rm "$cid" >/dev/null
+          docker run --rm -v "$RUNNER_TEMP/app:/scan:ro" "$TRUFFLEHOG_IMAGE" \
+            filesystem /scan --fail --no-update
 
       # 2. Both architectures, pushed only if the checks above passed
       - name: Image tags
