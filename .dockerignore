@@ -28,3 +28,10 @@ ui/
 
 # Large data / backup dirs
 database_backups/
+
+# Backups anywhere in the tree (patterns are anchored to the build root)
+**/database_backups/
+# Keys and certificates must never be baked into the image
+*.key
+*.pem
+*.crt
