@@ -25,6 +25,14 @@ function gitInfo() {
 }
 const GIT_INFO = gitInfo()
 
+// The dev server's HTTPS certificate. Only the dev server uses it, and the folder is not in Git (a clean checkout — the GitHub release
+// build, a Docker build — has no ssl/), so it is read only when both files exist; otherwise the dev server falls back to plain HTTP.
+const keyPath = path.resolve(__dirname, 'ssl/key.pem')
+const certPath = path.resolve(__dirname, 'ssl/cert.pem')
+const devHttps = fs.existsSync(keyPath) && fs.existsSync(certPath)
+  ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }
+  : undefined
+
 export default defineConfig({
   define: {
     __GIT_HASH__: JSON.stringify(GIT_INFO.hash),
@@ -88,10 +96,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    https: {
-      key:  fs.readFileSync(path.resolve(__dirname, 'ssl/key.pem')),
-      cert: fs.readFileSync(path.resolve(__dirname, 'ssl/cert.pem')),
-    },
+    https: devHttps,
     proxy: {
       '/api': { target: 'http://localhost:8000', changeOrigin: true },
     },

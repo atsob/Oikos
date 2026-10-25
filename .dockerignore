@@ -31,7 +31,8 @@ database_backups/
 
 # Backups anywhere in the tree (patterns are anchored to the build root)
 **/database_backups/
-# Keys and certificates must never be baked into the image
-*.key
-*.pem
-*.crt
+# Keys and certificates must never be baked into the image — anywhere in the tree (a bare *.pem only matches the build root)
+**/*.key
+**/*.pem
+**/*.crt
+**/*.p12
