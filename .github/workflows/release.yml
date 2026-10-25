@@ -1,0 +1,112 @@
+# Builds, checks, scans and pushes atsob/oikos for amd64 and arm64 when a release tag is pushed:
+#   git tag v1.5.0 && git push origin v1.5.0
+# Docker Hub tags produced: 1.5.0, 1.5 and latest (pre-releases like v1.6.0-rc1 do not move latest).
+#
+# One-time setup in GitHub -> Settings -> Secrets and variables -> Actions:
+#   DOCKERHUB_USERNAME  atsob
+#   DOCKERHUB_TOKEN     a Docker Hub access token with Read & Write scope
+name: Release image
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: atsob/oikos
+  MAX_APP_MB: 150
+  TRUFFLEHOG_IMAGE: trufflesecurity/trufflehog:3.99.7
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      - name: Build information
+        id: info
+        run: |
+          echo "hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cd --date=short)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # 1. Native amd64 copy, loaded locally for checking (nothing is pushed yet)
+      - name: Build a copy for checking
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: oikos-scan:ci
+          build-args: |
+            GIT_HASH=${{ steps.info.outputs.hash }}
+            GIT_DATE=${{ steps.info.outputs.date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Forbidden-files check
+        run: |
+          bad=$(docker run --rm --entrypoint sh oikos-scan:ci -c \
+            'find /app -type f \( -name "*.dump" -o -name "*.sql.gz" -o -name "*.backup" -o -name "*.bak" \
+               -o -name ".env" -o -name "*.env" -o -name ".env.*" -o -name "*.key" -o -name "*.pem" -o -name "*.p12" -o -name "*.pfx" \) -print' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Files that must never ship are in the image:"; echo "$bad"; exit 1
+          fi
+          app_mb=$(docker run --rm --entrypoint sh oikos-scan:ci -c 'du -sm /app | cut -f1')
+          if [ "$app_mb" -gt "$MAX_APP_MB" ]; then
+            echo "::error::/app is ${app_mb} MB (limit ${MAX_APP_MB} MB)"
+            docker run --rm --entrypoint sh oikos-scan:ci -c 'du -sm /app/* | sort -rn | head'
+            exit 1
+          fi
+          echo "No forbidden files; /app is ${app_mb} MB"
+
+      - name: Secret scan (TruffleHog)
+        run: |
+          docker save oikos-scan:ci -o "$RUNNER_TEMP/image.tar"
+          docker run --rm -v "$RUNNER_TEMP/image.tar:/image.tar:ro" "$TRUFFLEHOG_IMAGE" \
+            docker --image file:///image.tar --fail --no-update
+
+      # 2. Both architectures, pushed only if the checks above passed
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push amd64 + arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_HASH=${{ steps.info.outputs.hash }}
+            GIT_DATE=${{ steps.info.outputs.date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Show the published platforms
+        run: docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}" | grep 'Platform:' | grep -v unknown
