@@ -1901,8 +1901,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <H3>Version info</H3>
         <P>
-          The sidebar footer shows the build version and, below it, the exact git commit hash and date it was
-          built from — useful when reporting an issue, since it pins down precisely which code is running. The{' '}
+          The sidebar footer shows the release version — for example <code>v2026-10-26.0</code>. A version is{' '}
+          <code>vYYYY-MM-DD.HF</code>: the date of the release and
+          its hot-fix number, <code>0</code> for the first release of a day, then <code>1</code>, <code>2</code> … Hover over it for the
+          exact git commit — useful when reporting an issue, since it pins down precisely which code is running (a build
+          that is not a release, such as a local build of an untagged commit, shows the commit hash instead). The same
+          version is the Docker image tag (<code>atsob/oikos:v2026-10-26.0</code>), so rolling back is pointing the
+          compose file at an older tag. The{' '}
           <b>Release Notes</b> page (below Help in the sidebar) lists what's actually changed release to
           release.
         </P>

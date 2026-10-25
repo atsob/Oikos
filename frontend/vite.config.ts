@@ -14,7 +14,7 @@ function gitInfo() {
     return { hash: process.env.GIT_HASH, date: process.env.GIT_DATE ?? '' }
   }
   try {
-    const run = (cmd: string) => execSync(cmd, { cwd: __dirname }).toString().trim()
+    const run = (cmd: string) => execSync(cmd, { cwd: import.meta.dirname }).toString().trim()
     const hash = run('git rev-parse --short HEAD')
     const date = run('git log -1 --format=%cd --date=short')
     const dirty = run('git status --porcelain').length > 0
@@ -25,10 +25,25 @@ function gitInfo() {
 }
 const GIT_INFO = gitInfo()
 
+// The release version, vYYYY-MM-DD.HF (HF = the hot fix of that date, from 0). A Docker / release build is told it (APP_VERSION build arg, set from
+// the git tag); a build from a checkout reads the tag on the current commit, if there is one. Empty otherwise — the footer then shows the commit.
+const VERSION_RE = /^v\d{4}-\d{2}-\d{2}\.\d+$/
+function appVersion(): string {
+  const given = (process.env.APP_VERSION ?? '').trim()
+  if (given) return VERSION_RE.test(given) ? given : ''
+  try {
+    const tags = execSync('git tag --points-at HEAD', { cwd: import.meta.dirname }).toString().split(/\r?\n/).map(t => t.trim())
+    return tags.filter(t => VERSION_RE.test(t)).sort().pop() ?? ''
+  } catch {
+    return ''
+  }
+}
+const APP_VERSION = appVersion()
+
 // The dev server's HTTPS certificate. Only the dev server uses it, and the folder is not in Git (a clean checkout — the GitHub release
 // build, a Docker build — has no ssl/), so it is read only when both files exist; otherwise the dev server falls back to plain HTTP.
-const keyPath = path.resolve(__dirname, 'ssl/key.pem')
-const certPath = path.resolve(__dirname, 'ssl/cert.pem')
+const keyPath = path.resolve(import.meta.dirname, 'ssl/key.pem')
+const certPath = path.resolve(import.meta.dirname, 'ssl/cert.pem')
 const devHttps = fs.existsSync(keyPath) && fs.existsSync(certPath)
   ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }
   : undefined
@@ -37,6 +52,7 @@ export default defineConfig({
   define: {
     __GIT_HASH__: JSON.stringify(GIT_INFO.hash),
     __GIT_DATE__: JSON.stringify(GIT_INFO.date),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   plugins: [
     react(),
@@ -75,7 +91,7 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    alias: { '@': path.resolve(__dirname, './src') },
+    alias: { '@': path.resolve(import.meta.dirname, './src') },
   },
   optimizeDeps: {
     include: ['plotly.js/dist/plotly', 'react-plotly.js'],

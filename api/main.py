@@ -93,7 +93,7 @@ async def no_cache_api(request, call_next):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": "2.0.0", "release": os.environ.get("APP_VERSION") or None}
 
 
 @app.get("/api/changelog", dependencies=_auth)

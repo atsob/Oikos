@@ -19,6 +19,7 @@ services:
       args:
         GIT_HASH: ${GIT_HASH:-unknown}
         GIT_DATE: ${GIT_DATE:-}
+        APP_VERSION: ${APP_VERSION:-}
     image: ${IMAGE_NAME:-atsob/oikos:latest}
     container_name: oikos
     network_mode: host
@@ -76,6 +77,7 @@ services:
       args:
         GIT_HASH: ${GIT_HASH:-unknown}
         GIT_DATE: ${GIT_DATE:-}
+        APP_VERSION: ${APP_VERSION:-}
     image: ${IMAGE_NAME:-atsob/oikos:latest}
     container_name: oikos_scheduler
     network_mode: host

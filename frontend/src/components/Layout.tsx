@@ -182,8 +182,8 @@ export default function Layout() {
             info@allabout360c.com
           </a>
           <p className="text-xs text-slate-500">v2.0 · React + FastAPI</p>
-          <p className="text-xs text-slate-600" title={__GIT_DATE__ ? `Built from commit ${__GIT_HASH__} on ${__GIT_DATE__}` : undefined}>
-            {__GIT_HASH__}{__GIT_DATE__ && ` · ${__GIT_DATE__}`}
+          <p className="text-xs text-slate-600" title={__GIT_DATE__ ? `${__APP_VERSION__ ? `Release ${__APP_VERSION__} — ` : ''}built from commit ${__GIT_HASH__} on ${__GIT_DATE__}` : undefined}>
+            {__APP_VERSION__ || `${__GIT_HASH__}${__GIT_DATE__ ? ` · ${__GIT_DATE__}` : ''}`}
           </p>
           {window.location.protocol === 'https:' && window.location.hostname !== 'localhost' && (
             <a
