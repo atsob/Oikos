@@ -1,5 +1,5 @@
 # ── Stage 1: Build React ──────────────────────────────────────────────────────
-FROM node:22-alpine AS frontend-build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-build
 WORKDIR /build
 # .git is excluded from the build context (see .dockerignore), so the commit hash
 # shown in the sidebar footer is passed in from the host instead of using `git`
