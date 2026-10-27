@@ -44,7 +44,17 @@ export function srTraces(levels: SrLevel[], from: string, to: string, fmt: (v: n
 type AnyTrace = Record<string, any>
 
 const REFERENCE_NAME = /^(Avg Cost|Trailing Stop|▲ Alert|▼ Alert)/
-const CHAR_PX = 6.6            // a legend entry at 12px, per character
+// Drops the moving-average traces (MA50, MA200, the adjustable MA<n>) and / or the reference lines when their chart toggle is off.
+export function filterLines<T extends AnyTrace>(traces: T[], showMa: boolean, showRef: boolean): T[] {
+  return traces.filter(t => {
+    const name = String(t.name ?? '')
+    if (!showMa && /^MA\d+$/.test(name)) return false
+    if (!showRef && REFERENCE_NAME.test(name)) return false
+    return true
+  })
+}
+
+const CHAR_PX = 6.6           // a legend entry at 12px, per character
 const SAMPLE_PX = 70           // the line sample, its padding and the column gap
 const ROW_PX = 19
 const TITLE_PX = 26

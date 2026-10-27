@@ -487,6 +487,12 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
             )
             consumed_tax_idx.update(candidates)
 
+    # The key is date | type | symbol | amount, so two entries that agree on all four — the daily "XETRA-GOLD MAINTENANCE FEE FOR 2026-10-23 / -24 / -25",
+    # all booked on 2026-10-26 for -0.02, with no symbol — would share one key, and the importer takes a key it has already seen for a
+    # re-import: only the first was imported. As with the trade fills above, the first of a kind keeps the bare key (what an earlier import of it
+    # stored) and each further one gets "#2", "#3", ...
+    _seen_keys: dict[str, int] = {}
+
     for i, p in enumerate(parsed):
         tx_type, tx_type_key = p["tx_type"], p["tx_type_key"]
         currency, fx_rate, amount = p["currency"], p["fx_rate"], p["amount"]
@@ -497,6 +503,9 @@ def _parse_cash_transactions(statement: ET.Element) -> tuple[list, list, int]:
 
         amount_eur = amount * fx_rate
         key = f"{_IB_PREFIX}CASH|{tx_date}|{tx_type}|{symbol}|{amount}"
+        _seen_keys[key] = _seen_keys.get(key, 0) + 1
+        if _seen_keys[key] > 1:
+            key = f"{key}#{_seen_keys[key]}"
 
         if tx_type_key in _CASH_INV_MAP:
             action = _CASH_INV_MAP[tx_type_key]

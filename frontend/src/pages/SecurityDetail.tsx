@@ -43,8 +43,8 @@ import type { NewsItem } from '@/pages/News'
 import { STYLE_BOX_CATEGORIES, ASSET_CLASS_OVERRIDE_OPTIONS } from '@/lib/xrayCategories'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
-import { SrSummary } from '@/components/SupportResistance'
-import { srTraces, groupLegends } from '@/lib/technical'
+import { SrSummary, LineToggles } from '@/components/SupportResistance'
+import { srTraces, groupLegends, filterLines } from '@/lib/technical'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
 
@@ -378,7 +378,9 @@ function PricesTab({ secId }: { secId: number }) {
               hovertemplate: '%{text}<extra></extra>',
             },
   ]
-  const lg = groupLegends(chartTraces, isDark, 340)
+  const [showMa, setShowMa] = usePersist('chart_ma_show', true)
+  const [showRef, setShowRef] = usePersist('chart_ref_show', true)
+  const lg = groupLegends(filterLines(chartTraces, showMa, showRef), isDark, 340)
 
   return (
     <div className="p-3 sm:p-4 space-y-4">
@@ -411,7 +413,8 @@ function PricesTab({ secId }: { secId: number }) {
         <span className="text-xs text-slate-400">plus the fixed MA50/MA200 trend lines below</span>
       </div>
 
-      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)}
+        lead={<LineToggles showMa={showMa} onMa={setShowMa} showRef={showRef} onRef={setShowRef} />} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <Plot
           data={lg.data}
@@ -2352,7 +2355,9 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
               hovertemplate: '%{text}<extra></extra>',
             },
   ]
-  const lg = groupLegends(chartTraces, isDark, 280)
+  const [showMa, setShowMa] = usePersist('chart_ma_show', true)
+  const [showRef, setShowRef] = usePersist('chart_ref_show', true)
+  const lg = groupLegends(filterLines(chartTraces, showMa, showRef), isDark, 280)
 
   return (
     <OverviewPanel
@@ -2378,7 +2383,8 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
         </div>
       }
     >
-      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
+      {!isLoading && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)}
+        lead={<LineToggles showMa={showMa} onMa={setShowMa} showRef={showRef} onRef={setShowRef} />} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <Plot
           data={lg.data}

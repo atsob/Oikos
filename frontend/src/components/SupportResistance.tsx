@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { SrLevel } from '@/lib/technical'
 import { Tooltip } from '@/components/ui'
 
@@ -7,9 +8,27 @@ const HELP = 'Support (green) and resistance (red) from the plotted period. A tu
   + 'period\'s own high and low always count. Below the last price is support, above it resistance; the three nearest on each '
   + 'side are drawn. Levels change with the period selected. A guide to where the price has turned before, not a forecast.'
 
+// "Moving averages" and "Reference lines" toggles for a security chart's header row, next to the Support / Resistance one.
+export function LineToggles({ showMa, onMa, showRef, onRef }: {
+  showMa: boolean; onMa: (v: boolean) => void; showRef: boolean; onRef: (v: boolean) => void
+}) {
+  const box = (checked: boolean, onChange: (v: boolean) => void, label: string, tip: string) => (
+    <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="rounded" />
+      <Tooltip text={tip}>{label}</Tooltip>
+    </label>
+  )
+  return (
+    <>
+      {box(showMa, onMa, 'Moving averages', 'The MA50 and MA200 lines (and the adjustable MA on the Prices tab).')}
+      {box(showRef, onRef, 'Reference lines', 'Average cost, the trailing stop and your price alerts.')}
+    </>
+  )
+}
+
 // "Support / Resistance" toggle plus the nearest level on each side, for a chart's header row.
-export function SrSummary({ levels, show, onToggle, fmt }: {
-  levels: SrLevel[]; show: boolean; onToggle: (v: boolean) => void; fmt: (v: number) => string
+export function SrSummary({ levels, show, onToggle, fmt, lead }: {
+  levels: SrLevel[]; show: boolean; onToggle: (v: boolean) => void; fmt: (v: number) => string; lead?: ReactNode
 }) {
   const nearest = (kind: SrLevel['kind']) => levels.find(l => l.kind === kind)
   const s = nearest('support'), r = nearest('resistance')
@@ -22,7 +41,8 @@ export function SrSummary({ levels, show, onToggle, fmt }: {
     </span>
   )
   return (
-    <div className="flex items-center gap-2 flex-wrap">
+    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap">
+      {lead}
       <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
         <input type="checkbox" checked={show} onChange={e => onToggle(e.target.checked)} className="rounded" />
         <Tooltip text={HELP}>Support / Resistance</Tooltip>

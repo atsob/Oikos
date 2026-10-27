@@ -2,6 +2,17 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-27
+
+### Added
+- **Show / hide moving averages and reference lines on a security's price chart.** Next to the *Support / Resistance* checkbox above the chart (Overview and Prices tabs) there are now **Moving averages** (MA50, MA200 and, on the Prices tab, the adjustable MA) and **Reference lines** (average cost, trailing stop, your price alerts) checkboxes. A hidden group also disappears from the legend; the choice is remembered and shared by both charts.
+
+### Fixed
+- **IBKR import: only one of three identical fees was imported.** The three daily *XETRA-GOLD MAINTENANCE FEE FOR 2026-10-23 / -24 / -25* lines (booked together on 2026-10-26, −0.02 each) all appeared in the preview, but only one was imported and the other two were skipped as already imported. A cash entry's duplicate check is built from its date, type, symbol and amount, and these three agree on all four (IB leaves the symbol empty), so the second and third looked like repeats of the first. The importer now numbers entries that share a key within one statement the way it already did for partial fills of the same order: the first keeps the key it always had — so the one you already imported still matches and shows *Exists* — and the others become `…#2`, `…#3`. Importing the same statement again adds the two missing fees and nothing else. Checked with the three fees plus an unrelated one: four records with distinct keys, the three fees booked as MiscExp on Xetra-Gold.
+
+### Changed
+- **Docker Hub's scan of the slimmer image: 139 → 59 findings.** `atsob/oikos:v2026-10-26.0` shows 0 critical, 6 high, 3 medium, 50 low (was 0 / 6 / 3 / 130); Oikos's own layer went from 112 findings to 24, and the image from 452 MB to 278 MB compressed. The 6 high and 3 medium are in the Debian base image (`python:3.13-slim`) and clear when that image is updated.
+
 ## 2026-10-24
 
 ### Fixed

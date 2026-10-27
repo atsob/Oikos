@@ -1497,6 +1497,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "warm up" first.
         </Note>
         <Note>
+          <b>Show / hide lines</b> — above a security's price chart (<b>Overview</b> and <b>Prices</b> tabs) three checkboxes
+          switch whole groups of lines on and off: <b>Moving averages</b> (MA50, MA200 and, on the Prices tab, the adjustable
+          MA), <b>Reference lines</b> (average cost, trailing stop and your price alerts) and <b>Support / Resistance</b>.
+          A hidden group also leaves the legend, and the choice is remembered and shared by both charts.
+        </Note>
+        <Note>
           <b>Support / Resistance</b> — the price charts on a security's <b>Overview</b> and <b>Prices</b> tabs, and a
           currency's rate charts on Currency Detail (<b>Overview</b>, in your reporting currency, and <b>Prices</b>, the
           stored rates), draw support (green) and resistance (red) levels for the period shown, with the nearest level on
@@ -1693,7 +1699,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           transaction on that security (a rebate as MiscInc) instead of a plain Cash Transaction, so it counts in the security's own P&amp;L; the cash
           side follows through the investment account's linked cash account. IB leaves symbol and ISIN empty on these lines, so the security is found
           from the name before the fee wording; a fee that matches no security (market-data charges, say) stays a Cash Transaction, and a fee already
-          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice.
+          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
           "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual
