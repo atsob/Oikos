@@ -1,5 +1,6 @@
 import { Component, useEffect, type ReactNode } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Outlet, Navigate } from 'react-router-dom'
+import { useRole } from '@/lib/auth'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { useSettings } from '@/lib/hooks'
 import { setReportingFx } from '@/lib/settings'
@@ -63,6 +64,19 @@ function ReportingFxSync() {
   return null
 }
 
+// Pages only an admin can use (api/access.py): a limited or read-only user is sent to the Cash Register.
+function AdminOnly() {
+  const { isAdmin, isLoading } = useRole()
+  if (isLoading) return null
+  return isAdmin ? <Outlet /> : <Navigate to="/register" replace />
+}
+
+function Home() {
+  const { isAdmin, isLoading } = useRole()
+  if (isLoading) return null
+  return isAdmin ? <ErrorBoundary><Dashboard /></ErrorBoundary> : <Navigate to="/register" replace />
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -73,24 +87,26 @@ export default function App() {
           <Route path="login" element={<Login />} />
           <Route element={<RequireAuth />}>
             <Route element={<Layout />}>
-              <Route index element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
-              <Route path="dashboard/:group" element={<ErrorBoundary><DashboardAccounts /></ErrorBoundary>} />
+              <Route index element={<Home />} />
               <Route path="register" element={<ErrorBoundary><Register /></ErrorBoundary>} />
-              <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
               <Route path="investments" element={<ErrorBoundary><Investments /></ErrorBoundary>} />
-              <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
-              <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
-              <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
-              <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
-              <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
-              <Route path="currencies/:id" element={<ErrorBoundary><CurrencyDetail /></ErrorBoundary>} />
-              <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
-              <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
-              <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
-              <Route path="alerts" element={<ErrorBoundary><Alerts /></ErrorBoundary>} />
-              <Route path="plan" element={<ErrorBoundary><Plan /></ErrorBoundary>} />
               <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
               <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
+              <Route element={<AdminOnly />}>
+                <Route path="dashboard/:group" element={<ErrorBoundary><DashboardAccounts /></ErrorBoundary>} />
+                <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
+                <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
+                <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
+                <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
+                <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
+                <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
+                <Route path="currencies/:id" element={<ErrorBoundary><CurrencyDetail /></ErrorBoundary>} />
+                <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
+                <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
+                <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
+                <Route path="alerts" element={<ErrorBoundary><Alerts /></ErrorBoundary>} />
+                <Route path="plan" element={<ErrorBoundary><Plan /></ErrorBoundary>} />
+              </Route>
             </Route>
           </Route>
         </Routes>

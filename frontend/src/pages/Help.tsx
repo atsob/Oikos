@@ -762,6 +762,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           its balance as a <b>Cash</b> slice instead of only ever breaking down investment holdings.
         </Note>
         <Note>
+          <b>Compare two presets.</b> On the Portfolio Analysis sub-tab, the highlighted <b>⚖️ Compare two presets</b> bar picks a second preset (say a family member's accounts, or a pension
+          wrapper against your main brokerage) and shows its Portfolio Analysis next to the first, side by side, with the same view, date and grouping controls
+          applied to both — so allocation, sectors and currency can be read across without switching back and forth. The choice is remembered; <b>Stop comparing</b> returns to one.
+        </Note>
+        <Note>
           <b>Portfolio Analysis</b> looks through held ETFs/Mutual Funds into their underlying composition (sector weights,
           asset mix, top holdings, Morningstar-style category, expense ratio, bond quality/duration — sourced
           from Yahoo Finance, no Morningstar account needed) and blends it with your direct stock/bond holdings:
@@ -1202,6 +1207,29 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           when any of its 5 required inputs is missing, since unlike the F-Score's additive points it has no partial
           credit. This is the original formula for public manufacturing companies; treat it with more caution for
           financials, utilities, and other asset-light or heavily-regulated sectors it wasn't designed around.
+        </Note>
+
+        <H3>🧾 Tax Report and entity-level tax</H3>
+        <Note>
+          <b>Account Preset for the whole Investment Tax report.</b> The preset bar above its sub-tabs limits Capital Gains, Interest &amp; Dividend Income, Crypto, Tax-Loss Harvesting
+          and the printable export to a saved set of accounts — one person's accounts, a company, a trust — instead of everything. It uses the <b>same presets as Net Worth</b> (interest and dividends come from
+          bank and brokerage accounts alike); it remembers its own selection, separate from the other reports, and a banner reminds you when the figures cover only part of your accounts.
+        </Note>
+        <Note>
+          <b>Tax Report</b> (the first Investment Tax sub-tab) gathers the year's figures in the order a tax return asks for them — it prepares the return, it is not the return itself: securities capital gains by tax category (crypto excluded), cryptocurrency,
+          dividends, interest including bank interest, and an estimate of the tax. Each line carries the <b>form code</b> where it goes. The codes follow your <b>Country of Usage</b>
+          (Tools → App Settings): Greece has a built-in starting set (form E1: 743, 865–866, 781–782, 869–870 for losses…); for any other country the codes start empty. <b>Every code can be changed, Greece's included</b> — click
+          the code (✎) and type yours; an edited code turns blue and <b>↺</b> brings back the built-in one. Changes are saved for that country and shown whenever it is the Country of Usage; nothing is borrowed from another country. A category that has both taxable and tax-exempt dividends or interest in the year (bond interest, where some bonds are exempt and others not) is shown as <b>two lines</b> — <i>(taxable)</i> and <i>(tax-exempt)</i> — each with its own code and its own withheld-tax line. <b>Summary by code</b> at the top adds the figures up per code (gains and losses sharing a code net off) and opens into the accounts each total comes from. The <b>Withheld</b> column shows the tax already withheld at source on dividends and interest, and a <i>Tax withheld at source</i> section lists it as figures of their own, each with a code you can set (they start empty), to credit against the tax due. The crypto figures use what is set on the Crypto tab — including <i>Rewards are income when received</i>, the exemption, the rate, the loss start year and the accounts left out — so the two tabs agree; with rewards not taxed on receipt the rewards line is information only and stays out of the tax and the summary. Lines shown <b>for information only</b> (these, and the crypto losses still to carry forward) are shaded amber with an <i>Information only</i> badge; the estimated-tax lines carry an <i>Estimate</i> badge. <b>Export CSV</b> writes everything on the screen in one file: a row per part — the summary by code, each code by account, every figure, and every transaction behind it — with code, account, security, date, proceeds, cost, tax withheld, amount and a status column marking information-only and estimate lines. <b>Click a line</b> to see what it is made of: the accounts, then (click an account) its securities, then (click a security) the transactions — sales with their proceeds, cost and result, dividends and interest with the tax withheld — the same detail as the Capital Gains and Interest &amp; Dividend Income tabs. The estimated-tax lines and the "spent buying crypto" and "losses to carry forward" lines have no transactions of their own. Export PDF prints every line opened.
+        </Note>
+
+        <H3>🏛️ Private Funds</H3>
+        <P>Private equity, venture, real-estate and other funds that call capital in stages — tracked on their own, outside Net Worth.</P>
+        <Note>
+          The <b>Private Funds</b> tab of Reports lists each fund with what you committed, what has been <b>paid in</b>, what is still <b>unfunded</b>, its latest <b>NAV</b>, what has been <b>distributed</b>,
+          and the usual measures: <b>DPI</b> (distributions ÷ paid-in), <b>RVPI</b> (NAV ÷ paid-in), <b>TVPI</b> (their sum) and the <b>IRR</b> of the dated cash flows. Open a fund to add its events:
+          capital calls, distributions and NAV statements, each with a date and amount; a call dated in the future is an <b>expected call</b>, counted as unfunded until it happens.
+          An <b>alert</b> (type <i>Fund capital call</i>, in the Events group, 14 days ahead) warns before an expected call falls due. Funds are not part of Net Worth or the investment reports — they are
+          valued on the NAV you enter, not on a market price.
         </Note>
 
         <H3>🏖️ Financial Planning</H3>
@@ -1903,6 +1931,22 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Tips &amp; Interface</H2>
+        <H3>Users and access</H3>
+        <P>
+          Every person who logs in has a <b>role</b>, set by an admin in <b>Account</b> (bottom of the sidebar → Users and access):
+        </P>
+        <Note>
+          <b>Admin</b> — everything, on every account (the users that existed before roles were added are admins). <b>Limited</b> — reads and changes only the accounts an admin has mapped to the user.
+          <b>Read-only</b> — reads those accounts and changes nothing. The accounts of a Limited or Read-only user are picked from a list, or added from a saved Account Preset; an account linked to a
+          mapped one (a brokerage's cash account) comes with it. To add a user choose the role and the accounts, or edit a user later to change either (or set a new password). Changing a role logs the user out,
+          the last admin cannot be demoted or removed, and nobody can remove their own account.
+        </Note>
+        <Note>
+          A Limited or Read-only user sees only the <b>Cash Register</b> and <b>Investments</b> (their accounts, nothing else — the account list, holdings and transactions are narrowed to what is mapped),
+          <b>Help</b> and the <b>Release Notes</b>; the Dashboard, Reports, Static Data, Importers, Tools and the rest are admin-only. For a Read-only user the New / Transfer / Clear / Reconcile / Move / Delete controls and the editing of
+          transactions and holdings are hidden. The limits are enforced by the server, not just hidden — a request for another account, or a change by a Read-only user, is refused with a short notice.
+          Everyone can change their own password under Account.
+        </Note>
         <H3>Sidebar</H3>
         <P>
           Click the panel icon at the top of the sidebar (next to "Oikos") to collapse it to icon-only and

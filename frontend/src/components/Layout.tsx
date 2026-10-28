@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
 import { PhoneTitleContext } from '@/lib/phoneTitle'
+import { useRole } from '@/lib/auth'
 import { useCardTables } from '@/lib/useCardTables'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
@@ -55,6 +56,16 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const [phoneTitle, setPhoneTitle] = useState('')
+  const { isAdmin } = useRole()
+  const [refused, setRefused] = useState<string | null>(null)
+  // A limited or read-only user gets the Cash Register and Investments of their accounts, Help and the Release Notes; the rest is admin-only (api/access.py).
+  const menu = isAdmin ? nav : nav.map(g => g.filter(n => ['/register', '/investments', '/help', '/releases'].includes(n.to))).filter(g => g.length > 0)
+  React.useEffect(() => {
+    let timer: number | undefined
+    const onRefused = (e: Event) => { setRefused(String((e as CustomEvent).detail)); window.clearTimeout(timer); timer = window.setTimeout(() => setRefused(null), 6000) }
+    window.addEventListener('oikos-forbidden', onRefused)
+    return () => { window.removeEventListener('oikos-forbidden', onRefused); window.clearTimeout(timer) }
+  }, [])
   useCardTables()
   const location = useLocation()
   const navigate = useNavigate()
@@ -62,7 +73,7 @@ export default function Layout() {
   // Close the mobile drawer whenever the route changes (e.g. after tapping a nav link).
   React.useEffect(() => { setMobileOpen(false); setPhoneTitle('') }, [location.pathname])
   // The app bar's title: what the page's header says, else the menu entry for this address.
-  const barTitle = phoneTitle || nav.flat().find(n => n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to))?.label || 'Oikos'
+  const barTitle = phoneTitle || menu.flat().find(n => 'exact' in n && n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to))?.label || 'Oikos'
 
   const handleLogout = async () => {
     try { await logout() } catch { /* revoke server-side if reachable; proceed regardless */ }
@@ -124,7 +135,7 @@ export default function Layout() {
           </button>
         )}
         <nav className="flex-1 px-2 py-3 space-y-0.5">
-          {nav.map((group, gi) => (
+          {menu.map((group, gi) => (
             <div key={gi} className={cn('space-y-0.5', gi > 0 && 'mt-2 pt-2 border-t border-slate-700/70')}>
               {group.map(({ to, label, icon: Icon, ...rest }) => (
                 <NavLink
@@ -199,6 +210,12 @@ export default function Layout() {
 
       {/* Main content */}
       <main className="flex-1 min-w-0 overflow-y-auto overscroll-contain bg-slate-50 pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        {refused && (
+          <div role="alert" className="sticky top-0 z-30 flex items-start justify-between gap-3 bg-red-50 border-b border-red-200 text-red-700 text-sm px-4 py-2">
+            <span>{refused}</span>
+            <button className="text-red-400 hover:text-red-600" onClick={() => setRefused(null)} aria-label="Dismiss">✕</button>
+          </div>
+        )}
         <PhoneTitleContext.Provider value={setPhoneTitle}>
           <Outlet />
         </PhoneTitleContext.Provider>

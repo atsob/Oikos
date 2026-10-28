@@ -8,6 +8,7 @@ import {
 import { Input, Button, useEscapeKey, AccountOptions, AmountCalculator } from '@/components/ui'
 import { fmtEur, cn, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getSettings } from '@/lib/settings'
+import { useRole } from '@/lib/auth'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { Plus, X, Save, ArrowLeftRight, Copy } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -699,6 +700,7 @@ export function useNoOpRecurring() {
 // copy of this modal + save logic that had already drifted, e.g. missing the inline
 // "add new payee" feature and the tax_amount field on the investment-transaction side).
 export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDeleted?: () => void }) {
+  const { readOnly } = useRole()  // a read-only user never gets the editor (the server refuses the change too)
   const [modalOpen, setModalOpen] = useState(false)
   const [form, setForm] = useState<TxForm | null>(null)
   const [splits, setSplits] = useState<SplitRow[]>([])
@@ -721,15 +723,17 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
   }
 
   const openNew = useCallback((accountId: number) => {
+    if (readOnly) return
     setForm(emptyForm(accountId))
     setSplits([{ categories_id: '', amount: '', memo: '' }])
     setUseSplits(false)
     setSaveError(null)
     resetExtras()
     setModalOpen(true)
-  }, [])
+  }, [readOnly])
 
   const openEdit = useCallback(async (row: Record<string, unknown>, accountId: number) => {
+    if (readOnly) return
     const txSplits = await getSplits(Number(row.id))
     setForm({
       id: Number(row.id),
@@ -758,7 +762,7 @@ export function useTxModal({ onSaved, onDeleted }: { onSaved: () => void; onDele
     setSaveError(null)
     resetExtras()
     setModalOpen(true)
-  }, [])
+  }, [readOnly])
 
   const close = useCallback(() => setModalOpen(false), [])
 

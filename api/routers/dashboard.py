@@ -1,5 +1,5 @@
 """Dashboard API endpoints: net worth, accounts, summaries, drafts."""
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from typing import Optional
 import math
 import threading
@@ -176,8 +176,8 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
 
 
 @router.get("/accounts")
-def get_accounts(include_future: bool = Query(False)):
-    """All accounts with balance, currency and EUR equivalent.
+def get_accounts(include_future: bool = Query(False), request: Request = None):
+    """All accounts with balance, currency and EUR equivalent — for a restricted user, only their accounts.
 
     include_future=False (default): cash balances exclude transactions dated
     after today (i.e. show today's actual balance, not what's already scheduled).
@@ -266,6 +266,11 @@ def get_accounts(include_future: bool = Query(False)):
             LEFT JOIN holdings_value hv ON hv.Accounts_Id = a.Accounts_Id
             ORDER BY a.Is_Active DESC, a.Accounts_Type, a.Accounts_Name
         """, conn)
+    if request is not None:
+        from api.access import scope_ids
+        mine = scope_ids(request)
+        if mine is not None:
+            df = df[df["id"].isin(mine)]
     return _df_to_list(df)
 
 

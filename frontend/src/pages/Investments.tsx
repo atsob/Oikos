@@ -20,6 +20,7 @@ import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInv
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { usePhone } from '@/lib/useMedia'
+import { useRole } from '@/lib/auth'
 import { MoreMenu, Fab } from '@/components/mobile'
 import { TxCards, InvCards, HoldingCards } from '@/components/TxCards'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -116,6 +117,7 @@ type HoldingEdit = { quantity: string; staking: boolean }
 
 function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown>[]; onSaved: () => void }) {
   const navigate = useNavigate()
+  const { readOnly } = useRole()
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -258,14 +260,14 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
                   </td>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.security_type ?? '')}</td>
                   <td className="py-1 pr-3">
-                    <input type="number" step="any"
+                    <input type="number" step="any" disabled={readOnly}
                       className="w-full rounded border border-slate-300 px-2 py-0.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={edit.quantity}
                       onChange={e => setField(id, row, 'quantity', e.target.value)}
                     />
                   </td>
                   <td className="py-1 pr-3 text-center">
-                    <input type="checkbox" className="rounded"
+                    <input type="checkbox" className="rounded" disabled={readOnly}
                       checked={edit.staking}
                       onChange={e => setField(id, row, 'staking', e.target.checked)}
                     />
@@ -291,12 +293,12 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
         <button onClick={copyHoldingsToExcel} className={`no-print flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copiedHoldings ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
           {copiedHoldings ? '✓ Copied!' : '📋 Copy to Excel'}
         </button>
-        <div className="flex gap-2">
+        {!readOnly && <div className="flex gap-2">
           <Button variant="secondary" size="sm" disabled={changedIds.length === 0} onClick={() => { setEdits({}); setMsg(null) }}>Reset</Button>
           <Button size="sm" disabled={saving || changedIds.length === 0} onClick={handleSave}>
             <Save size={14} /> {saving ? 'Saving…' : `Save${changedIds.length > 0 ? ` (${changedIds.length})` : ''}`}
           </Button>
-        </div>
+        </div>}
       </div>
     </div>
   )
@@ -306,6 +308,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {
   const navigate = useNavigate()
+  const { readOnly, isAdmin } = useRole()  // read-only: no editing controls; limited/read-only: no balance sync (admin job)
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const [tab, setTab] = usePersist<'holdings' | 'transactions' | 'cash'>('investments_tab', 'holdings')
@@ -635,6 +638,7 @@ export default function Investments() {
   }
 
   const openEdit = useCallback((row: Record<string, unknown>) => {
+    if (readOnly) return
     const acc = (accounts as Record<string, unknown>[]).find(a => String(a.name) === String(row.account))
     const sec = (securities as Record<string, unknown>[]).find(s => String(s.ticker) === String(row.ticker))
     const accId = acc ? String(acc.id) : ''
@@ -664,7 +668,7 @@ export default function Investments() {
         setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
       }).catch(() => {})
     }
-  }, [accounts, securities])
+  }, [accounts, securities, readOnly])
 
   // Arriving here via a "?investmentId=123" deep link (e.g. Reports → Inv.
   // Portfolio → Costs by Broker, double-click on a transaction row) — open
@@ -688,6 +692,7 @@ export default function Investments() {
   }, [searchParams, setSearchParams, accounts, securities])
 
   const openNewInv = () => {
+    if (readOnly) return
     setEditId(null)
     setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
     setSaveError(null); setModalOpen(true)
@@ -726,13 +731,15 @@ export default function Investments() {
                 <div className="w-px h-5 bg-slate-200" />
               </>
             )}
+            {!readOnly && <>
             <Button size="sm" className="hidden sm:inline-flex" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined} onClick={openNewInv}>
               <Plus size={14} /> New Transaction
             </Button>
             <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => setTransferOpen(true)}>
               <ArrowLeftRight size={14} /> Transfer
             </Button>
-            <div className="hidden sm:block">
+            </>}
+            {isAdmin && <div className="hidden sm:block">
               <SyncBalancesButton
                 options={[
                   { label: '📈 Investments', target: 'investment' },
@@ -741,15 +748,18 @@ export default function Investments() {
                 ]}
                 onSync={syncInv}
               />
-            </div>
-            <div className="sm:hidden">
+            </div>}
+            {isAdmin && <div className="sm:hidden">
               <MoreMenu items={[
                 { label: 'Transfer between accounts…', onClick: () => setTransferOpen(true) },
                 { label: 'Sync investments', onClick: () => { void syncInv('investment') } },
                 { label: 'Sync pension', onClick: () => { void syncInv('pension') } },
                 { label: 'Sync holdings', onClick: () => { void syncInv('holdings') } },
               ]} />
-            </div>
+            </div>}
+            {!isAdmin && !readOnly && <div className="sm:hidden">
+              <MoreMenu items={[{ label: 'Transfer between accounts…', onClick: () => setTransferOpen(true) }]} />
+            </div>}
           </div>
         }
       />
@@ -828,9 +838,9 @@ export default function Investments() {
                 </label>
               </div>
               </div>
-              <Button size="sm" className="hidden sm:inline-flex" onClick={() => cashTx.openNew(accountId!)} disabled={!accountId}>
+              {!readOnly && <Button size="sm" className="hidden sm:inline-flex" onClick={() => cashTx.openNew(accountId!)} disabled={!accountId}>
                 <Plus size={14} /> New
-              </Button>
+              </Button>}
             </>
           )}
 
@@ -908,8 +918,8 @@ export default function Investments() {
                       {selectedCashIds.length > 0 && (
                         <>
                           <span className="text-xs text-slate-500 whitespace-nowrap">{selectedCashIds.length} selected</span>
-                          <Button variant="secondary" size="sm" onClick={() => setCashBatchMoveOpen(true)}>Move to Account…</Button>
-                          <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>
+                          {!readOnly && <Button variant="secondary" size="sm" onClick={() => setCashBatchMoveOpen(true)}>Move to Account…</Button>}
+                          {!readOnly && <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>}
                         </>
                       )}
                       {cashGridFilter.hasFilters && (
@@ -979,9 +989,9 @@ export default function Investments() {
                   {selectedTxIds.length > 0 && (
                     <>
                       <span className="text-xs text-slate-500 whitespace-nowrap">{selectedTxIds.length} selected</span>
-                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>
-                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>
-                      <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
+                      {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>}
+                      {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>}
+                      {!readOnly && <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>}
                     </>
                   )}
                   <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
@@ -1016,7 +1026,7 @@ export default function Investments() {
         )}
       </div>
 
-      <Fab label={tab === 'cash' ? 'New cash transaction' : 'New transaction'} disabled={!accountId} onClick={() => (tab === 'cash' ? cashTx.openNew(accountId!) : openNewInv())} />
+      {!readOnly && <Fab label={tab === 'cash' ? 'New cash transaction' : 'New transaction'} disabled={!accountId} onClick={() => (tab === 'cash' ? cashTx.openNew(accountId!) : openNewInv())} />}
 
       {cashTx.modalOpen && cashTx.form && (
         <TxModal

@@ -24,6 +24,10 @@ api.interceptors.response.use(
       queryClient.clear()
       if (window.location.pathname !== '/login') window.location.href = '/login'
     }
+    // A change refused for the user's role (read-only, or an account that is not theirs): the Layout shows a notice.
+    if (err.response?.status === 403 && String(err.config?.method ?? 'get') !== 'get') {
+      window.dispatchEvent(new CustomEvent('oikos-forbidden', { detail: String(err.response?.data?.detail ?? 'Not permitted for your role') }))
+    }
     return Promise.reject(err)
   },
 )
@@ -35,17 +39,20 @@ export const login = (username: string, password: string): Promise<{ username: s
 export const logout = (): Promise<{ ok: boolean }> =>
   api.post('/auth/logout').then(r => r.data)
 
-export const getMe = (): Promise<{ username: string }> =>
+export const getMe = (): Promise<{ username: string; role: 'admin' | 'limited' | 'readonly'; accounts: number[] | null }> =>
   api.get('/auth/me').then(r => r.data)
 
 export const changePassword = (currentPassword: string, newPassword: string): Promise<{ ok: boolean }> =>
   api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }).then(r => r.data)
 
-export const getUsers = (): Promise<{ users_id: number; username: string; created_at: string }[]> =>
+export const getUsers = (): Promise<{ users_id: number; username: string; created_at: string; role: 'admin' | 'limited' | 'readonly'; account_ids: number[] }[]> =>
   api.get('/auth/users').then(r => r.data)
 
-export const addUser = (username: string, password: string): Promise<{ users_id: number; username: string }> =>
-  api.post('/auth/users', { username, password }).then(r => r.data)
+export const addUser = (username: string, password: string, role: 'admin' | 'limited' | 'readonly' = 'admin', accountIds: number[] = []): Promise<{ users_id: number; username: string }> =>
+  api.post('/auth/users', { username, password, role, account_ids: accountIds }).then(r => r.data)
+
+export const updateUserAccess = (usersId: number, body: { role: 'admin' | 'limited' | 'readonly'; account_ids: number[]; new_password?: string }): Promise<{ ok: boolean }> =>
+  api.put(`/auth/users/${usersId}`, body).then(r => r.data)
 
 export const deleteUser = (usersId: number): Promise<{ ok: boolean }> =>
   api.delete(`/auth/users/${usersId}`).then(r => r.data)
@@ -209,8 +216,8 @@ export const getCategoryBreakdown = (startDate: string, endDate: string) =>
 export const getBudgets = (year: number, month?: number) =>
   api.get('/reports/budgets', { params: { year, ...(month ? { month } : {}) } }).then(r => r.data)
 
-export const getCapitalGains = (year: number, method: string = 'WAC') =>
-  api.get('/reports/capital-gains', { params: { year, method } }).then(r => r.data)
+export const getCapitalGains = (year: number, method: string = 'WAC', accountIds?: number[]) =>
+  api.get('/reports/capital-gains', { params: { year, method, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getDividends = (startDate: string, endDate: string) =>
   api.get('/reports/dividends', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data)
@@ -1129,8 +1136,8 @@ export const getBenchmarkCandidates = (types?: string[], excludeId?: number) =>
     exclude_id: excludeId ?? undefined,
   } }).then(r => r.data)
 
-export const getTaxLossHarvesting = () =>
-  api.get('/reports/tax-loss-harvesting').then(r => r.data)
+export const getTaxLossHarvesting = (accountIds?: number[]) =>
+  api.get('/reports/tax-loss-harvesting', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export interface TaxLossSummary {
   year: number; method: string
@@ -1140,15 +1147,15 @@ export interface TaxLossSummary {
 }
 // `crypto` carries the Crypto tab's own settings, so the crypto figures here are the same ones that tab shows.
 export interface CryptoSettings { rewardsIncome?: boolean | null; exemption?: number; lossesFrom?: number; rate?: number | null; excluded?: number[] }
-export const getTaxLossHarvestingSummary = (year: number, method: string, crypto: CryptoSettings = {}): Promise<TaxLossSummary> =>
+export const getTaxLossHarvestingSummary = (year: number, method: string, crypto: CryptoSettings = {}, accountIds?: number[]): Promise<TaxLossSummary> =>
   api.get('/reports/tax-loss-harvesting/summary', { params: {
-    year, method, rewards_income: crypto.rewardsIncome ?? undefined, exemption: crypto.exemption || undefined, losses_from: crypto.lossesFrom || undefined,
+    year, method, account_ids: accountIds?.join(',') || undefined, rewards_income: crypto.rewardsIncome ?? undefined, exemption: crypto.exemption || undefined, losses_from: crypto.lossesFrom || undefined,
     crypto_rate: crypto.rate ?? undefined, exclude_account_ids: crypto.excluded?.join(',') || undefined } }).then(r => r.data)
 
-export const getDividendIncomeTax = (year: number) =>
-  api.get('/reports/dividend-income-tax', { params: { year } }).then(r => r.data)
-export const getBankInterestTax = (year: number) =>
-  api.get('/reports/bank-interest-tax', { params: { year } }).then(r => r.data)
+export const getDividendIncomeTax = (year: number, accountIds?: number[]) =>
+  api.get('/reports/dividend-income-tax', { params: { year, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
+export const getBankInterestTax = (year: number, accountIds?: number[]) =>
+  api.get('/reports/bank-interest-tax', { params: { year, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getPriceChanges = () =>
   api.get('/reports/price-changes').then(r => r.data)
@@ -1367,3 +1374,38 @@ export interface CryptoTaxResult {
 }
 export const getCryptoTax = (p: { year: number; method: string; exemption: number; rate?: number; accountIds?: number[]; lossesFrom?: number; rewardsIncome?: boolean }): Promise<CryptoTaxResult> =>
   api.get('/reports/crypto-tax', { params: { year: p.year, method: p.method, exemption: p.exemption, rate: p.rate, account_ids: p.accountIds?.join(',') || undefined, losses_from: p.lossesFrom || undefined, rewards_income: p.rewardsIncome } }).then(r => r.data)
+
+// Tax return summary (Reports -> Investment Tax -> Tax Return)
+export interface TaxReturnLine { account: string; security: string; date: string; label: string; amount: number; proceeds: number | null; cost: number | null; withheld: number | null }
+export interface TaxReturnResult {
+  year: number; method: string; country: { code: string; name: string; form: string; has_profile: boolean }
+  sections: { title: string; rows: { key: string; label: string; amount: number; detail: string; code: string; default: string; custom: boolean; lines: TaxReturnLine[]; withheld: number | null; info: boolean; kind: string | null }[] }[]
+  codes_set: Record<string, string>; notes: string[]
+}
+export interface TaxReturnCrypto { rewardsIncome?: boolean; exemption?: number; rate?: number; lossesFrom?: number; exclude?: number[] }
+export const getTaxReturn = (year: number, method: string, accountIds?: number[], crypto?: TaxReturnCrypto): Promise<TaxReturnResult> =>
+  api.get('/reports/tax-return', { params: { year, method, account_ids: accountIds?.join(',') || undefined, rewards_income: crypto?.rewardsIncome, crypto_exemption: crypto?.exemption || undefined,
+    crypto_rate: crypto?.rate, crypto_losses_from: crypto?.lossesFrom || undefined, crypto_exclude: crypto?.exclude?.length ? crypto.exclude.join(',') : undefined } }).then(r => r.data)
+export const putTaxReturnCodes = (codes: Record<string, string>) => api.put('/reports/tax-return/codes', { codes }).then(r => r.data)
+
+// Private funds (Reports -> Private Funds)
+export interface PrivateFundIn { name: string; manager?: string | null; fund_type?: string | null; vintage_year?: number | null; currency?: string | null; commitment: number; accounts_id?: number | null; status?: string | null; notes?: string | null }
+export interface PrivateFundMetrics {
+  paid_in: number; distributions: number; nav: number; nav_date: string | null; unfunded: number; called_pct: number | null; dpi: number | null; rvpi: number | null; tvpi: number | null; gain: number; irr_pct: number | null
+  next_call: { date: string; amount: number; days: number } | null; upcoming_calls: { id: number; date: string; amount: number; days: number; note: string | null }[]
+}
+export interface PrivateFundRow extends PrivateFundMetrics { id: number; name: string; manager: string | null; fund_type: string; vintage_year: number | null; currency: string; commitment: number; accounts_id: number | null; status: string; notes: string | null; events: number; rate_eur: number }
+export interface PrivateFundDetail extends PrivateFundMetrics { id: number; name: string; manager: string | null; fund_type: string; vintage_year: number | null; currency: string; commitment: number; accounts_id: number | null; status: string; notes: string | null
+  events: { id: number; funds_id: number; date: string; type: string; amount: number; note: string | null }[] }
+export interface PrivateFundsList {
+  funds: PrivateFundRow[]
+  summary: { commitment: number; paid_in: number; unfunded: number; nav: number; distributions: number; tvpi: number | null; dpi: number | null; irr_pct: number | null }
+  upcoming: { id: number; date: string; amount: number; days: number; note: string | null; fund: string; currency: string; funds_id: number }[]
+}
+export const getPrivateFunds = (): Promise<PrivateFundsList> => api.get('/private-funds').then(r => r.data)
+export const getPrivateFund = (id: number): Promise<PrivateFundDetail> => api.get(`/private-funds/${id}`).then(r => r.data)
+export const savePrivateFund = (id: number | null, body: PrivateFundIn): Promise<PrivateFundDetail> => (id == null ? api.post('/private-funds', body) : api.put(`/private-funds/${id}`, body)).then(r => r.data)
+export const deletePrivateFund = (id: number) => api.delete(`/private-funds/${id}`).then(r => r.data)
+export const addPrivateFundEvent = (id: number, body: { date: string; type: string; amount: number; note?: string | null }): Promise<PrivateFundDetail> => api.post(`/private-funds/${id}/events`, body).then(r => r.data)
+export const updatePrivateFundEvent = (id: number, eventId: number, body: { date: string; type: string; amount: number; note?: string | null }): Promise<PrivateFundDetail> => api.put(`/private-funds/${id}/events/${eventId}`, body).then(r => r.data)
+export const deletePrivateFundEvent = (id: number, eventId: number): Promise<PrivateFundDetail> => api.delete(`/private-funds/${id}/events/${eventId}`).then(r => r.data)

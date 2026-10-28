@@ -1,10 +1,11 @@
 """Investments and Holdings API endpoints."""
-from fastapi import APIRouter, Query, Body
+from fastapi import APIRouter, Query, Body, Request
 from typing import Optional, List, Dict, Any
 import math
 import pandas as pd
 from database.connection import get_db
 from api.routers.register import _refresh_balance
+from api.access import scope_clause
 
 router = APIRouter()
 
@@ -123,6 +124,7 @@ def get_investments(
     sort_dir: str = Query("desc"),
     limit: int = Query(500),
     offset: int = Query(0),
+    request: Request = None,
 ):
     # `id` deep-links a single row (e.g. Costs by Broker's transaction drill-down)
     # regardless of date range — widen from_date/to_date so it can't be filtered
@@ -130,7 +132,7 @@ def get_investments(
     if id is not None:
         from_date, to_date = "1900-01-01", "2099-12-31"
     id_clause = "AND i.Investments_Id = %(id)s" if id is not None else ""
-    acc_clause = "AND i.Accounts_Id = %(acc)s" if account_id else ""
+    acc_clause = ("AND i.Accounts_Id = %(acc)s" if account_id else "") + (scope_clause(request, "i.Accounts_Id") if request is not None else "")
     action_clause = "AND i.Action = %(action)s" if action else ""
     ticker_clause = "AND LOWER(s.Ticker) LIKE %(ticker)s" if ticker else ""
     search_clause = "AND (s.securities_name ILIKE %(search)s OR s.ticker ILIKE %(search)s OR i.description ILIKE %(search)s)" if search else ""
@@ -642,8 +644,8 @@ def staking_reinvest(entries: List[Dict[str, Any]] = Body(...)):
 
 
 @router.get("/holdings")
-def get_holdings(account_id: Optional[int] = Query(None), include_closed: bool = Query(False)):
-    acc_clause = "AND h.Accounts_Id = %(acc)s" if account_id else ""
+def get_holdings(account_id: Optional[int] = Query(None), include_closed: bool = Query(False), request: Request = None):
+    acc_clause = ("AND h.Accounts_Id = %(acc)s" if account_id else "") + (scope_clause(request, "h.Accounts_Id") if request is not None else "")
     params: dict = {"include_closed": include_closed}
     if account_id:
         params["acc"] = account_id

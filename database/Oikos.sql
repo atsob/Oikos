@@ -861,6 +861,14 @@ CREATE TABLE IF NOT EXISTS Users (
     Created_At    TIMESTAMPTZ DEFAULT now()
 );
 
+-- Roles: 'admin' (everything), 'limited' (read and write on the accounts mapped to the user below) or 'readonly' (read only on those accounts) — api/access.py.
+ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin';
+CREATE TABLE IF NOT EXISTS User_Account_Access (
+    Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
+    Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+    PRIMARY KEY (Users_Id, Accounts_Id)
+);
+
 -- Sessions.Token_Hash stores a SHA-256 hash of the session cookie's random token,
 -- never the raw token itself — a leaked DB backup shouldn't hand over live sessions.
 CREATE TABLE IF NOT EXISTS Sessions (
@@ -1457,6 +1465,31 @@ CREATE TABLE IF NOT EXISTS Plan_Items (
     Created_At    TIMESTAMP DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open';
+
+-- Private funds (Reports -> Private Funds): a commitment and its dated calls, distributions and NAVs — see database/private_funds.py.
+CREATE TABLE IF NOT EXISTS Private_Funds (
+    Private_Funds_Id SERIAL PRIMARY KEY,
+    Name          TEXT NOT NULL,
+    Manager       TEXT,
+    Fund_Type     TEXT NOT NULL DEFAULT 'Private Equity',
+    Vintage_Year  INTEGER,
+    Currency      VARCHAR(3) NOT NULL DEFAULT 'EUR',
+    Commitment    NUMERIC(18,2) NOT NULL DEFAULT 0,
+    Accounts_Id   INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL,
+    Status        TEXT NOT NULL DEFAULT 'active',
+    Notes         TEXT,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS Private_Fund_Events (
+    Private_Fund_Events_Id SERIAL PRIMARY KEY,
+    Private_Funds_Id INTEGER NOT NULL REFERENCES Private_Funds(Private_Funds_Id) ON DELETE CASCADE,
+    Event_Date    DATE NOT NULL,
+    Event_Type    TEXT NOT NULL,
+    Amount        NUMERIC(18,2) NOT NULL,
+    Note          TEXT,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_private_fund_events_fund ON Private_Fund_Events (Private_Funds_Id, Event_Date);
 
 -- The Retirement Planner (Reports -> Financial Planning): saved plans / scenarios. Params is the whole plan as JSON (database/retirement.py);
 -- one plan is the base the others are compared with.

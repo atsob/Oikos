@@ -818,13 +818,13 @@ def get_user_by_username(username: str) -> dict | None:
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT Users_Id, Username, Password_Hash FROM Users WHERE Username = %s",
+            "SELECT Users_Id, Username, Password_Hash, Role FROM Users WHERE Username = %s",
             (username,),
         )
         row = cur.fetchone()
         if not row:
             return None
-        return {"users_id": row[0], "username": row[1], "password_hash": row[2]}
+        return {"users_id": row[0], "username": row[1], "password_hash": row[2], "role": row[3] or "admin"}
 
 
 def create_session(users_id: int, token_hash: str, expires_at) -> None:
@@ -842,7 +842,7 @@ def get_session(token_hash: str) -> dict | None:
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT u.Users_Id, u.Username
+            SELECT u.Users_Id, u.Username, u.Role
             FROM Sessions s
             JOIN Users u ON u.Users_Id = s.Users_Id
             WHERE s.Token_Hash = %s AND s.Expires_At > now()
@@ -850,7 +850,12 @@ def get_session(token_hash: str) -> dict | None:
         row = cur.fetchone()
         if not row:
             return None
-        return {"users_id": row[0], "username": row[1]}
+        role = row[2] or "admin"
+        accounts = None                       # None = every account (an admin)
+        if role != "admin":
+            cur.execute("SELECT Accounts_Id FROM User_Account_Access WHERE Users_Id = %s ORDER BY Accounts_Id", (row[0],))
+            accounts = [r[0] for r in cur.fetchall()]
+        return {"users_id": row[0], "username": row[1], "role": role, "accounts": accounts}
 
 
 def delete_session(token_hash: str) -> None:
@@ -879,21 +884,57 @@ def list_users() -> list[dict]:
     """All accounts (no password hashes), oldest first."""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Users_Id, Username, Created_At FROM Users ORDER BY Users_Id")
-        return [{"users_id": r[0], "username": r[1], "created_at": r[2]} for r in cur.fetchall()]
+        cur.execute("SELECT Users_Id, Username, Created_At, Role FROM Users ORDER BY Users_Id")
+        users = [{"users_id": r[0], "username": r[1], "created_at": r[2], "role": r[3] or "admin", "account_ids": []} for r in cur.fetchall()]
+        cur.execute("SELECT Users_Id, Accounts_Id FROM User_Account_Access ORDER BY Accounts_Id")
+        by_user: dict[int, list[int]] = {}
+        for uid, aid in cur.fetchall():
+            by_user.setdefault(uid, []).append(aid)
+        for u in users:
+            u["account_ids"] = by_user.get(u["users_id"], []) if u["role"] != "admin" else []
+        return users
 
 
-def create_user(username: str, password_hash: str) -> int:
-    """Add a new login account. Raises ValueError if the username is already taken."""
+ROLES = ("admin", "limited", "readonly")
+
+
+def create_user(username: str, password_hash: str, role: str = "admin", account_ids: list[int] | None = None) -> int:
+    """Add a new login account. Raises ValueError if the username is already taken or the role is unknown."""
+    if role not in ROLES:
+        raise ValueError(f"Unknown role '{role}'")
     if get_user_by_username(username):
         raise ValueError(f"Username '{username}' is already taken")
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO Users (Username, Password_Hash) VALUES (%s, %s) RETURNING Users_Id",
-            (username, password_hash),
+            "INSERT INTO Users (Username, Password_Hash, Role) VALUES (%s, %s, %s) RETURNING Users_Id",
+            (username, password_hash, role),
         )
-        return cur.fetchone()[0]
+        uid = cur.fetchone()[0]
+        if role != "admin" and account_ids:
+            cur.executemany("INSERT INTO User_Account_Access (Users_Id, Accounts_Id) VALUES (%s, %s) ON CONFLICT DO NOTHING", [(uid, int(a)) for a in account_ids])
+        return uid
+
+
+def set_user_access(users_id: int, role: str, account_ids: list[int]) -> None:
+    """Set a user's role and the accounts it covers (an admin covers every account, so none are stored). Raises ValueError for an unknown role or
+    when it would leave no admin."""
+    if role not in ROLES:
+        raise ValueError(f"Unknown role '{role}'")
+    with get_db() as conn:
+        cur = conn.cursor()
+        if role != "admin":
+            cur.execute("SELECT COUNT(*) FROM Users WHERE Role = 'admin' AND Users_Id <> %s", (users_id,))
+            if cur.fetchone()[0] == 0:
+                raise ValueError("There must be at least one admin.")
+        cur.execute("UPDATE Users SET Role = %s WHERE Users_Id = %s", (role, users_id))
+        if cur.rowcount == 0:
+            raise ValueError("That user no longer exists.")
+        cur.execute("DELETE FROM User_Account_Access WHERE Users_Id = %s", (users_id,))
+        if role != "admin" and account_ids:
+            cur.executemany("INSERT INTO User_Account_Access (Users_Id, Accounts_Id) VALUES (%s, %s) ON CONFLICT DO NOTHING", [(users_id, int(a)) for a in account_ids])
+        if role != "admin":
+            cur.execute("DELETE FROM Sessions WHERE Users_Id = %s", (users_id,))      # a changed role takes effect at once: sign the user in again
 
 
 def update_password(users_id: int, password_hash: str) -> None:
@@ -912,6 +953,7 @@ def delete_user(users_id: int) -> bool:
         cur.execute("""
             DELETE FROM Users
             WHERE Users_Id = %s AND (SELECT COUNT(*) FROM Users) > 1
+              AND (Role <> 'admin' OR (SELECT COUNT(*) FROM Users WHERE Role = 'admin') > 1)
         """, (users_id,))
         return cur.rowcount > 0
 
@@ -7622,6 +7664,8 @@ def check_triggered_alerts() -> list:
         _source('split_mismatch', _get_split_mismatch_alerts)
         _source('trend', _get_trend_alerts)
         _source('loan', _get_loan_payment_alerts)
+        from database.private_funds import get_fund_call_alerts
+        _source('fund', get_fund_call_alerts)
 
         # ── support / resistance: holdings, Watchlist, exposed currencies ─────
         from database.sr_alerts import get_sr_alerts

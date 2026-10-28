@@ -776,6 +776,8 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
       } },
     { field: 'loan_linked_asset_account_name', headerName: 'Linked Asset', flex: 1, minWidth: 140, hide: true },
     { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 160, hide: true },
+    { field: 'exclude_balance_alerts', headerName: 'No Balance Alerts', width: 140, hide: true, headerTooltip: 'Excluded from the negative-balance and projected-shortfall alerts (Dashboard and Cash Flow Forecast).',
+      cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,

@@ -541,6 +541,14 @@ def _run_startup_migrations():
                Created_At  TIMESTAMPTZ DEFAULT now(),
                Expires_At  TIMESTAMPTZ NOT NULL
            )""",
+        # Roles: admin (everything), limited (read and write on the accounts mapped to the user) and readonly (read only on those accounts) — see api/access.py.
+        # Every user that existed before is an admin.
+        "ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin'",
+        """CREATE TABLE IF NOT EXISTS User_Account_Access (
+               Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
+               Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+               PRIMARY KEY (Users_Id, Accounts_Id)
+           )""",
         # Installment series (migration 015) — a Recurring_Templates row with
         # Total_Occurrences set generates its first occurrence like any normal
         # template, then confirming it generates the rest. See

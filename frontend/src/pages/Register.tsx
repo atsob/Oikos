@@ -15,6 +15,7 @@ import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { usePhone } from '@/lib/useMedia'
+import { useRole } from '@/lib/auth'
 import { MoreMenu, Fab } from '@/components/mobile'
 import { TxCards, type TxRow } from '@/components/TxCards'
 
@@ -112,6 +113,7 @@ export default function Register() {
   const [gridApi, setGridApi] = useState<GridApi | null>(null)
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
+  const { readOnly, isAdmin } = useRole()  // read-only: no editing controls; limited/read-only: no balance sync (admin job)
 
   const [accountId, setAccountId] = usePersist<number | null>('register_accountId', null)
   const navigate = useNavigate()
@@ -453,6 +455,7 @@ export default function Register() {
               <Search size={14} />
             </button>
             <div className="hidden sm:block w-px h-5 bg-slate-200" />
+            {!readOnly && <>
             <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => { setClearMsg(null); setClearOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Clear
             </Button>
@@ -460,7 +463,8 @@ export default function Register() {
               <CheckCheck size={14} /> Reconcile
             </Button>
             <Button size="sm" className="hidden sm:inline-flex" onClick={() => tx.openNew(accountId!)} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
-            <div className="hidden sm:block">
+            </>}
+            {isAdmin && <div className="hidden sm:block">
               <SyncBalancesButton
                 options={[{ label: '🏦 Bank & Cash', target: 'cash' }]}
                 onSync={async target => {
@@ -469,14 +473,14 @@ export default function Register() {
                   refreshGrid()
                 }}
               />
-            </div>
-            <div className="sm:hidden">
+            </div>}
+            {isAdmin && <div className="sm:hidden">
               <MoreMenu items={[
                 { label: 'Clear transactions…', onClick: () => { setClearMsg(null); setClearOpen(true) }, disabled: !accountId },
                 { label: 'Reconcile…', onClick: () => { setReconcileMsg(null); setReconcileOpen(true) }, disabled: !accountId },
                 { label: 'Sync bank & cash balances', onClick: () => { void syncCash() } },
               ]} />
-            </div>
+            </div>}
           </div>
         }
       />
@@ -619,8 +623,8 @@ export default function Register() {
                     <span className="text-xs text-slate-500 whitespace-nowrap">
                       {allFilteredSelected ? `All ${selectedIds.length} selected` : `${selectedIds.length} selected`}
                     </span>
-                    <Button variant="secondary" size="sm" onClick={() => setBatchMoveOpen(true)}>Move to Account…</Button>
-                    <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
+                    {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchMoveOpen(true)}>Move to Account…</Button>}
+                    {!readOnly && <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>}
                   </>
                 )}
                 <ColumnsMenu columns={gridCols.columns} onToggle={gridCols.toggleColumn} />
@@ -655,7 +659,7 @@ export default function Register() {
         )}
       </div>
 
-      <Fab label="New transaction" onClick={() => tx.openNew(accountId!)} disabled={!accountId} />
+      {!readOnly && <Fab label="New transaction" onClick={() => tx.openNew(accountId!)} disabled={!accountId} />}
 
       {/* Transaction Modal */}
       {tx.modalOpen && tx.form && (

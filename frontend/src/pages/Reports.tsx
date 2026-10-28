@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useCallback, useEffect, Fragment } from 'react'
-import type { CountryExposureCountry } from '@/lib/api'
+import React, { useState, useMemo, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
+import type { CountryExposureCountry, TaxReturnLine, TaxReturnResult } from '@/lib/api'
 import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useMainScrollRestore, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import Plot from '@/components/Plot'
 import RetirementPlanner from '@/components/RetirementPlanner'
+import PrivateFunds from '@/components/PrivateFunds'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import {
   getPortfolioSummary,
@@ -15,7 +16,7 @@ import {
   getNetWorthByAccount, getInvestmentPositionsHistory,
   getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio, getCountryExposure, getCurrencyExposure,
   getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getTaxLossHarvestingSummary, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getTaxLossHarvestingSummary, getTaxReturn, putTaxReturnCodes, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getSavingsForecast, getSavingsRecommendations,
@@ -68,6 +69,7 @@ const REPORT_TABS = [
   { key: 'tax',             label: '🧾 Investment Tax' },
   { key: 'securities',      label: '🔍 Securities Analysis' },
   { key: 'planning',        label: '🏖️ Financial Planning' },
+  { key: 'private-funds',   label: '🏛️ Private Funds' },
   { key: 'custom',          label: '📋 Custom Reports' },
 ]
 
@@ -1200,7 +1202,11 @@ function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected,
   )
 }
 
+// Set while Portfolio Analysis shows two presets side by side: each half is narrow, so charts that sit two across stack instead.
+const XRayCompactContext = createContext(false)
+
 function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
+  const compact = useContext(XRayCompactContext)
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -1302,17 +1308,17 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <div>
           <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
           <Plot
             data={[{
               values: rows.map(r => Number(r.value_eur)), labels: rows.map(r => String(r.asset_class)),
-              type: 'pie', hole: 0.45, textinfo: 'label+percent',
+              type: 'pie', hole: 0.45, textinfo: compact ? 'percent' : 'label+percent',
               pull: rows.map(r => String(r.asset_class) === selectedClass ? 0.06 : 0),
             }]}
             layout={{
-              height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' },
+              height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: compact ? { orientation: 'h', y: -0.05 } : { orientation: 'v' },
               annotations: [{ text: `<b>${fmtEur(total)}</b><br>Total`, showarrow: false, font: { size: 14 }, x: 0.5, y: 0.5 }],
               ...plotLayout(isDark),
             }}
@@ -2039,14 +2045,15 @@ function XrayCountryExposureTab({ accountIds, mode = 'country' }: { accountIds?:
   )
 }
 
-function XRayTab({ accountIds }: { accountIds?: number[] }) {
+// hideControls: the second column of a side-by-side comparison, which follows the first one's sub-tab and "Compare vs" date (same remembered values).
+function XRayTab({ accountIds, hideControls = false }: { accountIds?: number[]; hideControls?: boolean }) {
   const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
   const [compareDate, setCompareDate] = usePersist('xray_compare_date', '')
   const today = todayLocal()
   return (
     <div className="space-y-3">
-      <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Country Exposure', 'Currency Exposure', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
-      {tab !== 'Country Exposure' && tab !== 'Currency Exposure' && (
+      {!hideControls && <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Country Exposure', 'Currency Exposure', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />}
+      {!hideControls && tab !== 'Country Exposure' && tab !== 'Currency Exposure' && (
       <div className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
         <Tooltip text="Show current values alongside a past date's, reconstructed from your transaction history and historical prices/FX. Sector weights, asset mix, credit ratings, category, and expense ratio always reflect today's fund data — Oikos has no historical version of a fund's own internal makeup.">
           <span className="text-slate-500 cursor-help underline decoration-dotted">Compare vs</span>
@@ -2341,6 +2348,12 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
   // 'FX Exposure' was folded into Portfolio Analysis → Currency Exposure; send a persisted old value there.
   useEffect(() => { if (tab === 'X-Ray' || tab === 'FX Exposure') setTab('Portfolio Analysis') }, [tab, setTab])
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  // Portfolio Analysis can set a second Account Preset beside the first, to compare two sets of accounts (family members, brokers, entities) side by side.
+  const [selPreset] = usePersist<string>('preset_sel_inv_positions', FULL_PORTFOLIO)
+  const [comparePreset, setComparePreset] = usePersist<string>('xray_compare_preset', '')
+  const { data: savedPresets = EMPTY_PRESET_ROWS } = useQuery({ queryKey: ['portfolio-presets', 'inv_positions'], queryFn: () => getPortfolioPresets('inv_positions') })
+  const presetRows = savedPresets as { preset_id: number; preset_name: string; account_ids: number[] }[]
+  const compareIds: number[] | undefined | null = !comparePreset ? null : comparePreset === FULL_PORTFOLIO ? undefined : (presetRows.find(p => p.preset_name === comparePreset)?.account_ids ?? null)
 
   // Default to Dec 31 of the previous calendar year
   const defaultDate = `${new Date().getFullYear() - 1}-12-31`
@@ -2377,7 +2390,29 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
       {tab === 'Costs by Broker' && <CostsByBrokerTab />}
       {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
-      {tab === 'Portfolio Analysis' && <XRayTab accountIds={presetAccountIds} />}
+      {tab === 'Portfolio Analysis' && (
+        <>
+          <div className={`flex flex-wrap items-center gap-2 text-sm rounded-lg border px-3 py-2 ${compareIds !== null ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}>
+            <span className="font-semibold text-slate-700">⚖️ Compare two presets</span>
+            <label className="text-slate-500">with</label>
+            <select className="rounded border border-slate-300 px-2 py-1 text-sm bg-white" value={comparePreset} onChange={e => setComparePreset(e.target.value)}>
+              <option value="">— none —</option>
+              <option value={FULL_PORTFOLIO}>{FULL_PORTFOLIO}</option>
+              {[...presetRows].sort((a, b) => a.preset_name.localeCompare(b.preset_name)).map(p => <option key={p.preset_id} value={p.preset_name}>{p.preset_name}</option>)}
+            </select>
+            {compareIds !== null
+              ? <><span className="text-xs text-slate-600">shows <b>{selPreset}</b> and <b>{comparePreset}</b> side by side; the sub-tab and date follow the left one</span>
+                  <button className="text-xs text-blue-600 hover:underline ml-auto" onClick={() => setComparePreset('')}>Stop comparing</button></>
+              : <span className="text-xs text-slate-400">pick a second preset to see it next to <b>{selPreset}</b></span>}
+          </div>
+          {compareIds !== null ? (
+            <XRayCompactContext.Provider value={true}><div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+              <div className="min-w-0 border border-slate-200 rounded-lg p-3"><p className="text-sm font-semibold text-slate-700 mb-2">{selPreset}</p><XRayTab accountIds={presetAccountIds} /></div>
+              <div className="min-w-0 border border-slate-200 rounded-lg p-3"><p className="text-sm font-semibold text-slate-700 mb-2">{comparePreset}</p><XRayTab accountIds={compareIds} hideControls /></div>
+            </div></XRayCompactContext.Provider>
+          ) : <XRayTab accountIds={presetAccountIds} />}
+        </>
+      )}
     </div>
   )
 }
@@ -4841,6 +4876,13 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey
 
   const savedIds = selPreset === FULL_PORTFOLIO ? eligibleAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
   const currentIds = draftIds ?? new Set(savedIds)
+
+  // A remembered selection that is not a preset of this scope (deleted, or remembered under another scope) would mean "no accounts" and an empty report:
+  // once the presets have loaded, fall back to the Full Portfolio (a preset just saved is already in the list: it is refetched before it is selected).
+  useEffect(() => {
+    if (presetsLoaded && selPreset !== FULL_PORTFOLIO && !(selPreset in presetMap)) setSelPreset(FULL_PORTFOLIO)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetsLoaded, selPreset, presetMap])
 
   useEffect(() => {
     // A saved preset's account list lives in `presets` (a real network fetch, never
@@ -8428,7 +8470,7 @@ function CgTable({ rows, method, forceExpandAll }: { rows: Row[]; method: string
   )
 }
 
-function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; forceExpandAll?: boolean }) {
+function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; forceExpandAll?: boolean; accountIds?: number[] }) {
   // HTML radio-button grouping is by `name` across the whole DOM, not scoped to
   // a component instance — since TaxPrintExport always mounts a second, hidden
   // copy of this component (sharing the same method/setMethod), a hardcoded
@@ -8451,7 +8493,7 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
       window.setTimeout(() => setHighlighted(h => h === id ? null : h), 1500)
     }, expand ? 50 : 0)
   }
-  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
+  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method, accountIds ?? null], queryFn: () => getCapitalGains(year, method, accountIds) })
   // Cryptocurrency is on the Crypto tab (every wallet pooled, losses carried forward, rewards, E1) — not counted a second time here.
   const d = (data as Row[]).filter(r => String(r.tax_category) !== 'Crypto' && String(r.securities_type) !== 'Crypto')
 
@@ -8665,8 +8707,8 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
 // Tax-loss harvesting: a loss only helps if it can be set against a gain, and only against gains of its own taxable category — so the candidates are grouped
 // by tax category, the categories whose gains are exempt (a loss there offsets nothing) are set apart, and each taxable category shows the gains it could be
 // set against in the tax year. Server side: /reports/tax-loss-harvesting and /summary.
-function TaxLossHarvestingTab({ year, method, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean }) {
-  const { data = [], isLoading } = useQuery({ queryKey: ['tax-loss-harvesting'], queryFn: getTaxLossHarvesting })
+function TaxLossHarvestingTab({ year, method, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean; accountIds?: number[] }) {
+  const { data = [], isLoading } = useQuery({ queryKey: ['tax-loss-harvesting', accountIds ?? null], queryFn: () => getTaxLossHarvesting(accountIds) })
   // The crypto figures use the Crypto tab's own settings (same remembered values), so the two tabs always agree.
   const [rewardsIncome] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
   const [cryptoExemption] = usePersist('crypto_tax_exemption', 0)
@@ -8674,8 +8716,8 @@ function TaxLossHarvestingTab({ year, method, forceExpandAll = false }: { year: 
   const [cryptoLossesFrom] = usePersist('crypto_tax_losses_from', 0)
   const [cryptoExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
   const { data: sum } = useQuery({
-    queryKey: ['tax-loss-harvesting-summary', year, method, rewardsIncome, cryptoExemption, cryptoRate, cryptoLossesFrom, cryptoExcluded],
-    queryFn: () => getTaxLossHarvestingSummary(year, method, { rewardsIncome, exemption: cryptoExemption, rate: cryptoRate, lossesFrom: cryptoLossesFrom, excluded: cryptoExcluded }),
+    queryKey: ['tax-loss-harvesting-summary', year, method, rewardsIncome, cryptoExemption, cryptoRate, cryptoLossesFrom, cryptoExcluded, accountIds ?? null],
+    queryFn: () => getTaxLossHarvestingSummary(year, method, { rewardsIncome, exemption: cryptoExemption, rate: cryptoRate, lossesFrom: cryptoLossesFrom, excluded: cryptoExcluded }, accountIds),
   })
   const [showExempt, setShowExempt] = useState(false)
   const [catFilter, setCatFilter] = useState<string | null>(null)
@@ -8953,7 +8995,7 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false, forceExp
   )
 }
 
-function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; forceExpandAll?: boolean }) {
+function DividendIncomeTaxTab({ year, forceExpandAll = false, accountIds }: { year: number; forceExpandAll?: boolean; accountIds?: number[] }) {
   const [showRoc, setShowRoc] = useState(true)
   const rocOpen = forceExpandAll || showRoc
   const [highlighted, setHighlighted] = useState<string | null>(null)
@@ -8969,8 +9011,8 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
   }
   const qc = useQueryClient()
   useEffect(() => { qc.removeQueries({ queryKey: ['bank-interest-tax'] }) }, [])
-  const invQ = useQuery({ queryKey: ['dividend-income-tax', year], queryFn: () => getDividendIncomeTax(year) })
-  const bankQ = useQuery({ queryKey: ['bank-interest-tax', year], queryFn: () => api.get('/reports/bank-interest-tax', { params: { year } }).then(r => r.data), staleTime: 0, gcTime: 0 })
+  const invQ = useQuery({ queryKey: ['dividend-income-tax', year, accountIds ?? null], queryFn: () => getDividendIncomeTax(year, accountIds) })
+  const bankQ = useQuery({ queryKey: ['bank-interest-tax', year, accountIds ?? null], queryFn: () => getBankInterestTax(year, accountIds), staleTime: 0, gcTime: 0 })
   if (invQ.isLoading || bankQ.isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const invRows  = Array.isArray(invQ.data)  ? invQ.data  as Row[] : []
   const bankRows = Array.isArray(bankQ.data) ? bankQ.data as Row[] : []
@@ -9157,7 +9199,7 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
 // The things the TaxApps.gr crypto calculator asks you to type in — total bought, total sold, commissions, losses of earlier years, rewards — worked out
 // from the ledger: every wallet pooled into one FIFO / LIFO queue per coin, moves between your own wallets left out, losses carried forward for five
 // years, the tax at the rate of the Crypto tax category, the rewards received and the figures for the Form E1 codes. Server side: /reports/crypto-tax.
-function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean }) {
+function CryptoTaxReport({ year, method, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean; accountIds?: number[] }) {
   const [exemption, setExemption] = usePersist('crypto_tax_exemption', 0)
   const [rateOverride, setRateOverride] = usePersist<number | null>('crypto_tax_rate', null)
   const [lossesFrom, setLossesFrom] = usePersist('crypto_tax_losses_from', 0)
@@ -9167,7 +9209,9 @@ function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: numbe
   const [open, setOpen] = useState<Set<number>>(new Set())
   const m = method === 'LIFO' ? 'LIFO' : 'FIFO'
   const { data: first } = useQuery({ queryKey: ['crypto-tax-accounts'], queryFn: () => getCryptoTax({ year, method: m, exemption: 0 }), staleTime: 300_000 })
-  const included = (first?.accounts ?? []).map(a => a.id).filter(id => !excluded.includes(id))
+  // The Account Preset narrows the accounts first; the ticks below then leave some of those out.
+  const inPreset = (first?.accounts ?? []).map(a => a.id).filter(id => !accountIds || accountIds.includes(id))
+  const included = inPreset.filter(id => !excluded.includes(id))
   const allIncluded = !first || included.length === first.accounts.length
   const { data, isLoading } = useQuery({
     queryKey: ['crypto-tax', year, m, exemption, rateOverride, lossesFrom, rewardsIncome, allIncluded ? null : included],
@@ -9203,7 +9247,7 @@ function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: numbe
           <div className="text-xs text-slate-500">
             <p><Tooltip text="Untick an account to leave it out, for example the Capital.com account if its crypto is CFD trading rather than coins you own.">Accounts included</Tooltip></p>
             <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
-              {first.accounts.map(a => (
+              {first.accounts.filter(a => !accountIds || accountIds.includes(a.id)).map(a => (
                 <label key={a.id} className="flex items-center gap-1 cursor-pointer">
                   <input type="checkbox" checked={!excluded.includes(a.id)} onChange={e => setExcluded(e.target.checked ? excluded.filter(x => x !== a.id) : [...excluded, a.id])} /> {a.name} <span className="text-slate-400">({a.rows})</span>
                 </label>
@@ -9341,6 +9385,242 @@ function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: numbe
   )
 }
 
+// ── Tax return summary ────────────────────────────────────────────────────────────────────────────
+// Every figure a return needs for the tax year — capital gains by tax category, crypto, dividends, interest — each with the code of the line it goes on. The codes
+// follow the Country of Usage (database/tax_return.py); click one to type your own, kept per country. Server side: /reports/tax-return.
+// What one figure of the Tax Report is made of, account by account, then security by security, then the transactions (click to open each level).
+function TaxLines({ lines, expandAll }: { lines: TaxReturnLine[]; expandAll?: boolean }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const tree = useMemo(() => {
+    const byAcc = new Map<string, Map<string, TaxReturnLine[]>>()
+    for (const l of lines) {
+      if (!byAcc.has(l.account)) byAcc.set(l.account, new Map())
+      const m = byAcc.get(l.account)!
+      m.set(l.security, [...(m.get(l.security) ?? []), l])
+    }
+    return [...byAcc.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [lines])
+  const sum = (ls: TaxReturnLine[], f: (l: TaxReturnLine) => number | null) => ls.reduce((t, l) => t + (f(l) ?? 0), 0)
+  const hasPC = lines.some(l => l.proceeds != null || l.cost != null)
+  const hasW = lines.some(l => l.withheld != null)
+  const money = (v: number | null) => v == null ? '' : `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  const cells = (ls: TaxReturnLine[]) => (
+    <>
+      {hasPC && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.proceeds))}</td>}
+      {hasPC && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.cost))}</td>}
+      {hasW && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.withheld))}</td>}
+      <td className={`px-2 py-1 text-right tabular-nums ${sum(ls, l => l.amount) < 0 ? 'text-red-600' : ''}`}>{money(sum(ls, l => l.amount))}</td>
+    </>
+  )
+  return (
+    <table className="w-full text-xs bg-white border border-slate-200 rounded">
+      <thead><tr className="text-slate-500">
+        <th className="px-2 py-1 text-left">Account · security · transaction</th>
+        {hasPC && <th className="px-2 py-1 text-right">Proceeds</th>}{hasPC && <th className="px-2 py-1 text-right">Cost</th>}{hasW && <th className="px-2 py-1 text-right">Withheld</th>}
+        <th className="px-2 py-1 text-right">Amount</th>
+      </tr></thead>
+      <tbody>
+        {tree.map(([acc, secs]) => {
+          const aOpen = expandAll || open.has(acc)
+          const accLines = [...secs.values()].flat()
+          return (
+            <Fragment key={acc}>
+              <tr className="bg-slate-50 font-medium cursor-pointer hover:bg-slate-100" onClick={() => toggle(acc)}>
+                <td className="px-2 py-1">{aOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{acc} <span className="text-slate-400 font-normal">· {accLines.length}</span></td>
+                {cells(accLines)}
+              </tr>
+              {aOpen && [...secs.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([sec, ls]) => {
+                const k = `${acc}||${sec}`
+                const sOpen = expandAll || open.has(k)
+                return (
+                  <Fragment key={k}>
+                    <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggle(k)}>
+                      <td className="px-2 py-1 pl-6">{sOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{sec} <span className="text-slate-400">· {ls.length}</span></td>
+                      {cells(ls)}
+                    </tr>
+                    {sOpen && ls.map((l, i) => (
+                      <tr key={i} className="text-slate-500">
+                        <td className="px-2 py-0.5 pl-12">{l.date} {l.label}</td>
+                        {cells([l])}
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
+            </Fragment>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+type TaxCodeGroup = { code: string; amount: number; withheld: number; figures: string[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }
+function taxCodeGroups(data: TaxReturnResult): TaxCodeGroup[] {
+  const by = new Map<string, { code: string; amount: number; withheld: number; figures: string[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }>()
+  for (const s of data.sections) for (const r of s.rows) {
+    if (r.key.startsWith('est:') || r.info) continue
+    const code = r.code.trim() || '(no code)'
+    if (!by.has(code)) by.set(code, { code, amount: 0, withheld: 0, figures: [], accounts: new Map() })
+    const g = by.get(code)!
+    g.amount += r.amount; g.withheld += r.withheld ?? 0; g.figures.push(r.label)
+    const add = (acc: string, amount: number, withheld: number, n: number) => { const a = g.accounts.get(acc) ?? { amount: 0, withheld: 0, n: 0 }; a.amount += amount; a.withheld += withheld; a.n += n; g.accounts.set(acc, a) }
+    if (!r.lines?.length) { add('Not split by account', r.amount, r.withheld ?? 0, 0); continue }
+    for (const l of r.lines) add(l.account, l.amount, l.withheld ?? 0, 1)
+    const diff = r.amount - r.lines.reduce((t, l) => t + l.amount, 0)
+    if (Math.abs(diff) > 0.01) add('Adjustment (losses brought forward, exemption, rounding)', diff, 0, 0)
+  }
+  return [...by.values()].sort((a, b) => (a.code === '(no code)' ? 1 : 0) - (b.code === '(no code)' ? 1 : 0) || a.code.localeCompare(b.code, undefined, { numeric: true }))
+}
+
+// The figures added up by the code of the return line they go on, each opening into the accounts it comes from. A figure without transactions of its own (money spent buying
+// crypto) is shown as "Not split by account"; where the figure differs from its transactions (crypto losses brought forward, an exemption) the difference is its own line.
+function TaxByCode({ data, expandAll }: { data: TaxReturnResult; expandAll?: boolean }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const groups = useMemo(() => taxCodeGroups(data), [data])
+  if (!groups.length) return null
+  const money = (v: number) => v === 0 ? '' : `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  return (
+    <div>
+      <p className="text-sm font-semibold text-slate-700 mb-1">Summary by code</p>
+      <p className="text-xs text-slate-400 mb-1">Net of gains and losses sharing a code; the tax withheld has its own codes below. Click a code for the accounts it comes from.</p>
+      <table className="w-full text-xs">
+        <thead><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-1.5 text-left w-28">Code</th><th className="px-3 py-1.5 text-left">Figures</th><th className="px-3 py-1.5 text-right">Amount</th><th className="px-3 py-1.5 text-right">Withheld</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {groups.map(g => {
+            const isOpen = expandAll || open.has(g.code)
+            return (
+              <Fragment key={g.code}>
+                <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggle(g.code)}>
+                  <td className="px-3 py-1.5 font-mono text-slate-700 whitespace-nowrap">{isOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{g.code}</td>
+                  <td className="px-3 py-1.5 text-slate-500" title={g.figures.join('\n')}>{g.figures.length === 1 ? g.figures[0] : `${g.figures.length} figures: ${g.figures.slice(0, 2).join('; ')}${g.figures.length > 2 ? '…' : ''}`}</td>
+                  <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${g.amount < 0 ? 'text-red-600' : ''}`}>{money(g.amount)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{money(g.withheld)}</td>
+                </tr>
+                {isOpen && [...g.accounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([acc, v]) => (
+                  <tr key={acc} className="text-slate-500 bg-slate-50/50">
+                    <td />
+                    <td className="px-3 py-1 pl-8">{acc}{v.n > 0 && <span className="text-slate-400"> · {v.n}</span>}</td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${v.amount < 0 ? 'text-red-600' : ''}`}>{money(v.amount)}</td>
+                    <td className="px-3 py-1 text-right tabular-nums">{money(v.withheld)}</td>
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TaxReturnSummary({ year, method, accountIds, scope, expandAll }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; accountIds?: number[]; scope: string; expandAll?: boolean }) {
+  const qc = useQueryClient()
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set())
+  const toggleRow = (k: string) => setOpenRows(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  // The crypto figures use what is set on the Crypto tab (rewards as income, exemption, rate, losses counted from, accounts left out), so the two tabs agree.
+  const [cExemption] = usePersist('crypto_tax_exemption', 0)
+  const [cRate] = usePersist<number | null>('crypto_tax_rate', null)
+  const [cLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [cExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const [cRewards] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
+  const { data, isLoading } = useQuery({
+    queryKey: ['tax-return', year, method, accountIds ?? null, cExemption, cRate, cLossesFrom, cExcluded, cRewards],
+    queryFn: () => getTaxReturn(year, method, accountIds, { rewardsIncome: cRewards ?? undefined, exemption: cExemption, rate: cRate ?? undefined, lossesFrom: cLossesFrom, exclude: cExcluded }),
+  })
+  const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
+  const resetCode = useMutation({
+    mutationFn: (key: string) => { const next = { ...(data?.codes_set ?? {}) }; delete next[key]; return putTaxReturnCodes(next) },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax-return'] }),
+  })
+  const saveCode = useMutation({
+    mutationFn: (v: { key: string; value: string }) => putTaxReturnCodes({ ...(data?.codes_set ?? {}), [v.key]: v.value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax-return'] }),
+  })
+  if (isLoading || !data) return <div className="flex justify-center py-12"><Spinner /></div>
+  const eurFmt = (v: number) => `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  const exportCsv = () => {
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`
+    const num = (v: number | null) => v == null ? '' : v.toFixed(2)
+    const status = (r: { key: string; info: boolean }) => r.info ? 'Information only' : r.key.startsWith('est:') ? 'Estimate' : ''
+    const out: (string | number)[][] = [['Tax year', 'Part', 'Code', 'Section', 'Figure', 'Account', 'Security', 'Date', 'Transaction', 'Proceeds (EUR)', 'Cost (EUR)', 'Withheld (EUR)', 'Amount (EUR)', 'Status', 'Note']]
+    out.push([data.year, 'Report', '', '', '', '', '', '', '', '', '', '', '', '', `${scope}; ${data.method} for the securities' gains; ${data.country.name || data.country.code || 'no country set'} ${data.country.form}`.trim()])
+    for (const g of taxCodeGroups(data)) {
+      out.push([data.year, 'Summary by code', g.code, '', g.figures.join('; '), '', '', '', '', '', '', num(g.withheld || null), g.amount.toFixed(2), '', `${g.figures.length} figure(s)`])
+      for (const [acc, v] of [...g.accounts.entries()].sort((x, y) => x[0].localeCompare(y[0])))
+        out.push([data.year, 'Code by account', g.code, '', '', acc, '', '', '', '', '', num(v.withheld || null), v.amount.toFixed(2), '', v.n ? `${v.n} transaction(s)` : ''])
+    }
+    for (const s of data.sections) for (const r of s.rows) {
+      out.push([data.year, 'Figure', r.code, s.title, r.label, '', '', '', '', '', '', num(r.withheld), r.amount.toFixed(2), status(r), r.detail])
+      for (const l of r.lines ?? []) out.push([data.year, 'Transaction', r.code, s.title, r.label, l.account, l.security, l.date, l.label, num(l.proceeds), num(l.cost), num(l.withheld), l.amount.toFixed(2), status(r), ''])
+    }
+    const blob = new Blob(['\ufeff' + out.map(r => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob); a.download = `tax-report-${data.year}.csv`; a.click(); URL.revokeObjectURL(a.href)
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-slate-500 max-w-3xl">
+          Everything the return for <b>{data.year}</b> needs, gathered from the other tax tabs ({scope}; {data.method} for the securities' gains), each with the code of the line it goes on.
+          {data.country.has_profile
+            ? <> Codes start from <b>{data.country.name}</b>'s {data.country.form} (the Country of Usage). Every code can be changed — click it (✎) and type yours; a changed code is marked <span className="text-blue-600">edited</span> and <b>↺</b> brings back the built-in one. They are kept for this country.</>
+            : <> There are no built-in codes for <b>{data.country.name || 'the country of usage (not set)'}</b> yet: click ✎ on a line to enter yours — they are kept for this country.</>}
+        </p>
+        <Button size="sm" variant="secondary" className="ml-auto" onClick={exportCsv} title="Every transaction behind every figure, with its code, account and tax withheld — one row each, for a spreadsheet or your accountant">Export CSV (all transactions)</Button>
+      </div>
+      <TaxByCode data={data} expandAll={expandAll} />
+      {data.sections.map(s => (
+        <div key={s.title}>
+          <p className="text-sm font-semibold text-slate-700 mb-1">{s.title}</p>
+          {s.rows.length === 0 ? <p className="text-xs text-slate-400 mb-2">Nothing in {data.year}.</p> : (
+            <WithCopy>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-1.5 text-left w-28">Code</th><th className="px-3 py-1.5 text-left">Figure</th><th className="px-3 py-1.5 text-right">Amount</th><th className="px-3 py-1.5 text-right">Withheld</th><th className="px-3 py-1.5 text-left">Detail</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {s.rows.map(r => (
+                      <Fragment key={r.key}>
+                      <tr className={`${r.key === 'est:total' ? 'font-semibold bg-slate-50' : ''} ${r.info ? 'bg-amber-50 text-slate-500 italic' : ''} ${r.lines?.length ? 'cursor-pointer hover:bg-slate-50' : ''}`} onClick={() => { if (r.lines?.length) toggleRow(r.key) }}>
+                        <td className="px-3 py-1.5 font-mono text-slate-600 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          {r.key.startsWith('est:') ? '' : editing?.key === r.key ? (
+                            <input autoFocus className="w-24 border border-blue-400 rounded px-1 py-0.5 text-xs" value={editing.value}
+                              onChange={e => setEditing({ key: r.key, value: e.target.value })}
+                              onBlur={() => { if (editing.value !== r.code) saveCode.mutate(editing); setEditing(null) }}
+                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(null) }} />
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <button className={`text-left rounded px-1 hover:bg-slate-100 ${r.code ? (r.custom ? 'text-blue-600' : '') : 'text-slate-300'}`} title={r.custom ? `Your own code (built-in: ${r.default || 'none'}) — click to change` : 'Click to change the code of this line'} onClick={() => setEditing({ key: r.key, value: r.code })}>{r.code || 'set code'} <span className="text-slate-300 no-print">✎</span></button>
+                              {r.custom && <button className="text-slate-400 hover:text-slate-700 no-print" title={`Back to the built-in code (${r.default || 'none'})`} onClick={() => resetCode.mutate(r.key)}>↺</button>}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5">{r.lines?.length ? ((expandAll || openRows.has(r.key)) ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />) : null}{r.label}{r.lines?.length ? <span className="text-slate-400"> · {r.lines.length}</span> : null}
+                          {r.info && <span className="ml-2 rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 text-[10px] font-medium uppercase not-italic whitespace-nowrap" title="Shown for your information; it is not a figure of the return and is left out of the estimated tax and the summary by code">Information only</span>}
+                          {r.key.startsWith('est:') && r.key !== 'est:total' && <span className="ml-2 rounded bg-slate-200 text-slate-600 px-1.5 py-0.5 text-[10px] font-medium uppercase not-italic whitespace-nowrap" title="An indication, not advice">Estimate</span>}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums ${r.amount < 0 ? 'text-red-600' : ''}`}>{eurFmt(r.amount)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{r.withheld ? eurFmt(r.withheld) : ''}</td>
+                        <td className="px-3 py-1.5 text-slate-400">{r.detail}</td>
+                      </tr>
+                      {r.lines?.length > 0 && (expandAll || openRows.has(r.key)) && (
+                        <tr><td colSpan={5} className="px-3 pb-2 pt-0"><TaxLines lines={r.lines} expandAll={expandAll} /></td></tr>
+                      )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+          )}
+        </div>
+      ))}
+      <ul className="text-xs text-slate-400 space-y-0.5 list-disc pl-5">{data.notes.map(n => <li key={n}>{n}</li>)}</ul>
+    </div>
+  )
+}
+
 // Renders all three Investment Tax reports stacked, fully expanded, inside a
 // container that's invisible on screen and only shown for printing (see the
 // .printable-area rules in index.css) — lets "Export PDF" produce one document
@@ -9350,28 +9630,32 @@ function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: numbe
 // and DividendIncomeTaxTab's own react-query calls use the same query keys, so
 // this costs no extra network requests beyond whatever the visible tab already
 // fetched.
-function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void }) {
+function TaxPrintExport({ year, method, setMethod, accountIds, scope }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; accountIds?: number[]; scope: string }) {
   return (
     <div className="printable-area p-8 space-y-10 bg-white text-slate-900">
       <div className="text-center border-b border-slate-300 pb-4 mb-2">
         <h1 className="text-2xl font-bold">Investment Tax Report</h1>
-        <p className="text-sm text-slate-500">Tax Year {year} · Generated {new Date().toLocaleDateString()}</p>
+        <p className="text-sm text-slate-500">Tax Year {year} · {scope} · Generated {new Date().toLocaleDateString()}</p>
       </div>
       <section>
+        <h2 className="text-xl font-bold mb-3">Tax Report</h2>
+        <TaxReturnSummary year={year} method={method} accountIds={accountIds} scope={scope} expandAll />
+      </section>
+      <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Capital Gains</h2>
-        <CapitalGainsReport year={year} method={method} setMethod={setMethod} forceExpandAll />
+        <CapitalGainsReport year={year} method={method} setMethod={setMethod} forceExpandAll accountIds={accountIds} />
       </section>
       <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Interest &amp; Dividend Income</h2>
-        <DividendIncomeTaxTab year={year} forceExpandAll />
+        <DividendIncomeTaxTab year={year} forceExpandAll accountIds={accountIds} />
       </section>
       <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Crypto</h2>
-        <CryptoTaxReport year={year} method={method} forceExpandAll />
+        <CryptoTaxReport year={year} method={method} forceExpandAll accountIds={accountIds} />
       </section>
       <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Tax-Loss Harvesting</h2>
-        <TaxLossHarvestingTab year={year} method={method} forceExpandAll />
+        <TaxLossHarvestingTab year={year} method={method} forceExpandAll accountIds={accountIds} />
       </section>
     </div>
   )
@@ -9379,8 +9663,13 @@ function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WA
 
 function TaxSection() {
   const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
+  useEffect(() => { if (tab === 'Tax Return') setTab('Tax Report') }, [tab, setTab])   // the sub-tab's old name
   const [year, setYear] = usePersist('tax_year', new Date().getFullYear() - 1)
   const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
+  // Which accounts the tax figures cover (an Account Preset; undefined = every account). Its own remembered choice, so a preset left on elsewhere never trims a tax report unseen.
+  const [accountIds, setAccountIds] = useState<number[] | undefined>(undefined)
+  const [presetName] = usePersist<string>('preset_sel_inv_tax', 'Full Portfolio')
+  const scope = accountIds === undefined ? 'All accounts' : `Account preset: ${presetName}`
 
   const handleExportPdf = () => {
     // The dark theme is applied via a `dark` class on <html>, layered on top of
@@ -9407,12 +9696,15 @@ function TaxSection() {
           <Printer size={14} /> Export PDF (All Expanded)
         </Button>
       </div>
-      <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Crypto', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
-      {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} />}
-      {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} />}
-      {tab === 'Crypto' && <CryptoTaxReport year={year} method={method} />}
-      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab year={year} method={method} />}
-      <TaxPrintExport year={year} method={method} setMethod={setMethod} />
+      <SubTabs tabs={['Tax Report', 'Capital Gains', 'Interest & Dividend Income', 'Crypto', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
+      <PortfolioPresetBar reportScope="net_worth" selectionKey="inv_tax" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={setAccountIds} />
+      {accountIds !== undefined && <p className="text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-1.5">These tax figures cover only the accounts of <b>{presetName}</b> ({accountIds.length} account{accountIds.length === 1 ? '' : 's'}) — choose Full Portfolio for the whole return.</p>}
+      {tab === 'Tax Report' && <TaxReturnSummary year={year} method={method} accountIds={accountIds} scope={scope} />}
+      {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} accountIds={accountIds} />}
+      {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} accountIds={accountIds} />}
+      {tab === 'Crypto' && <CryptoTaxReport year={year} method={method} accountIds={accountIds} />}
+      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab year={year} method={method} accountIds={accountIds} />}
+      <TaxPrintExport year={year} method={method} setMethod={setMethod} accountIds={accountIds} scope={scope} />
     </div>
   )
 }
@@ -10854,6 +11146,7 @@ export default function Reports() {
               {activeTab === 'budget' && <BudgetSection />}
               {activeTab === 'tax' && <TaxSection />}
               {activeTab === 'planning' && <PlanningSection />}
+              {activeTab === 'private-funds' && <PrivateFunds />}
               {activeTab === 'custom' && <CustomReportsSection />}
             </CardBody>
           </Card>
