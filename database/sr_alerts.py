@@ -82,18 +82,35 @@ def events(points: list[dict]) -> list[dict]:
         sup = [l for l in _meaningful(prior["levels"]) if l["price"] < ref]
         res = [l for l in _meaningful(prior["levels"]) if l["price"] > ref]
 
-        def two_beyond(test) -> bool:
-            return any(test(recent[i]) and test(recent[i + 1]) for i in range(len(recent) - 1))
+        def two_beyond(test) -> int | None:
+            """Index in `recent` of the second of the first two consecutive closes beyond the level — when the break was confirmed."""
+            return next((i + 1 for i in range(len(recent) - 1) if test(recent[i]) and test(recent[i + 1])), None)
+
+        def momentum(n: int, falling: bool, test) -> dict:
+            """What the price has done since it first closed beyond the level (the confirmation can come days later, after a close back
+            inside): its furthest close in the break's direction, how far it has come back from it, and the run of closes (up to the
+            last) moving back toward the level."""
+            first = next(i for i, c in enumerate(recent) if test(c))
+            since = closes[-BREAK_BARS + first:]
+            best = min(since) if falling else max(since)
+            back = (c0 / best - 1) * 100 * (1 if falling else -1)           # % retraced from that extreme
+            run = 0
+            for k in range(len(closes) - 1, 0, -1):
+                if (closes[k] > closes[k - 1]) if falling else (closes[k] < closes[k - 1]): run += 1
+                else: break
+            return {"confirmed": str(points[-BREAK_BARS + n].get("date", ""))[:10], "extreme_since": best, "retrace_pct": back, "back_run": run}
 
         # The nearest broken level on each side (the highest broken support, lowest broken resistance).
         for l in sorted(sup, key=lambda l: -l["price"]):
             below = lambda c, p=l["price"]: c < p - half
-            if two_beyond(below) and below(c0):
-                out.append({"event": "support_break", **l}); broke.add("support"); break
+            n = two_beyond(below)
+            if n is not None and below(c0):
+                out.append({"event": "support_break", **l, **momentum(n, True, below)}); broke.add("support"); break
         for l in sorted(res, key=lambda l: l["price"]):
             above = lambda c, p=l["price"]: c > p + half
-            if two_beyond(above) and above(c0):
-                out.append({"event": "resistance_break", **l}); broke.add("resistance"); break
+            n = two_beyond(above)
+            if n is not None and above(c0):
+                out.append({"event": "resistance_break", **l, **momentum(n, False, above)}); broke.add("resistance"); break
 
     full = technical.analyse(points)
     if full:
@@ -136,6 +153,27 @@ def _after_break(e: dict) -> str:
     return " That level is now support" + (f"; the next resistance that has held is {_level_text(nxt)}." if nxt else ".")
 
 
+def _when(e: dict) -> str:
+    """When the two closes beyond the level were confirmed — they are not necessarily the latest two."""
+    return f" (confirmed {e['confirmed']})" if e.get("confirmed") else ""
+
+
+def _fading(e: dict) -> str:
+    """A break the price is already walking back — falling for days after a resistance break, recovering after a support break — says so,
+    so a "Resistance broken" alert doesn't read as a live breakout while the price is sliding back toward the level."""
+    back, run = e.get("retrace_pct") or 0.0, e.get("back_run") or 0
+    if back < 1.0 and run < 2:
+        return ""
+    up = e["event"] == "resistance_break"
+    parts = []
+    if run >= 2:
+        parts.append(f"{'down' if up else 'up'} {run} sessions running")
+    if back >= 1.0:
+        parts.append(f"{back:.1f}% off its post-break {'high' if up else 'low'} of {_fmt(e['extreme_since'])}")
+    return (f" ⚠️ It is already {'fading' if up else 'recovering'}: {', '.join(parts)}"
+            f"; a close back {'under' if up else 'over'} the level would undo the break.")
+
+
 def _pnl_clause(pnl: float | None, cost: float | None) -> str:
     if pnl is None or not cost or cost <= 0:
         return ""
@@ -149,8 +187,8 @@ def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None) ->
     clause = _pnl_clause(pnl, cost)
     if ev == "support_break":
         level = "error" if pnl is not None and pnl < 0 else "warning"
-        return level, (f"🔻 **Support broken** — {name} closed below support {lvl} on two days running; now {close}, "
-                       f"{_beyond(e)}% below it.{_after_break(e)}{clause} Worth reviewing the position — your stop or thesis.")
+        return level, (f"🔻 **Support broken** — {name} closed below support {lvl} on two days running{_when(e)}; now {close}, "
+                       f"{_beyond(e)}% below it.{_after_break(e)}{_fading(e)}{clause} Worth reviewing the position — your stop or thesis.")
     if ev == "support_near":
         level = "warning" if pnl is not None and pnl < 0 else "info"
         return level, (f"🟢 **Near support** — {name} at {close}, {abs(e['distance_pct']):.1f}% above support {lvl}.{clause}")
@@ -159,8 +197,8 @@ def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None) ->
             return "warning", (f"🔴 **Near resistance** — {name} at {close}, {abs(e['distance_pct']):.1f}% below resistance {lvl}."
                                f"{clause} Consider taking profit or rebalancing.")
         return "info", f"🔴 **Near resistance** — {name} at {close}, {abs(e['distance_pct']):.1f}% below resistance {lvl}.{clause}"
-    return "info", (f"🚀 **Resistance broken** — {name} closed above resistance {lvl} on two days running; now {close}, "
-                    f"{_beyond(e)}% above it.{_after_break(e)}{clause}")
+    return "info", (f"🚀 **Resistance broken** — {name} closed above resistance {lvl} on two days running{_when(e)}; now {close}, "
+                    f"{_beyond(e)}% above it.{_after_break(e)}{_fading(e)}{clause}")
 
 
 def _watch_alert(name: str, e: dict) -> tuple[str, str]:
@@ -168,9 +206,9 @@ def _watch_alert(name: str, e: dict) -> tuple[str, str]:
     if ev == "support_near":
         return "info", f"👀 **Near support** (Watchlist) — {name} at {close}, {abs(e['distance_pct']):.1f}% above support {lvl}: a possible entry."
     if ev == "resistance_break":
-        return "info", f"🚀 **Breakout** (Watchlist) — {name} closed above resistance {lvl} on two days running; now {close}.{_after_break(e)}"
+        return "info", f"🚀 **Breakout** (Watchlist) — {name} closed above resistance {lvl} on two days running{_when(e)}; now {close}.{_after_break(e)}{_fading(e)}"
     if ev == "support_break":
-        return "info", f"🔻 **Support broken** (Watchlist) — {name} closed below support {lvl}; now {close}.{_after_break(e)} It may have further to fall."
+        return "info", f"🔻 **Support broken** (Watchlist) — {name} closed below support {lvl}; now {close}.{_after_break(e)}{_fading(e)} It may have further to fall."
     return "info", f"🔴 **Near resistance** (Watchlist) — {name} at {close}, {abs(e['distance_pct']):.1f}% below resistance {lvl}."
 
 
@@ -178,9 +216,9 @@ def _currency_alert(code: str, e: dict, exposure_eur: float) -> tuple[str, str]:
     ev, lvl, close = e["event"], _level_text(e), _fmt(e["close"])
     exp = f" Affects €{exposure_eur:,.0f} of your exposure."
     if ev == "support_break":
-        return "warning", f"🔻 **{code} broke support** vs EUR — closed below {lvl} on two days running; now {close}.{_after_break(e)}{exp}"
+        return "warning", f"🔻 **{code} broke support** vs EUR — closed below {lvl} on two days running{_when(e)}; now {close}.{_after_break(e)}{_fading(e)}{exp}"
     if ev == "resistance_break":
-        return "info", f"🚀 **{code} broke resistance** vs EUR — closed above {lvl} on two days running; now {close}.{_after_break(e)}{exp}"
+        return "info", f"🚀 **{code} broke resistance** vs EUR — closed above {lvl} on two days running{_when(e)}; now {close}.{_after_break(e)}{_fading(e)}{exp}"
     if ev == "support_near":
         return "info", f"🟢 **{code} near support** vs EUR — at {close}, {abs(e['distance_pct']):.1f}% above {lvl}.{exp}"
     return "info", f"🔴 **{code} near resistance** vs EUR — at {close}, {abs(e['distance_pct']):.1f}% below {lvl}.{exp}"

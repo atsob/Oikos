@@ -142,6 +142,92 @@ def _stats(sub: pd.DataFrame) -> dict:
     return out
 
 
+def _pick_horizon(df: pd.DataFrame, minimum: int = 100) -> str | None:
+    """The longest horizon with enough results to say anything (12 months, else 6, else 3)."""
+    for k in ("12m", "6m", "3m"):
+        if df["x" + k].notna().sum() >= minimum:
+            return k
+    for k in ("12m", "6m", "3m"):
+        if df["x" + k].notna().sum() >= 20:
+            return k
+    return None
+
+
+MONTHS = {"3m": 3, "6m": 6, "12m": 12}
+
+
+def _verdict(df: pd.DataFrame, per_security: bool) -> dict | None:
+    """The back-test in plain words: did higher scores go with better results, and by how much. Compares the high scorers (5 or more) with the
+    low scorers (1 or less), and measures — date by date — how well the score ranks the securities against what they went on to do (rank
+    correlation, the "information coefficient")."""
+    k = _pick_horizon(df)
+    if k is None:
+        return None
+    d = df[["d", "score", "x" + k]].dropna().rename(columns={"x" + k: "x"})
+    top, bot = d[d.score >= 5], d[d.score <= 1]
+    if len(top) < 20 or len(bot) < 20:
+        return None
+    hit = lambda s: float((s > 0).mean() * 100)
+    if per_security:
+        ic_series = pd.Series([d.score.rank().corr(d.x.rank())])
+    else:
+        ic_series = d.groupby("d").apply(lambda g: g.score.rank().corr(g.x.rank()) if len(g) >= 5 and g.score.nunique() > 1 else np.nan).dropna()
+    ic = float(ic_series.mean()) if len(ic_series) else float("nan")
+    share_pos = float((ic_series > 0).mean() * 100) if len(ic_series) else float("nan")
+    top_hit, bot_hit = hit(top.x), hit(bot.x)
+    top_mean, bot_mean = float(top.x.mean()), float(bot.x.mean())
+    gap = top_hit - bot_hit
+    if np.isnan(ic):
+        level = "weak"
+    elif ic >= 0.05 and gap >= 3:
+        level = "works"
+    elif ic <= -0.03 or gap <= -3:
+        level = "inverted"
+    else:
+        level = "weak"
+    months = MONTHS[k]
+    headline = {"works": f"Yes — over {months} months higher scores went with better results.",
+                "weak": f"Not clearly — over {months} months a higher score made little difference.",
+                "inverted": f"No — over {months} months the low scorers did as well or better than the high scorers."}[level]
+    sgn = lambda v: f"{v:+.1f}"
+    lines = [
+        f"Cases scoring 5 or more ({len(top):,}) beat the benchmark {top_hit:.0f}% of the time over {months} months, with an average excess return of {sgn(top_mean)} points (median {sgn(float(top.x.median()))}); "
+        f"cases scoring 1 or less ({len(bot):,}) beat it {bot_hit:.0f}% of the time ({sgn(bot_mean)} points, median {sgn(float(bot.x.median()))}). A score that works shows the first percentage clearly above the second; the median is the more honest figure, since a few huge winners (crypto, small caps) lift the average.",
+    ]
+    if not np.isnan(ic):
+        lines.append(f"Ranking correlation between the score and what followed: {ic:+.2f}" + (f", positive in {share_pos:.0f}% of the {len(ic_series)} months tested" if not per_security else "") +
+                     ". 0 means no link; +0.05 or more is a usable signal; negative means high scores did worse.")
+    lines.append({"works": "So the score has shown some ability to pick the better securities — still a tilt, not a guarantee, and it does not include fair value, analyst view or F-Score in the price-driven mode.",
+                  "weak": "So, on this evidence, do not lean on the score alone to choose between securities: a 50% hit rate is what luck gives. Use it as one input beside valuation and your own view.",
+                  "inverted": "So the price-driven points have not helped to pick winners here — strong trends and low volatility were not rewarded, while low-scored (often beaten-down or volatile) securities recovered more. Treat a high score as a description of the past, not a prediction."}[level])
+    return {"horizon": k, "level": level, "headline": headline, "lines": lines, "ic": _clean(ic), "top_hit": _clean(top_hit), "bottom_hit": _clean(bot_hit),
+            "top_mean": _clean(top_mean), "bottom_mean": _clean(bot_mean), "top_n": int(len(top)), "bottom_n": int(len(bot))}
+
+
+def _best_worst(df: pd.DataFrame, k: str) -> dict | None:
+    """The securities that did best and worst against the benchmark across all the dates tested (average excess return over the horizon),
+    with the score they had on average and the latest one. Needs a minimum of cases per security so one lucky month does not rank."""
+    d = df[["sid", "d", "score", "r" + k, "x" + k]].dropna(subset=["x" + k])
+    if d.empty:
+        return None
+    need = 12 if k != "3m" else 8
+    g = d.groupby("sid")
+    agg = pd.DataFrame({"n": g.size(), "excess": g["x" + k].mean(), "ret": g["r" + k].mean(), "hit": g["x" + k].apply(lambda s: (s > 0).mean() * 100),
+                        "avg_score": g.score.mean()})
+    agg = agg[agg.n >= need]
+    if len(agg) < 4:
+        return None
+    last = df.sort_values("d").groupby("sid").tail(1).set_index("sid")
+    agg["last_score"] = last.score.reindex(agg.index)
+    names = _q("SELECT Securities_Id AS sid, Securities_Name AS name FROM Securities WHERE Securities_Id = ANY(%s)", ([int(s) for s in agg.index],)).set_index("sid").name
+    rows = lambda a: [{"id": int(i), "name": str(names.get(i, i)), "n": int(r.n), "excess": _clean(r.excess), "ret": _clean(r.ret), "hit": _clean(r.hit),
+                       "avg_score": _clean(r.avg_score), "last_score": _clean(r.last_score)} for i, r in a.iterrows()]
+    # Every tested security, best first — the screen picks how many to show from each end. The score cuts are the lower and upper third of
+    # the securities' average scores: a "best" security whose typical score sat in the lower third, or a "worst" one in the upper third, is a miss.
+    cuts = [float(agg.avg_score.quantile(1 / 3)), float(agg.avg_score.quantile(2 / 3))]
+    return {"horizon": k, "tested": int(len(agg)), "score_cuts": [_clean(c) for c in cuts], "rows": rows(agg.sort_values("excess", ascending=False))}
+
+
 def run(params: dict, progress=None) -> dict:
     say = progress or (lambda _m: None)
     mode = params.get("mode") or "price"
@@ -200,8 +286,11 @@ def run(params: dict, progress=None) -> dict:
         for r in df.sort_values("d").itertuples():
             timeline.append({"date": str(r.d.date()), "score": _clean(r.score), **{k: _clean(getattr(r, "x" + k)) for k in HORIZONS}})
         notes.append("Excess is the security's forward return minus the benchmark's, in EUR, from each date.")
+    say("Summarising…")
+    verdict = _verdict(df, per_security=scope == "security")
+    best_worst = None if scope == "security" else _best_worst(df, verdict["horizon"] if verdict else (_pick_horizon(df, 40) or "3m"))
     return {"mode": mode, "scope": scope, "samples": int(len(df)), "securities": int(df.sid.nunique()), "from": str(df.d.min().date()), "to": str(df.d.max().date()),
-            "benchmark": benchmark, "groups": res_groups, "by_score": by_score, "timeline": timeline, "notes": notes}
+            "benchmark": benchmark, "groups": res_groups, "by_score": by_score, "timeline": timeline, "notes": notes, "verdict": verdict, "best_worst": best_worst}
 
 
 # ── background jobs (the UI starts one and polls it) ──────────────────────────────────────────────

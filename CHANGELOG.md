@@ -2,6 +2,18 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-28
+
+### Added
+- **Action Backtest explains itself, and lists the best and worst securities.** The result was a table of numbers with no verdict. It now opens with a **What this says** box in plain words — whether higher scores went with better results over the longest horizon with enough data — built from the share of cases beating the benchmark for scores of 5 or more against 1 or less (with average and median excess), and the ranking correlation between the score and what followed, month by month (0 = no link, +0.05 or more = usable, negative = high scores did worse). The table's headers now say what the figures are (average / median excess over the benchmark, % that beat it), the chart has a title, and a **Best / Worst** pair of lists shows the ten securities that beat or trailed the benchmark most (average excess, how often it beat it, the score it typically had and has now). Each security in those lists is marked **✓ called it** or **⚠ missed** (row highlighted): the tested securities are split by their typical score into a lower, middle and upper third, and a best performer rated in the lower third — or a worst one rated in the upper third — is a miss; a line under the title tallies the calls and the misses, and **Show N each** sets how many are listed (10 by default, remembered). For "what I hold now" the price-driven test reads: not clearly — scores of 5+ beat the benchmark 54% of the time over 12 months against 56% for scores of 1 or less, correlation +0.04.
+
+### Changed
+- **Securities Analysis → Volatility: High / Low Volatility lists are one line per security too.** Long names (an ETF's or a T-bill's full title) wrapped onto two lines, and the *Volatility %* header wrapped as well. The name is now cut with an ellipsis (full name on hover) and the header and numbers stay on one line.
+- **Inv. Performance: Top Gainers / Top Losers fit without scrolling sideways, one line per security.** The two lists sit side by side and a long security name (an ETF's full title) pushed the numbers off to the right, so the Losers list needed a horizontal scroll bar to reach its Change column. The name now takes whatever width the numbers leave and is cut with an ellipsis when it is too long — hover for the full name — so every security is a single row and the Change / P&L / Invested columns are always visible.
+
+### Fixed
+- **"Resistance broken" read like a live breakout while the price was falling.** The alert fires on two consecutive closes beyond a level within the last 10 trading days, but its wording ("closed above resistance … on two days running; now 116.41") suggested those were the latest two days — Thomson Reuters broke 111.51 on 22 October, peaked at 123.26 and had since fallen three sessions in a row. Break alerts now give the date the break was confirmed and, when the price is already walking back (falling for two or more sessions, or more than 1% off its post-break high — the reverse for a support break), add a ⚠️ note such as "down 3 sessions running, 5.6% off its post-break high of 123.2600; a close back under the level would undo the break". The move is measured from the first close beyond the level, not from the confirmation, which can come days later after a close back inside — Alphabet's support break was "confirmed" on 27 October although the price had been below 327.33 since the 23rd and bounced 1.2% off its low on the 27th. The detection rule itself is unchanged.
+
 ## 2026-10-27
 
 ### Added

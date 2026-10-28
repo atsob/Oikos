@@ -3821,7 +3821,8 @@ function PerformanceTab() {
   const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
     <tr className="hover:bg-slate-50">
       {rank != null && <td className="px-3 py-2 text-slate-400">{rank}</td>}
-      <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap"><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
+      {/* One line per security: the name takes the width the numbers leave and is cut with an ellipsis (full name on hover). */}
+      <td className="px-3 py-2 font-medium text-blue-700 w-full max-w-0 min-w-[8rem] truncate" title={String(v.securities_name)}><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
       {viewPct ? (
         <>
           <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
@@ -3909,7 +3910,7 @@ function PerformanceTab() {
         <div>
           <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-green-700">📈 Top {topN} Gainers</div>
           <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-96">
+            <div className="overflow-x-hidden overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
@@ -3930,7 +3931,7 @@ function PerformanceTab() {
         <div>
           <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-red-600">📉 Top {topN} Losers</div>
           <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-96">
+            <div className="overflow-x-hidden overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
@@ -5282,19 +5283,20 @@ function VolatilityTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const VolTable = ({ items, label, style }: { items: typeof highVol; label: string; style: string }) => (
-    <div>
+    <div className="min-w-0">
       <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${style}`}>{label}</div>
       <WithCopy scrollKey="investment-signals">
         <table className="w-full text-sm">
           <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-3 py-2 text-left">Security</th>
-            <th className="px-3 py-2 text-right">Volatility %</th>
+            <th className="px-3 py-2 text-left whitespace-nowrap">Security</th>
+            <th className="px-3 py-2 text-right whitespace-nowrap">Volatility %</th>
           </tr></thead>
           <tbody className="divide-y divide-slate-100">
             {items.map((r, i) => (
               <tr key={i} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium"><SecLink id={r.id}>{r.name}</SecLink></td>
-                <td className="px-3 py-2 text-right tabular-nums">{r.vol.toFixed(2)}%</td>
+                {/* One line per security: the name takes the width the number leaves, cut with an ellipsis (full name on hover). */}
+                <td className="px-3 py-2 font-medium w-full max-w-0 min-w-[8rem] truncate" title={r.name}><SecLink id={r.id}>{r.name}</SecLink></td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.vol.toFixed(2)}%</td>
               </tr>
             ))}
           </tbody>
@@ -5935,7 +5937,10 @@ type BtResult = {
   mode: string; scope: string; samples: number; securities: number; from?: string; to?: string
   benchmark: { id: number; name: string } | null; groups: BtGroup[]; by_score: { score: number; n: number; h: Record<string, BtHorizon> }[]
   timeline: { date: string; score: number | null; '3m': number | null; '6m': number | null; '12m': number | null }[]; notes: string[]
+  verdict?: { horizon: string; level: 'works' | 'weak' | 'inverted'; headline: string; lines: string[] } | null
+  best_worst?: { horizon: string; tested: number; score_cuts: [number, number]; rows: BtSecurity[] } | null
 }
+type BtSecurity = { id: number; name: string; n: number; excess: number | null; ret: number | null; hit: number | null; avg_score: number | null; last_score: number | null }
 const BT_HORIZONS = ['3m', '6m', '12m'] as const
 
 function ActionBacktestTab() {
@@ -5944,6 +5949,7 @@ function ActionBacktestTab() {
   const [mode, setMode] = usePersist<'price' | 'log'>('ab_mode', 'price')
   const [bench, setBench] = usePersist<string>('ab_bench', 'default')
   const [secId, setSecId] = usePersist<number>('ab_security', 0)
+  const [topN, setTopN] = usePersist<number>('ab_top_n', 10)
   const [secFilter, setSecFilter] = useState('')
   const [accountIds, setAccountIds] = useState<number[] | undefined>(undefined)
   const [result, setResult] = useState<BtResult | null>(null)
@@ -5982,12 +5988,53 @@ function ActionBacktestTab() {
 
   const filteredSecs = secs.filter(s => !secFilter || `${s.name} ${s.ticker}`.toLowerCase().includes(secFilter.toLowerCase())).sort(byName).slice(0, 300)
 
+  const pp = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
+  // Did the score see it coming? A security's typical score is "high" in the upper third of the tested securities, "low" in the lower third.
+  // Among the best, a low score is a miss and a high one a call; among the worst, the other way round. The middle third says nothing either way.
+  const scoreCall = (r: BtSecurity, best: boolean, cuts: [number, number]): 'called' | 'missed' | null => {
+    if (r.avg_score == null) return null
+    const high = r.avg_score >= cuts[1], low = r.avg_score <= cuts[0]
+    return high ? (best ? 'called' : 'missed') : low ? (best ? 'missed' : 'called') : null
+  }
+  const securityTable = (rows: BtSecurity[], title: string, tone: string, best: boolean, cuts: [number, number]) => (
+    <div className="min-w-0">
+      <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${tone}`}>{title}</div>
+      <table className="w-full text-sm">
+        <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+          <th className="px-3 py-2 text-left whitespace-nowrap">Security</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Average of the security's return minus the benchmark's over the horizon, across every date tested, in percentage points.">Excess</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Share of the dates on which the security beat the benchmark.">Beat it</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Average Action score it had on the dates tested, and the latest one.">Score avg → now</th>
+          <th className="px-3 py-2 text-left whitespace-nowrap" title="Whether its typical score pointed the right way: high for the best, low for the worst = called it; the opposite = missed it.">Score</th>
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map(r => {
+            const call = scoreCall(r, best, cuts)
+            return (
+              <tr key={r.id} className={call === 'missed' ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'}>
+                <td className="px-3 py-2 font-medium w-full max-w-0 min-w-[8rem] truncate" title={`${r.name} — ${r.n} dates tested`}><SecLink id={r.id}>{r.name}</SecLink></td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${(r.excess ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{pp(r.excess)} pp</td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.hit == null ? '—' : `${r.hit.toFixed(0)}%`}</td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-slate-500">{r.avg_score == null ? '—' : r.avg_score.toFixed(1)} → {r.last_score == null ? '—' : r.last_score.toFixed(0)}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-xs font-medium">
+                  {call === 'missed' ? <span className="text-amber-700" title={best ? 'It beat the benchmark although its typical score was low.' : 'It trailed the benchmark although its typical score was high.'}>⚠ missed</span>
+                    : call === 'called' ? <span className="text-green-700" title={best ? 'It beat the benchmark and its typical score was high.' : 'It trailed the benchmark and its typical score was low.'}>✓ called it</span>
+                    : <span className="text-slate-400" title="Its typical score was in the middle third — neither high nor low.">—</span>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-slate-500 max-w-3xl">
-        Does the Action score work? For each month-end since 2016 (or each day of the log) it takes the score the securities had and compares what they returned over
-        the next 3, 6 and 12 months with the benchmark. <b>mean / median</b> are the excess return in percentage points; the <b>%</b> is how often it beat the benchmark.
-        A score that works shows higher % in the higher groups. 50% is a coin flip.
+        Does the Action score work? For each month-end since 2016 (or each day of the log) it takes the score a security had, then looks at what it returned over
+        the next 3, 6 and 12 months <i>in excess of the benchmark</i> — +5 means it beat the benchmark by 5 percentage points. Each row is a group of cases with a similar score.
+        A score that works shows better numbers in the higher-scoring rows; a hit rate near 50% is a coin flip.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="text-xs text-slate-500">Test
@@ -6041,13 +6088,19 @@ function ActionBacktestTab() {
           {result.notes.length > 0 && (
             <ul className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5 list-disc pl-5 max-w-4xl">{result.notes.map(n => <li key={n}>{n}</li>)}</ul>
           )}
+          {result.verdict && (
+            <div className={`rounded-lg border p-3 max-w-4xl space-y-1.5 ${result.verdict.level === 'works' ? 'bg-green-50 border-green-200' : result.verdict.level === 'inverted' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+              <p className="text-sm font-semibold text-slate-800">What this says — {result.verdict.headline}</p>
+              {result.verdict.lines.map(l => <p key={l} className="text-xs text-slate-600">{l}</p>)}
+            </div>
+          )}
           {result.groups.length > 0 && (
             <div className="overflow-x-auto">
               <table className="text-sm">
                 <thead>
                   <tr className="text-xs text-slate-500 border-b border-slate-200">
-                    <th className="text-left py-1 pr-6">Group</th><th className="text-right px-3">Cases</th>
-                    {BT_HORIZONS.map(h => <th key={h} className="text-left px-4">{h}: mean / median · beat</th>)}
+                    <th className="text-left py-1 pr-6">Group (score on that date)</th><th className="text-right px-3">Cases</th>
+                    {BT_HORIZONS.map(h => <th key={h} className="text-left px-4">{({ '3m': 'After 3 months', '6m': 'After 6 months', '12m': 'After 12 months' })[h]}<span className="block font-normal text-slate-400">average / median excess · % beat it</span></th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -6068,10 +6121,43 @@ function ActionBacktestTab() {
                 marker: { color: i ? '#2563eb' : '#f59e0b' },
                 hovertemplate: result.by_score.map(r => `score ${r.score}<br>${r.n} cases<br>${r.h[h].hit ?? '—'}% beat it<extra>${h}</extra>`),
               }))}
-              layout={{ height: 280, barmode: 'group', margin: { t: 10, r: 10, b: 40, l: 45 }, yaxis: { title: { text: '% beating the benchmark' }, range: [30, 70] }, xaxis: { title: { text: 'score' } },
+              layout={{ title: { text: 'Share of cases that beat the benchmark, by score (dotted line = 50%, a coin flip)', font: { size: 12 } }, height: 300, barmode: 'group', margin: { t: 40, r: 10, b: 40, l: 45 }, yaxis: { title: { text: '% beating the benchmark' }, range: [30, 70] }, xaxis: { title: { text: 'score' } },
                 shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 50, y1: 50, line: { color: '#94a3b8', dash: 'dot' } }], legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
               config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} useResizeHandler />
           )}
+          {result.best_worst && (() => {
+            const bw = result.best_worst
+            const n = Math.max(1, Math.min(topN, Math.floor(bw.rows.length / 2)))
+            const best = bw.rows.slice(0, n), worst = bw.rows.slice(-n).reverse()
+            const tally = (rows: BtSecurity[], isBest: boolean) => rows.map(r => scoreCall(r, isBest, bw.score_cuts))
+            const calls = [...tally(best, true), ...tally(worst, false)]
+            const called = calls.filter(c => c === 'called').length, missed = calls.filter(c => c === 'missed').length
+            return (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-end gap-x-6 gap-y-1">
+                  <p className="text-sm font-semibold text-slate-700">Best and worst against the benchmark
+                    <span className="font-normal text-slate-500"> — over {({ '3m': '3', '6m': '6', '12m': '12' } as Record<string, string>)[bw.horizon]} months, averaged across every date tested ({bw.tested} securities with enough history)</span></p>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">Show
+                    <button onClick={() => setTopN(Math.max(3, n - 1))} className="px-2 py-0.5 rounded border border-slate-300 hover:bg-slate-50">−</button>
+                    <span className="w-8 text-center tabular-nums text-sm text-slate-700">{n}</span>
+                    <button onClick={() => setTopN(Math.min(50, n + 1))} className="px-2 py-0.5 rounded border border-slate-300 hover:bg-slate-50">+</button>
+                    each
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500 max-w-4xl space-y-1">
+                  <p><b>Excess</b> — average return minus the benchmark's, in percentage points. <b>Beat it</b> — on how many dates it did better than the benchmark. <b>Score avg → now</b> — the Action score it typically had on those dates, and has today.</p>
+                  <p><b>Score</b> asks: did the score point the right way? The tested securities are split by their typical score into a lower, a middle and an upper third.
+                    <span className="text-green-700 font-medium"> ✓ called it</span> — a best security whose typical score was in the upper third, or a worst one in the lower third.
+                    <span className="text-amber-700 font-medium"> ⚠ missed</span> (row highlighted) — a best one that the score rated in the lower third, or a worst one it rated in the upper third:
+                    the score would have steered you the wrong way. In the {n * 2} shown, the score <b>called {called}</b> and <b>missed {missed}</b>; the rest sat in the middle third. If the score worked, "called" would clearly outnumber "missed".</p>
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  {securityTable(best, '🏆 Best', 'bg-green-50 border border-green-100 text-green-700', true, bw.score_cuts)}
+                  {securityTable(worst, '📉 Worst', 'bg-red-50 border border-red-100 text-red-600', false, bw.score_cuts)}
+                </div>
+              </div>
+            )
+          })()}
           {result.timeline.length > 0 && (
             <Plot
               data={[
