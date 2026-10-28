@@ -181,10 +181,23 @@ def _pnl_clause(pnl: float | None, cost: float | None) -> str:
     return f" You're {'📈 up' if pnl >= 0 else '📉 down'} {abs(pct):.1f}% (€{abs(pnl):,.2f}) vs cost."
 
 
-def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None) -> tuple[str, str]:
+def _accounts_clause(accounts: list[dict]) -> str:
+    """Up / down vs cost for each account holding the security — one security held in several accounts can be up in one and down in
+    another, and a position moved in without a cost basis would otherwise turn the combined figure into nonsense."""
+    parts = []
+    for a in accounts:
+        if a["cost_eur"] and a["cost_eur"] > 0:
+            pnl = a["value_eur"] - a["cost_eur"]
+            parts.append(f"**{a['account']}** {'📈 up' if pnl >= 0 else '📉 down'} {abs(pnl / a['cost_eur'] * 100):.1f}% (€{abs(pnl):,.2f})")
+        else:
+            parts.append(f"**{a['account']}** no cost basis recorded (€{a['value_eur']:,.2f} held)")
+    return " Vs cost, by account: " + "; ".join(parts) + "."
+
+
+def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None, accounts: list[dict] | None = None) -> tuple[str, str]:
     ev, lvl, close = e["event"], _level_text(e), _fmt(e["close"])
     pct = (pnl / cost * 100) if pnl is not None and cost else None
-    clause = _pnl_clause(pnl, cost)
+    clause = _accounts_clause(accounts) if accounts and len(accounts) > 1 else _pnl_clause(pnl, cost)
     if ev == "support_break":
         level = "error" if pnl is not None and pnl < 0 else "warning"
         return level, (f"🔻 **Support broken** — {name} closed below support {lvl} on two days running{_when(e)}; now {close}, "
@@ -248,6 +261,22 @@ def get_sr_alerts(today: date | None = None) -> list[dict]:
             WHERE h.Quantity > 0
             GROUP BY s.Securities_Id, s.Securities_Name, s.Currencies_Id
         """, conn, params={"t": today})
+        by_account = pd.read_sql("""
+            WITH px AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices
+                        WHERE Date <= %(t)s ORDER BY Securities_Id, Date DESC),
+                 fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX
+                        WHERE Date <= %(t)s ORDER BY Currencies_Id_1, Date DESC)
+            SELECT h.Securities_Id AS sid, a.Accounts_Name AS account,
+                   SUM(h.Quantity * px.Close * COALESCE(fx.FX_Rate, 1))::float AS value_eur,
+                   SUM(h.Quantity * COALESCE(h.Fifo_Avg_Cost_EUR, 0))::float AS cost_eur
+            FROM Holdings h JOIN Securities s ON s.Securities_Id = h.Securities_Id
+            JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
+            JOIN px ON px.Securities_Id = h.Securities_Id
+            LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
+            WHERE h.Quantity > 0
+            GROUP BY h.Securities_Id, a.Accounts_Id, a.Accounts_Name
+            ORDER BY h.Securities_Id, value_eur DESC
+        """, conn, params={"t": today})
         watch = pd.read_sql("""SELECT w.Securities_Id AS sid, s.Securities_Name AS name FROM Watchlist w
                                JOIN Securities s ON s.Securities_Id = w.Securities_Id""", conn)
         cash = pd.read_sql("""SELECT Currencies_Id AS cid, SUM(Accounts_Balance)::float AS bal FROM Accounts
@@ -300,9 +329,13 @@ def get_sr_alerts(today: date | None = None) -> list[dict]:
 
     for r in held.itertuples():
         try:
-            pnl = (float(r.value_eur) - float(r.cost_eur)) if r.cost_eur and r.cost_eur > 0 else None
+            accounts = by_account[by_account["sid"] == int(r.sid)].to_dict("records")
+            # P&L over the accounts that have a cost basis only: shares moved in with none would make the whole position look like a pure gain.
+            priced = [a for a in accounts if a["cost_eur"] and a["cost_eur"] > 0]
+            cost_all = sum(a["cost_eur"] for a in priced)
+            pnl = (sum(a["value_eur"] for a in priced) - cost_all) if cost_all > 0 else None
             for e in events(series(prices, "sid", int(r.sid))):
-                level, msg = _holding_alert(r.name, e, pnl, float(r.cost_eur) if r.cost_eur else None)
+                level, msg = _holding_alert(r.name, e, pnl, cost_all or None, accounts)
                 add(level, msg, e, "holding", securities_id=int(r.sid))
         except Exception as ex:  # one bad series never hides the others
             log.warning("S/R alerts for security %s failed: %s", r.sid, ex)
