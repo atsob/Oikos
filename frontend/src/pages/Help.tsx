@@ -1655,6 +1655,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Importers</H2>
         <P>Bring in transactions from banks and brokers instead of entering them by hand, grouped into three families:</P>
+        <Note>
+          <b>Last run is remembered.</b> The importers that take a date range — Interactive Brokers, Saxo, Coinbase and Crypto.com — keep the range you used the last time you fetched a preview or imported, with the time it ran, and put it back in the date fields when you open the tab (on any device; with the account and credentials they already remembered). A line under the dates says when the last run was; if its "To" date is in the past it warns that newer records would be left out. Replace mode is never remembered.
+        </Note>
         <Ul>
           <li>
             <b>Bank</b> — Import &amp; Reconcile (generic file import with matching against existing
@@ -1699,7 +1702,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           transaction on that security (a rebate as MiscInc) instead of a plain Cash Transaction, so it counts in the security's own P&amp;L; the cash
           side follows through the investment account's linked cash account. IB leaves symbol and ISIN empty on these lines, so the security is found
           from the name before the fee wording; a fee that matches no security (market-data charges, say) stays a Cash Transaction, and a fee already
-          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first.
+          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first. An order for a fractional quantity (4.2436 shares) arrives as two fills, the whole shares and the fraction; the statement puts the order's one commission in the fractional fill, but the importer books it on the whole-share fill, as IB's own statement shows it — the order's total cost is the same either way.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
           "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual

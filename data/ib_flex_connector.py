@@ -397,7 +397,32 @@ def _parse_trades(statement: ET.Element) -> tuple[list, int]:
             "commission":     round(commission, 4),
             "total_eur":      round(total_eur, 2),
             "exchange":       exchange,
+            "_order":         _s(t, "ibOrderID"),
         })
+
+    # An order for a fractional quantity (4.2436 shares) comes as two fills of the same order — the whole shares and the fraction — and IB books
+    # the order's single commission in the netCash of the fractional fill, so back-calculating it from netCash puts it there. It belongs to the
+    # whole-share execution, which is how IB's own statement and a hand-entered trade show it. Move it when one fill of an order carries a
+    # commission and the largest fill, a whole number of shares, carries none; the order's total cost does not change.
+    by_order: dict[tuple, list[dict]] = {}
+    for rec in records:
+        if rec["_order"]:
+            by_order.setdefault((rec["_order"], rec["symbol"], rec["date"], rec["action"]), []).append(rec)
+    for fills in by_order.values():
+        if len(fills) < 2:
+            continue
+        big = max(fills, key=lambda r: r["quantity"])
+        paying = [r for r in fills if r["commission"] and r is not big]
+        if big["commission"] or len(paying) != 1 or float(big["quantity"]) != int(big["quantity"]):
+            continue
+        small = paying[0]
+        comm = small["commission"]
+        move_eur = round(comm * small["fx_rate"], 2)
+        small["commission"], big["commission"] = 0.0, comm
+        small["total_eur"] = round(small["total_eur"] - move_eur, 2)
+        big["total_eur"] = round(big["total_eur"] + move_eur, 2)
+    for rec in records:
+        rec.pop("_order", None)
 
     # Some Flex Query configurations report neither tradeID nor ibExecID, so
     # multiple partial fills of the same order can still end up sharing an
