@@ -4,6 +4,7 @@ import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, use
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import Plot from '@/components/Plot'
+import RetirementPlanner from '@/components/RetirementPlanner'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import {
   getPortfolioSummary,
@@ -14,11 +15,11 @@ import {
   getNetWorthByAccount, getInvestmentPositionsHistory,
   getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio, getCountryExposure, getCurrencyExposure,
   getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getTaxLossHarvestingSummary, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getSavingsForecast, getSavingsRecommendations,
-  getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
+  getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts, getCryptoTax,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull, getCostsByBroker,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
@@ -2480,7 +2481,7 @@ function ChkBox({ label, checked, onChange }: { label: string; checked: boolean;
   )
 }
 
-function PnlReport() {
+function PnlReport({ accountIds }: { accountIds?: number[] }) {
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const [win, setWin] = usePersist<PnlWindow>('pnl_win', 'ytd')
@@ -2505,9 +2506,11 @@ function PnlReport() {
   const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
 
   // Derive all data BEFORE any early return so hooks are always called in the same order
+  // Only the accounts of the Account Preset (undefined = Full Portfolio).
   const rows = useMemo(
-    () => mergeLongTermPnl(data as Row[], ltYears ? pnlKey(win) : null, ltYears ? `pnl_${win}_percent` : null, ltMap),
-    [data, win, ltYears, ltMap],
+    () => mergeLongTermPnl(data as Row[], ltYears ? pnlKey(win) : null, ltYears ? `pnl_${win}_percent` : null, ltMap)
+      .filter(r => !accountIds || accountIds.includes(Number(r.accounts_id))),
+    [data, win, ltYears, ltMap, accountIds],
   )
   const pk = pnlKey(win)
   const mktKey = win === 'dtd' ? 'pnl_dtd_market_eur' : win === 'ytd' ? 'pnl_ytd_market_eur' : null
@@ -2570,8 +2573,8 @@ function PnlReport() {
   // filter); account-level only once a row's been drilled into, scoped to that one account —
   // the endpoint already supports this account_ids filter, so no backend change was needed.
   const { data: portfolioVar } = useQuery({
-    queryKey: ['risk-metrics', 756, null, 'all'],
-    queryFn: () => getRiskMetrics(756, null),
+    queryKey: ['risk-metrics', 756, null, 'all', accountIds ?? null],
+    queryFn: () => getRiskMetrics(756, null, accountIds),
     staleTime: 300_000,
   })
   const { data: accountVar } = useQuery({
@@ -2687,7 +2690,7 @@ function PnlReport() {
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
               <table data-cards className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." />
+                  <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." className="bg-slate-50 md:sticky md:left-0 md:z-20" />
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
                   <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current market value of the position in EUR." />
@@ -2701,8 +2704,9 @@ function PnlReport() {
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedDrill.map((r, i) => (
-                    <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
-                      <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
+                    <tr key={i} className={`bg-white hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
+                      {/* The Security column is pinned on the left while the numbers scroll. One line per security on a wide screen (a very long name is cut with an ellipsis, full name on hover); the phone's card layout keeps the whole name. */}
+                      <td className="px-3 py-2 font-medium bg-inherit md:whitespace-nowrap md:sticky md:left-0 md:z-10 md:shadow-[1px_0_0_0_#e2e8f0] md:w-full md:max-w-0 md:min-w-[9rem]"><div className="md:truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</div></td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
                       <EditablePriceCell
                         securitiesId={r.securities_id}
@@ -3133,7 +3137,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
 const DIV_PERIODS = ['YTD', 'Previous Year', '1 Year', '2 Years', '3 Years', '5 Years', 'All Time', 'Custom']
 const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b82f6', '#ec4899', '#84cc16']
 
-function DividendTrackerTab() {
+function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const [divView, setDivView] = usePersist<'actual' | 'forecast' | 'recommendations'>('div_view', 'actual')
@@ -3145,8 +3149,8 @@ function DividendTrackerTab() {
   const [detailOpen, setDetailOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
-    queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
+    queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null, accountIds ?? null],
+    queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined, accountIds),
     refetchInterval: liveRefetchMs,
   })
 
@@ -3155,8 +3159,8 @@ function DividendTrackerTab() {
   const [fcPeriod, setFcPeriod] = usePersist<'eoy' | '6m' | '12m'>('div_forecast_period', '12m')
 
   const { data: fcData, isLoading: fcLoading } = useQuery({
-    queryKey: ['dividends-forecast', fcPeriod],
-    queryFn: () => getDividendsForecast(fcPeriod),
+    queryKey: ['dividends-forecast', fcPeriod, accountIds ?? null],
+    queryFn: () => getDividendsForecast(fcPeriod, accountIds),
     enabled: divView === 'forecast',
   })
 
@@ -3742,7 +3746,7 @@ const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
   'All-Time': ['pnl_net_all_time_eur', 'pnl_net_all_time_percent', 'gross_invested_all_time_eur'],
 }
 
-function PerformanceTab() {
+function PerformanceTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl(), refetchInterval: liveRefetchMs })
@@ -3754,8 +3758,9 @@ function PerformanceTab() {
   const ltYears = LONG_TERM_YEARS[period] ?? null
   const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
   const rows = useMemo(
-    () => mergeLongTermPnl(data as Row[], ltYears ? PERF_PERIOD_MAP[period][0] : null, null, ltMap),
-    [data, period, ltYears, ltMap],
+    () => mergeLongTermPnl(data as Row[], ltYears ? PERF_PERIOD_MAP[period][0] : null, null, ltMap)
+      .filter(r => !accountIds || accountIds.includes(Number(r.accounts_id))),
+    [data, period, ltYears, ltMap, accountIds],
   )
 
   const bySec = useMemo(() => {
@@ -4421,10 +4426,10 @@ function SavingsAccountsTab() {
   )
 }
 
-function BondScheduleTab() {
+function BondScheduleTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule, refetchInterval: liveRefetchMs })
+  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule', accountIds ?? null], queryFn: () => getBondSchedule(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTablePersisted(rows, 'bond-schedule-sort', 'days_to_maturity', 'asc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -4793,9 +4798,10 @@ const INV_POSITION_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Inv
 // (Report_Scope keeps each report section's saved preset names in their own
 // namespace — see api/routers/reports.py's portfolio-presets endpoints).
 const EMPTY_PRESET_ROWS: never[] = []
-function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void }) {
+// `selectionKey` gives a report its own remembered choice while still offering the presets saved under `reportScope`.
+function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void; selectionKey?: string }) {
   const [open, setOpen] = useState(false)
-  const [selPreset, setSelPreset] = usePersist(`preset_sel_${reportScope}`, FULL_PORTFOLIO)
+  const [selPreset, setSelPreset] = usePersist(`preset_sel_${selectionKey ?? reportScope}`, FULL_PORTFOLIO)
   const [nameInput, setNameInput] = useState('')
   const [draftIds, setDraftIds] = useState<Set<number> | null>(null)
   const [showInactive, setShowInactive] = useState(false)
@@ -5053,26 +5059,26 @@ function InvPerformanceSection() {
   useEffect(() => {
     qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
     qc.prefetchQuery({ queryKey: ['price-changes'], queryFn: getPriceChanges })
-    qc.prefetchQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
-    qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null], queryFn: () => getDividendsTracker('YTD') })
+    qc.prefetchQuery({ queryKey: ['bond-schedule', null], queryFn: () => getBondSchedule() })
+    qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null, null], queryFn: () => getDividendsTracker('YTD') })
   }, [])
-  const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR'].includes(tab)
+  const needsPreset = tab !== 'Savings'            // every tab that looks at investment accounts shares one Account Preset
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
       {needsPreset && <PortfolioPresetBar reportScope="inv_performance" eligibleTypes={INV_ACCOUNT_TYPES} onChange={setPresetAccountIds} />}
-      {tab === 'P&L'              && <PnlReport />}
-      {tab === 'Performance'      && <PerformanceTab />}
+      {tab === 'P&L'              && <PnlReport accountIds={presetAccountIds} />}
+      {tab === 'Performance'      && <PerformanceTab accountIds={presetAccountIds} />}
       {tab === 'TWR/MWR'          && <TwrTab accountIds={presetAccountIds} />}
       {tab === 'Savings'          && <SavingsAccountsTab />}
-      {tab === 'Dividend Tracker' && <DividendTrackerTab />}
-      {tab === 'Bond Schedule'    && <BondScheduleTab />}
+      {tab === 'Dividend Tracker' && <DividendTrackerTab accountIds={presetAccountIds} />}
+      {tab === 'Bond Schedule'    && <BondScheduleTab accountIds={presetAccountIds} />}
       {tab === 'Benchmark'        && <BenchmarkTab accountIds={presetAccountIds} />}
       {tab === 'Risk Metrics'     && <RiskMetricsTab accountIds={presetAccountIds} />}
       {tab === 'Correlation'      && <CorrelationTab accountIds={presetAccountIds} />}
       {tab === 'Monte Carlo'      && <MonteCarloTab accountIds={presetAccountIds} />}
       {tab === 'Stress Test'      && <StressTestTab accountIds={presetAccountIds} />}
-      {tab === 'Best / Worst Days' && <DayExtremesTab />}
+      {tab === 'Best / Worst Days' && <DayExtremesTab accountIds={presetAccountIds} />}
     </div>
   )
 }
@@ -8446,7 +8452,8 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
     }, expand ? 50 : 0)
   }
   const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
-  const d = data as Row[]
+  // Cryptocurrency is on the Crypto tab (every wallet pooled, losses carried forward, rewards, E1) — not counted a second time here.
+  const d = (data as Row[]).filter(r => String(r.tax_category) !== 'Crypto' && String(r.securities_type) !== 'Crypto')
 
   const sum = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
   const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${fmtNum(n, 2)}`
@@ -8483,6 +8490,9 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
         Realized gains/losses for the selected tax year. Tax treatment is driven by each position's{' '}
         <strong>effective tax category</strong> (instrument-type override → security tax category → Tax Rules settings).
         Exempt categories (e.g. Local Listed, UCITS) are shown separately. All amounts in EUR.
+      </p>
+      <p className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 max-w-4xl">
+        <b>Cryptocurrency is on the Crypto tab</b>, not here — all your wallets pooled, losses carried forward, rewards and the Form E1 figures.
       </p>
 
       {/* Controls */}
@@ -8652,49 +8662,128 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
   )
 }
 
-function TaxLossHarvestingTab() {
+// Tax-loss harvesting: a loss only helps if it can be set against a gain, and only against gains of its own taxable category — so the candidates are grouped
+// by tax category, the categories whose gains are exempt (a loss there offsets nothing) are set apart, and each taxable category shows the gains it could be
+// set against in the tax year. Server side: /reports/tax-loss-harvesting and /summary.
+function TaxLossHarvestingTab({ year, method, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean }) {
   const { data = [], isLoading } = useQuery({ queryKey: ['tax-loss-harvesting'], queryFn: getTaxLossHarvesting })
+  // The crypto figures use the Crypto tab's own settings (same remembered values), so the two tabs always agree.
+  const [rewardsIncome] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
+  const [cryptoExemption] = usePersist('crypto_tax_exemption', 0)
+  const [cryptoRate] = usePersist<number | null>('crypto_tax_rate', null)
+  const [cryptoLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [cryptoExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const { data: sum } = useQuery({
+    queryKey: ['tax-loss-harvesting-summary', year, method, rewardsIncome, cryptoExemption, cryptoRate, cryptoLossesFrom, cryptoExcluded],
+    queryFn: () => getTaxLossHarvestingSummary(year, method, { rewardsIncome, exemption: cryptoExemption, rate: cryptoRate, lossesFrom: cryptoLossesFrom, excluded: cryptoExcluded }),
+  })
+  const [showExempt, setShowExempt] = useState(false)
+  const [catFilter, setCatFilter] = useState<string | null>(null)
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
-  const totalLoss = rows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const taxableRows = rows.filter(r => r.tax_value === 'taxable')
+  const exemptRows = rows.filter(r => r.tax_value !== 'taxable')
+  const shown = catFilter ? taxableRows.filter(r => r.tax_category === catFilter) : taxableRows
+  const totalTaxable = taxableRows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const totalExempt = exemptRows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const th = 'text-right px-2 py-1.5 border-b border-slate-200 font-semibold'
+
+  const positions = (rs: Row[]) => (
+    <WithCopy>
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-420px)] text-xs">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
+            <th className={th}>Qty</th><th className={th}>Cur. Price</th><th className={th}>Cost Basis</th><th className={th}>Cur. Value</th><th className={th}>Cost Total</th><th className={th}>Loss (€)</th><th className={th}>Loss %</th>
+          </tr></thead>
+          <tbody>
+            {rs.map((r, i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{String(r.tax_category)}</td>
+                <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toFixed(4)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_price ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-red-600 font-medium">{fmtEur(Number(r.unrealized_loss_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{Number(r.loss_pct ?? 0).toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </WithCopy>
+  )
+
   return (
     <div className="space-y-4">
-      <KpiCard label="Total Harvestable Loss" value={fmtEur(totalLoss)} color="text-red-600" />
-      {rows.length === 0 ? (
-        <p className="text-slate-500 text-sm py-4">No positions with unrealized losses.</p>
-      ) : (
-        <WithCopy scrollKey="tax-loss-harvesting">
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Qty</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cur. Price</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cost Basis</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cur. Value</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cost Total</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Loss (€)</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Loss %</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                  <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toFixed(4)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_price ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-red-600 font-medium">{fmtEur(Number(r.unrealized_loss_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{Number(r.loss_pct ?? 0).toFixed(2)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <p className="text-xs text-slate-500 max-w-4xl">
+        A loss helps only if it can be set against a gain, and only against gains of its <b>own taxable category</b> (crypto against crypto, FX Spot against FX Spot…). So the positions below are grouped by tax category; categories whose gains are exempt
+        are set apart, because selling them at a loss offsets nothing. The gains are those realised in {year} ({method}).
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard label="Loss with tax value" value={fmtEur(totalTaxable)} color="text-red-600" tooltip="Unrealized losses in categories whose gains are taxed — the only ones that could offset anything." />
+        <KpiCard label={`Tax it could save in ${year}`} value={fmtEur(sum?.totals.saving_eur ?? 0)} color="text-green-700" tooltip="For each taxable category: the loss, up to the gains of that category realised this year (Crypto: the gain left after the losses already carried forward), times the rate." />
+        <KpiCard label="No tax value (exempt)" value={fmtEur(totalExempt)} color="text-slate-500" tooltip="Unrealized losses in categories whose gains are exempt (Local Listed, UCITS, foreign listed shares…): selling them offsets nothing." />
+      </div>
+
+      {sum && sum.categories.length > 0 && (
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">By taxable category <span className="font-normal text-xs text-slate-400">— click one to list its positions</span></p>
+          <WithCopy>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead><tr className="bg-slate-50">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th><th className={th}>Positions</th><th className={th}>Loss on offer</th><th className={th}>Gains realised {year}</th>
+                  <th className={th}><Tooltip text="What the loss could be set against: this year's realised gains of the category (Crypto: what is still taxable after the losses already carried forward).">Left to offset</Tooltip></th><th className={th}>Could save</th>
+                </tr></thead>
+                <tbody>
+                  {sum.categories.map(c => (
+                    <React.Fragment key={c.category}>
+                      <tr className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 ${catFilter === c.category ? 'bg-blue-50' : ''}`} onClick={() => setCatFilter(f => f === c.category ? null : c.category)}>
+                        <td className="px-2 py-1.5 font-medium">{c.display_name} <span className="text-slate-400 font-normal">· {c.rate}%</span></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{c.positions}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{fmtEur(c.loss_eur)}</td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums ${c.gains_eur >= 0 ? 'text-green-700' : 'text-red-600'}`}>{c.gains_eur >= 0 ? '+' : '−'}{fmtEur(Math.abs(c.gains_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(c.capacity_eur)}</td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${c.saving_eur > 0 ? 'text-green-700' : 'text-slate-400'}`}>{fmtEur(c.saving_eur)}</td>
+                      </tr>
+                      <tr className="border-b border-slate-100"><td colSpan={6} className="px-2 pb-1.5 text-slate-400">
+                        {c.note}{c.carry_forward_eur != null && c.carry_forward_eur > 0 && <> <b className="text-slate-500">{fmtEur(c.carry_forward_eur)}</b> of crypto losses are already carried forward (Crypto tab), so more crypto losses would only add to that.</>}
+                      </td></tr>
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
         </div>
-        </WithCopy>
+      )}
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">Positions with a loss that has tax value{catFilter ? ` — ${catFilter}` : ''}
+          {catFilter && <button className="ml-2 text-xs font-normal text-blue-600 hover:underline" onClick={() => setCatFilter(null)}>show all</button>}</p>
+        {shown.length === 0 ? <p className="text-slate-500 text-sm py-2">No positions with unrealized losses in a taxable category.</p> : positions(shown)}
+      </div>
+
+      {exemptRows.length > 0 && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <button onClick={() => setShowExempt(o => !o)} className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left">
+            <span className="text-xs">{showExempt || forceExpandAll ? '▼' : '▶'}</span>
+            <span>No tax value — {exemptRows.length} position{exemptRows.length === 1 ? '' : 's'}, {fmtEur(totalExempt)}</span>
+            <span className="text-xs font-normal text-slate-400">gains in these categories are exempt, so a loss offsets nothing</span>
+          </button>
+          {(showExempt || forceExpandAll) && (
+            <div className="p-3 space-y-2">
+              {sum && <p className="text-xs text-slate-500">{sum.exempt.categories.map(c => `${c.category}: ${fmtEur(c.loss_eur)} (${c.positions})`).join(' · ')}</p>}
+              {positions(exemptRows)}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Reference note */}
@@ -9064,6 +9153,194 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
   )
 }
 
+// ── Crypto tax (Greece) ───────────────────────────────────────────────────────────────────────────
+// The things the TaxApps.gr crypto calculator asks you to type in — total bought, total sold, commissions, losses of earlier years, rewards — worked out
+// from the ledger: every wallet pooled into one FIFO / LIFO queue per coin, moves between your own wallets left out, losses carried forward for five
+// years, the tax at the rate of the Crypto tax category, the rewards received and the figures for the Form E1 codes. Server side: /reports/crypto-tax.
+function CryptoTaxReport({ year, method, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean }) {
+  const [exemption, setExemption] = usePersist('crypto_tax_exemption', 0)
+  const [rateOverride, setRateOverride] = usePersist<number | null>('crypto_tax_rate', null)
+  const [lossesFrom, setLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [excluded, setExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const [rewardsIncome, setRewardsIncome] = usePersist<boolean | null>('crypto_tax_rewards_income', null)      // null = what the Crypto tax category says
+  const [showAll, setShowAll] = useState(false)
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const m = method === 'LIFO' ? 'LIFO' : 'FIFO'
+  const { data: first } = useQuery({ queryKey: ['crypto-tax-accounts'], queryFn: () => getCryptoTax({ year, method: m, exemption: 0 }), staleTime: 300_000 })
+  const included = (first?.accounts ?? []).map(a => a.id).filter(id => !excluded.includes(id))
+  const allIncluded = !first || included.length === first.accounts.length
+  const { data, isLoading } = useQuery({
+    queryKey: ['crypto-tax', year, m, exemption, rateOverride, lossesFrom, rewardsIncome, allIncluded ? null : included],
+    queryFn: () => getCryptoTax({ year, method: m, exemption, rate: rateOverride ?? undefined, lossesFrom, rewardsIncome: rewardsIncome ?? undefined, accountIds: allIncluded ? undefined : included }),
+    enabled: !!first,
+  })
+  if (isLoading || !first) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!data || !data.accounts.length) return <p className="text-sm text-slate-400 py-8 text-center">No cryptocurrency transactions found.</p>
+  const s = data.summary
+  const signed = (v: number) => `${v >= 0 ? '+' : '−'}${fmtEur(Math.abs(v))}`
+  const color = (v: number) => v >= 0 ? 'text-green-700' : 'text-red-600'
+  const rows = showAll || forceExpandAll ? data.disposals : data.disposals.slice(0, 15)
+  const th = 'px-3 py-2 text-right whitespace-nowrap'
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500 max-w-4xl">
+        Crypto tax for <b>{data.year}</b>, worked out from your ledger the way the <a className="text-blue-600 hover:underline" href="https://taxapps.gr/el/calculators/crypto-tax" target="_blank" rel="noreferrer">TaxApps.gr crypto calculator</a> asks for it:
+        gain = what you sold for − what it cost (fees are inside both), losses of up to five earlier years offset first, then the rate on the rest. All wallets and accounts are pooled into one {m} queue per coin,
+        and moves between your own wallets ({data.transfers_removed} found) are left out — so it can differ from the Capital Gains tab, which works account by account. Swaps and spending crypto count as disposals.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="text-xs text-slate-500"><Tooltip text="The tax rate on the gain. It starts from the gains rate of the Crypto tax category (Tools → Static Data → Tax Categories); type another to try it.">Rate (%)</Tooltip>
+          <Input type="number" className="w-24 mt-0.5" value={rateOverride ?? data.rate} step={0.5} onChange={e => setRateOverride(e.target.value === '' ? null : Number(e.target.value))} />
+        </label>
+        <label className="text-xs text-slate-500"><Tooltip text="A yearly amount of gain left untaxed, after losses. 0 unless the law in force gives one (a €500 exemption has been proposed).">Annual exemption (€)</Tooltip>
+          <Input type="number" className="w-28 mt-0.5" value={exemption} step={100} onChange={e => setExemption(Math.max(Number(e.target.value) || 0, 0))} />
+        </label>
+        <label className="text-xs text-slate-500"><Tooltip text="Only losses of this year and later are carried forward (0 = every year). Crypto gains were not taxed in every year, so losses from before the tax started may not count.">Losses count from</Tooltip>
+          <Input type="number" className="w-24 mt-0.5" value={lossesFrom || ''} placeholder="all" onChange={e => setLossesFrom(Number(e.target.value) || 0)} />
+        </label>
+        {first.accounts.length > 1 && (
+          <div className="text-xs text-slate-500">
+            <p><Tooltip text="Untick an account to leave it out, for example the Capital.com account if its crypto is CFD trading rather than coins you own.">Accounts included</Tooltip></p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+              {first.accounts.map(a => (
+                <label key={a.id} className="flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" checked={!excluded.includes(a.id)} onChange={e => setExcluded(e.target.checked ? excluded.filter(x => x !== a.id) : [...excluded, a.id])} /> {a.name} <span className="text-slate-400">({a.rows})</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <KpiCard label="Disposals" value={String(s.disposals)} />
+        <KpiCard label="Sold for" value={fmtEur(s.proceeds_eur)} tooltip="What the coins sold, swapped or spent in the year were worth, net of fees." />
+        <KpiCard label="Cost" value={fmtEur(s.cost_eur)} tooltip="What those same coins cost, fees included (the lots they came from)." />
+        <KpiCard label="Result" value={signed(s.result_eur)} color={color(s.result_eur)} />
+        <KpiCard label="Losses used" value={fmtEur(s.losses_used_eur)} tooltip="Losses of the previous five years offset against this year's gain, oldest first." />
+        <KpiCard label="Taxable gain" value={fmtEur(s.taxable_eur)} />
+        <KpiCard label={`Tax at ${data.rate}%`} value={fmtEur(s.tax_eur)} color={s.tax_eur > 0 ? 'text-red-600' : 'text-green-700'} />
+      </div>
+      {s.losses_available_eur > 0 && <p className="text-xs text-slate-500">Losses still to carry forward after {data.year}: <b>{fmtEur(s.losses_available_eur)}</b>{(() => { const ly = data.years[data.years.length - 1]?.loss_years ?? []; return ly.length ? ` — ${ly.map(l => `${fmtEur(l.remaining)} from ${l.year} (until ${l.expires})`).join(', ')}` : '' })()}.</p>}
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">Loss carry-forward by year</p>
+          <WithCopy>
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0"><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-2 text-left">Year</th><th className={th}>Result</th><th className={th}>Losses used</th><th className={th}>Taxable</th><th className={th}>Tax</th><th className={th}>Losses left</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {[...data.years].reverse().map(y => (
+                    <tr key={y.year} className={y.year === data.year ? 'bg-blue-50 font-semibold' : ''}>
+                      <td className="px-3 py-1.5">{y.year}</td>
+                      <td className={`${th} tabular-nums ${color(y.result)}`}>{signed(y.result)}</td>
+                      <td className={`${th} tabular-nums`}>{y.losses_used ? fmtEur(y.losses_used) : '—'}</td>
+                      <td className={`${th} tabular-nums`}>{y.taxable ? fmtEur(y.taxable) : '—'}</td>
+                      <td className={`${th} tabular-nums`}>{y.tax ? fmtEur(y.tax) : '—'}</td>
+                      <td className={`${th} tabular-nums text-slate-500`}>{y.losses_available ? fmtEur(y.losses_available) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
+          <p className="text-xs text-slate-400 mt-1">A loss can offset gains for the next five years, oldest first. Years before crypto gains were taxed show a “tax” that was never due: set “Losses count from”.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">For the tax return (Form E1)</p>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-slate-100">
+                {data.e1.map(e => (
+                  <tr key={e.codes}><td className="py-1.5 pr-3 font-mono text-xs text-slate-500 whitespace-nowrap">{e.codes}</td><td className="py-1.5 pr-3 text-slate-700">{e.label}</td><td className="py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">{fmtEur(e.amount)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-400 mt-1">The codes are those the calculator lists for the return on {data.year} income (filed in {data.year + 1}). Check them against the E1 instructions.</p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">Rewards received in {data.year} (staking, earn)</p>
+            <label className="flex items-start gap-2 text-xs text-slate-600 mb-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={data.rewards.taxable} onChange={e => setRewardsIncome(e.target.checked)} />
+              <span><Tooltip text="On: the value of a reward on the day it arrives is income (taxed then, as the TaxApps.gr text describes staking and lending) and becomes the cost of those coins. Off: nothing is taxed when it arrives, the coins cost nothing, and their whole value is a gain when they are sold — the view if staking rewards are not income until you sell.">Rewards are income when received</Tooltip>
+                {rewardsIncome === null && <span className="text-slate-400"> (as the Crypto tax category says)</span>}</span>
+            </label>
+            {data.rewards.rows.length === 0 ? <p className="text-xs text-slate-400">None recorded.</p> : (
+              <>
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-slate-100">
+                    {data.rewards.rows.map(r => <tr key={r.security}><td className="py-1 pr-3">{r.security}</td><td className="py-1 pr-3 text-right text-slate-400">{r.payments} payment{r.payments === 1 ? '' : 's'}</td><td className="py-1 text-right tabular-nums">{fmtEur(r.value_eur)}</td></tr>)}
+                    <tr className="font-semibold"><td className="py-1 pr-3" colSpan={2}>Total value when received{data.rewards.taxable ? '' : ' (not taxed then)'}</td><td className="py-1 text-right tabular-nums">{fmtEur(data.rewards.total)}</td></tr>
+                  </tbody>
+                </table>
+                {data.rewards.taxable ? (
+                  <p className="text-xs text-slate-600 mt-1">
+                    As income: <b>{fmtEur(data.rewards.tax_at_rate ?? 0)}</b> at the {data.income_rate}% your Crypto tax category sets for income, or about <b>{fmtEur(data.rewards.tax_progressive ?? 0)}</b> on the Greek income-tax scale if they were your only income
+                    (the calculator puts mining, staking and lending on the 9%–44% scale). Their value when received is their cost when sold. The calculator's “holding is not taxed” is about coins you bought; a reward is taxed when it arrives even if you keep it in the wallet.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-600 mt-1">Nothing is taxed when they arrive. They cost nothing, so selling them later is all gain — see the disposals below.</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-1">Disposals in {data.year}</p>
+        <p className="text-xs text-slate-400 mb-2">Click a row to see the sale and the lots it used. A tiny sale is usually dust left in a wallet after a transfer.</p>
+        {data.disposals.length === 0 ? <p className="text-xs text-slate-400">No crypto was sold, swapped or spent in {data.year}.</p> : (
+          <>
+            <WithCopy>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0"><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Coin</th><th className="px-3 py-2 text-left">Account</th><th className="px-3 py-2 text-left">Type</th><th className={th}>Quantity</th><th className={th}>Sold for</th><th className={th}>Cost</th><th className={th}>Gain / loss</th><th className="px-3 py-2 text-left">Held</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {rows.map((d, i) => {
+                      const isOpen = forceExpandAll || open.has(i)
+                      return (
+                        <React.Fragment key={i}>
+                          <tr className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n })}>
+                            <td className="px-3 py-1.5 whitespace-nowrap"><span className="text-slate-400 mr-1">{isOpen ? '▾' : '▸'}</span>{d.date}</td><td className="px-3 py-1.5">{d.security}</td><td className="px-3 py-1.5 text-slate-500">{d.account ?? '—'}</td><td className="px-3 py-1.5 text-slate-500">{d.kind}</td>
+                            <td className={`${th} tabular-nums`}>{fmtNum(d.quantity, 6)}</td><td className={`${th} tabular-nums`}>{fmtEur(d.proceeds_eur)}</td><td className={`${th} tabular-nums`}>{fmtEur(d.cost_eur)}</td>
+                            <td className={`${th} tabular-nums font-semibold ${color(d.gain_loss_eur)}`}>{signed(d.gain_loss_eur)}</td><td className="px-3 py-1.5 text-slate-500">{d.holding_type}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr className="bg-slate-50"><td colSpan={9} className="px-6 py-2">
+                              <p className="text-slate-600 mb-1">
+                                {d.kind === 'Sale' ? 'Sold' : 'Swapped out'} <b>{fmtNum(d.quantity, 8)} {d.security}</b> in <b>{d.account ?? 'the account'}</b> on {d.date} for <b>{fmtEur(d.proceeds_eur)}</b>.
+                                It was taken from these lots ({method === 'LIFO' ? 'newest' : 'oldest'} first), which cost <b>{fmtEur(d.cost_eur)}</b> in all:
+                              </p>
+                              <table className="text-xs">
+                                <thead><tr className="text-slate-400 uppercase"><th className="pr-4 text-left">Acquired</th><th className="pr-4 text-left">How</th><th className="pr-4 text-left">Account</th><th className="pr-4 text-right">Quantity used</th><th className="text-right">Cost</th></tr></thead>
+                                <tbody>
+                                  {d.lots.map((l, j) => <tr key={j}><td className="pr-4 whitespace-nowrap">{l.date}</td><td className="pr-4">{l.how}</td><td className="pr-4 text-slate-500">{l.account ?? '—'}</td><td className="pr-4 text-right tabular-nums">{fmtNum(l.quantity, 8)}</td><td className="text-right tabular-nums">{fmtEur(l.cost_eur)}</td></tr>)}
+                                </tbody>
+                              </table>
+                              {d.lots_total > d.lots.length && <p className="text-slate-400 mt-1">… and {d.lots_total - d.lots.length} more lots.</p>}
+                            </td></tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+            {!forceExpandAll && data.disposals.length > 15 && <button className="text-xs text-blue-600 hover:underline mt-1" onClick={() => setShowAll(v => !v)}>{showAll ? 'Show fewer' : `Show all ${data.disposals.length}`}</button>}
+          </>
+        )}
+      </div>
+      <ul className="text-xs text-slate-400 space-y-0.5 list-disc pl-5">{data.notes.map(n => <li key={n}>{n}</li>)}</ul>
+    </div>
+  )
+}
+
 // Renders all three Investment Tax reports stacked, fully expanded, inside a
 // container that's invisible on screen and only shown for printing (see the
 // .printable-area rules in index.css) — lets "Export PDF" produce one document
@@ -9089,8 +9366,12 @@ function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WA
         <DividendIncomeTaxTab year={year} forceExpandAll />
       </section>
       <section className="print-break-before">
+        <h2 className="text-xl font-bold mb-3">Crypto</h2>
+        <CryptoTaxReport year={year} method={method} forceExpandAll />
+      </section>
+      <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Tax-Loss Harvesting</h2>
-        <TaxLossHarvestingTab />
+        <TaxLossHarvestingTab year={year} method={method} forceExpandAll />
       </section>
     </div>
   )
@@ -9126,10 +9407,11 @@ function TaxSection() {
           <Printer size={14} /> Export PDF (All Expanded)
         </Button>
       </div>
-      <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Crypto', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
       {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} />}
       {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} />}
-      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab />}
+      {tab === 'Crypto' && <CryptoTaxReport year={year} method={method} />}
+      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab year={year} method={method} />}
       <TaxPrintExport year={year} method={method} setMethod={setMethod} />
     </div>
   )
@@ -9747,10 +10029,11 @@ function LoanAmortizationTab() {
 }
 
 function PlanningSection() {
-  const [tab, setTab] = usePersist('planning_tab', 'Goals')
+  const [tab, setTab] = usePersist('planning_tab', 'Retirement Planner')
   return (
     <div>
-      <SubTabs tabs={['Goals', 'FIRE Calculator', 'Loan Amortization']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Retirement Planner', 'Goals', 'FIRE Calculator', 'Loan Amortization']} active={tab} onChange={setTab} />
+      {tab === 'Retirement Planner' && <RetirementPlanner renderPresetBar={onChange => <PortfolioPresetBar reportScope="net_worth" selectionKey="retirement" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={onChange} />} />}
       {tab === 'Goals' && <GoalsTab />}
       {tab === 'FIRE Calculator' && <FireCalculatorTab />}
       {tab === 'Loan Amortization' && <LoanAmortizationTab />}

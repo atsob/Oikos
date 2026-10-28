@@ -936,6 +936,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           money-weighted return).
         </P>
         <Note>
+          <b>One Account Preset for the whole report.</b> The <b>⚙️ Account Preset</b> bar above the sub-tabs — the same saved sets of accounts everywhere in Inv. Performance — scopes every
+          sub-tab except Savings: <b>P&amp;L</b> and <b>Performance</b> (only the preset's accounts, and the totals follow), <b>Best / Worst Days</b> (the account list is limited to the preset and
+          “All” means all of them), <b>Dividend Tracker</b> (income, the cost basis behind the yield and the forecast — the Recommendations view is not account-based) and <b>Bond Schedule</b>, as
+          well as Benchmark, Risk Metrics, Correlation, Monte Carlo, Stress Test and TWR/MWR. Pick it once and it stays as you move between tabs; Full Portfolio means every account.
+        </Note>
+        <Note>
           <b>Best / Worst Days</b> (next to Performance) picks one investment account (or all of them — inactive accounts are hidden unless <b>Show inactive</b> is ticked) and a calendar year and lists the best
           and worst <b>days, weeks or months</b> (the <b>Period</b> switch) — four tables: worst by loss in €, worst by loss in %,
           best by gain in €, best by gain in % — with how many each table shows (default 10, up to 100) and the positions that
@@ -1111,8 +1117,27 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           (collapsed by default) Tax-Exempt Sales section on the way there.
         </Note>
         <Note>
-          <b>Export PDF (All Expanded)</b>, top-right, produces one document covering all three sub-tabs (Capital
-          Gains, Interest &amp; Dividend Income, Tax-Loss Harvesting) with every row and section forced open —
+          <b>Tax-Loss Harvesting</b> lists the positions you hold at an unrealized loss, grouped by tax category, because a loss only helps against gains of its own taxable category (crypto against crypto, FX Spot against FX Spot…).
+          Positions in categories whose gains are exempt (Local Listed, UCITS, foreign listed shares…) are set apart under <i>No tax value</i> — selling them at a loss offsets nothing — and left out of the totals. For each taxable
+          category the table shows the loss on offer, the gains realised so far in the tax year (using the cost-basis method chosen above), what is left to offset, and the most tax it could save: the loss, up to those gains, times the
+          rate. For Crypto the gain left is the Crypto tab's, after the losses already carried forward — so more crypto losses only add to that pile unless this year has crypto gains. Click a category to list just its positions.
+        </Note>
+        <Note>
+          <b>Crypto</b> does what the <a className="text-blue-600 hover:underline" href="https://taxapps.gr/el/calculators/crypto-tax" target="_blank" rel="noreferrer">TaxApps.gr crypto tax calculator</a> asks you to do by hand,
+          from your ledger. For the tax year it pools every wallet and account into one FIFO (or LIFO) queue per coin — Greek tax counts what you disposed of, not where it sat — and leaves out moves between your own
+          wallets (the same coin out and in within a few days, allowing for the network fee), so its figures can differ from the Capital Gains tab, which works account by account. Sales, swaps for another coin and
+          spending crypto are disposals; fees are inside the cost and the proceeds. It shows the proceeds, the cost and the result; the <b>loss carry-forward</b> — a loss offsets gains for the next five years, oldest first, with
+          a year-by-year table of what is used, taxed and still to come; the <b>tax</b> at the rate of the <i>Crypto</i> tax category (Static Data → Tax Categories) or one you type, after an optional yearly exemption; the
+          <b>Form E1</b> figures for codes 743 (spent buying crypto), 865–866 (gain) and 781–782 (invested capital returned); and the <b>rewards</b> received (staking, earn), taxed as income when received, with the tax at your
+          category's income rate and an estimate on the Greek progressive scale (the calculator's view of mining, staking and lending) — <i>Rewards are income when received</i> switches that off if staking is not
+          income until you sell (the rewards then cost nothing, so the whole value is gain when sold). Each disposal row shows its account, and clicking it opens the sale and the lots it used (when and where they were
+          acquired, bought or rewarded, how much of each, the cost); a tiny sale is usually dust left in a wallet after a transfer. Cryptocurrency appears only here, not on the Capital Gains tab. Tick the accounts to include — a CFD account such as Capital.com can be left out — and
+          set <i>Losses count from</i> if gains were not taxed in the earlier years. Whether, from when and how crypto gains are taxed (and whether there is a yearly exemption, and swaps) is still moving in Greece:
+          treat it as an estimate and check it with your accountant.
+        </Note>
+        <Note>
+          <b>Export PDF (All Expanded)</b>, top-right, produces one document covering all four sub-tabs (Capital
+          Gains, Interest &amp; Dividend Income, Crypto, Tax-Loss Harvesting) with every row and section forced open —
           regardless of what's currently expanded or collapsed on screen. It opens your browser's own print
           dialog; choose <b>Save as PDF</b> there to get the file. A security or payee with an unusually large
           number of small transactions (e.g. many tiny dividend-reinvestment buys) stays collapsed in the
@@ -1180,7 +1205,36 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
 
         <H3>🏖️ Financial Planning</H3>
-        <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
+        <P>A Retirement Planner, goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
+        <Note>
+          <b>Retirement Planner</b> projects your money to the age you plan to (90 by default) and asks whether it lasts. It opens pre-filled from your data — what you hold in
+          cash and savings, investments (with their cost basis) and pension accounts, what you saved and spent over the last 12 months, and your portfolio's own volatility —
+          and every number can be changed; under <b>What you have today</b> an <b>Account Preset</b> — the same presets as the Net Worth report — takes the amounts from just those accounts. You set the <b>year of birth</b>, <b>retirement age</b> (the statutory age of your Country of Usage by default — 67 in Greece), what you <b>save</b> until then (into
+          investments, cash and pension pots, with a yearly increase), your <b>spending</b> in retirement, the <b>income</b> that arrives (state and occupational pensions, a pension
+          from another EU country, rent — each with the age it starts, how it is indexed and how it is taxed — plus one-off sums such as an inheritance), the <b>returns</b> before and after
+          retiring, their volatility, and <b>inflation</b>. Everything is in today's euros, with the year-by-year table switchable to nominal.
+        </Note>
+        <Note>
+          <b>Reading it.</b> The banner answers the question: the share of 1,000 simulated market paths (random yearly returns around your expected return) in which the money lasts to the planning
+          age, against your <b>target</b> (80% by default) — <i>on track</i>, <i>close</i> or <i>not on track</i>. Below it: what you will have at retirement, what the plan <i>needs</i> if every
+          year returned exactly the expected return (so it can say "surplus" while the chance is under target — a poor run of returns early in retirement is what does the damage), and how long the money
+          lasts. The fan chart shows the middle 80% of outcomes by age against the straight-line projection; the next chart the chance the money is still there at each age; the third where each year
+          of retirement is paid from (pensions after tax, cash, investments, pension pots) against spending. <b>How could it be fixed?</b> works out, each on its own, the extra monthly saving, the later
+          retirement age or the spending cut that reaches the target, and the capital you would want at retirement for it. <b>What if…</b> compares the plan with variants — retiring two years
+          earlier or later, saving or spending more or less, lower returns, higher inflation, living longer, no pensions — side by side.
+        </Note>
+        <Note>
+          <b>Saved plans.</b> <b>Save as new…</b> keeps the plan on screen under a name; the first one saved is the <b>base</b> and opens by default (<b>Make base</b> changes it). Open another to compare:
+          once there are two, a <b>Saved scenarios</b> table lines them all up. <b>Reset to my data</b> rebuilds the starting point from your accounts.
+        </Note>
+        <Note>
+          <b>Country rules.</b> The planner follows the <b>Country of Usage</b> setting (Tools → App Settings), the same one Local Market Watch uses. Greece has a built-in profile; for any other country the retirement age starts at its statutory age and taxes start at zero, with a warning until you enter the rates — nothing is borrowed from another country. A plan keeps the rules it was saved with, and says so (with a button to switch) if your country is now different. The Greek profile fills the <b>Tax rules</b> section, and every figure is editable: the income-tax scale and the employee / pensioner credit (applied to pensions, with the
+          6% health contribution taken first), tax on dividends, interest and gains from securities (0% on gains from listed shares and ETFs by default — some sources say 15% since 2022, so check),
+          pension-pot withdrawals (a flat rate or the scale; drawn gradually or paid out as a lump sum at retirement), and the order the pots are drawn in. By default the scale and the credit are
+          kept constant in real terms, as Greece adjusts them from time to time. Income tax is national, not EU-wide: for another country change the scale, credit and rates; a pension earned abroad is
+          entered as its own income source, <i>withheld at source</i> if it is taxed where it is paid. Pension rights earned in several EU countries add up but each country pays and taxes its own.
+          The defaults are a starting point, not tax advice. Not modelled: inflation that varies, wealth and property taxes, partner and survivor benefits, and care costs.
+        </Note>
         <Note>
           <b>Loan Amortization</b>'s <b>Loan Account</b> dropdown can pre-fill Loan Amount, Annual Rate, Compounding
           Period, and Payment Schedule from one of your real Loan-type accounts instead of typing them by hand —

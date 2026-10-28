@@ -1499,8 +1499,10 @@ def get_dividends_tracker(
     period: str = Query("YTD"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    account_ids: Optional[str] = Query(None),
 ):
-    """Monthly dividend/interest income with FIFO cost basis & annualised YOC per security."""
+    """Monthly dividend/interest income with FIFO cost basis & annualised YOC per security. account_ids (comma-separated, an Account Preset)
+    limits the income, and the buys and sells its cost basis is built from, to those accounts."""
     from datetime import date as _date, timedelta as _td
 
     today = _date.today()
@@ -1553,7 +1555,7 @@ def get_dividends_tracker(
             JOIN Accounts   a ON i.Accounts_Id   = a.Accounts_Id
             LEFT JOIN fx      ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
-              AND i.Date BETWEEN %(start_date)s AND %(end_date)s
+              AND i.Date BETWEEN %(start_date)s AND %(end_date)s /*ACCT_I*/
             GROUP BY i.Date, i.Securities_Id, s.Securities_Name, s.Securities_Type,
                      a.Accounts_Id, a.Accounts_Name, a.Currencies_Id, i.Action
         )
@@ -1586,14 +1588,14 @@ def get_dividends_tracker(
                       OR (b.Action = 'Reinvest' AND i.Securities_Type NOT IN ('CD','Bond'))
                   )
                   AND b.Date    <= i.Date
-                  AND b.Quantity > 0
+                  AND b.Quantity > 0 /*ACCT_B*/
             ),
             sells AS (
                 SELECT COALESCE(SUM(s.Quantity), 0) AS total_sell_qty
                 FROM Investments s
                 WHERE s.Securities_Id = i.Securities_Id
                   AND s.Action IN ('Sell','ShrOut','Expire')
-                  AND s.Date     < i.Date
+                  AND s.Date     < i.Date /*ACCT_S*/
             ),
             fifo AS (
                 SELECT
@@ -1609,6 +1611,9 @@ def get_dividends_tracker(
         ) AS fc
         ORDER BY i.Date DESC, i.income_eur DESC
     """
+    acct_ids = _parse_account_ids(account_ids)
+    query = (query.replace("/*ACCT_I*/", _acct_clause(acct_ids, "i.Accounts_Id")).replace("/*ACCT_B*/", _acct_clause(acct_ids, "b.Accounts_Id"))
+             .replace("/*ACCT_S*/", _acct_clause(acct_ids, "s.Accounts_Id")))
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"start_date": str(sd), "end_date": str(ed)})
 
@@ -1742,10 +1747,11 @@ def get_dividends_tracker(
 
 # ── Dividend Forecast ───────────────────────────────────────────────────────────
 @router.get("/dividends-forecast")
-def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
+def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"), account_ids: Optional[str] = Query(None)):
     """Projected dividend income for currently-held dividend-paying securities, over
     a selectable horizon: to end of this calendar year, the next 6 months, or the
-    next 12 months (default, matches the original always-12-month behaviour)."""
+    next 12 months (default, matches the original always-12-month behaviour). account_ids
+    (comma-separated, an Account Preset) limits the holdings and the trailing income to those accounts."""
     import calendar as _cal
     from datetime import date as _date, timedelta as _timedelta
 
@@ -1802,7 +1808,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
             FROM Holdings h
             JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
             LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
-            WHERE h.Quantity > 0
+            WHERE h.Quantity > 0 /*ACCT_H*/
             GROUP BY h.Securities_Id
         ),
         last_div AS (
@@ -1817,7 +1823,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
             JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
             LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE i.Action IN ('Dividend','IntInc','Reinvest')
-              AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+              AND i.Date >= CURRENT_DATE - INTERVAL '12 months' /*ACCT_I*/
             GROUP BY i.Securities_Id
         )
         SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
@@ -1839,6 +1845,8 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
         WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
         ORDER BY s.Securities_Name
     """
+    acct_ids = _parse_account_ids(account_ids)
+    query = query.replace("/*ACCT_H*/", _acct_clause(acct_ids, "h.Accounts_Id")).replace("/*ACCT_I*/", _acct_clause(acct_ids, "i.Accounts_Id"))
     with get_db() as conn:
         df = pd.read_sql(query, conn)
 
@@ -2278,7 +2286,7 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
     return df
 
 
-def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO') -> pd.DataFrame:
+def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO', detail: bool = False) -> pd.DataFrame:
     """FIFO or LIFO lot matching.
 
     Tracks both long lots and short lots per (security, account). A sell first
@@ -2291,6 +2299,8 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
     short lots (recognised now, gain = the original short-sale proceeds minus
     this cover's cost) before any leftover opens a new long lot. Ordinary
     long-only accounts are numerically unaffected.
+
+    detail=True adds a `lots` column: for each gain row, the lots the sale used (when and where they were acquired, how, how much of each and what it cost).
     """
     from collections import deque
     BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn', 'CashIn'}
@@ -2386,11 +2396,12 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                 if cover_qty > 1e-9 and date.year == tax_year:
                     make_row(row, date, action, cover_qty, cover_proceeds, cover_cost, first_short_date)
                 if remaining > 1e-9:
-                    long_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
+                    long_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps, 'action': action, 'account': row.get('account_name')})
 
             elif action in SELL_ACTIONS:
                 remaining = qty
                 close_cost, close_proceeds, close_qty, first_buy_date = 0.0, 0.0, 0.0, None
+                pieces = []
                 while remaining > 1e-9 and long_lots:
                     lot = long_lots[-1] if is_lifo else long_lots[0]
                     if first_buy_date is None:
@@ -2399,12 +2410,18 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                     close_cost     += consumed * lot['cost_ps']
                     close_proceeds += consumed * cost_ps
                     close_qty      += consumed
+                    if detail:
+                        pieces.append({'date': lot['date'].date().isoformat(), 'quantity': consumed, 'cost_eur': consumed * lot['cost_ps'],
+                                       'action': lot.get('action'), 'account': lot.get('account')})
                     lot['qty']     -= consumed
                     remaining      -= consumed
                     if lot['qty'] < 1e-9:
                         (long_lots.pop() if is_lifo else long_lots.popleft())
                 if close_qty > 1e-9 and date.year == tax_year:
                     make_row(row, date, action, close_qty, close_proceeds, close_cost, first_buy_date)
+                    if detail:
+                        results[-1]['lots'] = pieces
+                        results[-1]['sell_account'] = row.get('account_name')
                 if remaining > 1e-9:
                     short_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
 
@@ -2412,6 +2429,8 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
             'holding_type','is_tax_exempt','instrument_type','securities_type',
             'tax_category','gains_taxable','gains_rate','gains_tax_code']
+    if detail:
+        cols = cols + ['lots', 'sell_account']
     return pd.DataFrame(results, columns=cols) if results else pd.DataFrame(columns=cols)
 
 
@@ -2567,6 +2586,153 @@ def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
 
     df = _compute_wac_gains(df_all, year)
     return _df_to_list(df)
+
+
+# ── Crypto tax (Greece) ─────────────────────────────────────────────────────────────────────────────────────
+# What Reports -> Investment Tax -> Crypto adds to the Capital Gains tab: all wallets pooled into one FIFO / LIFO queue per coin (Greek tax counts what
+# you disposed of, not where it sat), moves between your own wallets taken out, a loss carry-forward over the next five years, the tax at the
+# configured rate, the rewards (staking, earn) received, and the figures for the Form E1 codes — the things the TaxApps.gr crypto calculator asks for,
+# worked out from the ledger instead of typed in.
+CRYPTO_LOSS_YEARS = 5
+TRANSFER_QTY_TOLERANCE = 0.03       # an own-wallet transfer arrives a little short of what left: the network fee
+TRANSFER_DAYS = 3
+
+
+def _drop_own_transfers(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Takes out pairs of ShrOut / ShrIn of the same coin within a few days and of nearly the same quantity — a move between your own wallets, which is
+    not a disposal. (A swap is a different coin on each side, so it stays.) Returns the rest and how many pairs were removed."""
+    outs, ins = df[df["action"] == "ShrOut"], df[df["action"] == "ShrIn"]
+    drop, taken = set(), set()
+    for oi, o in outs.sort_values("date").iterrows():
+        q = float(o["quantity"] or 0)
+        if q <= 0:
+            continue
+        cand = ins[(ins["securities_id"] == o["securities_id"]) & (~ins.index.isin(taken))
+                   & ((ins["date"] - o["date"]).abs() <= pd.Timedelta(days=TRANSFER_DAYS))
+                   & (ins["quantity"].astype(float) <= q * 1.0001) & (ins["quantity"].astype(float) >= q * (1 - TRANSFER_QTY_TOLERANCE))]
+        if cand.empty:
+            continue
+        ci = (cand["date"] - o["date"]).abs().idxmin()
+        drop.update([oi, ci]); taken.add(ci)
+    return df.drop(index=list(drop)), len(drop) // 2
+
+
+def _progressive_tax(income: float) -> float:
+    """Greek income tax on `income` alone, on the scale of the retirement planner's Greek profile (no credit): the rewards taxed as income, as if they were
+    the only income — a rough figure, the real one depends on everything else you earned."""
+    from database.retirement import GREEK_TAX
+    tax, lo = 0.0, 0.0
+    for ub, rate in GREEK_TAX["brackets"]:
+        hi = float("inf") if ub is None else float(ub)
+        tax += rate / 100.0 * max(min(income, hi) - lo, 0.0)
+        lo = hi
+    return tax
+
+
+@router.get("/crypto-tax")
+def get_crypto_tax(year: int = Query(None), method: str = Query("FIFO"), exemption: float = Query(0.0), rate: Optional[float] = Query(None),
+                   account_ids: Optional[str] = Query(None), losses_from: int = Query(0), rewards_income: Optional[bool] = Query(None),
+                   exclude_account_ids: Optional[str] = Query(None)):
+    """Crypto tax for a year: disposals (FIFO / LIFO over all wallets together), the loss carry-forward, tax due, rewards and the Form E1 figures.
+    `rate` defaults to the gains rate of the 'Crypto' tax category; `exemption` is a yearly amount of gain left untaxed (0 unless the law gives one);
+    `account_ids` limits it to some accounts (the crypto CFD account, say, can be left out); `losses_from` is the first year whose losses can be carried forward
+    (0 = all — crypto gains were not taxed in every year, so losses from before the tax started may not count).
+    `rewards_income`: staking / earn rewards are income when received (their value then is taxed as income and is the cost of the coins) — the 'Crypto'
+    category's setting unless given; off means they are not taxed on receipt and cost nothing, so the whole value is a gain when sold."""
+    from datetime import date as _date
+    method = method.upper() if method.upper() in ("FIFO", "LIFO") else "FIFO"
+    year = year or _date.today().year
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+        rules = pd.read_sql("SELECT Gains_Rate, Income_Tax_Rate, Reinvest_Taxable FROM Tax_Category_Rules WHERE Tax_Category = 'Crypto'", conn)
+    gains_rate = float(rules["gains_rate"].iloc[0]) if not rules.empty and pd.notna(rules["gains_rate"].iloc[0]) else 15.0
+    income_rate = float(rules["income_tax_rate"].iloc[0]) if not rules.empty and pd.notna(rules["income_tax_rate"].iloc[0]) else 15.0
+    rate = gains_rate if rate is None else float(rate)
+    if rewards_income is None:
+        rewards_income = bool(rules["reinvest_taxable"].iloc[0]) if not rules.empty and pd.notna(rules["reinvest_taxable"].iloc[0]) else True
+
+    notes = ["Estimate, not advice: it does not replace the tax return. Check the rules and the E1 codes with your accountant or the AADE guidance.",
+             "Crypto-to-crypto swaps and spending crypto are treated as disposals, as the TaxApps.gr calculator does; sources disagree about swaps."]
+    empty = {"year": year, "method": method, "rate": rate, "exemption": exemption, "income_rate": income_rate, "accounts": [], "summary": {}, "years": [],
+             "disposals": [], "rewards": {"total": 0.0, "rows": []}, "e1": [], "notes": notes, "transfers_removed": 0}
+    if df_all.empty:
+        return empty
+    is_crypto = (df_all["securities_type"].astype(str) == "Crypto") | (df_all["tax_category"].astype(str) == "Crypto")
+    crypto = df_all[is_crypto].copy()
+    if crypto.empty:
+        return empty
+    accounts = [{"id": int(i), "name": str(n), "rows": int(c)} for (i, n), c in crypto.groupby(["accounts_id", "account_name"]).size().items()]
+    ids = _parse_account_ids(account_ids)
+    if ids:
+        crypto = crypto[crypto["accounts_id"].isin(ids)]
+    skip = _parse_account_ids(exclude_account_ids)
+    if skip:
+        crypto = crypto[~crypto["accounts_id"].isin(skip)]
+    crypto, n_transfers = _drop_own_transfers(crypto)
+    pooled = crypto.copy()
+    pooled["accounts_id"] = 0                      # one queue per coin across wallets; each row keeps its account's name for display
+    if not rewards_income:
+        pooled.loc[pooled["action"] == "Reinvest", "amount_eur"] = 0.0
+
+    first_year = int(pooled["date"].dt.year.min()) if not pooled.empty else year
+    results = {}
+    disposals = []
+    for y in range(first_year, year + 1):
+        g = _compute_lot_gains(pooled, y, method=method, detail=(y == year))
+        results[y] = float(g["gain_loss_eur"].sum()) if not g.empty else 0.0
+        if y == year and not g.empty:
+            for r in g.sort_values("date").to_dict("records"):
+                lots = [{**l, "quantity": float(l["quantity"]), "cost_eur": round(float(l["cost_eur"]), 2),
+                         "how": {"Buy": "Bought", "Reinvest": "Reward (staking / earn)", "ShrIn": "Received (swap or transfer in)", "CashIn": "Cash in"}.get(l["action"], l["action"])}
+                        for l in (r.get("lots") or [])]
+                disposals.append({"date": r["date"], "security": r["security"], "account": r.get("sell_account"), "lots": lots[:200], "lots_total": len(lots),
+                                  "kind": "Swap (coin sold for another)" if r["action"] == "ShrOut" else "Sale", "quantity": float(r["quantity"]), "proceeds_eur": round(float(r["proceeds_eur"]), 2), "cost_eur": round(float(r["cost_eur"]), 2),
+                                  "gain_loss_eur": round(float(r["gain_loss_eur"]), 2), "holding_type": r["holding_type"]})
+
+    pools: list[list[float]] = []                  # [loss year, remaining]
+    years = []
+    for y in range(first_year, year + 1):
+        pools = [pl for pl in pools if y - pl[0] <= CRYPTO_LOSS_YEARS and pl[1] > 0.005]
+        res, used = results[y], 0.0
+        if res > 0:
+            left = res
+            for pl in pools:                       # the oldest loss first
+                take = min(pl[1], left); pl[1] -= take; left -= take; used += take
+            after_losses = left
+        else:
+            after_losses = 0.0
+            if res < 0 and y >= losses_from:
+                pools.append([y, -res])
+        taxable = max(after_losses - max(exemption, 0.0), 0.0)
+        years.append({"year": y, "result": round(res, 2), "losses_used": round(used, 2), "taxable": round(taxable, 2), "tax": round(taxable * rate / 100.0, 2),
+                      "losses_available": round(sum(pl[1] for pl in pools), 2),
+                      "loss_years": [{"year": int(pl[0]), "remaining": round(pl[1], 2), "expires": int(pl[0]) + CRYPTO_LOSS_YEARS} for pl in pools if pl[1] > 0.005]})
+    cur = years[-1] if years else {"year": year, "result": 0.0, "losses_used": 0.0, "taxable": 0.0, "tax": 0.0, "losses_available": 0.0, "loss_years": []}
+
+    yr = crypto[crypto["date"].dt.year == year]
+    purchases = float(yr[yr["action"] == "Buy"]["amount_eur"].sum())
+    rw = yr[yr["action"] == "Reinvest"]
+    rewards_rows = [{"security": str(n), "quantity": float(g["quantity"].sum()), "value_eur": round(float(g["amount_eur"].sum()), 2), "payments": int(len(g))}
+                    for n, g in rw.groupby("securities_name")]      # `crypto`, not `pooled`: the value when received is shown whether or not it is taxed then
+    rewards_rows.sort(key=lambda r: -r["value_eur"])
+    rewards_total = round(sum(r["value_eur"] for r in rewards_rows), 2)
+    proceeds = round(sum(d["proceeds_eur"] for d in disposals), 2)
+    cost = round(sum(d["cost_eur"] for d in disposals), 2)
+    e1 = [
+        {"codes": "743", "label": "Amount spent purchasing crypto in the year", "amount": round(purchases, 2)},
+        {"codes": "865 – 866", "label": "Capital gain from sales (after losses brought forward)", "amount": cur["taxable"]},
+        {"codes": "781 – 782", "label": "Return of invested capital — the cost of what was sold, not taxed again", "amount": cost},
+    ]
+    return {
+        "year": year, "method": method, "rate": rate, "exemption": exemption, "income_rate": income_rate, "accounts": accounts, "transfers_removed": n_transfers,
+        "summary": {"disposals": len(disposals), "proceeds_eur": proceeds, "cost_eur": cost, "result_eur": cur["result"], "losses_used_eur": cur["losses_used"],
+                    "taxable_eur": cur["taxable"], "tax_eur": cur["tax"], "losses_available_eur": cur["losses_available"], "purchases_eur": round(purchases, 2)},
+        "years": years, "disposals": disposals,
+        "rewards": {"total": rewards_total, "rows": rewards_rows, "taxable": bool(rewards_income),
+                    "tax_at_rate": round(rewards_total * income_rate / 100.0, 2) if rewards_income else 0.0,
+                    "tax_progressive": round(_progressive_tax(rewards_total), 2) if rewards_income else 0.0},
+        "e1": e1, "notes": notes,
+    }
 
 
 @router.get("/budget-vs-actual")
@@ -5181,6 +5347,8 @@ def get_benchmark_candidates_endpoint(
 # ── Tax-Loss Harvesting ───────────────────────────────────────────────────────
 @router.get("/tax-loss-harvesting")
 def get_tax_loss_harvesting():
+    """Positions held at an unrealized loss, each with its effective tax category and whether a loss there is worth anything for tax (`tax_value`:
+    "taxable" when gains in the category are taxed, "none" when they are exempt — a loss that nothing can be offset against)."""
     query = """
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     latest_price AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
@@ -5203,7 +5371,77 @@ def get_tax_loss_harvesting():
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn)
+        meta = pd.read_sql("""
+            SELECT s.Securities_Id AS securities_id,
+                   COALESCE(ito.Tax_Category_Override, s.Tax_Category) AS tax_category,
+                   tcr.Gains_Taxable AS gains_taxable, tcr.Gains_Rate AS gains_rate,
+                   CASE WHEN ito.Tax_Category_Override IS NOT NULL THEN FALSE ELSE COALESCE(s.Is_Tax_Exempt, FALSE) END AS is_tax_exempt
+            FROM Securities s
+            LEFT JOIN Instrument_Type_Tax_Override ito ON ito.Instrument_Type = s.Securities_Type::text
+            LEFT JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = COALESCE(ito.Tax_Category_Override, s.Tax_Category)
+        """, conn)
+    if df.empty:
+        return []
+    df = df.merge(meta, on="securities_id", how="left")
+    df["tax_category"] = df["tax_category"].fillna("Unclassified")
+    taxable = (df["gains_taxable"] == True) & (df["is_tax_exempt"] != True)          # same rule as the Capital Gains tab: no rule or exempt = not taxed
+    df["tax_value"] = taxable.map({True: "taxable", False: "none"})
     return _df_to_list(df)
+
+
+@router.get("/tax-loss-harvesting/summary")
+def get_tax_loss_harvesting_summary(year: int = Query(None), method: str = Query("FIFO"), rewards_income: Optional[bool] = Query(None), exemption: float = Query(0.0),
+                                    losses_from: int = Query(0), crypto_rate: Optional[float] = Query(None), exclude_account_ids: Optional[str] = Query(None)):
+    """Tax-loss harvesting by tax category for a tax year. A loss only helps against gains of its own taxable category, so for each one: the loss on offer,
+    the gains realised so far in `year` (Crypto: what is left taxable after the losses already carried forward — the Crypto tab's figure, worked out with the Crypto
+    tab's own settings: `rewards_income`, `exemption`, `losses_from`, `crypto_rate` and the accounts left out), and the most
+    tax the loss could save, loss (up to the gain) × rate. Positions in exempt categories are totalled separately: selling them offsets nothing."""
+    from datetime import date as _date
+    year = year or _date.today().year
+    method = method.upper() if method.upper() in ("WAC", "FIFO", "LIFO") else "FIFO"
+    rows = pd.DataFrame(get_tax_loss_harvesting())
+    out = {"year": year, "method": method, "categories": [], "exempt": {"loss_eur": 0.0, "positions": 0, "categories": []},
+           "totals": {"taxable_loss_eur": 0.0, "saving_eur": 0.0, "exempt_loss_eur": 0.0}}
+    if rows.empty:
+        return out
+    rows["unrealized_loss_eur"] = rows["unrealized_loss_eur"].astype(float)
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+        rules = pd.read_sql("SELECT Tax_Category, Display_Name, Gains_Rate FROM Tax_Category_Rules", conn).set_index("tax_category")
+    gains = _compute_wac_gains(df_all, year) if method == "WAC" else _compute_lot_gains(df_all, year, method=method)
+    realised = {}
+    if not gains.empty:
+        eff = gains[(gains["gains_taxable"] == True) & (gains["is_tax_exempt"] != True)]
+        realised = eff.groupby(eff["tax_category"].fillna("Other"))["gain_loss_eur"].sum().to_dict()
+
+    for cat, g in rows[rows["tax_value"] == "taxable"].groupby("tax_category"):
+        loss = round(float(-g["unrealized_loss_eur"].sum()), 2)
+        rate = float(g["gains_rate"].dropna().iloc[0]) if g["gains_rate"].notna().any() else 0.0
+        item = {"category": cat, "display_name": (rules["display_name"].get(cat) if cat in rules.index else None) or cat, "rate": rate, "loss_eur": loss,
+                "positions": int(len(g)), "gains_eur": round(float(realised.get(cat, 0.0)), 2), "carry_forward_eur": None, "note": ""}
+        if cat == "Crypto":
+            c = get_crypto_tax(year=year, method="LIFO" if method == "LIFO" else "FIFO", exemption=exemption, rate=crypto_rate, account_ids=None, losses_from=losses_from,
+                               rewards_income=rewards_income, exclude_account_ids=exclude_account_ids)
+            item["rate"] = rate = c["rate"]
+            item["gains_eur"] = c["summary"]["result_eur"]
+            item["capacity_eur"] = c["summary"]["taxable_eur"]
+            item["carry_forward_eur"] = c["summary"]["losses_available_eur"]
+            item["note"] = ("Crypto losses offset crypto gains only, for the next five years. The Crypto tab's gain after the losses already carried forward is what is left to offset."
+                            if c["summary"]["taxable_eur"] <= 0 else "Crypto losses offset crypto gains only; this is the gain left after the losses already carried forward.")
+        else:
+            item["capacity_eur"] = round(max(item["gains_eur"], 0.0), 2)
+            item["note"] = "Offsets realised gains of this category in the same year; an excess may carry forward up to five years (not modelled here)."
+        item["saving_eur"] = round(min(loss, item["capacity_eur"]) * rate / 100.0, 2)
+        out["categories"].append(item)
+    out["categories"].sort(key=lambda i: -i["loss_eur"])
+    ex = rows[rows["tax_value"] != "taxable"]
+    if not ex.empty:
+        out["exempt"] = {"loss_eur": round(float(-ex["unrealized_loss_eur"].sum()), 2), "positions": int(len(ex)),
+                         "categories": [{"category": c, "loss_eur": round(float(-g["unrealized_loss_eur"].sum()), 2), "positions": int(len(g))}
+                                        for c, g in ex.groupby("tax_category")]}
+    out["totals"] = {"taxable_loss_eur": round(sum(i["loss_eur"] for i in out["categories"]), 2), "saving_eur": round(sum(i["saving_eur"] for i in out["categories"]), 2),
+                     "exempt_loss_eur": out["exempt"]["loss_eur"]}
+    return out
 
 
 # ── Dividend Income for Tax ───────────────────────────────────────────────────
@@ -6239,7 +6477,8 @@ def get_savings_recommendations():
 
 # ── Bond Schedule ─────────────────────────────────────────────────────────────
 @router.get("/bond-schedule")
-def get_bond_schedule():
+def get_bond_schedule(account_ids: Optional[str] = Query(None)):
+    """Bond holdings with their coupons and maturities; account_ids (comma-separated, an Account Preset) limits them to those accounts."""
     query = """
     WITH fx AS (
         SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
@@ -6252,7 +6491,7 @@ def get_bond_schedule():
         FROM Holdings h
         JOIN Securities s ON h.Securities_Id = s.Securities_Id
         JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-        WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond'
+        WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' /*ACCT_H*/
     )
     SELECT
         bh.securities_id,
@@ -6278,6 +6517,7 @@ def get_bond_schedule():
     LEFT JOIN fx ON fx.Currencies_Id_1 = bh.Currencies_Id
     ORDER BY bh.Maturity_Date ASC NULLS LAST
     """
+    query = query.replace("/*ACCT_H*/", _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id"))
     with get_db() as conn:
         df = pd.read_sql(query, conn)
     return _df_to_list(df)

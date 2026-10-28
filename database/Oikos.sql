@@ -1458,6 +1458,17 @@ CREATE TABLE IF NOT EXISTS Plan_Items (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open';
 
+-- The Retirement Planner (Reports -> Financial Planning): saved plans / scenarios. Params is the whole plan as JSON (database/retirement.py);
+-- one plan is the base the others are compared with.
+CREATE TABLE IF NOT EXISTS Retirement_Plans (
+    Retirement_Plans_Id SERIAL PRIMARY KEY,
+    Name        TEXT NOT NULL,
+    Params      JSONB NOT NULL,
+    Is_Base     BOOLEAN NOT NULL DEFAULT FALSE,
+    Created_At  TIMESTAMP DEFAULT NOW(),
+    Updated_At  TIMESTAMP DEFAULT NOW()
+);
+
 
 -- =============================================================================
 -- SCHEDULER

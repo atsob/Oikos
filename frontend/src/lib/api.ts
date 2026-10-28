@@ -1132,6 +1132,19 @@ export const getBenchmarkCandidates = (types?: string[], excludeId?: number) =>
 export const getTaxLossHarvesting = () =>
   api.get('/reports/tax-loss-harvesting').then(r => r.data)
 
+export interface TaxLossSummary {
+  year: number; method: string
+  categories: { category: string; display_name: string; rate: number; loss_eur: number; positions: number; gains_eur: number; capacity_eur: number; saving_eur: number; carry_forward_eur: number | null; note: string }[]
+  exempt: { loss_eur: number; positions: number; categories: { category: string; loss_eur: number; positions: number }[] }
+  totals: { taxable_loss_eur: number; saving_eur: number; exempt_loss_eur: number }
+}
+// `crypto` carries the Crypto tab's own settings, so the crypto figures here are the same ones that tab shows.
+export interface CryptoSettings { rewardsIncome?: boolean | null; exemption?: number; lossesFrom?: number; rate?: number | null; excluded?: number[] }
+export const getTaxLossHarvestingSummary = (year: number, method: string, crypto: CryptoSettings = {}): Promise<TaxLossSummary> =>
+  api.get('/reports/tax-loss-harvesting/summary', { params: {
+    year, method, rewards_income: crypto.rewardsIncome ?? undefined, exemption: crypto.exemption || undefined, losses_from: crypto.lossesFrom || undefined,
+    crypto_rate: crypto.rate ?? undefined, exclude_account_ids: crypto.excluded?.join(',') || undefined } }).then(r => r.data)
+
 export const getDividendIncomeTax = (year: number) =>
   api.get('/reports/dividend-income-tax', { params: { year } }).then(r => r.data)
 export const getBankInterestTax = (year: number) =>
@@ -1164,17 +1177,17 @@ export const getSavingsForecast = (period: 'eoy' | '6m' | '12m' = '12m') =>
 export const getSavingsRecommendations = () =>
   api.get('/reports/savings-recommendations').then(r => r.data)
 
-export const getDividendsTracker = (period: string, startDate?: string, endDate?: string) =>
-  api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate } }).then(r => r.data)
+export const getDividendsTracker = (period: string, startDate?: string, endDate?: string, accountIds?: number[]) =>
+  api.get('/reports/dividends-tracker', { params: { period, start_date: startDate, end_date: endDate, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
-export const getDividendsForecast = (period: 'eoy' | '6m' | '12m' = '12m') =>
-  api.get('/reports/dividends-forecast', { params: { period } }).then(r => r.data)
+export const getDividendsForecast = (period: 'eoy' | '6m' | '12m' = '12m', accountIds?: number[]) =>
+  api.get('/reports/dividends-forecast', { params: { period, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getDividendRecommendations = () =>
   api.get('/reports/dividend-recommendations').then(r => r.data)
 
-export const getBondSchedule = () =>
-  api.get('/reports/bond-schedule').then(r => r.data)
+export const getBondSchedule = (accountIds?: number[]) =>
+  api.get('/reports/bond-schedule', { params: { account_ids: accountIds?.join(',') || undefined } }).then(r => r.data)
 
 export const getBenchmark = (
   benchmarkIds: number[], compareAccountIds: number[], lookbackDays = 252,
@@ -1222,11 +1235,11 @@ export const getPricesFreshness = (securityId?: number) =>
   api.get('/market-data/prices-freshness', { params: { security_id: securityId } }).then(r => r.data as PricesFreshness)
 
 // Best / Worst Days (Reports -> Inv. Performance -> Best / Worst Days)
-export const getDayExtremeYears = (accountId?: number) =>
-  api.get('/reports/day-extremes/years', { params: { account_id: accountId } }).then(r => r.data as number[])
+export const getDayExtremeYears = (accountId?: number, accountIds?: number[]) =>
+  api.get('/reports/day-extremes/years', { params: { account_id: accountId, account_ids: accountIds?.join(',') || undefined } }).then(r => r.data as number[])
 
-export const getDayExtremes = (p: { accountId?: number; year: number; n: number; period?: 'day' | 'week' | 'month' }) =>
-  api.get('/reports/day-extremes', { params: { account_id: p.accountId, year: p.year, n: p.n, period: p.period } }).then(r => r.data)
+export const getDayExtremes = (p: { accountId?: number; accountIds?: number[]; year: number; n: number; period?: 'day' | 'week' | 'month' }) =>
+  api.get('/reports/day-extremes', { params: { account_id: p.accountId, account_ids: p.accountIds?.join(',') || undefined, year: p.year, n: p.n, period: p.period } }).then(r => r.data)
 
 // Stress Test (Reports -> Inv. Performance -> Stress Test)
 export const getStressAssumptions = () =>
@@ -1286,3 +1299,71 @@ export const deletePlanItem = (id: number) => api.delete(`/plan/items/${id}`).th
 export const deletePlan = (name: string): Promise<{ deleted: number }> => api.delete('/plan/plans', { params: { name } }).then(r => r.data)
 export const importPlan = (text: string, plan: string): Promise<{ created: number; errors: string[]; plan: string }> => api.post('/plan/import', { text, plan: plan || null }).then(r => r.data)
 export const remindPlanNow = (): Promise<{ sent: boolean; detail: string }> => api.post('/plan/remind-now').then(r => r.data)
+
+// ── Retirement planner (database/retirement.py) ────────────────────────────────
+export interface RetirementStream { name: string; annual: number; start_age: number; end_age: number | null; indexation: 'inflation' | 'fixed' | number; tax: 'income' | 'source' | 'exempt'; source_rate: number }
+export interface RetirementLump { name: string; age: number; amount: number; tax_pct: number }
+export interface RetirementTax {
+  country: string; brackets: [number | null, number][]; credit: number; credit_taper_from: number; credit_taper_per_1000: number; health_pct: number; index_brackets: boolean
+  div_pct: number; interest_pct: number; gains_pct: number; pot_mode: 'flat' | 'income'; pot_flat_pct: number; pot_payout: 'drawdown' | 'lump'
+}
+export interface RetirementParams {
+  birth_year: number; retire_age: number; end_age: number
+  assets: { cash: number; investments: number; pot: number; investments_cost: number | null }
+  contrib: { cash: number; investments: number; pot: number; growth_pct: number }
+  spend: { annual: number; real_change_pct: number }
+  streams: RetirementStream[]; lumps: RetirementLump[]
+  returns: { cash_pct: number; pre_pct: number; post_pct: number; vol_pre_pct: number; vol_post_pct: number; yield_pct: number }
+  inflation_pct: number; tax: RetirementTax; order: ('cash' | 'investments' | 'pot')[]; target_success_pct: number
+  assets_source?: string
+}
+export interface RetirementRow {
+  age: number; year: number; infl: number; phase: string; cash: number; investments: number; pot: number; contrib?: number; spend?: number; income?: number; health?: number
+  income_tax?: number; wd_cash?: number; wd_investments?: number; wd_pot?: number; tax_gains?: number; tax_pot?: number; tax_drag?: number; surplus?: number; shortfall?: number
+}
+export interface RetirementResult {
+  params: RetirementParams; ages: number[]; retire_index: number; balance_at_retirement: number; needed_at_retirement: number | null; gap_at_retirement: number | null
+  depletion_age: number | null; survives: boolean; end_balance_real: number; rows: RetirementRow[]; real_total: number[]; insights: string[]
+  first_year?: { age: number; spend_real: number; income_real: number; withdrawal_real: number; income_tax_real: number; withdrawal_rate_pct: number }
+  mc: null | { sims: number; success_pct: number; p10: number[]; p50: number[]; p90: number[]; solvent_by_age: number[]; end_p10: number; end_p50: number; median_at_retirement: number }
+}
+export interface RetirementStart {
+  params: RetirementParams; rules: { label: string; value: string; note: string }[]
+  country: { code: string; name: string; has_tax_profile: boolean; hints: Record<string, string> }
+  suggestions: { assets: Record<string, number | null>; flows: { from?: string; to?: string; income?: number; expense?: number; tax?: number; saved?: number }; calibration: { past_return_pct: number; vol_pct: number } | null; notes: string[] }
+}
+export interface RetirementPlan { id: number; name: string; params: Partial<RetirementParams>; is_base: boolean; updated_at: string }
+export interface RetirementLevers {
+  success_pct: number; target_pct: number; reached: boolean; capital_needed: number | null; capital_projected: number
+  save_more: { extra_per_year: number; extra_per_month: number; success_pct: number } | null
+  retire_later: { years: number; age: number; success_pct: number } | null
+  spend_less: { cut_pct: number; annual: number; success_pct: number } | null
+}
+export interface RetirementCompareRow {
+  name: string; error?: string; retire_age: number; end_age: number; balance_at_retirement: number; needed_at_retirement: number | null; gap_at_retirement: number | null
+  survives: boolean; depletion_age: number | null; end_balance_real: number; success_pct: number | null; target_pct: number; withdrawal_rate_pct: number | null; spend_real: number | null
+}
+export interface RetirementAssets { assets: { cash: number; investments: number; pot: number; investments_cost: number | null }; notes: string[]; accounts: number }
+export const getRetirementAssets = (accountIds?: number[]): Promise<RetirementAssets> =>
+  api.get('/retirement/assets', { params: accountIds ? { account_ids: accountIds.join(',') } : {} }).then(r => r.data)
+export const getRetirementStart = (): Promise<RetirementStart> => api.get('/retirement/starting-plan').then(r => r.data)
+export const projectRetirement = (params: unknown, sims = 1000): Promise<RetirementResult> => api.post('/retirement/project', { params, sims }).then(r => r.data)
+export const retirementLevers = (params: unknown): Promise<RetirementLevers> => api.post('/retirement/levers', { params }).then(r => r.data)
+export const compareRetirement = (scenarios: { name: string; params: unknown }[], sims = 600): Promise<RetirementCompareRow[]> => api.post('/retirement/compare', { scenarios, sims }).then(r => r.data)
+export const getRetirementPlans = (): Promise<RetirementPlan[]> => api.get('/retirement/plans').then(r => r.data)
+export const saveRetirementPlan = (body: { id?: number | null; name: string; params: unknown; is_base?: boolean }): Promise<RetirementPlan> => api.post('/retirement/plans', body).then(r => r.data)
+export const deleteRetirementPlan = (id: number) => api.delete(`/retirement/plans/${id}`).then(r => r.data)
+
+// Crypto tax (Reports -> Investment Tax -> Crypto)
+export interface CryptoTaxResult {
+  year: number; method: string; rate: number; exemption: number; income_rate: number; transfers_removed: number
+  accounts: { id: number; name: string; rows: number }[]
+  summary: { disposals: number; proceeds_eur: number; cost_eur: number; result_eur: number; losses_used_eur: number; taxable_eur: number; tax_eur: number; losses_available_eur: number; purchases_eur: number }
+  years: { year: number; result: number; losses_used: number; taxable: number; tax: number; losses_available: number; loss_years: { year: number; remaining: number; expires: number }[] }[]
+  disposals: { date: string; security: string; account: string | null; kind: string; quantity: number; proceeds_eur: number; cost_eur: number; gain_loss_eur: number; holding_type: string
+    lots: { date: string; quantity: number; cost_eur: number; action: string; how: string; account: string | null }[]; lots_total: number }[]
+  rewards: { total: number; taxable: boolean; rows: { security: string; quantity: number; value_eur: number; payments: number }[]; tax_at_rate?: number; tax_progressive?: number }
+  e1: { codes: string; label: string; amount: number }[]; notes: string[]
+}
+export const getCryptoTax = (p: { year: number; method: string; exemption: number; rate?: number; accountIds?: number[]; lossesFrom?: number; rewardsIncome?: boolean }): Promise<CryptoTaxResult> =>
+  api.get('/reports/crypto-tax', { params: { year: p.year, method: p.method, exemption: p.exemption, rate: p.rate, account_ids: p.accountIds?.join(',') || undefined, losses_from: p.lossesFrom || undefined, rewards_income: p.rewardsIncome } }).then(r => r.data)
