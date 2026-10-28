@@ -9,7 +9,7 @@ A row key names the figure: `gains:<tax category>` (net capital gain of a catego
 `interest:<category>`, `bank_interest`, `crypto:purchases`, `crypto:gain`, `crypto:capital`, `crypto:rewards`. For a capital-gains category the code set on the
 category itself (Static Data -> Tax Categories -> Gains Tax Code) is used before the country's.
 
-To add a country: add an entry to PROFILES (name, form, codes) — nothing else changes. The codes are starting points to check against the form's instructions.
+To add a country: add an entry to PROFILES (name, form, codes, and optionally `income`: the codes for interest by source / withholder, see Greece) — nothing else changes. The codes are starting points to check against the form's instructions.
 """
 from __future__ import annotations
 
@@ -22,6 +22,23 @@ PROFILES: dict[str, dict] = {
             # As listed by the TaxApps.gr crypto calculator for the return on a year's income, and the loss line of derivatives, CFDs, FX Spot and crypto.
             "crypto:purchases": "743", "crypto:gain": "865 – 866", "crypto:capital": "781 – 782",
             "losses:*": "869 – 870",
+        },
+        # Interest on bonds and deposits (E1, Table 4Δ1): the gross interest by where it comes from, the tax withheld by who withheld it; interest that is exempt
+        # (Greek government bonds and T-bills) goes to Table 6. Where nothing was withheld the tax codes stay empty and the 15% is settled when the return is assessed.
+        "income": {
+            "interest_domestic": "667 – 668",                 # interest from a Greek source (Greek corporate bonds, Greek bank deposits)
+            "interest_foreign": "669 – 670",                  # interest from abroad (foreign corporate or government bonds)
+            "interest_exempt": "659 – 660",                   # tax-exempt interest (Table 6)
+            "withheld_interest_domestic": "675 – 676",        # tax withheld by the Greek issuer or bank on Greek-source interest
+            "withheld_interest_custodian": "677 – 678",       # tax withheld by a Greek bank or custodian on interest from abroad
+            "withheld_interest_abroad": "683 – 684",          # tax withheld abroad (credited against the Greek tax; keep the broker's certificate)
+            # Dividends (E1, Table 4Δ1, as in the 2016 instructions — check the current year's before relying on them): the same split by source and by who withheld.
+            "dividend_domestic": "291 – 292",                 # gross dividends of Greek companies
+            "dividend_foreign": "295 – 296",                  # gross dividends of foreign companies
+            "dividend_exempt": "659 – 660",                   # tax-exempt dividends (Table 6)
+            "withheld_dividend_domestic": "293 – 294",        # tax withheld by the Greek company on its dividends
+            "withheld_dividend_custodian": "297 – 298",       # tax withheld in Greece (a Greek bank or custodian) on dividends of foreign companies
+            "withheld_dividend_abroad": "683 – 684",          # tax withheld abroad
         },
     },
 }
@@ -42,7 +59,7 @@ def country_codes(cc: str | None = None) -> dict:
     except Exception:
         mine = {}
     return {"code": cc, "name": (prof or {}).get("name") or (MARKETS.get(cc) or {}).get("name") or "", "form": (prof or {}).get("form") or "",
-            "has_profile": prof is not None, "defaults": dict((prof or {}).get("codes") or {}), "overrides": mine}
+            "has_profile": prof is not None, "defaults": dict((prof or {}).get("codes") or {}), "income": dict((prof or {}).get("income") or {}), "overrides": mine}
 
 
 def resolve(setup: dict, key: str, category_code: str | None = None) -> str:

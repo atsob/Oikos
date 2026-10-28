@@ -9174,12 +9174,12 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false, accountIds }: { ye
         <div>
           <strong>Dividends (5%):</strong> Greek-source dividends are subject to <strong>5% withholding tax</strong> (Art. 36, L.4172/2013), withheld at source.
           Foreign dividends are grossed up and taxed at 5%; foreign WHT is credited up to the Greek rate.
-          Declare in <strong>E1 Table 4D, Codes 289–294</strong> (foreign) or <strong>Codes 285–288</strong> (domestic).
+          Declare in <strong>E1 Table 4Δ1</strong>: gross <strong>291–292</strong> (Greek companies) or <strong>295–296</strong> (foreign); tax withheld <strong>293–294</strong> (by the Greek company), <strong>297–298</strong> (by a Greek bank or custodian on foreign dividends), <strong>683–684</strong> (withheld abroad) — codes from the 2016 instructions, check the year you file. The Tax Report tab works these out.
         </div>
         <div>
           <strong>CD / Bond Coupon Interest (15%):</strong> Interest from time deposits and bonds is taxed at <strong>15%</strong>, withheld at source by the paying institution (Art. 40, L.4172/2013).
           T-bill discount at maturity is tax-exempt for Greek government securities (Is_Tax_Exempt flag).
-          Declare interest income in <strong>E1 Table 4Δ, Codes 595–596</strong>.
+          Declare the gross interest in <strong>E1 Table 4Δ1</strong>: <strong>667–668</strong> from a Greek source, <strong>669–670</strong> from abroad (tax-exempt Greek government securities: Table 6, <strong>659–660</strong>); tax withheld: <strong>675–676</strong> by the Greek issuer or bank, <strong>677–678</strong> by a Greek bank or custodian on interest from abroad, <strong>683–684</strong> withheld abroad. The Tax Report tab works these out.
         </div>
         <div>
           <strong>Bank / Savings Interest (15%):</strong> Taxed at <strong>15%</strong>, withheld at source. Same declaration as bond interest.

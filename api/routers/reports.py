@@ -2761,6 +2761,22 @@ def _income_lines(x) -> list[dict]:
             for r in x.sort_values("date").to_dict("records")]
 
 
+def _source_maps() -> tuple[dict, dict]:
+    """(security id -> country, account id -> country of its institution) for the Tax Report: a security's source is where the issuer is registered — its ISIN prefix
+    (XS / EU are not countries) — else the Country set on the security (which is also used for exposure), else its issuer's; an account's country comes from its
+    institution's BIC (characters 5-6), else its IBAN prefix."""
+    with get_db() as conn:
+        sec = pd.read_sql("SELECT s.Securities_Id AS sid, s.Country AS c1, s.ISIN AS isin, i.Country AS c3 FROM Securities s LEFT JOIN Issuers i ON i.Issuers_Id = s.Issuer_Id", conn)
+        acc = pd.read_sql("SELECT a.Accounts_Id AS aid, i.BIC_Code AS bic, a.IBAN AS iban FROM Accounts a LEFT JOIN Institutions i ON i.Institutions_Id = a.Institutions_Id", conn)
+    txt = lambda v: v.strip().upper() if isinstance(v, str) else ""
+    def sec_cc(r):
+        pre = txt(r["isin"])[:2]
+        return (pre if pre and pre not in ("XS", "EU") else "") or txt(r["c1"]) or txt(r["c3"])
+    def acc_cc(r):
+        return txt(r["bic"])[4:6] or txt(r["iban"])[:2]
+    return ({int(r["sid"]): sec_cc(r) for _, r in sec.iterrows()}, {int(r["aid"]): acc_cc(r) for _, r in acc.iterrows()})
+
+
 @router.get("/tax-return")
 def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account_ids: Optional[str] = Query(None),
                    rewards_income: Optional[bool] = Query(None), crypto_exemption: float = Query(0.0), crypto_rate: Optional[float] = Query(None),
@@ -2831,39 +2847,72 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
     # 3. dividends and interest from securities, by category (crypto rewards are above)
     d = pd.DataFrame(get_dividend_income_tax(year=year, account_ids=account_ids))
     drows, irows, wrows = [], [], []
+    rules = setup.get("income") or {}                       # the country's codes for interest by source and by who withheld the tax (Greece: Table 4Δ1); none for other countries
+    home, home_name = setup["code"], (setup.get("name") or setup["code"])
+    sec_cc, acct_cc = _source_maps() if rules else ({}, {})
     if not d.empty:
         d = d[(d["tax_category"].astype(str) != "Crypto") & (d["action"] != "RtrnCap")]
         # A category with both taxable and tax-exempt income (bond interest: some bonds are exempt, some are not) is reported as two figures, each with its own code.
-        d = d.assign(_cat=d["tax_category"].fillna("Other"), _ex=d["is_tax_exempt"].fillna(False).astype(bool))
-        mixed = {k for k, v in d.groupby(["section", "_cat"])["_ex"].nunique().items() if v > 1}
-        for (sec, cat, ex), x in d.groupby(["section", "_cat", "_ex"]):
-            split = (sec, cat) in mixed
-            suffix = ":exempt" if split and ex else ""                  # the taxable part (or a category that is all one kind) keeps the key it always had
-            tag = (" (tax-exempt)" if ex else " (taxable)") if split else ""
+        d = d.assign(_cat=d["tax_category"].fillna("Other"), _ex=d["is_tax_exempt"].fillna(False).astype(bool), _src="", _wcls="")
+        if rules and not d.empty:
+            def _source(r):
+                cc = sec_cc.get(int(r["securities_id"])) if pd.notna(r["securities_id"]) else ""
+                cc = cc or acct_cc.get(int(r["accounts_id"]), "")          # a deposit or a bond without a country: where it is held
+                return "domestic" if cc == home else "foreign"
+            def _who(r):                                                   # who withheld: the issuer or bank (home-country interest), a home-country custodian, or a foreign one
+                return "domestic" if r["_src"] == "domestic" else ("custodian" if acct_cc.get(int(r["accounts_id"]), "") == home else "abroad")
+            d["_src"] = d.apply(_source, axis=1)
+            d["_wcls"] = d.apply(_who, axis=1)
+        mixed_ex = {k for k, v in d.groupby(["section", "_cat"])["_ex"].nunique().items() if v > 1}
+        mixed_src = {k for k, v in d.groupby(["section", "_cat", "_ex"])["_src"].nunique().items() if v > 1}
+        for (sec, cat, ex, src), x in d.groupby(["section", "_cat", "_ex", "_src"]):
+            word = "dividends" if sec == "dividend" else "interest"
+            split_ex, split_src = (sec, cat) in mixed_ex, (sec, cat, ex) in mixed_src
+            # the taxable domestic part (or a category that is all one kind) keeps the key it always had; exempt interest always has its own key (its code is another table's)
+            suffix = (":exempt" if ex and (split_ex or sec == "interest") else "") + (":foreign" if split_src and src == "foreign" else "")
+            tag = ((" (tax-exempt)" if ex else " (taxable)") if split_ex else "") + ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if split_src else "")
             gross = float(x["amount_eur"].astype(float).sum())
             wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
             due = float(x["local_tax_liability"].astype(float).sum() if x["local_tax_liability"].notna().any() else 0.0) + float(x["income_tax_liability"].astype(float).sum() if x["income_tax_liability"].notna().any() else 0.0)
             est_tax["income"] += due
             exempt = bool(ex)
+            code_cat = (rules.get(f"{sec}_exempt" if exempt else f"{sec}_{src}") or None) if rules else None
             target = drows if sec == "dividend" else irows
-            target.append(row(f"{'dividends' if sec == 'dividend' else 'interest'}:{cat}{suffix}", f"{cat} — {'dividends' if sec == 'dividend' else 'interest'}{tag}", gross,
-                              f"withheld abroad {wht:,.2f}; tax still due {due:,.2f}" + ("; exempt category" if exempt else ""), None, _income_lines(x)))
-            if wht > 0.004:
-                word = "dividends" if sec == "dividend" else "interest"
-                wrows.append(row(f"withheld:{word}:{cat}{suffix}", f"{cat} — tax withheld on {word}{tag}", wht, f"on {word} of {gross:,.2f}", None,
-                                 [{**l_, "amount": l_["withheld"], "withheld": None} for l_ in _income_lines(x) if l_["withheld"]], kind="withheld"))
+            target.append(row(f"{'dividends' if sec == 'dividend' else 'interest'}:{cat}{suffix}", f"{cat} — {word}{tag}", gross,
+                              f"withheld abroad {wht:,.2f}; tax still due {due:,.2f}" + ("; exempt category" if exempt else ""), code_cat, _income_lines(x)))
+            # the tax withheld, one figure per who withheld it where the country's form distinguishes them
+            wcls = sorted(set(x["_wcls"])) if rules else [""]
+            for wc in wcls:
+                xw = x[x["_wcls"] == wc] if wc else x
+                w = float(xw["tax_amount_eur"].astype(float).abs().sum()) if xw["tax_amount_eur"].notna().any() else 0.0
+                if w <= 0.004:
+                    continue
+                multi = len(wcls) > 1
+                wsuffix = suffix + (f":{wc}" if multi and wc != "domestic" else "")
+                wtag = tag + ({"custodian": f" (by a bank or custodian in {home_name})", "abroad": " (withheld abroad)"}.get(wc, "") if multi else "")
+                wrows.append(row(f"withheld:{word}:{cat}{wsuffix}", f"{cat} — tax withheld on {word}{wtag}", w, f"on {word} of {float(xw['amount_eur'].astype(float).sum()):,.2f}",
+                                 (rules.get(f"withheld_{sec}_{wc}") or None) if wc else None,
+                                 [{**l_, "amount": l_["withheld"], "withheld": None} for l_ in _income_lines(xw) if l_["withheld"]], kind="withheld"))
     sections.append({"title": "Dividends", "rows": drows})
     b = pd.DataFrame(get_bank_interest_tax(year=year, account_ids=account_ids))
     if not b.empty:
-        gross = float(b["amount_eur"].astype(float).sum())
-        wht = float(b["tax_amount_eur"].astype(float).abs().sum()) if b["tax_amount_eur"].notna().any() else 0.0
-        irows.append(row("bank_interest", "Bank and savings interest", gross, f"withheld at source {wht:,.2f}", None,
-                         [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], r["amount_eur"], withheld=abs(float(r["tax_amount_eur"])) if pd.notna(r.get("tax_amount_eur")) else None)
-                          for r in b.sort_values("date").to_dict("records")]))
-        if wht > 0.004:
-            wrows.append(row("withheld:bank_interest", "Bank and savings interest — tax withheld", wht, f"on interest of {gross:,.2f}", None,
-                             [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], abs(float(r["tax_amount_eur"]))) for r in b.sort_values("date").to_dict("records")
-                              if pd.notna(r.get("tax_amount_eur")) and abs(float(r["tax_amount_eur"])) > 0.004], kind="withheld"))
+        # Bank and savings interest: by the country of the bank (a Greek bank's interest is of Greek source, another's from abroad), each with the country's codes when it has them
+        b = b.assign(_src=[("domestic" if acct_cc.get(int(a_), "") == home else "foreign") if rules else "" for a_ in b["accounts_id"]])
+        multi_src = b["_src"].nunique() > 1
+        for src, x in b.groupby("_src"):
+            gross = float(x["amount_eur"].astype(float).sum())
+            wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
+            suffix = ":foreign" if multi_src and src == "foreign" else ""
+            tag = ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if multi_src else "")
+            recs = x.sort_values("date").to_dict("records")
+            irows.append(row(f"bank_interest{suffix}", f"Bank and savings interest{tag}", gross, f"withheld at source {wht:,.2f}", (rules.get(f"interest_{src}") or None) if src else None,
+                             [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], r["amount_eur"], withheld=abs(float(r["tax_amount_eur"])) if pd.notna(r.get("tax_amount_eur")) else None)
+                              for r in recs]))
+            if wht > 0.004:
+                wcode = rules.get("withheld_interest_domestic" if src == "domestic" else "withheld_interest_abroad") if src else None
+                wrows.append(row(f"withheld:bank_interest{suffix}", f"Bank and savings interest — tax withheld{tag}", wht, f"on interest of {gross:,.2f}", wcode or None,
+                                 [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], abs(float(r["tax_amount_eur"]))) for r in recs
+                                  if pd.notna(r.get("tax_amount_eur")) and abs(float(r["tax_amount_eur"])) > 0.004], kind="withheld"))
     sections.append({"title": "Interest", "rows": irows})
     sections.append({"title": "Tax withheld at source (to credit against the tax due)", "rows": wrows})
 
