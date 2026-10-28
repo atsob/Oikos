@@ -2870,7 +2870,7 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
             split_ex, split_src = (sec, cat) in mixed_ex, (sec, cat, ex) in mixed_src
             # the taxable domestic part (or a category that is all one kind) keeps the key it always had; exempt interest always has its own key (its code is another table's)
             suffix = (":exempt" if ex and (split_ex or sec == "interest") else "") + (":foreign" if split_src and src == "foreign" else "")
-            tag = ((" (tax-exempt)" if ex else " (taxable)") if split_ex else "") + ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if split_src else "")
+            tag = ((" (tax-exempt)" if ex else " (taxable)") if split_ex else (" (tax-exempt)" if ex else "")) + ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if split_src else "")
             gross = float(x["amount_eur"].astype(float).sum())
             wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
             due = float(x["local_tax_liability"].astype(float).sum() if x["local_tax_liability"].notna().any() else 0.0) + float(x["income_tax_liability"].astype(float).sum() if x["income_tax_liability"].notna().any() else 0.0)

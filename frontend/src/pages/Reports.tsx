@@ -9456,15 +9456,17 @@ function TaxLines({ lines, expandAll }: { lines: TaxReturnLine[]; expandAll?: bo
   )
 }
 
-type TaxCodeGroup = { code: string; amount: number; withheld: number; figures: string[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }
+// A code typed or pasted with another dash (a hyphen, a non-breaking hyphen, an en dash) is the same code: "659 - 660", "659 ‑ 660" and "659 – 660".
+const normCode = (c: string) => c.replace(/[‐-―−-]/g, '–').replace(/\s*–\s*/g, ' – ').replace(/\s+/g, ' ').trim()
+type TaxCodeGroup = { code: string; amount: number; withheld: number; figures: string[]; figs: { label: string; amount: number; withheld: number }[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }
 function taxCodeGroups(data: TaxReturnResult): TaxCodeGroup[] {
-  const by = new Map<string, { code: string; amount: number; withheld: number; figures: string[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }>()
+  const by = new Map<string, TaxCodeGroup>()
   for (const s of data.sections) for (const r of s.rows) {
     if (r.key.startsWith('est:') || r.info) continue
-    const code = r.code.trim() || '(no code)'
-    if (!by.has(code)) by.set(code, { code, amount: 0, withheld: 0, figures: [], accounts: new Map() })
+    const code = normCode(r.code) || '(no code)'
+    if (!by.has(code)) by.set(code, { code, amount: 0, withheld: 0, figures: [], figs: [], accounts: new Map() })
     const g = by.get(code)!
-    g.amount += r.amount; g.withheld += r.withheld ?? 0; g.figures.push(r.label)
+    g.amount += r.amount; g.withheld += r.withheld ?? 0; g.figures.push(r.label); g.figs.push({ label: r.label, amount: r.amount, withheld: r.withheld ?? 0 })
     const add = (acc: string, amount: number, withheld: number, n: number) => { const a = g.accounts.get(acc) ?? { amount: 0, withheld: 0, n: 0 }; a.amount += amount; a.withheld += withheld; a.n += n; g.accounts.set(acc, a) }
     if (!r.lines?.length) { add('Not split by account', r.amount, r.withheld ?? 0, 0); continue }
     for (const l of r.lines) add(l.account, l.amount, l.withheld ?? 0, 1)
@@ -9499,6 +9501,16 @@ function TaxByCode({ data, expandAll }: { data: TaxReturnResult; expandAll?: boo
                   <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${g.amount < 0 ? 'text-red-600' : ''}`}>{money(g.amount)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{money(g.withheld)}</td>
                 </tr>
+                {isOpen && g.figs.length > 0 && <tr><td /><td colSpan={3} className="px-3 pt-1 pl-8 text-[10px] uppercase tracking-wide text-slate-400">Figures</td></tr>}
+                {isOpen && g.figs.map((f, i) => (
+                  <tr key={`f${i}`} className="text-slate-600 bg-slate-50/50">
+                    <td />
+                    <td className="px-3 py-1 pl-8">{f.label}</td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${f.amount < 0 ? 'text-red-600' : ''}`}>{money(f.amount)}</td>
+                    <td className="px-3 py-1 text-right tabular-nums">{money(f.withheld)}</td>
+                  </tr>
+                ))}
+                {isOpen && <tr><td /><td colSpan={3} className="px-3 pt-1 pl-8 text-[10px] uppercase tracking-wide text-slate-400">By account</td></tr>}
                 {isOpen && [...g.accounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([acc, v]) => (
                   <tr key={acc} className="text-slate-500 bg-slate-50/50">
                     <td />
@@ -9549,6 +9561,7 @@ function TaxReturnSummary({ year, method, accountIds, scope, expandAll }: { year
     out.push([data.year, 'Report', '', '', '', '', '', '', '', '', '', '', '', '', `${scope}; ${data.method} for the securities' gains; ${data.country.name || data.country.code || 'no country set'} ${data.country.form}`.trim()])
     for (const g of taxCodeGroups(data)) {
       out.push([data.year, 'Summary by code', g.code, '', g.figures.join('; '), '', '', '', '', '', '', num(g.withheld || null), g.amount.toFixed(2), '', `${g.figures.length} figure(s)`])
+      for (const f of g.figs) out.push([data.year, 'Code by figure', g.code, '', f.label, '', '', '', '', '', '', num(f.withheld || null), f.amount.toFixed(2), '', ''])
       for (const [acc, v] of [...g.accounts.entries()].sort((x, y) => x[0].localeCompare(y[0])))
         out.push([data.year, 'Code by account', g.code, '', '', acc, '', '', '', '', '', num(v.withheld || null), v.amount.toFixed(2), '', v.n ? `${v.n} transaction(s)` : ''])
     }
