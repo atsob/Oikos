@@ -7,6 +7,14 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **Alerts on currency rates.** Set an above / below alert on a currency's rate — for example to sell GBP when GBP/EUR reaches 1.21. Add it on the currency's new **Alerts** tab (Currency Detail) or under Market Data → Alerts (types "Currency Rate Above Threshold" and "Currency Rate Below Threshold"); the rate is units of the second currency per 1 unit of the first, the one the currency's Overview shows, quoted in your reporting currency by default. A triggered one appears with the Price Alerts on the Dashboard and the Alerts page, opens the currency when clicked, goes to Telegram like the others and can be dismissed. The currency's rate charts (Overview and Prices) draw its active rate alerts as dashed threshold lines, like a security's price alerts, with a Reference lines toggle. The Alerts table gains the currency and its quote currency (added automatically on start).
 
+### Changed
+- **Style Box: direct commodities.** A direct commodity holding such as Silver/Euro used to land in "Direct Other" with crypto. In the Style Box grid view it now sits in the **Commodities** row next to the commodity funds, and crypto stays in Direct Other. The Category view lists it as **Direct Commodities**, like Direct Stocks, Direct Bonds and Direct Other, instead of a plain "Commodities" row beside Morningstar's "Commodities - Precious Metals".
+
+### Fixed
+- **Bond Quality: Avg. Duration is weighted by value.** It was a plain average of the securities in each row, so a row of seven short Greek T-bills (0–0.85 years) and three funds with tiny slices (4–7 years) showed about 2 years when the row's real duration was about 0.3. Each row, and the US Government line, now weights by value.
+- **Bond Quality leaves out funds pinned to another asset class.** A fund whose Asset Class Override is Cash, Commodities, Other and so on (a swap-based money-market or inflation fund, say) holds no credit exposure to rate, yet it counted as "US Government" or "Other" bond exposure through Yahoo's placeholder ratings. Only funds set to Bonds, or with no override, are rated now.
+- **Portfolio Analysis: funds with no look-through data are no longer "Uncovered".** Sector and industry were filled in for 20 securities that had none, and four funds — the gold ETC, the two overnight / cash ETFs and the euro inflation-expectations swap ETF — were given an Asset Class Override (the swap fund *Other*, with its bond ratings set to Other) so Sector Weighting files them under Commodities, Cash and Other instead of "Uncovered Fund Exposure". That is data, not code: set the override on a fund's Composition tab when Yahoo has nothing for it.
+
 ## 2026-10-28
 
 ### Changed

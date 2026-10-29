@@ -1550,6 +1550,7 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
       <p className="text-xs text-slate-400">
         Percentages are of total bond-like exposure (direct bonds + the bond portion of held funds), not the whole portfolio.
         "Direct / Unrated" duration is an approximation (years to maturity), not modified duration like the fund-sourced figures.
+        Avg. duration is weighted by value; funds pinned to a non-bond asset class (cash, commodities, other) are left out.
       </p>
 
       {usGov && (

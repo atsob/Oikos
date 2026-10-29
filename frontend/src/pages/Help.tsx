@@ -798,7 +798,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "Uncovered Fund Bond Exposure" bucket only holds funds that actually hold bonds but lack a ratings
           breakdown — a fund already known to hold no bonds at all (an Asset Class Override, or a 0% bond
           allocation from Yahoo, e.g. a physical commodity ETC) is excluded rather than having its whole value
-          counted as unrated bond exposure. Credit-quality labels from a fund's look-through ratings (e.g. "bbb")
+          counted as unrated bond exposure; likewise a fund whose Asset Class Override is anything but Bonds (a swap-based money-market
+          or inflation fund, say) is left out of Bond Quality altogether. <b>Avg. Duration</b> of each row is weighted by value, so a few
+          long-dated fund slices don't make a row of short T-bills look long. Credit-quality labels from a fund's look-through ratings (e.g. "bbb")
           are normalized onto the same "BBB"/"AA"/"Below B" labels direct bond holdings use, so the same rating
           doesn't show up as two separate rows with different casing. Rows are ordered highest credit quality
           first (AAA → Below B), not by value. Yahoo's fund data also reports a "US Government" figure alongside
@@ -871,9 +873,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Style Box</b> has two views. <b>Style Box</b> shows Morningstar's two 3×3 grids — equity funds by size (large, mid, small) and
           style (value, blend, growth), bond funds by credit quality (high, medium, low) and duration (limited, moderate, extensive) —
           each square with its value, its weight and, with a compare date, the change in points; a table below holds what has no grid
-          (direct stocks and bonds, cash, commodity and money-market funds, funds Morningstar does not cover). <b>Category</b> shows
+          (direct stocks and bonds, cash, commodities — direct holdings such as Silver/Euro as well as commodity funds — money-market
+          funds, funds Morningstar does not cover; crypto and anything else direct is listed as <i>Direct Other</i>). <b>Category</b> shows
           Morningstar's Category of each fund (<i>Global Large-Cap Blend Equity</i>, <i>EUR Corporate Bond</i> …), or its coarser broad
-          group with the <b>Broad groups</b> box. Click a square, a row or a bar to list the securities in it, with their Style Box and
+          group with the <b>Broad groups</b> box; direct holdings are listed as <i>Direct Stocks</i>, <i>Direct Bonds</i>,
+          <i>Direct Commodities</i> and <i>Direct Other</i>. Click a square, a row or a bar to list the securities in it, with their Style Box and
           Category (a ✎ marks one set by hand). Morningstar's Style Box and Category are fetched by ISIN (Market Data → Downloads →
           <b>Morningstar</b>, a fund's own Downloads tab, or the monthly <b>Morningstar Category &amp; Style Box</b> scheduler job), together with a bond fund's
           <b>Duration</b> and <b>Maturity</b> (effective, in years — Yahoo's figures for these are not used). To set one yourself — for a

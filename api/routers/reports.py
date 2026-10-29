@@ -4675,8 +4675,10 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None), compare_date: O
             if r["sec_type"] in ("ETF", "Mutual Fund"):
                 items.append({**base, "kind": "Fund", **_fund_style_row(r)})
             else:
-                kind = {"Stock": "Direct Stocks", "Bond": "Direct Bonds"}.get(r["sec_type"], "Direct Other")
-                items.append({**base, "kind": kind, "style_box": None, "other": kind, "category": kind, "broad_category": kind,
+                kind = {"Stock": "Direct Stocks", "Bond": "Direct Bonds", "Commodity": "Direct Commodities"}.get(r["sec_type"], "Direct Other")
+                # in the grid view's plain buckets a direct commodity joins the commodity funds; the Category view keeps it as a direct holding
+                other = "Commodities" if r["sec_type"] == "Commodity" else kind
+                items.append({**base, "kind": kind, "style_box": None, "other": other, "category": kind, "broad_category": kind,
                               "manual_style": False, "manual_category": False})
         for r in cash_df.to_dict(orient="records"):
             if r["value_eur"] is None or pd.isna(r["value_eur"]):
@@ -4750,6 +4752,8 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         CROSS JOIN LATERAL jsonb_each_text(COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings)) AS je(key, value)
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings) IS NOT NULL
+          -- a fund pinned to another asset class (cash, commodities, "other" — e.g. a swap-based fund) holds no credit exposure to rate
+          AND (fc.Asset_Class_Override IS NULL OR fc.Asset_Class_Override = 'Bonds')
     ),
     direct_bond AS (
         -- Maps a linked Issuer's Moody's notch straight to a quality bucket;
@@ -4814,7 +4818,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT quality, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
-           ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
+           ROUND((SUM(value_eur * duration_years) / NULLIF(SUM(CASE WHEN duration_years IS NOT NULL THEN value_eur END), 0))::numeric,2) AS avg_duration_years
     FROM rated GROUP BY quality ORDER BY {_quality_rank('quality')}
     """
         us_gov_query = holdings_cte + detail_cte + """
@@ -4822,7 +4826,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
-           ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
+           ROUND((SUM(value_eur * duration_years) / NULLIF(SUM(CASE WHEN duration_years IS NOT NULL THEN value_eur END), 0))::numeric,2) AS avg_duration_years
     FROM detail_combined WHERE quality = 'Us Government'
     """
         detail_query = holdings_cte + detail_cte + f"""
