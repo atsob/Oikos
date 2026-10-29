@@ -1374,7 +1374,9 @@ CREATE TABLE IF NOT EXISTS Alerts (
     Direction     TEXT,
     Is_Active     BOOLEAN DEFAULT TRUE,
     Note          TEXT,
-    Created_At    TIMESTAMP DEFAULT NOW()
+    Created_At    TIMESTAMP DEFAULT NOW(),
+    Currencies_Id       INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE,   -- currency alerts (fx_above / fx_below): the currency ...
+    Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE    -- ... and the one its rate is quoted in (NULL = the storage base, EUR)
 );
 
 CREATE TABLE IF NOT EXISTS Signal_Notifications (

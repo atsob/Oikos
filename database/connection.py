@@ -544,6 +544,9 @@ def _run_startup_migrations():
         # Roles: admin (everything), limited (read and write on the accounts mapped to the user) and readonly (read only on those accounts) — see api/access.py.
         # Every user that existed before is an admin.
         "ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin'",
+        # Currency alerts (fx_above / fx_below on Alerts): the currency and the one its rate is quoted in
+        "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",
+        "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",
         """CREATE TABLE IF NOT EXISTS User_Account_Access (
                Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
                Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,

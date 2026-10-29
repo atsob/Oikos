@@ -1648,6 +1648,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           alerts (tied to an asset type, not one security) only show up on the Market Data page.
         </Note>
         <Note>
+          <b>Currency rate alerts.</b> A currency can have above / below alerts too — <i>sell GBP when GBP/EUR reaches 1.21</i>. Add one on a currency's own <b>Alerts</b> tab (Currency Detail), or under
+          Market Data → Alerts with the type <i>Currency Rate Above / Below Threshold</i>, choosing the currency and the currency its rate is quoted in (your reporting currency is offered first). The threshold
+          is how many units of the second currency 1 unit of the first buys — the rate shown on the currency's Overview — and it is compared with the latest stored rate. A triggered rate alert appears with
+          the <b>Price Alerts</b> on the Dashboard and Alerts page (clicking it opens the currency), is sent to Telegram like the others, and is silenced by Dismiss until the rate crosses back and triggers again. The currency's rate charts (Overview and Prices) draw its active rate alerts as dashed threshold lines — green for above, pink for below, with the note — in the <b>Reference lines</b> group of the legend, switched on and off by the same <i>Reference lines</i> checkbox as on a security chart; a chart shows the alerts quoted in its own currency (Overview: your reporting currency, Prices: the storage base).
+        </Note>
+        <Note>
           The price charts on <b>Overview</b> and <b>Prices</b> both draw a security's active price alerts as
           horizontal threshold lines (green dashed for Price Above, red dashed for Price Below), plus a violet
           dotted <b>Avg Cost / Share</b> line whenever the security is currently held — so the price's position

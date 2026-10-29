@@ -13,13 +13,14 @@ import {
 import { plotLayout, plotAxis, fmt, fmtNum, fmtPct, fmtEur, todayLocal } from '@/lib/utils'
 import { getReportingFx } from '@/lib/settings'
 import { useTheme } from '@/lib/theme'
-import { getCurrencies, getCurrencyDetail, getCurrencyHistory, getTechnicalLevels, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
+import { getAlertsDefinitions, getCurrencies, getCurrencyDetail, getCurrencyHistory, getTechnicalLevels, getCurrencyFxEffect, getFxRates, addFxRate, deleteFxRate, importFxFromFile, FX_EFFECT_PERIODS } from '@/lib/api'
 import type { SrSource, CurrencyDetail as CurrencyDetailData, FxEffectPeriod, FxEffectPosition } from '@/lib/api'
 import { periodToFromDate, type ChartPeriod } from '@/lib/chartPeriods'
 import { PeriodSelector } from '@/components/PeriodSelector'
 import { CurrencyLink } from '@/components/CurrencyLink'
-import { SrSummary } from '@/components/SupportResistance'
-import { srTraces, groupLegends } from '@/lib/technical'
+import CurrencyAlerts from '@/components/CurrencyAlerts'
+import { SrSummary, RefToggle } from '@/components/SupportResistance'
+import { srTraces, groupLegends, filterLines } from '@/lib/technical'
 
 // Currency counterpart of Security Detail: one currency's rate in your reporting currency
 // (Tools → App Settings), its stored rate history (moved here from the former Market
@@ -30,7 +31,7 @@ import { srTraces, groupLegends } from '@/lib/technical'
 // storage base (EUR) whatever the reporting currency is, so only the storage base has
 // no stored history to maintain — every other currency keeps its Prices tab.
 
-const TABS = ['Overview', 'Prices', 'Exposure', 'FX Effect'] as const
+const TABS = ['Overview', 'Prices', 'Exposure', 'FX Effect', 'Alerts'] as const
 type Tab = typeof TABS[number]
 
 const signColor = (v: number | null | undefined) => v == null ? undefined : v >= 0 ? 'text-emerald-600' : 'text-red-500'
@@ -107,6 +108,7 @@ export default function CurrencyDetail() {
               {activeTab === 'Prices' && <PricesTab curId={curId} code={detail.code} base={detail.storage_base} />}
               {activeTab === 'Exposure' && <ExposureTab detail={detail} />}
               {activeTab === 'FX Effect' && <FxEffectTab detail={detail} />}
+              {activeTab === 'Alerts' && <CurrencyAlerts curId={curId} code={detail.code} />}
             </CardBody>
           </Card>
         )}
@@ -197,7 +199,7 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
       {!detail.is_quote && (
         <FxChart label={`${q} per 1 ${detail.code}`}
           fetch={from => getCurrencyHistory(detail.id, q, from)} queryKey={['currency-history', detail.id, q]}
-          srSource={{ kind: 'currency', id: detail.id, quote: q }} />
+          srSource={{ kind: 'currency', id: detail.id, quote: q }} alertsFor={{ currencyId: detail.id, quoteCode: q }} />
       )}
     </div>
   )
@@ -205,11 +207,12 @@ function OverviewTab({ detail, onShowExposure }: { detail: CurrencyDetailData; o
 
 // Rate chart with a period selector. `fetch` decides what is plotted: Overview plots the
 // rate in the reporting currency, Prices the stored rate against the storage base.
-function FxChart({ label, fetch, queryKey, srSource }: {
+function FxChart({ label, fetch, queryKey, srSource, alertsFor }: {
   label: string
   fetch: (fromDate: string) => Promise<unknown>
   queryKey: unknown[]
   srSource: SrSource // the same series, for its support / resistance levels
+  alertsFor: { currencyId: number; quoteCode: string } // the currency and the one the plotted rate is quoted in: its rate alerts in that quote are drawn as lines
 }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -232,17 +235,30 @@ function FxChart({ label, fetch, queryKey, srSource }: {
     refetchInterval: liveRefetchMs,
   })
   const srLineTraces = showSr && h.length ? srTraces(srLevels, String(h[0].date), String(h[h.length - 1].date), v => fmtNum(v, 4)) : []
-  const lg = groupLegends([{
+  // This currency's active rate alerts quoted in the plotted currency, as dashed threshold lines (green: above, pink: below), like a security's price alerts.
+  const { data: allAlerts = [] } = useQuery({ queryKey: ['alert-definitions'], queryFn: getAlertsDefinitions, refetchInterval: liveRefetchMs })
+  const [showRef, setShowRef] = usePersist('chart_ref_show', true)
+  const alerts = (allAlerts as Record<string, unknown>[]).filter(a => Boolean(a.is_active) && (a.alert_type === 'fx_above' || a.alert_type === 'fx_below')
+    && Number(a.currencies_id) === alertsFor.currencyId && String(a.quote_code ?? '') === alertsFor.quoteCode && a.threshold != null)
+  const alertTraces = h.length ? alerts.map(a => {
+    const above = a.alert_type === 'fx_above'
+    const y = Number(a.threshold)
+    const name = `${above ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    return { x: [h[0].date, h[h.length - 1].date], y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name,
+      line: { color: above ? '#0d9488' : '#db2777', width: 2, dash: 'dash' as const }, hovertemplate: `${name}<extra></extra>` }
+  }) : []
+  const lg = groupLegends(filterLines([{
     x: h.map(r => r.date), y: h.map(r => r.rate),
     type: 'scatter', mode: 'lines', line: { color: '#10b981', width: 2 }, name: label,
-  }, ...srLineTraces], isDark, 320)
+  }, ...alertTraces, ...srLineTraces], true, showRef), isDark, 320)
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-3 flex-wrap">
         <PeriodSelector value={period} onChange={setPeriod} />
         {pct != null && !isLoading && <span className={`text-sm font-semibold tabular-nums ${signColor(pct)}`}>{signed(pct)}</span>}
       </div>
-      {!isLoading && h.length > 0 && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)} />}
+      {!isLoading && h.length > 0 && <SrSummary levels={srLevels} show={showSr} onToggle={setShowSr} fmt={v => fmtNum(v, 4)}
+        lead={alerts.length > 0 ? <RefToggle showRef={showRef} onRef={setShowRef} /> : undefined} />}
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : h.length === 0 ? (
         <p className="text-sm text-slate-400 py-6">No rates for this period.</p>
       ) : (
@@ -348,7 +364,7 @@ function PricesTab({ curId, code, base }: { curId: number; code: string; base: s
       <p className="text-xs text-slate-500">The rates Oikos stores for {code}, as {base} per 1 {code} — every amount in {code} is converted with these.</p>
       <FxChart label={`${base} per 1 ${code} (stored)`}
         fetch={from => getFxRates(curId, from)} queryKey={['fx-history', curId]}
-        srSource={{ kind: 'currency_stored', id: curId }} />
+        srSource={{ kind: 'currency_stored', id: curId }} alertsFor={{ currencyId: curId, quoteCode: base }} />
 
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
         <div className="space-y-2">

@@ -26,6 +26,16 @@ export function LineToggles({ showMa, onMa, showRef, onRef }: {
   )
 }
 
+// Just the "Reference lines" toggle (a currency chart has no moving averages): your alerts. Shared with the security charts' one.
+export function RefToggle({ showRef, onRef }: { showRef: boolean; onRef: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+      <input type="checkbox" checked={showRef} onChange={e => onRef(e.target.checked)} className="rounded" />
+      <Tooltip text="Your rate alerts for this currency, drawn as dashed lines.">Reference lines</Tooltip>
+    </label>
+  )
+}
+
 // "Support / Resistance" toggle plus the nearest level on each side, for a chart's header row.
 export function SrSummary({ levels, show, onToggle, fmt, lead }: {
   levels: SrLevel[]; show: boolean; onToggle: (v: boolean) => void; fmt: (v: number) => string; lead?: ReactNode

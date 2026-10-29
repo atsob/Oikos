@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-29
+
+### Added
+- **Alerts on currency rates.** Set an above / below alert on a currency's rate — for example to sell GBP when GBP/EUR reaches 1.21. Add it on the currency's new **Alerts** tab (Currency Detail) or under Market Data → Alerts (types "Currency Rate Above Threshold" and "Currency Rate Below Threshold"); the rate is units of the second currency per 1 unit of the first, the one the currency's Overview shows, quoted in your reporting currency by default. A triggered one appears with the Price Alerts on the Dashboard and the Alerts page, opens the currency when clicked, goes to Telegram like the others and can be dismissed. The currency's rate charts (Overview and Prices) draw its active rate alerts as dashed threshold lines, like a security's price alerts, with a Reference lines toggle. The Alerts table gains the currency and its quote currency (added automatically on start).
+
 ## 2026-10-28
 
 ### Changed

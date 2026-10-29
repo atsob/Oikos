@@ -1005,6 +1005,8 @@ def save_alert_endpoint(data: dict):
             direction=data.get("direction"),
             note=data.get("note"),
             alert_id=data.get("alert_id"),
+            currencies_id=data.get("currencies_id"),
+            currencies_id_quote=data.get("currencies_id_quote"),
         )
         return {"ok": True}
     except Exception as e:

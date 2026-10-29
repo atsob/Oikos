@@ -38,7 +38,7 @@ GROUPS = [
 ]
 
 TYPE_GROUP = {
-    "price_alert": "price",
+    "price_alert": "price", "fx_alert": "price",
     "allocation_drift": "portfolio",
     "signal_change": "signals", "action_change": "action", "ma_cross": "signals", "trailing_stop": "signals", "zone_change": "signals",
     "bond_maturity": "events", "bond_coupon": "events", "dividend_payment": "events", "loan_payment": "events", "fund_call": "events",
@@ -49,7 +49,7 @@ TYPE_GROUP = {
 # label for the code that produces them) — a dismissal is only dropped as stale when its
 # source ran without error this time.
 KEYED_SOURCE = {
-    "price_alert": "main", "allocation_drift": "main",
+    "price_alert": "main", "fx_alert": "main", "allocation_drift": "main",
     "bond_maturity": "bond", "bond_coupon": "bond", "dividend_payment": "dividend",
     "loan_payment": "loan", "split_mismatch": "split_mismatch", "fund_call": "fund",
 }

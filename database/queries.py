@@ -6389,9 +6389,41 @@ def _ensure_alerts_table():
                     Created_At    TIMESTAMP DEFAULT NOW()
                 )
             """)
+            # Currency alerts (fx_above / fx_below): the currency, and the currency its rate is quoted in (empty = the storage base, EUR)
+            cur.execute("ALTER TABLE Alerts ADD COLUMN IF NOT EXISTS Currencies_Id INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE")
+            cur.execute("ALTER TABLE Alerts ADD COLUMN IF NOT EXISTS Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE")
         conn.commit()
     finally:
         conn.close()
+
+
+def _fx_alert_info(fx: pd.DataFrame) -> dict:
+    """For the currency alerts in `fx` (Alerts rows with Currencies_Id): {alert_id: {code, quote, rate, quote_id}} — the pair's codes and its latest rate, in units of the
+    quote currency per 1 unit of the currency (from the latest stored rate of each against the storage base, as Currency Detail shows it; the storage base is 1)."""
+    out: dict = {}
+    if fx is None or fx.empty:
+        return out
+    conn = get_connection()
+    try:
+        base_id = int(pd.read_sql("""
+            SELECT COALESCE((SELECT Currencies_Id_2 FROM Historical_FX GROUP BY Currencies_Id_2 ORDER BY COUNT(*) DESC LIMIT 1),
+                            (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')) AS id""", conn)["id"].iloc[0])
+        quote_of = {int(r["alert_id"]): (int(r["currencies_id_quote"]) if pd.notna(r.get("currencies_id_quote")) else base_id) for _, r in fx.iterrows()}
+        ids = sorted({int(c) for c in fx["currencies_id"]} | set(quote_of.values()))
+        codes = pd.read_sql("SELECT Currencies_Id AS id, TRIM(Currencies_ShortName) AS code FROM Currencies WHERE Currencies_Id = ANY(%s)", conn, params=(ids,))
+        latest = pd.read_sql("""SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1 AS id, FX_Rate::float AS rate FROM Historical_FX
+                                  WHERE Currencies_Id_1 = ANY(%s) ORDER BY Currencies_Id_1, Date DESC""", conn, params=(ids,))
+    finally:
+        conn.close()
+    code = {int(k): v for k, v in zip(codes["id"], codes["code"])}
+    rate = {int(k): float(v) for k, v in zip(latest["id"], latest["rate"])}
+    rate[base_id] = 1.0
+    for _, r in fx.iterrows():
+        aid, c = int(r["alert_id"]), int(r["currencies_id"])
+        q = quote_of[aid]
+        x, y = rate.get(c), rate.get(q)
+        out[aid] = {"code": code.get(c, str(c)), "quote": code.get(q, str(q)), "quote_id": q, "rate": (x / y) if x is not None and y else None}
+    return out
 
 
 def get_alerts() -> pd.DataFrame:
@@ -6414,6 +6446,8 @@ def get_alerts() -> pd.DataFrame:
                a.Is_Active       AS is_active,
                a.Note            AS note,
                a.Created_At      AS created_at,
+               a.Currencies_Id   AS currencies_id,
+               a.Currencies_Id_Quote AS currencies_id_quote,
                lp.current_price  AS current_price,
                lp.price_date     AS price_date
         FROM   Alerts a
@@ -6422,12 +6456,21 @@ def get_alerts() -> pd.DataFrame:
         ORDER  BY a.Created_At DESC
     """, conn)
     conn.close()
+    # A currency alert shows its pair where a security's name would be, and the pair's current rate as the current price.
+    fx = df[df["alert_type"].isin(["fx_above", "fx_below"]) & df["currencies_id"].notna()]
+    df["quote_code"] = None
+    for aid, info in _fx_alert_info(fx).items():
+        i = df.index[df["alert_id"] == aid][0]
+        df.at[i, "quote_code"] = info["quote"]
+        df.at[i, "securities_name"] = f"{info['code']}/{info['quote']}"
+        df.at[i, "current_price"] = info["rate"]
+        df.at[i, "currencies_id_quote"] = info["quote_id"]
     return df
 
 
 def save_alert(alert_type: str, securities_id=None, asset_type: str = None,
                threshold=None, direction: str = None, note: str = None,
-               alert_id: int = None):
+               alert_id: int = None, currencies_id=None, currencies_id_quote=None):
     _ensure_alerts_table()
     conn = get_connection()
     try:
@@ -6436,17 +6479,18 @@ def save_alert(alert_type: str, securities_id=None, asset_type: str = None,
                 cur.execute("""
                     UPDATE Alerts
                     SET Alert_Type=%s, Securities_Id=%s, Asset_Type=%s,
-                        Threshold=%s, Direction=%s, Note=%s
+                        Threshold=%s, Direction=%s, Note=%s,
+                        Currencies_Id=%s, Currencies_Id_Quote=%s
                     WHERE Alert_Id=%s
                 """, (alert_type, securities_id, asset_type,
-                      threshold, direction, note, alert_id))
+                      threshold, direction, note, currencies_id, currencies_id_quote, alert_id))
             else:
                 cur.execute("""
                     INSERT INTO Alerts
-                        (Alert_Type, Securities_Id, Asset_Type, Threshold, Direction, Note)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                        (Alert_Type, Securities_Id, Asset_Type, Threshold, Direction, Note, Currencies_Id, Currencies_Id_Quote)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (alert_type, securities_id, asset_type,
-                      threshold, direction, note))
+                      threshold, direction, note, currencies_id, currencies_id_quote))
         conn.commit()
     finally:
         conn.close()
@@ -7455,6 +7499,28 @@ def check_triggered_alerts() -> list:
                         'securities_id': sid,
                         'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
                     })
+
+        # ── currency alerts: a currency's rate above / below your threshold (e.g. sell GBP when GBP/EUR reaches 1.21) ───────
+        fx_rows = alerts_df[alerts_df['alert_type'].isin(['fx_above', 'fx_below']) & alerts_df['currencies_id'].notna()]
+        if not fx_rows.empty:
+            info = _fx_alert_info(fx_rows)
+            for _, row in fx_rows.iterrows():
+                i = info.get(int(row['alert_id']))
+                if not i or i['rate'] is None or row['threshold'] is None:
+                    continue
+                rate, thr = float(i['rate']), float(row['threshold'])
+                pair = f"{i['code']}/{i['quote']}"
+                suffix = f" _{row['note']}_" if row.get('note') else ''
+                if row['alert_type'] == 'fx_above' and rate > thr:
+                    msg = f"💱 **Currency Alert** — {pair} is at **{rate:,.4f}**, above your threshold of {thr:,.4f}.{suffix}"
+                    level = 'warning'
+                elif row['alert_type'] == 'fx_below' and rate < thr:
+                    msg = f"💱 **Currency Alert** — {pair} is at **{rate:,.4f}**, below your threshold of {thr:,.4f}.{suffix}"
+                    level = 'error'
+                else:
+                    continue
+                results.append({'level': level, 'message': msg, 'currencies_id': int(row['currencies_id']),
+                                'type': 'fx_alert', 'key': f"fx_alert:{int(row['alert_id'])}"})
 
         # ── allocation drift alerts ───────────────────────────────────────────
         drift_rows = alerts_df[alerts_df['alert_type'] == 'allocation_drift']

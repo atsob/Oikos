@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react'
-import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
@@ -1497,7 +1497,8 @@ function CapeRatiosTab() {
 }
 
 // ── Alerts Tab ────────────────────────────────────────────────────────────────
-const ALERT_TYPES = ['price_above', 'price_below', 'allocation_drift']
+const ALERT_TYPES = ['price_above', 'price_below', 'fx_above', 'fx_below', 'allocation_drift']
+const ALERT_TYPE_LABEL: Record<string, string> = { price_above: '▲ Price Above Threshold', price_below: '▼ Price Below Threshold', fx_above: '▲ Currency Rate Above Threshold', fx_below: '▼ Currency Rate Below Threshold', allocation_drift: '⚖ Allocation Drift' }
 const ASSET_TYPES_FOR_DRIFT = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Other']
 
 function AlertsTab() {
@@ -1507,9 +1508,13 @@ function AlertsTab() {
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const rows = data as Record<string, unknown>[]
   const secs = securities as Record<string, unknown>[]
+  const [{ reportingCurrency }] = useSettings()
+  const { data: currenciesData = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+  const curs = currenciesData as Record<string, unknown>[]
+  const defaultQuote = String(curs.find(c => String(c.code) === reportingCurrency)?.id ?? '')
 
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' })
+  const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '', currencies_id: '', currencies_id_quote: '' })
   const [editId, setEditId] = useState<number | null>(null)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
@@ -1541,11 +1546,13 @@ function AlertsTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
   })
 
-  const openAdd = () => { setForm({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' }); setEditId(null); setShowForm(true) }
+  const openAdd = () => { setForm({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '', currencies_id: '', currencies_id_quote: defaultQuote }); setEditId(null); setShowForm(true) }
   const openEdit = (row: Record<string, unknown>) => {
     setForm({
       alert_type: String(row.alert_type ?? 'price_above'),
       securities_id: String(row.securities_id ?? ''),
+      currencies_id: String(row.currencies_id ?? ''),
+      currencies_id_quote: String(row.currencies_id_quote ?? defaultQuote),
       asset_type: String(row.asset_type ?? ''),
       threshold: String(row.threshold ?? ''),
       note: String(row.note ?? ''),
@@ -1558,15 +1565,20 @@ function AlertsTab() {
     if (!form.alert_type) return setErr('Alert type is required')
     if (!form.threshold) return setErr('Threshold is required')
     const isPriceAlert = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+    const isFx = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
+    if (isFx && (!form.currencies_id || !form.currencies_id_quote)) return setErr('Choose the currency and the currency its rate is quoted in')
+    if (isFx && form.currencies_id === form.currencies_id_quote) return setErr('A currency cannot be quoted in itself')
     if (isPriceAlert && !form.securities_id) return setErr('Security is required for price alerts')
     if (form.alert_type === 'allocation_drift' && !form.asset_type) return setErr('Asset type is required for allocation drift alerts')
     saveMut.mutate({
       alert_id: editId ?? undefined,
       alert_type: form.alert_type,
-      securities_id: form.securities_id ? Number(form.securities_id) : null,
+      securities_id: form.securities_id && !isFx ? Number(form.securities_id) : null,
+      currencies_id: isFx ? Number(form.currencies_id) : null,
+      currencies_id_quote: isFx ? Number(form.currencies_id_quote) : null,
       asset_type: form.asset_type || null,
       threshold: Number(form.threshold),
-      direction: form.alert_type === 'price_above' ? 'above' : form.alert_type === 'price_below' ? 'below' : 'drift',
+      direction: form.alert_type === 'price_above' || form.alert_type === 'fx_above' ? 'above' : form.alert_type === 'price_below' || form.alert_type === 'fx_below' ? 'below' : 'drift',
       note: form.note || null,
     })
   }
@@ -1581,12 +1593,13 @@ function AlertsTab() {
 
   const alertTypeBadge = (t: unknown) => {
     const s = String(t ?? '')
-    const color = s === 'price_above' ? 'bg-green-100 text-green-700' : s === 'price_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : '⚖ Alloc Drift'
+    const color = s === 'price_above' || s === 'fx_above' ? 'bg-green-100 text-green-700' : s === 'price_below' || s === 'fx_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : s === 'fx_above' ? '💱 Rate Above' : s === 'fx_below' ? '💱 Rate Below' : '⚖ Alloc Drift'
     return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{label}</span>
   }
 
   const isPriceType = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+  const isFxType = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
@@ -1616,7 +1629,7 @@ function AlertsTab() {
           <Field label="Alert Type *">
             <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
               value={form.alert_type} onChange={e => setForm(f => ({ ...f, alert_type: e.target.value, securities_id: '', asset_type: '' }))}>
-              {ALERT_TYPES.map(t => <option key={t} value={t}>{t === 'price_above' ? '▲ Price Above Threshold' : t === 'price_below' ? '▼ Price Below Threshold' : '⚖ Allocation Drift'}</option>)}
+              {ALERT_TYPES.map(t => <option key={t} value={t}>{ALERT_TYPE_LABEL[t]}</option>)}
             </select>
           </Field>
           {isPriceType && (
@@ -1628,6 +1641,25 @@ function AlertsTab() {
               </select>
             </Field>
           )}
+          {isFxType && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Currency *">
+                <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  value={form.currencies_id} onChange={e => setForm(f => ({ ...f, currencies_id: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {curs.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>)}
+                </select>
+              </Field>
+              <Field label="Quoted in *">
+                <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  value={form.currencies_id_quote} onChange={e => setForm(f => ({ ...f, currencies_id_quote: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {curs.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)}</option>)}
+                </select>
+              </Field>
+              <p className="col-span-2 text-xs text-slate-400">The rate is how many units of the second currency 1 unit of the first buys — GBP quoted in EUR at 1.21 means 1 GBP = 1.21 EUR (the rate on the currency's own page).</p>
+            </div>
+          )}
           {form.alert_type === 'allocation_drift' && (
             <Field label="Asset Type *">
               <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
@@ -1637,7 +1669,7 @@ function AlertsTab() {
               </select>
             </Field>
           )}
-          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : 'Price Threshold *'}>
+          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : isFxType ? 'Rate Threshold *' : 'Price Threshold *'}>
             <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
           </Field>
           <Field label="Note"><Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" /></Field>
@@ -1661,8 +1693,8 @@ function AlertsTab() {
             {filtered.map(row => {
               const isActive = Boolean(row.is_active)
               const triggered = row.current_price != null && row.threshold != null && (
-                (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
-                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
+                ((row.alert_type === 'price_above' || row.alert_type === 'fx_above') && Number(row.current_price) > Number(row.threshold)) ||
+                ((row.alert_type === 'price_below' || row.alert_type === 'fx_below') && Number(row.current_price) < Number(row.threshold))
               )
               return (
                 <tr key={String(row.alert_id)} className={`hover:bg-slate-50 cursor-pointer ${!isActive ? 'opacity-50' : ''}`} onDoubleClick={() => openEdit(row)}>

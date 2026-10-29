@@ -12,7 +12,7 @@ export type AlertRow = Record<string, unknown>
 // its own header, count, collapse state and "Dismiss group".
 export const ALERT_GROUPS: { id: string; label: string; hint: string }[] = [
   { id: 'sr', label: 'Support / Resistance', hint: 'Holdings, Watchlist and the currencies you are exposed to approaching or breaking a support or resistance level (1-year daily closes).' },
-  { id: 'price', label: 'Price Alerts', hint: 'Your own above/below thresholds (Market Data → Alerts). Dismissing one silences it until the price crosses back and triggers again.' },
+  { id: 'price', label: 'Price Alerts', hint: 'Your own above/below thresholds on a security price or a currency rate (Market Data → Alerts, or the Alerts tab of a security or currency). Dismissing one silences it until the price crosses back and triggers again.' },
   { id: 'signals', label: 'Signals', hint: 'Signal changes, golden/death cross, trailing stop and Altman Z-Score zone changes.' },
   { id: 'action', label: 'Action', hint: 'A held security whose Action verdict (Securities Analysis → Portfolio Action Signals) moves between Reduce / Sell, Hold and Add — smoothed, so it does not flap day to day.' },
   { id: 'events', label: 'Upcoming Events', hint: 'Bond maturities and coupons, dividend payments and loan payments due soon. Dismissing one silences that event only.' },
