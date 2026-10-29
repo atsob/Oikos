@@ -5,6 +5,7 @@ import logging
 import math
 import pandas as pd
 from database.connection import get_db
+from api.access import scope_now, scope_sql   # a restricted user's counts, lists and transactions cover only their accounts
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,8 @@ def get_categories(search: Optional[str] = Query(None)):
                 FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
             ),
             SplitCounts AS (
-                SELECT Categories_Id, COUNT(*) AS cnt FROM Splits GROUP BY Categories_Id
+                SELECT s.Categories_Id, COUNT(*) AS cnt FROM Splits s JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+                WHERE TRUE {scope_sql('t.Accounts_Id')} GROUP BY s.Categories_Id
             )
             SELECT ch.Categories_Id AS id, ch.Full_Path AS full_path,
                    ch.Categories_Type AS type, ch.Level AS level,
@@ -85,7 +87,7 @@ def get_payees(search: Optional[str] = Query(None), stats: bool = Query(True)):
         params["s"] = f"%{search.lower()}%"
     if stats:
         stats_select = "COUNT(t.Transactions_Id) AS transactions_count, MAX(t.Date) AS last_transaction"
-        stats_join = "LEFT JOIN Transactions t ON t.Payees_Id = p.Payees_Id"
+        stats_join = f"LEFT JOIN Transactions t ON t.Payees_Id = p.Payees_Id{scope_sql('t.Accounts_Id')}"
         group_by = "GROUP BY p.Payees_Id, p.Payees_Name, ch.full_path, p.Track_For_News"
     else:
         stats_select = "NULL::bigint AS transactions_count, NULL::date AS last_transaction"
@@ -118,7 +120,7 @@ def get_payees(search: Optional[str] = Query(None), stats: bool = Query(True)):
 @router.get("/payees/{pid}/top-categories")
 def get_payee_top_categories(pid: int, limit: int = Query(5)):
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             WITH RECURSIVE ch AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS full_path
                 FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -130,7 +132,7 @@ def get_payee_top_categories(pid: int, limit: int = Query(5)):
             FROM Transactions t
             JOIN Splits s ON t.Transactions_Id = s.Transactions_Id
             JOIN ch ON ch.Categories_Id = s.Categories_Id
-            WHERE t.Payees_Id = %(pid)s AND s.Categories_Id IS NOT NULL
+            WHERE t.Payees_Id = %(pid)s AND s.Categories_Id IS NOT NULL {scope_sql('t.Accounts_Id')}
             GROUP BY s.Categories_Id, ch.full_path
             ORDER BY usage_count DESC
             LIMIT %(limit)s
@@ -145,7 +147,7 @@ def get_payee_transactions(pid: int):
     (usually just one — only a split transaction spanning multiple categories shows
     more than one), so a split-out grocery/pharmacy trip doesn't just silently pick one."""
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             WITH RECURSIVE ch AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS full_path
                 FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -166,7 +168,7 @@ def get_payee_transactions(pid: int):
             JOIN splits s ON s.transactions_id = t.transactions_id
             LEFT JOIN ch ON ch.categories_id = s.categories_id
             LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
-            WHERE t.payees_id = %(pid)s
+            WHERE t.payees_id = %(pid)s {scope_sql('t.accounts_id')}
             GROUP BY t.transactions_id, t.date, a.accounts_name,
                      t.description, c.currencies_shortname
             ORDER BY t.date DESC
@@ -177,7 +179,7 @@ def get_payee_transactions(pid: int):
 @router.get("/categories/{cid}/transactions")
 def get_category_transactions(cid: int):
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             SELECT t.transactions_id AS id,
                    t.date,
                    a.accounts_name AS account,
@@ -190,7 +192,7 @@ def get_category_transactions(cid: int):
             JOIN accounts a ON a.accounts_id = t.accounts_id
             LEFT JOIN payees p ON p.payees_id = t.payees_id
             LEFT JOIN currencies c ON c.currencies_id = a.currencies_id
-            WHERE s.categories_id = %(cid)s
+            WHERE s.categories_id = %(cid)s {scope_sql('t.accounts_id')}
             ORDER BY t.date DESC
         """, conn, params={"cid": cid})
     return _df(df)
@@ -776,10 +778,17 @@ def get_accounts_master(search: Optional[str] = Query(None)):
             LEFT JOIN Institutions i ON a.Institutions_Id = i.Institutions_Id
             LEFT JOIN Accounts la ON a.Accounts_Id_Linked = la.Accounts_Id
             LEFT JOIN Accounts laa ON a.Loan_Linked_Asset_Accounts_Id = laa.Accounts_Id
-            WHERE 1=1 {clause}
+            WHERE 1=1 {clause} {scope_sql('a.Accounts_Id')}
             ORDER BY a.Accounts_Type, a.Accounts_Name
         """, conn, params=params if params else None)
-    return _df(df)
+    rows = _df(df)
+    mine = scope_now()
+    if mine is not None:                                   # an account of someone else's that a loan or a link points at is not named
+        for r in rows:
+            if r.get("loan_linked_asset_accounts_id") not in mine:
+                r["loan_linked_asset_accounts_id"] = None
+                r["loan_linked_asset_account_name"] = None
+    return rows
 
 
 # ── Account Interest Rate Schedules ──────────────────────────────────────────
@@ -922,7 +931,7 @@ def get_securities_master(search: Optional[str] = Query(None)):
                    COUNT(DISTINCT h.Holdings_Id) FILTER (WHERE h.Quantity != 0) AS held_in_accounts
             FROM Securities s
             JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-            LEFT JOIN Holdings h ON h.Securities_Id = s.Securities_Id
+            LEFT JOIN Holdings h ON h.Securities_Id = s.Securities_Id {scope_sql('h.Accounts_Id')}
             WHERE 1=1 {clause}
             GROUP BY s.Securities_Id, s.Ticker, s.Securities_Name, s.Securities_Type,
                      c.Currencies_Id, c.Currencies_ShortName,

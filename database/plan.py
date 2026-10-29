@@ -12,6 +12,13 @@ from datetime import date, datetime, timedelta
 
 from database.connection import get_connection
 
+
+def _owner() -> int | None:
+    """Whose steps these are: the household's (an admin's) or a restricted user's own — api/access.owner_now(). The scheduler's reminder runs with no user, so it is the household's."""
+    from api.access import owner_now
+    return owner_now()
+
+
 STATUSES = ("open", "done", "skipped")
 DEFAULT_PLAN = "My plan"
 
@@ -34,6 +41,7 @@ def ensure_table() -> None:
                     Sort_Order    INTEGER NOT NULL DEFAULT 0,
                     Created_At    TIMESTAMP DEFAULT NOW()
                 )""")
+            cur.execute("ALTER TABLE Plan_Items ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")   # NULL = the household's
             cur.execute("CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open'")
         conn.commit()
     finally:
@@ -64,7 +72,7 @@ def _date(v) -> date:
 
 def list_items(plan: str | None = None, status: str | None = None) -> list[dict]:
     ensure_table()
-    sql, args = f"SELECT {COLUMNS} FROM Plan_Items WHERE TRUE", []
+    sql, args = f"SELECT {COLUMNS} FROM Plan_Items WHERE Owner_Users_Id IS NOT DISTINCT FROM %s", [_owner()]
     if plan:
         sql += " AND Plan_Name = %s"; args.append(plan)
     if status:
@@ -86,7 +94,7 @@ def plans() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute("""SELECT Plan_Name AS plan, COUNT(*) AS total, COUNT(*) FILTER (WHERE Status = 'open') AS open,
                                   MIN(Due_Date)::text AS first_due, MAX(Due_Date)::text AS last_due
-                           FROM Plan_Items GROUP BY Plan_Name ORDER BY MAX(Due_Date) DESC, Plan_Name""")
+                           FROM Plan_Items WHERE Owner_Users_Id IS NOT DISTINCT FROM %s GROUP BY Plan_Name ORDER BY MAX(Due_Date) DESC, Plan_Name""", (_owner(),))
             return _rows(cur)
     finally:
         conn.close()
@@ -99,8 +107,8 @@ def create_item(plan, due_date, title, details=None, sort_order: int = 0) -> dic
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"INSERT INTO Plan_Items (Plan_Name, Due_Date, Title, Details, Sort_Order) VALUES (%s, %s, %s, %s, %s) RETURNING {COLUMNS}",
-                        (plan, d, title, details, sort_order))
+            cur.execute(f"INSERT INTO Plan_Items (Plan_Name, Due_Date, Title, Details, Sort_Order, Owner_Users_Id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
+                        (plan, d, title, details, sort_order, _owner()))
             row = _rows(cur)[0]
         conn.commit()
         return row
@@ -115,8 +123,8 @@ def update_item(item_id: int, plan, due_date, title, details=None) -> dict | Non
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE Plan_Items SET Plan_Name = %s, Due_Date = %s, Title = %s, Details = %s WHERE Plan_Items_Id = %s RETURNING {COLUMNS}",
-                        (plan, d, title, details, item_id))
+            cur.execute(f"UPDATE Plan_Items SET Plan_Name = %s, Due_Date = %s, Title = %s, Details = %s WHERE Plan_Items_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s RETURNING {COLUMNS}",
+                        (plan, d, title, details, item_id, _owner()))
             rows = _rows(cur)
         conn.commit()
         return rows[0] if rows else None
@@ -131,8 +139,8 @@ def set_status(item_id: int, status: str) -> dict | None:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"UPDATE Plan_Items SET Status = %s, Done_At = CASE WHEN %s = 'open' THEN NULL ELSE NOW() END WHERE Plan_Items_Id = %s RETURNING {COLUMNS}",
-                        (status, status, item_id))
+            cur.execute(f"UPDATE Plan_Items SET Status = %s, Done_At = CASE WHEN %s = 'open' THEN NULL ELSE NOW() END WHERE Plan_Items_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s RETURNING {COLUMNS}",
+                        (status, status, item_id, _owner()))
             rows = _rows(cur)
         conn.commit()
         return rows[0] if rows else None
@@ -145,7 +153,7 @@ def delete_item(item_id: int) -> bool:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM Plan_Items WHERE Plan_Items_Id = %s", (item_id,))
+            cur.execute("DELETE FROM Plan_Items WHERE Plan_Items_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (item_id, _owner()))
             n = cur.rowcount
         conn.commit()
         return n > 0
@@ -158,7 +166,7 @@ def delete_plan(plan: str) -> int:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM Plan_Items WHERE Plan_Name = %s", (plan,))
+            cur.execute("DELETE FROM Plan_Items WHERE Plan_Name = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (plan, _owner()))
             n = cur.rowcount
         conn.commit()
         return n

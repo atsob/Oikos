@@ -8,6 +8,7 @@ import { useRole } from '@/lib/auth'
 import { useCardTables } from '@/lib/useCardTables'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
+import { resetPreferences } from '@/lib/preferences'
 import AccountModal from '@/components/AccountModal'
 import {
   LayoutDashboard, BookOpen, Bell, CalendarCheck, RefreshCw, BarChart2,
@@ -50,6 +51,9 @@ const nav = [
   ],
 ]
 
+// What a limited or read-only user does not get: the AI Assistant, the Importers and Tools.
+const ADMIN_ONLY = ['/ai', '/importers', '/tools']
+
 export default function Layout() {
   const { theme, setTheme } = useTheme()
   const [collapsed, setCollapsed] = usePersist('sidebar_collapsed', false)
@@ -58,8 +62,16 @@ export default function Layout() {
   const [phoneTitle, setPhoneTitle] = useState('')
   const { isAdmin } = useRole()
   const [refused, setRefused] = useState<string | null>(null)
-  // A limited or read-only user gets the Cash Register and Investments of their accounts, Help and the Release Notes; the rest is admin-only (api/access.py).
-  const menu = isAdmin ? nav : nav.map(g => g.filter(n => ['/register', '/investments', '/help', '/releases'].includes(n.to))).filter(g => g.length > 0)
+  // A limited or read-only user gets the whole app over their own accounts, except the admin's tools (api/access.py).
+  const menu = isAdmin ? nav : nav.map(g => g.filter(n => !ADMIN_ONLY.includes(n.to))).filter(g => g.length > 0)
+  // Static Data, Market Data and the security / currency pages are read-only for a limited or read-only user: the controls that add, edit, delete, merge,
+  // save or download are hidden (index.css, by their icon) while one of these pages is open. The server refuses the changes whatever the screen shows.
+  const loc = useLocation()
+  const dataPageReadOnly = !isAdmin && /^\/(static-data|market-data|securities|currencies)(\/|$)/.test(loc.pathname)
+  React.useEffect(() => {
+    document.body.classList.toggle('oikos-readonly-data', dataPageReadOnly)
+    return () => document.body.classList.remove('oikos-readonly-data')
+  }, [dataPageReadOnly])
   React.useEffect(() => {
     let timer: number | undefined
     const onRefused = (e: Event) => { setRefused(String((e as CustomEvent).detail)); window.clearTimeout(timer); timer = window.setTimeout(() => setRefused(null), 6000) }
@@ -78,6 +90,7 @@ export default function Layout() {
   const handleLogout = async () => {
     try { await logout() } catch { /* revoke server-side if reachable; proceed regardless */ }
     queryClient.clear()
+    resetPreferences()
     navigate('/login', { replace: true })
   }
 

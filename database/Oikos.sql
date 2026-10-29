@@ -894,6 +894,8 @@ CREATE TABLE IF NOT EXISTS Goals (
     Is_Active      BOOLEAN DEFAULT TRUE,
     Created_At     TIMESTAMP DEFAULT NOW()
 );
+-- A restricted user's goals, plan steps, retirement plans and budgets are their own: Owner_Users_Id is theirs, NULL is the household's (an admin's) — api/access.py owner_now().
+ALTER TABLE Goals ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
 
 
 -- =============================================================================
@@ -916,6 +918,9 @@ CREATE TABLE IF NOT EXISTS Annual_Budgets (
     Budget_Amount NUMERIC(15, 2) NOT NULL,
     UNIQUE(Year, Categories_Id)
 );
+ALTER TABLE Annual_Budgets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
+ALTER TABLE Annual_Budgets DROP CONSTRAINT IF EXISTS annual_budgets_year_categories_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_annual_budgets_owner ON Annual_Budgets (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)));
 
 
 -- =============================================================================
@@ -1083,12 +1088,15 @@ CREATE TABLE IF NOT EXISTS Country_Cape_Ratios (
 
 -- Server-side UI preferences (decimal/date format, saved report filters, last-used
 -- tabs, etc.) so they follow the user across browsers/devices/origins instead of
--- being trapped in a single browser's localStorage.
+-- being trapped in a single browser's localStorage. One set per user (Users_Id); NULL is
+-- the household's — 'app-settings', and what existed before preferences were per user.
 CREATE TABLE IF NOT EXISTS User_Preferences (
-    Pref_Key   VARCHAR(100) PRIMARY KEY,
+    Pref_Key   VARCHAR(100) NOT NULL,
     Pref_Value JSONB NOT NULL,
-    Updated_At TIMESTAMP DEFAULT NOW()
+    Updated_At TIMESTAMP DEFAULT NOW(),
+    Users_Id   INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_preferences_owner ON User_Preferences (Pref_Key, (COALESCE(Users_Id, 0)));
 
 -- Separate, older generic text key-value store (predates User_Preferences above) —
 -- still actively used for broker-integration credentials/tokens (Saxo, Coinbase,
@@ -1466,6 +1474,7 @@ CREATE TABLE IF NOT EXISTS Plan_Items (
     Sort_Order    INTEGER NOT NULL DEFAULT 0,
     Created_At    TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE Plan_Items ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open';
 
 -- Private funds (Reports -> Private Funds): a commitment and its dated calls, distributions and NAVs — see database/private_funds.py.
@@ -1503,6 +1512,7 @@ CREATE TABLE IF NOT EXISTS Retirement_Plans (
     Created_At  TIMESTAMP DEFAULT NOW(),
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE Retirement_Plans ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
 
 
 -- =============================================================================

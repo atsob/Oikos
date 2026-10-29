@@ -5,6 +5,7 @@ import math
 import threading
 import pandas as pd
 from database.connection import get_db, get_connection
+from api.access import narrow_ids, scope_now, scope_sql   # a restricted user's Dashboard covers their own accounts only (api/access.py)
 
 # Tracks in-progress AI generation jobs: key → True while running
 _generating: dict[str, bool] = {}
@@ -32,6 +33,7 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
     account regardless of what's selected.
     """
     ids = [int(x) for x in account_ids.split(',') if x.strip()] if account_ids else None
+    ids = narrow_ids(ids)                       # a restricted user's history covers their accounts, whatever the page asks for
     acct_filter = "AND a.Accounts_Id = ANY(%(ids)s)" if ids else ""
     holdings_filter = "WHERE h.Accounts_Id = ANY(%(ids)s)" if ids else ""
     query = f"""
@@ -266,11 +268,9 @@ def get_accounts(include_future: bool = Query(False), request: Request = None):
             LEFT JOIN holdings_value hv ON hv.Accounts_Id = a.Accounts_Id
             ORDER BY a.Is_Active DESC, a.Accounts_Type, a.Accounts_Name
         """, conn)
-    if request is not None:
-        from api.access import scope_ids
-        mine = scope_ids(request)
-        if mine is not None:
-            df = df[df["id"].isin(mine)]
+    mine = scope_now()
+    if mine is not None:
+        df = df[df["id"].isin(mine)]
     return _df_to_list(df)
 
 
@@ -513,7 +513,7 @@ def get_upcoming_bills(days: int = Query(14)):
 def get_anomalies(days: int = Query(30), z: float = Query(2.5)):
     """Unusual transactions: amount >= z std-deviations from payee+category mean."""
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             WITH RECURSIVE cat_path AS (
                 SELECT Categories_Id, Categories_Name::TEXT AS full_path, Categories_Id_Parent
                 FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -546,7 +546,7 @@ def get_anomalies(days: int = Query(30), z: float = Query(2.5)):
                   AND p.Payees_Name IS NOT NULL
                   AND s.Amount IS NOT NULL
                   AND t.Transfers_Id IS NULL
-                  AND t.Is_Draft = FALSE
+                  AND t.Is_Draft = FALSE {scope_sql('t.Accounts_Id')}
             ),
             stats AS (
                 SELECT
@@ -635,7 +635,7 @@ def get_monthly_summaries(limit: int = Query(24)):
 def get_draft_transactions():
     """All pending draft transactions."""
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             SELECT t.Transactions_Id AS id,
                    t.Date::text AS date,
                    t.Description AS description,
@@ -646,7 +646,7 @@ def get_draft_transactions():
             FROM Transactions t
             JOIN Accounts a ON t.Accounts_Id = a.Accounts_Id
             LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
-            WHERE t.Is_Draft = TRUE
+            WHERE t.Is_Draft = TRUE {scope_sql('t.Accounts_Id')}
             ORDER BY t.Date DESC, t.Transactions_Id DESC
         """, conn)
     return _df_to_list(df)
@@ -656,7 +656,7 @@ def get_draft_transactions():
 def get_uncategorized_transactions():
     """Non-transfer cash transactions with no category assigned on any split."""
     with get_db() as conn:
-        df = pd.read_sql("""
+        df = pd.read_sql(f"""
             SELECT t.Transactions_Id AS id,
                    t.Date::text AS date,
                    t.Description AS description,
@@ -671,7 +671,7 @@ def get_uncategorized_transactions():
             WHERE t.Is_Draft = FALSE
               AND t.Transfers_Id IS NULL
               AND t.Accounts_Id_Target IS NULL
-              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability') {scope_sql('t.Accounts_Id')}
               AND NOT EXISTS (
                   SELECT 1 FROM Splits s
                   WHERE s.Transactions_Id = t.Transactions_Id AND s.Categories_Id IS NOT NULL
@@ -718,7 +718,7 @@ def delete_draft(transaction_id: int):
 def confirm_all_drafts():
     from database.queries import confirm_all_draft_transactions
     try:
-        count = confirm_all_draft_transactions()
+        count = confirm_all_draft_transactions(scope_now())
         return {"confirmed": count}
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -754,7 +754,7 @@ def get_insights():
     insights = []
     with get_db() as conn:
         try:
-            df = pd.read_sql("""
+            df = pd.read_sql(f"""
                 WITH RECURSIVE cat_path AS (
                     SELECT Categories_Id, Categories_Name::TEXT AS full_path, Categories_Id_Parent
                     FROM Categories WHERE Categories_Id_Parent IS NULL
@@ -769,7 +769,7 @@ def get_insights():
                     JOIN cat_path cp ON cp.Categories_Id = s.Categories_Id
                     WHERE t.Date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
                       AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
-                      AND t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0
+                      AND t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0 {scope_sql('t.Accounts_Id')}
                     GROUP BY 1
                 ),
                 prev_month AS (
@@ -779,7 +779,7 @@ def get_insights():
                     JOIN cat_path cp ON cp.Categories_Id = s.Categories_Id
                     WHERE t.Date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '2 months')
                       AND t.Date <  DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
-                      AND t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0
+                      AND t.Transfers_Id IS NULL AND t.Is_Draft = FALSE AND s.Amount < 0 {scope_sql('t.Accounts_Id')}
                     GROUP BY 1
                 )
                 SELECT l.category,
@@ -805,14 +805,14 @@ def get_insights():
         except Exception:
             pass
         try:
-            df = pd.read_sql("""
+            df = pd.read_sql(f"""
                 SELECT a.Accounts_Id AS account_id, a.Accounts_Name AS name, a.Accounts_Type AS account_type,
                        ROUND(a.Accounts_Balance::numeric,2) AS balance,
                        c.Currencies_ShortName AS currency
                 FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
                 WHERE a.Is_Active = TRUE AND a.Accounts_Type IN ('Checking','Savings','Cash')
                   AND NOT a.Exclude_Balance_Alerts
-                  AND a.Accounts_Balance < 0 ORDER BY a.Accounts_Balance ASC
+                  AND a.Accounts_Balance < 0 {scope_sql('a.Accounts_Id')} ORDER BY a.Accounts_Balance ASC
             """, conn)
             for _, row in df.iterrows():
                 insights.append({"type": "danger", "icon": "negative_balance",
@@ -822,7 +822,7 @@ def get_insights():
         except Exception:
             pass
         try:
-            df = pd.read_sql("""
+            df = pd.read_sql(f"""
                 SELECT a.Accounts_Id AS account_id, a.Accounts_Name AS name, a.Accounts_Type AS account_type,
                        ROUND(ABS(a.Credit_Limit)::numeric,2) AS credit_limit,
                        ROUND((ABS(a.Credit_Limit) + a.Accounts_Balance)::numeric,2) AS remaining,
@@ -831,7 +831,7 @@ def get_insights():
                 FROM Accounts a JOIN Currencies c ON c.Currencies_Id = a.Currencies_Id
                 WHERE a.Is_Active = TRUE AND a.Accounts_Type = 'Credit Card'
                   AND NOT a.Exclude_Balance_Alerts
-                  AND a.Credit_Limit IS NOT NULL AND a.Credit_Limit <> 0
+                  AND a.Credit_Limit IS NOT NULL AND a.Credit_Limit <> 0 {scope_sql('a.Accounts_Id')}
                   AND ((ABS(a.Credit_Limit) + a.Accounts_Balance) / NULLIF(ABS(a.Credit_Limit),0) < 0.10
                        OR (ABS(a.Credit_Limit) + a.Accounts_Balance) < 500)
                 ORDER BY remaining ASC
@@ -845,7 +845,7 @@ def get_insights():
         except Exception:
             pass
         try:
-            df = pd.read_sql("""
+            df = pd.read_sql(f"""
                 WITH stats AS (
                     SELECT COALESCE(p.Payees_Name,'Unknown') AS payee,
                            AVG(ABS(t.Total_Amount)) AS mean_amt,
@@ -853,7 +853,7 @@ def get_insights():
                            COUNT(*) AS sample_count
                     FROM Transactions t LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
                     WHERE t.Date >= CURRENT_DATE - INTERVAL '90 days'
-                      AND t.Transfers_Id IS NULL AND t.Total_Amount <> 0
+                      AND t.Transfers_Id IS NULL AND t.Total_Amount <> 0 {scope_sql('t.Accounts_Id')}
                     GROUP BY 1 HAVING COUNT(*) >= 3
                 )
                 SELECT t.Date AS date, COALESCE(p.Payees_Name, t.Description, '?') AS payee,
@@ -865,7 +865,7 @@ def get_insights():
                 FROM Transactions t
                 LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
                 JOIN stats s ON s.payee = COALESCE(p.Payees_Name,'Unknown')
-                WHERE t.Date >= CURRENT_DATE - INTERVAL '14 days' AND t.Is_Draft = FALSE
+                WHERE t.Date >= CURRENT_DATE - INTERVAL '14 days' AND t.Is_Draft = FALSE {scope_sql('t.Accounts_Id')}
                   AND ABS(ABS(t.Total_Amount) - s.mean_amt) / NULLIF(s.std_amt,0) >= 2.5
                 ORDER BY ABS(t.Total_Amount) DESC LIMIT 3
             """, conn)
@@ -878,7 +878,7 @@ def get_insights():
         except Exception:
             pass
         try:
-            df = pd.read_sql("""
+            df = pd.read_sql(f"""
                 SELECT DATE_TRUNC('month', t.Date)::date AS month,
                        SUM(CASE WHEN s.Amount > 0 THEN s.Amount ELSE 0 END) AS income,
                        ABS(SUM(CASE WHEN s.Amount < 0 THEN s.Amount ELSE 0 END)) AS expenses
@@ -886,7 +886,7 @@ def get_insights():
                 JOIN Splits s ON s.Transactions_Id = t.Transactions_Id
                 WHERE t.Transfers_Id IS NULL AND t.Is_Draft = FALSE
                   AND t.Date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '3 months')
-                  AND t.Date <  DATE_TRUNC('month', CURRENT_DATE)
+                  AND t.Date <  DATE_TRUNC('month', CURRENT_DATE) {scope_sql('t.Accounts_Id')}
                 GROUP BY 1 ORDER BY 1
             """, conn)
             if len(df) >= 2 and float(df["income"].sum()) > 0:
@@ -944,7 +944,8 @@ def _projected_cash_insights() -> list:
     Dashboard is opened often and the projection is not free. An account that is already below its
     line is skipped — the Negative balance / Credit limit insights above cover it."""
     import time as _time
-    hit = _PROJECTED_CACHE.get("v")
+    key = tuple(scope_now() or ()) if scope_now() is not None else None      # the forecast differs by whose accounts it covers
+    hit = _PROJECTED_CACHE.get(key)
     if hit and _time.time() - hit[0] < 120:
         alerts = hit[1]
     else:
@@ -952,7 +953,7 @@ def _projected_cash_insights() -> list:
         fc = get_cash_flow_forecast_full(days=PROJECTED_ALERT_DAYS, months_back=3, account_ids=None,
                                          min_balance=0.0, with_alerts=True)
         alerts = (fc.get("account_alerts") or {}).get("alerts", [])
-        _PROJECTED_CACHE["v"] = (_time.time(), alerts)
+        _PROJECTED_CACHE[key] = (_time.time(), alerts)
     out = []
     for a in alerts:
         if a["already_below"]:

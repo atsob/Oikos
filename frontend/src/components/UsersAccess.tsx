@@ -50,7 +50,7 @@ function AccountPicker({ value, onChange }: { value: number[]; onChange: (ids: n
           </div>
         ))}
       </div>
-      <p className="text-xs text-slate-400">An account linked to a selected one (a brokerage's cash account) is included automatically.</p>
+      <p className="text-xs text-slate-400">A brokerage's cash account is included automatically only when nothing else shares it; a cash account behind several brokerages (several people's, say) must be ticked by hand.</p>
     </div>
   )
 }
@@ -85,7 +85,7 @@ export default function UsersAccess() {
     <div>
       <h3 className="text-sm font-semibold text-slate-700 mb-1">Users and access</h3>
       <p className="text-xs text-slate-400 mb-2">
-        <b>Admin</b> — {ROLE_HELP.admin} <b>Limited</b> — {ROLE_HELP.limited} <b>Read-only</b> — {ROLE_HELP.readonly} Restricted users get the Cash Register and Investments of their accounts; the rest is admin-only.
+        <b>Admin</b> — {ROLE_HELP.admin} <b>Limited</b> — {ROLE_HELP.limited} <b>Read-only</b> — {ROLE_HELP.readonly} Restricted users see the Dashboard, Reports, Alerts, Recurring and the rest over their own accounts, with Static Data and Market Data read-only; the AI Assistant, Importers and Tools are admin-only.
       </p>
       {isLoading ? <div className="flex justify-center py-4"><Spinner /></div> : (
         <div className="space-y-1 mb-3">

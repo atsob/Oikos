@@ -43,6 +43,58 @@ def _apply_tz(conn) -> None:
         log.debug("_apply_tz failed: %s", exc)
 
 
+# ── a restricted user's reads ─────────────────────────────────────────────────────────────────────
+# For a limited / read-only user's *read* requests (api/access.py binds the accounts to the request) the tables that hold account data are shadowed, on that
+# connection only, by temporary views showing nothing but the user's accounts. A temp schema is searched before `public`, so every unqualified query — the
+# Dashboard's, the reports', the forecasts', the alerts' — sees only those accounts without a line of it knowing so. It is a second layer behind the explicit
+# scoping in the endpoints, and it fails closed: if the views cannot be made, the request fails. Writes never see the views: the balance trigger and the checks
+# that look up what a row belongs to must see every row.
+_SCOPED_VIEWS = (
+    ("Accounts",                        "SELECT * FROM public.Accounts WHERE Accounts_Id IN ({ids})"),
+    ("Transactions",                    "SELECT * FROM public.Transactions WHERE Accounts_Id IN ({ids})"),
+    ("Splits",                          "SELECT * FROM public.Splits WHERE Transactions_Id IN (SELECT Transactions_Id FROM public.Transactions WHERE Accounts_Id IN ({ids}))"),
+    ("Investments",                     "SELECT * FROM public.Investments WHERE Accounts_Id IN ({ids})"),
+    ("Holdings",                        "SELECT * FROM public.Holdings WHERE Accounts_Id IN ({ids})"),
+    ("Recurring_Templates",             "SELECT * FROM public.Recurring_Templates WHERE Accounts_Id IN ({ids})"),
+    ("Recurring_Template_Splits",       "SELECT * FROM public.Recurring_Template_Splits WHERE Templates_Id IN (SELECT Templates_Id FROM public.Recurring_Templates WHERE Accounts_Id IN ({ids}))"),
+    ("Account_Interest_Rate_Schedules", "SELECT * FROM public.Account_Interest_Rate_Schedules WHERE Accounts_Id IN ({ids})"),
+    ("Account_Interest_Rate_Tiers",     "SELECT * FROM public.Account_Interest_Rate_Tiers WHERE Account_Interest_Rate_Schedules_Id IN "
+                                        "(SELECT Account_Interest_Rate_Schedules_Id FROM public.Account_Interest_Rate_Schedules WHERE Accounts_Id IN ({ids}))"),
+    ("V_Transactions_Eur",              "SELECT * FROM public.V_Transactions_Eur WHERE Accounts_Id IN ({ids})"),
+)
+
+
+def _apply_scope(conn) -> bool:
+    """Shadow the account tables with the current user's views (see above). Returns True when it did, so the checkout can undo it."""
+    try:
+        from api.access import view_scope
+    except Exception:
+        return False
+    ids = view_scope()
+    if ids is None:
+        return False
+    id_list = ",".join(str(int(i)) for i in ids) or "NULL"
+    conn.autocommit = True                 # autocommit, so a later rollback in the request cannot take the views with it
+    try:
+        with conn.cursor() as cur:
+            for name, body in _SCOPED_VIEWS:
+                cur.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS " + body.format(ids=id_list))
+    finally:
+        conn.autocommit = False
+    return True
+
+
+def _clear_scope(conn) -> None:
+    """Take the views off a pooled connection before it goes back."""
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            for name, _ in _SCOPED_VIEWS:
+                cur.execute(f"DROP VIEW IF EXISTS pg_temp.{name}")
+    finally:
+        conn.autocommit = False
+
+
 _RETRY_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 1.5   # seconds; doubles each attempt
 
@@ -120,6 +172,14 @@ def get_db():
     # Enforce local timezone on every checkout (handles pool connections that
     # were created before the DB_CONFIG `options` setting was in place).
     _apply_tz(conn)
+    try:
+        scoped = _apply_scope(conn)
+    except Exception:
+        try:
+            p.putconn(conn, close=True)         # a connection that half-made the views is never reused, and the request fails rather than run unscoped
+        except Exception:
+            pass
+        raise
 
     try:
         yield conn
@@ -132,7 +192,18 @@ def get_db():
                 pass
         raise
     finally:
-        if _is_conn_alive(conn):
+        if scoped:
+            try:
+                _clear_scope(conn)
+            except Exception:
+                try:
+                    p.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = None
+        if conn is None:
+            pass
+        elif _is_conn_alive(conn):
             p.putconn(conn)
         else:
             try:
@@ -954,6 +1025,11 @@ def get_connection() -> extensions.connection:
     """
     conn = _retry(lambda: psycopg2.connect(**DB_CONFIG), "get_connection")
     _apply_tz(conn)
+    try:
+        _apply_scope(conn)                  # the connection is the caller's to close, and the views go with it
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 

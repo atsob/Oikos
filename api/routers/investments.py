@@ -5,7 +5,7 @@ import math
 import pandas as pd
 from database.connection import get_db
 from api.routers.register import _refresh_balance
-from api.access import scope_clause
+from api.access import scope_clause, in_scope_sql, EXTERNAL_ACCOUNT
 
 router = APIRouter()
 
@@ -188,7 +188,10 @@ def get_investments(
             i.description AS notes,
             i.transactions_id AS transactions_id,
             tx.accounts_id AS cash_account_id,
-            a_cash.accounts_name AS cash_account,
+            -- A cash leg or a paired share transfer in an account that is not the user's is hidden from them by the scoped views; it shows as an external account and
+            -- the row cannot be changed from their side (the server refuses it too).
+            CASE WHEN ext.is_external THEN '{EXTERNAL_ACCOUNT}' ELSE a_cash.accounts_name END AS cash_account,
+            COALESCE(ext.is_external, FALSE) AS external,
             fr.qty_held AS qty_held,
             ROUND(fr.running_balance::numeric, 2) AS running_balance
         FROM Investments i
@@ -199,6 +202,11 @@ def get_investments(
         LEFT JOIN Transactions tx ON i.transactions_id = tx.transactions_id
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
         LEFT JOIN full_running fr ON fr.investments_id = i.investments_id
+        LEFT JOIN LATERAL (
+            SELECT (EXISTS (SELECT 1 FROM public.Transactions pt WHERE pt.Transactions_Id = i.transactions_id AND NOT ({in_scope_sql('pt.Accounts_Id')}))
+                 OR EXISTS (SELECT 1 FROM public.Investments p2 WHERE i.transfers_id IS NOT NULL AND p2.Transfers_Id = i.transfers_id AND p2.Investments_Id <> i.investments_id
+                              AND NOT ({in_scope_sql('p2.Accounts_Id')}))) AS is_external
+        ) ext ON TRUE
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
           {id_clause} {acc_clause} {action_clause} {ticker_clause} {search_clause}
         ORDER BY {order_clause}

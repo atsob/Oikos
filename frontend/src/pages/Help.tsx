@@ -1402,7 +1402,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts.</P>
+        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts. The <b>Anomalies</b> tab (and a security's own Price Anomalies tab) lists prices that moved by more than the threshold against the previous or next day. A move that a <b>recorded split or reverse split</b> explains — one dated within 20 days of the jump whose ratio fits it to within 15% — is hidden by default; tick <i>Show N moves explained by a recorded split</i> to see it (marked <i>Explained</i>). A missing corporate action still shows its jump, and the security's name opens its Security Detail.</P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
           holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
@@ -1948,13 +1948,25 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           <b>Admin</b> — everything, on every account (the users that existed before roles were added are admins). <b>Limited</b> — reads and changes only the accounts an admin has mapped to the user.
           <b>Read-only</b> — reads those accounts and changes nothing. The accounts of a Limited or Read-only user are picked from a list, or added from a saved Account Preset; an account linked to a
-          mapped one (a brokerage's cash account) comes with it. To add a user choose the role and the accounts, or edit a user later to change either (or set a new password). Changing a role logs the user out,
+          mapped one (a brokerage's cash account) comes with it, unless other accounts share it too — one cash account behind several people's brokerages goes to none of them, so tick it by hand if it should be shared. To add a user choose the role and the accounts, or edit a user later to change either (or set a new password). Changing a role logs the user out,
           the last admin cannot be demoted or removed, and nobody can remove their own account.
         </Note>
         <Note>
-          A Limited or Read-only user sees only the <b>Cash Register</b> and <b>Investments</b> (their accounts, nothing else — the account list, holdings and transactions are narrowed to what is mapped),
-          <b>Help</b> and the <b>Release Notes</b>; the Dashboard, Reports, Static Data, Importers, Tools and the rest are admin-only. For a Read-only user the New / Transfer / Clear / Reconcile / Move / Delete controls and the editing of
-          transactions and holdings are hidden. The limits are enforced by the server, not just hidden — a request for another account, or a change by a Read-only user, is refused with a short notice.
+          A Limited or Read-only user uses the whole app <i>over their own accounts</i>: the <b>Dashboard</b> (net worth, accounts, bills, insights, alerts), the <b>Cash Register</b>, <b>Investments</b>,
+          <b>Recurring</b>, <b>Reports</b>, <b>Alerts</b>, <b>News</b>, <b>Market Data</b> and <b>Static Data</b>, with <b>Help</b> and the <b>Release Notes</b>. Everything they see is narrowed to the
+          accounts mapped to them — balances, net worth, holdings, transactions, reports, forecasts, alerts and the counts in Static Data — and what is not theirs does not show at all. The AI Assistant, Importers and
+          Tools are admin-only, and so are the household's AI summaries on the Dashboard, the private funds, the watchlist and dismissing an alert. <b>Static Data</b> and <b>Market Data</b> are read-only for them:
+          the buttons that add, edit, delete, merge, save or download are hidden. For a Read-only user the New / Transfer / Clear / Reconcile / Move / Delete controls and the editing of transactions and holdings are
+          hidden too. A transfer to or from an account that is not theirs shows as <b>External account</b> (🔒) and cannot be edited or deleted from their side, since the other half of it is somebody else's.
+          The limits are enforced by the server, not just hidden — a request for another account, or a change by a Read-only user, is refused with a short notice.
+        </Note>
+        <Note>
+          Each user's <b>Account Presets</b>, saved <b>Custom Reports</b> and the place they left off (the last report and tab, the preset chosen in each report, filters, layout) are their own too: a Limited user does not
+          see the admin's presets and can create their own from their accounts.
+        </Note>
+        <Note>
+          A Limited user keeps their <b>own Plan</b> (the dated steps), <b>Retirement plans</b>, <b>Budgets</b> and <b>Goals</b>, apart from the household's and from every other user's: each starts empty,
+          the Retirement planner and Budget vs Actual work from their accounts, and the Telegram reminder and the AI summaries stay with the admin. A Read-only user can read but not change them.
           Everyone can change their own password under Account.
         </Note>
         <H3>Sidebar</H3>

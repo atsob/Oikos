@@ -75,7 +75,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'instrument_type', headerName: 'Instrument', width: 110 },
   { field: 'account', headerName: 'Account', flex: 1, minWidth: 130 },
   { field: 'cash_account', headerName: 'Cash Account', flex: 1, minWidth: 120,
-    valueFormatter: p => p.value ?? '—',
+    valueFormatter: p => p.data?.external ? `🔒 ${p.value ?? ''}` : (p.value ?? '—'),
     cellStyle: p => p.value ? { color: '#2563eb', fontSize: '12px' } : { color: '#cbd5e1', fontSize: '12px' } },
   { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 120 },
 ]
@@ -639,6 +639,8 @@ export default function Investments() {
 
   const openEdit = useCallback((row: Record<string, unknown>) => {
     if (readOnly) return
+    // A trade whose cash leg (or paired share transfer) is in an account that is not the user's is half somebody else's: viewable, not changeable. (The server refuses it too.)
+    if (row.external) { setBatchMsg('Error: this transaction involves an account that is not yours, so it can be viewed here but not changed.'); return }
     const acc = (accounts as Record<string, unknown>[]).find(a => String(a.name) === String(row.account))
     const sec = (securities as Record<string, unknown>[]).find(s => String(s.ticker) === String(row.ticker))
     const accId = acc ? String(acc.id) : ''
@@ -1010,6 +1012,7 @@ export default function Investments() {
                   columnDefs={txGridCols.colDefs}
                   defaultColDef={{ resizable: true, sortable: true }}
                   rowSelection="multiple"
+                  isRowSelectable={n => !n.data?.external}
                   onSelectionChanged={e => setSelectedTxIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                   onRowClicked={e => { if (e.data && e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
                   onGridReady={onTxGridReady}

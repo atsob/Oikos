@@ -2,6 +2,7 @@ import React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, AlertTriangle, Info } from 'lucide-react'
 import { getAlerts, dismissAlert, dismissAlertGroup } from '@/lib/api'
+import { useRole } from '@/lib/auth'
 
 // What the Dashboard's alert panel and the Alerts page share: the groups, the way an alert row looks, and the
 // triggered-alerts query with its instant (optimistic) dismissals.
@@ -56,6 +57,7 @@ const levelIcon = (level: string) => {
 }
 
 export function AlertItem({ a, onOpen, onDismiss }: { a: AlertRow; onOpen: (to: string) => void; onDismiss: (a: AlertRow) => void }) {
+  const { isAdmin } = useRole()          // dismissals are shared between everyone who signs in, so they stay with the admin
   const level = String(a.level ?? 'info')
   const to = alertTarget(a)
   return (
@@ -71,12 +73,14 @@ export function AlertItem({ a, onOpen, onDismiss }: { a: AlertRow; onOpen: (to: 
         )}
         <AlertText text={String(a.message ?? '')} />
       </p>
-      <button
-        className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline self-start"
-        onClick={(e) => { e.stopPropagation(); onDismiss(a) }}
-        title="Dismiss this alert — it comes back only if the event happens afresh">
-        Dismiss
-      </button>
+      {isAdmin && (
+        <button
+          className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline self-start"
+          onClick={(e) => { e.stopPropagation(); onDismiss(a) }}
+          title="Dismiss this alert — it comes back only if the event happens afresh">
+          Dismiss
+        </button>
+      )}
     </div>
   )
 }

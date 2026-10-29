@@ -51,6 +51,12 @@ async def require_auth(request: Request) -> dict:
         mapped = session.get("accounts") or []
         session["accounts"] = sorted(set(mapped) | linked_accounts(mapped))
         request.state.user = session
-        await enforce(request, session)
+        rule = await enforce(request, session)
+        # Only now: enforce looks rows up to see whose they are, and must see every row. A read request's connections then get the user's scoped views.
+        from api.access import bind_user
+        bind_user(session, reading=(request.method in ("GET", "HEAD") or rule.reads) and rule.views)
+    else:
+        from api.access import bind_user
+        bind_user(session)           # an admin has no restriction, but is still somebody: their own settings are kept under their id
     request.state.user = session
     return session

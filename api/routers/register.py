@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import pandas as pd
 from database.connection import get_db, get_connection
 from database import crud
+from api.access import in_scope_sql, EXTERNAL_ACCOUNT   # a transfer to an account that is not the user's shows as an external account
 
 router = APIRouter()
 
@@ -134,7 +135,8 @@ def get_transactions(
             ct.full_path AS category,
             COALESCE(sa.split_count, 0) AS split_count,
             sa.splits_detail AS splits,
-            ta.accounts_name AS target_account,
+            CASE WHEN t.accounts_id_target IS NULL OR {in_scope_sql('t.accounts_id_target')} THEN ta.accounts_name ELSE '{EXTERNAL_ACCOUNT}' END AS target_account,
+            (t.accounts_id_target IS NOT NULL AND NOT {in_scope_sql('t.accounts_id_target')}) AS external_transfer,
             (ai.accounts_balance - at2.grand_total + at2.cumulative_total) AS running_balance
         FROM Transactions t
         JOIN all_txns at2 ON at2.transactions_id = t.transactions_id

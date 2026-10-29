@@ -6,6 +6,7 @@ import datetime as _dt
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from database.connection import get_db, get_connection
+from api.access import narrow_ids, scope_now, scope_sql, held_securities, owner_now   # a restricted user's reports cover their own accounts only (api/access.py)
 
 router = APIRouter()
 
@@ -2668,7 +2669,7 @@ def get_crypto_tax(year: int = Query(None), method: str = Query("FIFO"), exempti
     ids = _parse_account_ids(account_ids)
     if ids:
         crypto = crypto[crypto["accounts_id"].isin(ids)]
-    skip = _parse_account_ids(exclude_account_ids)
+    skip = _parse_account_ids(exclude_account_ids, scoped=False)
     if skip:
         crypto = crypto[~crypto["accounts_id"].isin(skip)]
     crypto, n_transfers = _drop_own_transfers(crypto)
@@ -3012,7 +3013,7 @@ def get_budget_vs_actual(year: int = Query(2024), ref_years: int = Query(2)):
     ),
     budgets AS (
         SELECT Categories_Id, Budget_Amount
-        FROM Annual_Budgets WHERE Year = %(year)s
+        FROM Annual_Budgets WHERE Year = %(year)s AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s
     )
     SELECT
         c.Categories_Id                                          AS categories_id,
@@ -3040,7 +3041,7 @@ def get_budget_vs_actual(year: int = Query(2024), ref_years: int = Query(2)):
     from database.queries import ensure_budgets_table
     ensure_budgets_table()
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"year": year, "ref_years": ref_years})
+        df = pd.read_sql(query, conn, params={"year": year, "ref_years": ref_years, "owner": owner_now()})
     return _df_to_list(df)
 
 
@@ -3182,6 +3183,8 @@ def _ttl_cached(key: str, ttl_seconds: float, fn):
     """Cache a DataFrame-returning call for a short time. The two helpers it wraps are global (not
     per account) and take 1-2 seconds each, which dominated the forecast's response time."""
     import time as _time
+    mine = scope_now()
+    key = f"{key}|{sorted(mine) if mine is not None else 'all'}"      # what a restricted user's connection sees is not what an admin's does
     hit = _TTL_CACHE.get(key)
     if hit and _time.time() - hit[0] < ttl_seconds:
         return hit[1].copy()
@@ -3933,44 +3936,53 @@ def get_cash_flow_forecast_full(
 
 @router.get("/budgets")
 def get_budgets(year: int = Query(2024), month: Optional[int] = Query(None)):
-    """Budget entries by category and year."""
+    """Budget entries by category and year — the user's own (the household's, for an admin)."""
+    from database.queries import ensure_budgets_table
+    ensure_budgets_table()
     with get_db() as conn:
         df = pd.read_sql("""
             SELECT b.Budget_Id AS id, b.Year AS year, b.Categories_Id AS categories_id,
                    c.Categories_Name AS category_name, b.Budget_Amount AS budget_amount
             FROM Annual_Budgets b
             JOIN Categories c ON c.Categories_Id = b.Categories_Id
-            WHERE b.Year = %(year)s
+            WHERE b.Year = %(year)s AND b.Owner_Users_Id IS NOT DISTINCT FROM %(owner)s
             ORDER BY c.Categories_Name
-        """, conn, params={"year": year})
+        """, conn, params={"year": year, "owner": owner_now()})
     return _df_to_list(df)
 
 
 @router.post("/budgets")
 def upsert_budget(data: dict):
     from database.connection import get_connection
+    from database.queries import ensure_budgets_table
     from fastapi import HTTPException
+    ensure_budgets_table()
     conn = get_connection()
     try:
         cur = conn.cursor()
         bid = data.get('id')
         if bid:
             cur.execute(
-                "UPDATE Annual_Budgets SET Budget_Amount=%s WHERE Budget_Id=%s",
-                (data.get('budget_amount'), bid)
+                "UPDATE Annual_Budgets SET Budget_Amount=%s WHERE Budget_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s",
+                (data.get('budget_amount'), bid, owner_now())
             )
+            if cur.rowcount == 0:
+                raise HTTPException(404, "No such budget")
         else:
             cur.execute("""
-                INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (Year, Categories_Id) DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
+                INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount, Owner_Users_Id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0))) DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
                 RETURNING Budget_Id
-            """, (data.get('year'), data.get('categories_id'), data.get('budget_amount')))
+            """, (data.get('year'), data.get('categories_id'), data.get('budget_amount'), owner_now()))
             row = cur.fetchone()
             if row:
                 bid = row[0]
         conn.commit()
         return {"id": bid}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -3985,7 +3997,7 @@ def delete_budget(bid: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM Annual_Budgets WHERE Budget_Id=%s", (bid,))
+        cur.execute("DELETE FROM Annual_Budgets WHERE Budget_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (bid, owner_now()))
         conn.commit()
         return {"deleted": bid}
     except Exception as e:
@@ -5974,6 +5986,8 @@ def _ensure_goals_table(cur):
             Created_At TIMESTAMP DEFAULT NOW()
         )
     """)
+    # the household's goals (an admin's: no owner) or a restricted user's own
+    cur.execute("ALTER TABLE Goals ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
 
 
 @router.get("/goals")
@@ -5991,8 +6005,8 @@ def get_goals():
                    Target_Amount AS target_amount, Current_Amount AS current_amount,
                    Target_Date::text AS target_date, Notes AS notes,
                    CASE WHEN Target_Amount > 0 THEN ROUND((Current_Amount / Target_Amount * 100)::numeric,1) ELSE 0 END AS progress_pct
-            FROM Goals WHERE Is_Active=TRUE ORDER BY Target_Date ASC NULLS LAST, Goal_Id
-        """, conn)
+            FROM Goals WHERE Is_Active=TRUE AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Target_Date ASC NULLS LAST, Goal_Id
+        """, conn, params={"owner": owner_now()})
     return _df_to_list(df)
 
 
@@ -6006,20 +6020,25 @@ def upsert_goal(data: dict):
         if gid:
             cur.execute("""
                 UPDATE Goals SET Goal_Name=%s, Target_Amount=%s, Target_Date=%s,
-                    Current_Amount=%s, Notes=%s WHERE Goal_Id=%s
+                    Current_Amount=%s, Notes=%s WHERE Goal_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s
             """, (data.get("goal_name"), data.get("target_amount"),
                   data.get("target_date") or None, data.get("current_amount", 0),
-                  data.get("notes") or None, gid))
+                  data.get("notes") or None, gid, owner_now()))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "No such goal")
         else:
             cur.execute("""
-                INSERT INTO Goals (Goal_Name, Target_Amount, Target_Date, Current_Amount, Notes)
-                VALUES (%s, %s, %s, %s, %s) RETURNING Goal_Id
+                INSERT INTO Goals (Goal_Name, Target_Amount, Target_Date, Current_Amount, Notes, Owner_Users_Id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING Goal_Id
             """, (data.get("goal_name"), data.get("target_amount"),
                   data.get("target_date") or None, data.get("current_amount", 0),
-                  data.get("notes") or None))
+                  data.get("notes") or None, owner_now()))
             gid = cur.fetchone()[0]
         conn.commit()
         return {"goal_id": gid}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -6032,7 +6051,7 @@ def delete_goal(goal_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE Goals SET Is_Active=FALSE WHERE Goal_Id=%s", (goal_id,))
+        cur.execute("UPDATE Goals SET Is_Active=FALSE WHERE Goal_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (goal_id, owner_now()))
         conn.commit()
         return {"deleted": goal_id}
     except Exception as e:
@@ -6738,11 +6757,13 @@ def get_bond_schedule(account_ids: Optional[str] = Query(None)):
     return _df_to_list(df)
 
 
-def _parse_account_ids(account_ids: Optional[str]) -> Optional[list]:
-    if not account_ids:
-        return None
-    ids = [int(x) for x in account_ids.split(",") if x.strip()]
-    return ids or None
+def _parse_account_ids(account_ids: Optional[str], scoped: bool = True) -> Optional[list]:
+    """The accounts a report covers: those asked for (comma-separated Accounts_Id), or None for all of them. For a restricted user the list is always held to
+    their own accounts — when they ask for none, it is all of theirs — so every report built on it is scoped without further ado. `scoped=False` is for a list that
+    only *removes* accounts (an exclusion list), where narrowing to the user's accounts would turn 'none' into 'all'."""
+    ids = [int(x) for x in account_ids.split(",") if x.strip()] if account_ids else None
+    ids = ids or None
+    return narrow_ids(ids) if scoped else ids
 
 
 def _acct_clause(account_ids: Optional[list], col: str = "h.Accounts_Id") -> str:
@@ -6807,6 +6828,9 @@ def _pit_cash_balance_expr(as_of: Optional[str]) -> str:
 # ('inv_performance' | 'net_worth' | 'inv_positions') — see the ALTER TABLE in
 # database/connection.py's _run_startup_migrations for how an existing table
 # (created before Report_Scope existed) gets upgraded.
+_PRESETS_READY = False
+
+
 def _ensure_presets_table(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Portfolio_Presets (
@@ -6819,6 +6843,13 @@ def _ensure_presets_table(cur):
             UNIQUE (Report_Scope, Preset_Name)
         )
     """)
+    global _PRESETS_READY
+    if not _PRESETS_READY:
+        # a preset is the household's (an admin's: no owner) or a restricted user's own, and the same name can be used by each of them
+        cur.execute("ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE Portfolio_Presets DROP CONSTRAINT IF EXISTS portfolio_presets_report_scope_preset_name_key")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_presets_owner ON Portfolio_Presets (Report_Scope, Preset_Name, (COALESCE(Owner_Users_Id, 0)))")
+        _PRESETS_READY = True
 
 
 @router.get("/portfolio-presets")
@@ -6830,9 +6861,13 @@ def get_portfolio_presets(report_scope: str = Query("inv_performance")):
         conn.commit()
         df = pd.read_sql("""
             SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Account_Ids AS account_ids
-            FROM Portfolio_Presets WHERE Report_Scope = %(report_scope)s ORDER BY Preset_Name
-        """, conn, params={"report_scope": report_scope})
-        return _df_to_list(df)
+            FROM Portfolio_Presets WHERE Report_Scope = %(report_scope)s AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Preset_Name
+        """, conn, params={"report_scope": report_scope, "owner": owner_now()})
+        rows = _df_to_list(df)
+        mine = scope_now()
+        if mine is not None:           # a restricted user sees only their own presets, and of those only what is still made of their accounts
+            rows = [r for r in rows if r.get("account_ids") and set(r["account_ids"]) <= set(mine)]
+        return rows
     finally:
         conn.close()
 
@@ -6844,16 +6879,19 @@ def upsert_portfolio_preset(data: dict):
     report_scope = data.get("report_scope") or "inv_performance"
     if not name:
         raise HTTPException(400, "Preset name is required")
+    mine = scope_now()
+    if mine is not None and not set(int(a) for a in account_ids) <= set(mine):
+        raise HTTPException(403, "That account is not one of yours")
     conn = get_connection()
     try:
         cur = conn.cursor()
         _ensure_presets_table(cur)
         cur.execute("""
-            INSERT INTO Portfolio_Presets (Report_Scope, Preset_Name, Account_Ids, Updated_At)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (Report_Scope, Preset_Name) DO UPDATE
+            INSERT INTO Portfolio_Presets (Report_Scope, Preset_Name, Account_Ids, Owner_Users_Id, Updated_At)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (Report_Scope, Preset_Name, (COALESCE(Owner_Users_Id, 0))) DO UPDATE
                 SET Account_Ids = EXCLUDED.Account_Ids, Updated_At = NOW()
-        """, (report_scope, name, account_ids))
+        """, (report_scope, name, account_ids, owner_now()))
         conn.commit()
         return {"saved": name}
     except Exception as e:
@@ -6869,7 +6907,7 @@ def delete_portfolio_preset(preset_id: int):
     try:
         cur = conn.cursor()
         _ensure_presets_table(cur)
-        cur.execute("DELETE FROM Portfolio_Presets WHERE Preset_Id = %s", (preset_id,))
+        cur.execute("DELETE FROM Portfolio_Presets WHERE Preset_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (preset_id, owner_now()))
         conn.commit()
         return {"deleted": preset_id}
     except Exception as e:
@@ -7137,7 +7175,9 @@ def get_benchmark(
 
     acct_ids = _parse_account_ids(account_ids)
     bench_ids = [b for b in (_parse_account_ids(benchmark_ids) or []) if b != base_securities_id]
-    cmp_acct_ids = _parse_account_ids(compare_account_ids)
+    cmp_acct_ids = _parse_account_ids(compare_account_ids, scoped=False)
+    if cmp_acct_ids and scope_now() is not None:           # a restricted user compares only their own accounts
+        cmp_acct_ids = [i for i in cmp_acct_ids if i in set(scope_now())] or None
     base_dist = None
 
     with get_db() as conn:
@@ -7561,8 +7601,8 @@ def _fetch_presets_fresh() -> list:
         _ensure_custom_reports_table(conn)
         df = pd.read_sql(
             "SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Config AS config "
-            "FROM Custom_Report_Presets ORDER BY Preset_Name",
-            conn,
+            "FROM Custom_Report_Presets WHERE Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Preset_Name",
+            conn, params={"owner": owner_now()},
         )
     finally:
         conn.close()
@@ -7593,11 +7633,11 @@ def save_custom_report_preset(body: dict):
         _ensure_custom_reports_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO Custom_Report_Presets (Preset_Name, Config, Updated_At)
-                VALUES (%s, %s::jsonb, NOW())
-                ON CONFLICT (Preset_Name) DO UPDATE
+                INSERT INTO Custom_Report_Presets (Preset_Name, Config, Owner_Users_Id, Updated_At)
+                VALUES (%s, %s::jsonb, %s, NOW())
+                ON CONFLICT (Preset_Name, (COALESCE(Owner_Users_Id, 0))) DO UPDATE
                     SET Config = EXCLUDED.Config, Updated_At = NOW()
-            """, (name, json.dumps(config)))
+            """, (name, json.dumps(config), owner_now()))
         conn.commit()
     finally:
         conn.close()
@@ -7609,7 +7649,7 @@ def remove_custom_report_preset(preset_id: int):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM Custom_Report_Presets WHERE Preset_Id = %s", (preset_id,))
+            cur.execute("DELETE FROM Custom_Report_Presets WHERE Preset_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (preset_id, owner_now()))
         conn.commit()
     finally:
         conn.close()

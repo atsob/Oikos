@@ -46,6 +46,7 @@ import StressTestTab from '@/pages/StressTest'
 import DayExtremesTab from '@/pages/DayExtremes'
 import type { ColDef } from 'ag-grid-community'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
+import { useRole } from '@/lib/auth'
 
 type Row = Record<string, unknown>
 
@@ -4836,6 +4837,7 @@ const INV_POSITION_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Inv
 const EMPTY_PRESET_ROWS: never[] = []
 // `selectionKey` gives a report its own remembered choice while still offering the presets saved under `reportScope`.
 function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void; selectionKey?: string }) {
+  const { canWrite } = useRole()         // presets are each user's own (the admin's are not shown to others); a read-only user can use them but not save
   const [open, setOpen] = useState(false)
   const [selPreset, setSelPreset] = usePersist(`preset_sel_${selectionKey ?? reportScope}`, FULL_PORTFOLIO)
   const [nameInput, setNameInput] = useState('')
@@ -4947,11 +4949,13 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey
                 <option key={p.preset_id} value={p.preset_name}>{p.preset_name}</option>
               ))}
             </select>
-            <input className="rounded border border-slate-300 px-2 py-1 text-sm flex-1 min-w-[160px]" placeholder="Name to save as…"
-              value={nameInput} onChange={e => setNameInput(e.target.value)} />
-            <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
-            <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
-              className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+            {canWrite && (<>
+              <input className="rounded border border-slate-300 px-2 py-1 text-sm flex-1 min-w-[160px]" placeholder="Name to save as…"
+                value={nameInput} onChange={e => setNameInput(e.target.value)} />
+              <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
+              <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
+                className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+            </>)}
             <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none ml-auto">
               <input type="checkbox" className="rounded" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
               Show inactive
@@ -5097,7 +5101,9 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
 function InvPerformanceSection() {
   const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  const { isAdmin } = useRole()
   const TABS = ['P&L', 'Performance', 'Best / Worst Days', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR']
+    .filter(t => isAdmin || t !== 'Stress Test')
   const qc = useQueryClient()
   useEffect(() => {
     qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
@@ -6226,7 +6232,8 @@ function ActionBacktestTab() {
 // ── Securities Section ────────────────────────────────────────────────────────
 function SecuritiesSection() {
   const [tab, setTab] = usePersist('sec_tab', 'Price Changes')
-  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals', 'Action Backtest']
+  const { isAdmin } = useRole()
+  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals', 'Action Backtest'].filter(t => isAdmin || t !== 'Action Backtest')
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
@@ -11110,11 +11117,13 @@ function CustomReportsSection() {
 // MAIN
 // ════════════════════════════════════════════════════════════════════════════
 export default function Reports() {
+  const { isAdmin } = useRole()
+  const tabs = isAdmin ? REPORT_TABS : REPORT_TABS.filter(t => t.key !== 'private-funds')       // the household's private funds stay with the admin
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeTab, setActiveTab] = usePersist('reports_active_tab', searchParams.get('tab') ?? 'net-worth')
   const [startDate, setStartDate] = useState('2020-01-01')
   const [endDate, setEndDate] = useState(todayLocal())
-  const current = REPORT_TABS.find(t => t.key === activeTab)
+  const current = tabs.find(t => t.key === activeTab) ?? tabs[0]
 
   const switchTab = (key: string) => { setActiveTab(key); setSearchParams({ tab: key }, { replace: true }) }
 
@@ -11125,7 +11134,7 @@ export default function Reports() {
           width alongside the app nav on small screens. */}
       <nav className="shrink-0 md:w-48 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex flex-row md:flex-col overflow-x-auto md:overflow-visible py-1 md:py-4">
         <p className="hidden md:block px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reports</p>
-        {REPORT_TABS.map(t => (
+        {tabs.map(t => (
           <button key={t.key} onClick={() => switchTab(t.key)}
             className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${activeTab === t.key ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
             {t.label}

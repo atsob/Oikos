@@ -14,6 +14,6 @@ export function useRole() {
 export const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', limited: 'Limited', readonly: 'Read-only' }
 export const ROLE_HELP: Record<Role, string> = {
   admin: 'Everything, on every account.',
-  limited: 'Reads and changes only the accounts mapped to the user.',
-  readonly: 'Reads only the accounts mapped to the user; cannot change anything.',
+  limited: 'The whole app, over only the accounts mapped to the user — reads and changes them, and keeps their own Plan, Retirement plans, Budgets and Goals.',
+  readonly: 'The whole app, over only the accounts mapped to the user — reads them and changes nothing.',
 }

@@ -382,6 +382,13 @@ def _default_playbook() -> str:
 def get_local_watch(refresh: bool = False):
     if (empty := _no_country()) is not None:
         return empty
+    from api.access import restricted_now
+    if restricted_now():
+        # the cache is shared and its exposure tile is the household's: a restricted user reads it without that tile and cannot rebuild it
+        d = _cached()
+        if not d:
+            return {"status": "na", "note": "The Local Market Watch has not been built yet."}
+        return {k: v for k, v in d.items() if k != "exposure"}
     if not refresh:
         d = _cached()
         if d:

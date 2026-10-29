@@ -404,3 +404,9 @@ button, [role="button"], a { -webkit-tap-highlight-color: transparent; }
   /* the box the table sat in no longer needs its own height or scrollbar: the cards simply run down the page */
   main .overflow-x-auto:has(> table[data-cards]) { max-height: none !important; overflow: visible !important; }
 }
+
+/* Static Data, Market Data and the security / currency pages for a limited or read-only user (components/Layout.tsx puts the class on <body>, so a dialog is covered
+   too): whatever adds, edits, deletes, merges, saves, copies or downloads is hidden. What they can still do is read — and open a row to see its details. */
+body.oikos-readonly-data :is(button, a):has(> svg:is(.lucide-pencil, .lucide-pen, .lucide-square-pen, .lucide-trash-2, .lucide-trash, .lucide-plus, .lucide-save, .lucide-copy,
+  .lucide-arrow-right-left, .lucide-wand-2, .lucide-wand-sparkles, .lucide-upload, .lucide-download, .lucide-refresh-cw, .lucide-percent, .lucide-circle-plus)) { display: none !important; }
+body.oikos-readonly-data [data-write] { display: none !important; }

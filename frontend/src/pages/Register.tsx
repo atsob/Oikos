@@ -86,7 +86,8 @@ const makeColDefs = (currency: string): ColDef[] => [
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140, cellRenderer: CategoryCell, cellRendererParams: { currency } },
-  { field: 'target_account', headerName: 'Transfer To', width: 130, sortable: false },
+  { field: 'target_account', headerName: 'Transfer To', width: 130, sortable: false,
+    valueFormatter: (p: { value?: string; data?: { external_transfer?: boolean } }) => p.data?.external_transfer ? `🔒 ${p.value ?? ''}` : (p.value ?? '') },
   { field: 'memo', headerName: 'Memo', width: 140, sortable: false },
   { field: 'amount', headerName: 'Amount', width: 120, cellRenderer: AmountCell, cellRendererParams: { currency }, type: 'numericColumn' },
   { field: 'running_balance', headerName: 'Balance', width: 120, cellRenderer: BalanceCell, cellRendererParams: { currency }, type: 'numericColumn', sortable: false },
@@ -392,9 +393,14 @@ export default function Register() {
     setActivePeriod(label)
   }
 
+  // A transfer to or from an account that is not the user's cannot be changed from here — the other half of it is somebody else's. (The server refuses it too.)
+  const openRow = (row: Record<string, unknown>) => {
+    if (row.external_transfer) { setBatchMsg('Error: this transfer is with an account that is not yours, so it can be viewed here but not changed.'); return }
+    tx.openEdit(row, accountId!)
+  }
   const onRowClicked = (e: RowClickedEvent) => {
     if (e.event && (e.event as MouseEvent).detail === 2) {
-      tx.openEdit(e.data as Record<string, unknown>, accountId!)
+      openRow(e.data as Record<string, unknown>)
     }
   }
 
@@ -598,7 +604,7 @@ export default function Register() {
             </div>
             <p className="text-xs text-slate-400 mt-2">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</p>
             <TxCards rows={cardRows} currency={accountCurrency} loading={cards.isLoading} hasMore={!!cards.hasNextPage}
-              loadingMore={cards.isFetchingNextPage} onMore={() => cards.fetchNextPage()} onOpen={r => tx.openEdit(r, accountId!)} />
+              loadingMore={cards.isFetchingNextPage} onMore={() => cards.fetchNextPage()} onOpen={r => openRow(r)} />
           </div>
         ) : (
           <Card className="overflow-hidden">
@@ -650,6 +656,7 @@ export default function Register() {
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true }}
                 rowSelection="multiple"
+                isRowSelectable={n => !n.data?.external_transfer}
                 onSelectionChanged={e => { if (e.source !== 'api') setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id))) }}
                 suppressCellFocus={false}
                 getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}

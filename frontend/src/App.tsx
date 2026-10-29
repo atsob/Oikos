@@ -64,7 +64,7 @@ function ReportingFxSync() {
   return null
 }
 
-// Pages only an admin can use (api/access.py): a limited or read-only user is sent to the Cash Register.
+// Pages only an admin can use (api/access.py): the AI Assistant, the Importers and Tools. A limited or read-only user is sent to the Cash Register.
 function AdminOnly() {
   const { isAdmin, isLoading } = useRole()
   if (isLoading) return null
@@ -72,9 +72,7 @@ function AdminOnly() {
 }
 
 function Home() {
-  const { isAdmin, isLoading } = useRole()
-  if (isLoading) return null
-  return isAdmin ? <ErrorBoundary><Dashboard /></ErrorBoundary> : <Navigate to="/register" replace />
+  return <ErrorBoundary><Dashboard /></ErrorBoundary>
 }
 
 export default function App() {
@@ -92,20 +90,20 @@ export default function App() {
               <Route path="investments" element={<ErrorBoundary><Investments /></ErrorBoundary>} />
               <Route path="help" element={<ErrorBoundary><Help /></ErrorBoundary>} />
               <Route path="releases" element={<ErrorBoundary><Releases /></ErrorBoundary>} />
+              <Route path="dashboard/:group" element={<ErrorBoundary><DashboardAccounts /></ErrorBoundary>} />
+              <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
+              <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
+              <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
+              <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
+              <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
+              <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
+              <Route path="currencies/:id" element={<ErrorBoundary><CurrencyDetail /></ErrorBoundary>} />
+              <Route path="alerts" element={<ErrorBoundary><Alerts /></ErrorBoundary>} />
+              <Route path="plan" element={<ErrorBoundary><Plan /></ErrorBoundary>} />
               <Route element={<AdminOnly />}>
-                <Route path="dashboard/:group" element={<ErrorBoundary><DashboardAccounts /></ErrorBoundary>} />
-                <Route path="recurring" element={<ErrorBoundary><Recurring /></ErrorBoundary>} />
-                <Route path="reports" element={<ErrorBoundary><Reports /></ErrorBoundary>} />
-                <Route path="static-data" element={<ErrorBoundary><StaticData /></ErrorBoundary>} />
-                <Route path="market-data" element={<ErrorBoundary><MarketData /></ErrorBoundary>} />
-                <Route path="news" element={<ErrorBoundary><News /></ErrorBoundary>} />
-                <Route path="securities/:id" element={<ErrorBoundary><SecurityDetail /></ErrorBoundary>} />
-                <Route path="currencies/:id" element={<ErrorBoundary><CurrencyDetail /></ErrorBoundary>} />
                 <Route path="importers" element={<ErrorBoundary><Importers /></ErrorBoundary>} />
                 <Route path="tools" element={<ErrorBoundary><Tools /></ErrorBoundary>} />
                 <Route path="ai" element={<ErrorBoundary><AIAssistant /></ErrorBoundary>} />
-                <Route path="alerts" element={<ErrorBoundary><Alerts /></ErrorBoundary>} />
-                <Route path="plan" element={<ErrorBoundary><Plan /></ErrorBoundary>} />
               </Route>
             </Route>
           </Route>

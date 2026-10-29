@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader, Button, Spinner } from '@/components/ui'
 import { usePersist, useSettings } from '@/lib/hooks'
+import { useRole } from '@/lib/auth'
 import {
   ALERT_GROUPS, AlertItem, groupAlerts, levelDot, useTriggeredAlerts, worstLevel,
 } from '@/components/alerts'
@@ -10,6 +11,7 @@ import {
 // Dismissing here is the same as on the Dashboard.
 export default function Alerts() {
   const navigate = useNavigate()
+  const { isAdmin } = useRole()
   const [settings] = useSettings()
   const { alerts, isLoading, isFetching, refetch, dismissOne, dismissGroup } = useTriggeredAlerts()
   const [tab, setTab] = usePersist('alerts_tab', 'all')
@@ -36,7 +38,7 @@ export default function Alerts() {
           )}
           {!withHeader && <p className="text-xs text-slate-500">{g.hint}</p>}
           {hiddenOnDashboard(id) && <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded px-1.5 py-px">Hidden on Dashboard</span>}
-          {list.length > 0 && (
+          {list.length > 0 && isAdmin && (
             <button className="ml-auto shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
               onClick={() => dismissGroup.mutate({ group: id, list })}
               title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>

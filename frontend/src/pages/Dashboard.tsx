@@ -15,6 +15,7 @@ import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
+import { useRole } from '@/lib/auth'
 import { usePersist, useLiveRefetchInterval, useScrollRestore, useSettings } from '@/lib/hooks'
 import { ALERT_GROUPS, AlertItem, alertGroupOf, groupAlerts, levelDot, useTriggeredAlerts, worstLevel } from '@/components/alerts'
 import { DashboardCustomizer } from '@/components/DashboardCustomizer'
@@ -178,6 +179,7 @@ function SecuritiesAlertsPanel() {
   const [appSettings] = useSettings()
   const navigate = useNavigate()
   const { alerts, isLoading, dismissOne, dismissGroup } = useTriggeredAlerts()
+  const { isAdmin } = useRole()
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   const [groupOpen, setGroupOpen] = usePersist<Record<string, boolean>>('dashboard_alert_groups_open', {})
 
@@ -232,12 +234,14 @@ function SecuritiesAlertsPanel() {
                     <span className="text-xs text-slate-400">{list.length}</span>
                     {isOpen ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                   </button>
-                  <button
-                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    onClick={() => dismissGroup.mutate({ group: g.id, list })}
-                    title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
-                    {list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
-                  </button>
+                  {isAdmin && (
+                    <button
+                      className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                      onClick={() => dismissGroup.mutate({ group: g.id, list })}
+                      title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
+                      {list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
+                    </button>
+                  )}
                 </div>
                 {isOpen && (
                   <div className="p-2 space-y-2">
@@ -838,6 +842,7 @@ function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChang
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { isDark } = useTheme()
+  const { isAdmin } = useRole()
   const qc = useQueryClient()
   const navigate = useNavigate()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -884,11 +889,13 @@ export default function Dashboard() {
   const { data: monthlySummaries = [] } = useQuery({
     queryKey: ['monthly-summaries'],
     queryFn: () => getMonthlySummaries(24),
+    enabled: isAdmin,
   })
 
   const { data: weeklySummaries = [] } = useQuery({
     queryKey: ['weekly-summaries'],
     queryFn: () => getWeeklySummaries(12),
+    enabled: isAdmin,
   })
 
   // Same rows/queryKey as Recurring → Pending Drafts (Transactions.Is_Draft=TRUE) —
@@ -1273,7 +1280,7 @@ export default function Dashboard() {
           />
     ),
   }
-  const layout = resolveLayout(savedLayout)
+  const layout = resolveLayout(savedLayout, isAdmin)
 
   return (
     <div>
@@ -1283,16 +1290,18 @@ export default function Dashboard() {
         actions={
           <>
           <PricesUpdatedAuto />
-          <SyncBalancesButton
-            options={[
-              { label: '🏦 Bank & Cash', target: 'cash' },
-              { label: '📈 Investments', target: 'investment' },
-              { label: '🏛️ Pension', target: 'pension' },
-              { label: '📊 Holdings', target: 'holdings' },
-              { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
-            ]}
-            onSync={handleSync}
-          />
+          {isAdmin && (
+            <SyncBalancesButton
+              options={[
+                { label: '🏦 Bank & Cash', target: 'cash' },
+                { label: '📈 Investments', target: 'investment' },
+                { label: '🏛️ Pension', target: 'pension' },
+                { label: '📊 Holdings', target: 'holdings' },
+                { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
+              ]}
+              onSync={handleSync}
+            />
+          )}
           <Button size="sm" variant="secondary" onClick={() => setCustomizing(true)} title="Choose which blocks the Dashboard shows, and in what order">
             <SlidersHorizontal size={13} /> Customize
           </Button>

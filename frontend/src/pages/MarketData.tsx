@@ -6,6 +6,7 @@ import AppGrid from '@/components/AppGrid'
 import type { ColDef, RowClickedEvent } from 'ag-grid-community'
 import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+import { useRole } from '@/lib/auth'
 import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecurity, upsertCurrency, api, downloadCountryExposure, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadMorningstar, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
@@ -57,6 +58,7 @@ const ANOMALY_COLS: ColDef[] = [
   { field: 'next_close', headerName: 'Next', width: 110, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'ratio_prev', headerName: 'Ratio Prev', width: 110, type: 'numericColumn' },
   { field: 'ratio_next', headerName: 'Ratio Next', width: 110, type: 'numericColumn' },
+  { field: 'explained_by_split', headerName: 'Split', width: 90, cellDataType: false, headerTooltip: 'A recorded split or reverse split explains this move', valueFormatter: p => p.value ? 'Explained' : '' },
 ]
 
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
@@ -1732,11 +1734,14 @@ function AlertsTab() {
 }
 
 export default function MarketData() {
+  const { isAdmin } = useRole()
+  // The Downloads and the household's own Watchlist are the admin's; the rest is read-only for a limited user (components/Layout.tsx hides the controls that change anything).
+  const tabs = isAdmin ? TABS : TABS.filter(t => t !== 'Downloads' && t !== 'Watchlist')
   const [searchParams, setSearchParams] = useSearchParams()
   const [savedTab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
   // A tab saved before it was removed (e.g. the old Securities Prices / FX Prices tabs,
   // now on each Security Detail / Currency Detail → Prices) would otherwise open a blank page.
-  const tab = TABS.includes(savedTab) ? savedTab : 'Currencies'
+  const tab = tabs.includes(savedTab) ? savedTab : 'Currencies'
   // Deep-link support: "?tab=CAPE Ratios" (used by Dashboard's Market Valuation
   // tile) switches to that tab even when a different one was last persisted —
   // usePersist's initial value above only wins on a completely fresh visit with
@@ -1745,7 +1750,7 @@ export default function MarketData() {
   // or a manual tab switch back.
   const deepLinkTab = searchParams.get('tab')
   useEffect(() => {
-    if (deepLinkTab && TABS.includes(deepLinkTab)) {
+    if (deepLinkTab && tabs.includes(deepLinkTab)) {
       setTab(deepLinkTab)
       setSearchParams({}, { replace: true })
     }
@@ -1755,18 +1760,31 @@ export default function MarketData() {
   // silently dropping a filter you'd just typed. Still cleared explicitly on tab switches
   // below, same as before; this only fixes it surviving a navigate-away-and-back.
   const [search, setSearch] = usePersist('market_data_search', '')
-  const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
+  const navigate = useNavigate()
+  // the security's name opens its Security Detail
+  const anomalyCols = useMemo<ColDef[]>(() => ANOMALY_COLS.map(c => c.field === 'security_name' ? {
+    ...c,
+    cellRenderer: (p: { value: string; data?: Record<string, unknown> }) => p.data?.security_id == null ? p.value : (
+      <button onClick={() => navigate(`/securities/${p.data!.security_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+    ),
+  } : c), [navigate])
+  const anomalyGridCols = useGridColumnState('market-data-anomalies', anomalyCols)
   const anomalyGridScroll = useGridScrollState('market-data-anomalies')
   const anomalyGridFilter = useGridFilterState('market-data-anomalies')
   const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi(api => {
     if (anomalyGridFilter.filterModel) api.setFilterModel(anomalyGridFilter.filterModel)
   })
 
-  const { data: anomalies = [], isLoading: anomLoading } = useQuery({
+  const { data: anomalyData = [], isLoading: anomLoading } = useQuery({
     queryKey: ['price-anomalies'],
     queryFn: () => getPriceAnomalies(100),
     enabled: tab === 'Anomalies',
   })
+  // A jump that a recorded split or reverse split explains is not a bad price: hidden unless asked for.
+  const [showExplained, setShowExplained] = usePersist('market_data_anomalies_explained', false)
+  const explainedCount = useMemo(() => (anomalyData as Record<string, unknown>[]).filter(r => r.explained_by_split).length, [anomalyData])
+  // memoised: a new array on every render makes the grid reload its rows, which sends it back to the top
+  const anomalies = useMemo(() => showExplained ? anomalyData : (anomalyData as Record<string, unknown>[]).filter(r => !r.explained_by_split), [anomalyData, showExplained])
 
   return (
     <div>
@@ -1774,7 +1792,7 @@ export default function MarketData() {
 
       <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
-          {TABS.map(t => (
+          {tabs.map(t => (
             <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
               className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
               {t}
@@ -1791,6 +1809,12 @@ export default function MarketData() {
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
                 <div>
                   <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+                    {explainedCount > 0 && (
+                      <label className="mr-auto flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
+                        <input type="checkbox" className="rounded" checked={showExplained} onChange={e => setShowExplained(e.target.checked)} />
+                        Show {explainedCount} move{explainedCount === 1 ? '' : 's'} explained by a recorded split or reverse split {showExplained ? '' : '(hidden)'}
+                      </label>
+                    )}
                     {anomalyGridFilter.hasFilters && (
                       <button onClick={() => anomalyGridFilter.clearFilters(anomalyGridApi)}
                         className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">

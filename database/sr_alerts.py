@@ -245,7 +245,8 @@ def get_sr_alerts(today: date | None = None) -> list[dict]:
     try:
         fx = pd.read_sql("""SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1 AS cid, FX_Rate::float AS rate
                             FROM Historical_FX WHERE Date <= %(t)s ORDER BY Currencies_Id_1, Date DESC""", conn, params={"t": today})
-        holdings = pd.read_sql("""
+        from api.access import scope_sql, restricted_now      # a restricted user's levels and P&L cover their own accounts only
+        holdings = pd.read_sql(f"""
             WITH px AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices
                         WHERE Date <= %(t)s ORDER BY Securities_Id, Date DESC),
                  fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX
@@ -258,10 +259,10 @@ def get_sr_alerts(today: date | None = None) -> list[dict]:
             FROM Holdings h JOIN Securities s ON s.Securities_Id = h.Securities_Id
             JOIN px ON px.Securities_Id = h.Securities_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0
+            WHERE h.Quantity > 0 {scope_sql('h.Accounts_Id')}
             GROUP BY s.Securities_Id, s.Securities_Name, s.Currencies_Id
         """, conn, params={"t": today})
-        by_account = pd.read_sql("""
+        by_account = pd.read_sql(f"""
             WITH px AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices
                         WHERE Date <= %(t)s ORDER BY Securities_Id, Date DESC),
                  fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX
@@ -273,14 +274,14 @@ def get_sr_alerts(today: date | None = None) -> list[dict]:
             JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
             JOIN px ON px.Securities_Id = h.Securities_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0
+            WHERE h.Quantity > 0 {scope_sql('h.Accounts_Id')}
             GROUP BY h.Securities_Id, a.Accounts_Id, a.Accounts_Name
             ORDER BY h.Securities_Id, value_eur DESC
         """, conn, params={"t": today})
         watch = pd.read_sql("""SELECT w.Securities_Id AS sid, s.Securities_Name AS name FROM Watchlist w
-                               JOIN Securities s ON s.Securities_Id = w.Securities_Id""", conn)
-        cash = pd.read_sql("""SELECT Currencies_Id AS cid, SUM(Accounts_Balance)::float AS bal FROM Accounts
-                              WHERE Is_Active = TRUE AND Accounts_Type NOT IN ('Brokerage','Margin') GROUP BY Currencies_Id""", conn)
+                               JOIN Securities s ON s.Securities_Id = w.Securities_Id""" + (" WHERE FALSE" if restricted_now() else ""), conn)
+        cash = pd.read_sql(f"""SELECT Currencies_Id AS cid, SUM(Accounts_Balance)::float AS bal FROM Accounts
+                              WHERE Is_Active = TRUE AND Accounts_Type NOT IN ('Brokerage','Margin') {scope_sql('Accounts_Id')} GROUP BY Currencies_Id""", conn)
         cur_names = pd.read_sql("SELECT Currencies_Id AS cid, TRIM(Currencies_ShortName) AS code FROM Currencies", conn)
         base = pd.read_sql("""SELECT Currencies_Id_2 AS cid FROM Historical_FX GROUP BY Currencies_Id_2
                               ORDER BY COUNT(*) DESC LIMIT 1""", conn)

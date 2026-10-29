@@ -1086,6 +1086,7 @@ const PRICE_ANOMALIES_COLS = [
   { field: 'next_close', headerName: 'Next Close', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value) },
   { field: 'ratio_prev', headerName: '% vs Prev', width: 110, valueFormatter: (p: { value: unknown }) => anomalyPctFmt(p.value) },
   { field: 'ratio_next', headerName: '% vs Next', width: 110, valueFormatter: (p: { value: unknown }) => anomalyPctFmt(p.value) },
+  { field: 'explained_by_split', headerName: 'Split', width: 90, cellDataType: false, headerTooltip: 'A recorded split or reverse split explains this move', valueFormatter: (p: { value: unknown }) => p.value ? 'Explained' : '' },
 ]
 
 function PriceAnomaliesTab({ secId }: { secId: number }) {
@@ -1095,12 +1096,16 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
   const qc = useQueryClient()
   const [threshold, setThreshold] = useState(100)
   const [selected, setSelected] = useState<string[]>([])
+  const [showExplained, setShowExplained] = useState(false)
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['sec-anomalies', secId, threshold],
     queryFn: () => getSecurityPriceAnomalies(secId, threshold),
   })
-  const anomalies = data as Record<string, unknown>[]
+  // A move that a recorded split or reverse split explains is not a bad price: hidden unless asked for (and never part of "Delete all listed").
+  const all = data as Record<string, unknown>[]
+  const explained = useMemo(() => all.filter(r => r.explained_by_split).length, [all])
+  const anomalies = useMemo(() => showExplained ? all : all.filter(r => !r.explained_by_split), [all, showExplained])     // memoised: a new array each render reloads the grid
 
   const deleteMut = useMutation({
     mutationFn: (date: string) => deleteSecurityPrice(secId, date),
@@ -1135,6 +1140,12 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-sm text-yellow-800 font-medium">
               {anomalies.length} suspicious price record(s).
             </div>
+          )}
+          {explained > 0 && (
+            <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
+              <input type="checkbox" className="rounded" checked={showExplained} onChange={e => setShowExplained(e.target.checked)} />
+              Show {explained} move{explained === 1 ? '' : 's'} explained by a recorded split or reverse split {showExplained ? '' : '(hidden)'}
+            </label>
           )}
           <div className="ag-theme-alpine" style={{ height: '400px', width: '100%' }}>
             <AppGrid

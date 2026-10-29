@@ -26,16 +26,20 @@ export const DASH_BLOCKS: DashBlock[] = [
 
 export const BLOCK_BY_ID: Record<string, DashBlock> = Object.fromEntries(DASH_BLOCKS.map(b => [b.id, b]))
 
+/** Blocks only an admin has: the AI summaries are written about the whole household, not about one user's accounts. */
+export const ADMIN_BLOCKS = ['weekly', 'monthly']
+
 export type DashWidth = 'full' | 'half'
 export interface DashLayout { order: string[]; hidden: string[]; width?: Record<string, DashWidth> }
 export const DEFAULT_LAYOUT: DashLayout = { order: DASH_BLOCKS.map(b => b.id), hidden: [] }
 
 /** The saved layout made safe: unknown blocks dropped, blocks added since it was saved appended, nothing twice. */
-export function resolveLayout(saved: Partial<DashLayout> | null | undefined): { order: string[]; hidden: string[]; shown: string[]; widthOf: (id: string) => DashWidth } {
+export function resolveLayout(saved: Partial<DashLayout> | null | undefined, isAdmin = true): { order: string[]; hidden: string[]; shown: string[]; widthOf: (id: string) => DashWidth } {
   const seen = new Set<string>()
   const order: string[] = []
-  for (const id of saved?.order ?? []) if (BLOCK_BY_ID[id] && !seen.has(id)) { seen.add(id); order.push(id) }
-  for (const b of DASH_BLOCKS) if (!seen.has(b.id)) order.push(b.id)
+  const allowed = (id: string) => !!BLOCK_BY_ID[id] && (isAdmin || !ADMIN_BLOCKS.includes(id))
+  for (const id of saved?.order ?? []) if (allowed(id) && !seen.has(id)) { seen.add(id); order.push(id) }
+  for (const b of DASH_BLOCKS) if (allowed(b.id) && !seen.has(b.id)) order.push(b.id)
   const hidden = (saved?.hidden ?? []).filter((id, i, a) => BLOCK_BY_ID[id] && a.indexOf(id) === i)
   const widthOf = (id: string): DashWidth => saved?.width?.[id] ?? (BLOCK_BY_ID[id]?.half ? 'half' : 'full')
   return { order, hidden, shown: order.filter(id => !hidden.includes(id)), widthOf }

@@ -6,6 +6,7 @@ import {
   deletePlan, deletePlanItem, getPlanItems, importPlan, remindPlanNow, savePlanItem, setPlanStatus, type PlanItem,
 } from '@/lib/api'
 import { usePersist } from '@/lib/hooks'
+import { useRole } from '@/lib/auth'
 import { todayLocal } from '@/lib/utils'
 import { daysFromToday, planDayLabel } from '@/lib/plan'
 
@@ -103,6 +104,7 @@ function ImportModal({ defaultPlan, onClose, onDone }: { defaultPlan: string; on
 
 export default function Plan() {
   const qc = useQueryClient()
+  const { isAdmin, readOnly } = useRole()
   const today = todayLocal()
   const [plan, setPlan] = usePersist('plan_selected', 'all')
   const [edit, setEdit] = useState<PlanItem | 'new' | null>(null)
@@ -142,7 +144,7 @@ export default function Plan() {
 
   const row = (i: PlanItem, tone: 'overdue' | 'today' | 'later' | 'closed') => (
     <div key={i.id} className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 bg-white ${tone === 'overdue' ? 'border-red-200' : tone === 'today' ? 'border-blue-300' : 'border-slate-200'} ${tone === 'closed' ? 'opacity-70' : ''}`}>
-      <input type="checkbox" className="mt-1 rounded shrink-0 w-4 h-4" checked={i.status === 'done'} disabled={status.isPending}
+      <input type="checkbox" className="mt-1 rounded shrink-0 w-4 h-4" checked={i.status === 'done'} disabled={status.isPending || readOnly}
         onChange={() => status.mutate({ id: i.id, s: i.status === 'open' ? 'done' : 'open' })} title={i.status === 'open' ? 'Mark as done' : 'Reopen'} />
       <div className="min-w-0 flex-1">
         <p className={`text-sm font-medium ${i.status === 'open' ? 'text-slate-800' : 'text-slate-500 line-through'}`}>{i.title}</p>
@@ -154,13 +156,13 @@ export default function Plan() {
           {i.status === 'skipped' ? ' · skipped' : ''}
         </p>
       </div>
-      <div className="flex items-center gap-0.5 shrink-0 -mr-1">
+      {!readOnly && <div className="flex items-center gap-0.5 shrink-0 -mr-1">
         {i.status === 'open'
           ? <button className="p-1.5 text-slate-400 hover:text-slate-700" title="Skip — I decided not to do this" onClick={() => status.mutate({ id: i.id, s: 'skipped' })}><SkipForward size={14} /></button>
           : i.status === 'skipped' && <button className="p-1.5 text-slate-400 hover:text-slate-700" title="Reopen" onClick={() => status.mutate({ id: i.id, s: 'open' })}><Undo2 size={14} /></button>}
         <button className="p-1.5 text-slate-400 hover:text-slate-700" title="Edit" onClick={() => { setErr(''); setEdit(i) }}><Pencil size={14} /></button>
         <button className="p-1.5 text-slate-400 hover:text-red-600" title="Delete" onClick={() => { if (confirm(`Delete “${i.title}”?`)) remove.mutate(i.id) }}><Trash2 size={14} /></button>
-      </div>
+      </div>}
     </div>
   )
   const section = (label: string, list: PlanItem[], tone: 'overdue' | 'today' | 'later' | 'closed', color = 'text-slate-500') =>
@@ -175,10 +177,12 @@ export default function Plan() {
     <div>
       <PageHeader title="Plan" subtitle="Dated steps, reminded on Telegram every morning"
         actions={<>
-          <Button size="sm" variant="secondary" onClick={() => setImporting(true)}><Upload size={13} /> Import</Button>
-          <Button size="sm" variant="secondary" disabled={remind.isPending} onClick={() => { setMsg(null); remind.mutate() }}
-            title="Send today's reminder to Telegram now (steps due today or overdue, and tomorrow's)"><Bell size={13} /> Remind me now</Button>
-          <Button size="sm" onClick={() => { setErr(''); setEdit('new') }}><Plus size={13} /> New step</Button>
+          {!readOnly && <Button size="sm" variant="secondary" onClick={() => setImporting(true)}><Upload size={13} /> Import</Button>}
+          {isAdmin && (
+            <Button size="sm" variant="secondary" disabled={remind.isPending} onClick={() => { setMsg(null); remind.mutate() }}
+              title="Send today's reminder to Telegram now (steps due today or overdue, and tomorrow's)"><Bell size={13} /> Remind me now</Button>
+          )}
+          {!readOnly && <Button size="sm" onClick={() => { setErr(''); setEdit('new') }}><Plus size={13} /> New step</Button>}
         </>} />
       <div className="px-4 sm:px-6 py-4 space-y-5 max-w-3xl">
         {msg && <p className={`text-sm ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</p>}
@@ -198,7 +202,7 @@ export default function Plan() {
                   </Select>
                 )}
                 <span className="text-slate-500">{open.length} open{overdue.length ? <> · <span className="text-red-600 font-medium">{overdue.length} overdue</span></> : ''}{closed.length ? ` · ${closed.length} closed` : ''}</span>
-                {selected !== 'all' && (
+                {selected !== 'all' && !readOnly && (
                   <button className="ml-auto text-xs text-slate-400 hover:text-red-600 underline"
                     onClick={() => { if (confirm(`Delete the whole plan “${selected}” (${shown.length} steps)?`)) removePlan.mutate(selected) }}>Delete this plan</button>
                 )}

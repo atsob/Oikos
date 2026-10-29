@@ -111,7 +111,8 @@ def compute(conn, cid: int, period: str, today: Optional[date] = None) -> dict:
     today = today or date.today()
     start = period_start(period, today)
 
-    txns = pd.read_sql("""
+    from api.access import scope_sql         # a restricted user's currency effect covers their accounts only
+    txns = pd.read_sql(f"""
         SELECT i.Accounts_Id AS accounts_id, a.Accounts_Name AS account, a.Accounts_Type::text AS account_type,
                a.Currencies_Id AS acc_cur, i.Securities_Id AS securities_id, s.Securities_Name AS name,
                s.Ticker AS ticker, i.Date AS date, i.Action::text AS action, i.Quantity::float AS qty,
@@ -121,7 +122,7 @@ def compute(conn, cid: int, period: str, today: Optional[date] = None) -> dict:
         FROM Investments i
         JOIN Securities s ON s.Securities_Id = i.Securities_Id
         JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-        WHERE s.Currencies_Id = %(cid)s AND i.Date <= %(today)s
+        WHERE s.Currencies_Id = %(cid)s AND i.Date <= %(today)s {scope_sql('i.Accounts_Id')}
         ORDER BY i.Date, i.Investments_Id
     """, conn, params={"cid": cid, "today": today})
     if txns.empty:

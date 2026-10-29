@@ -656,6 +656,12 @@ def starting_plan() -> dict:
 
 # ── saved plans ──────────────────────────────────────────────────────────────────────────────────
 
+def _owner() -> int | None:
+    """Whose plans: the household's (an admin's) or a restricted user's own — api/access.owner_now()."""
+    from api.access import owner_now
+    return owner_now()
+
+
 def ensure_table() -> None:
     conn = get_connection()
     try:
@@ -669,6 +675,7 @@ def ensure_table() -> None:
                     Created_At  TIMESTAMP DEFAULT NOW(),
                     Updated_At  TIMESTAMP DEFAULT NOW()
                 )""")
+            cur.execute("ALTER TABLE Retirement_Plans ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")     # NULL = the household's
         conn.commit()
     finally:
         conn.close()
@@ -679,7 +686,8 @@ def list_plans() -> list[dict]:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT Retirement_Plans_Id, Name, Params, Is_Base, Updated_At::text FROM Retirement_Plans ORDER BY Is_Base DESC, Retirement_Plans_Id")
+            cur.execute("SELECT Retirement_Plans_Id, Name, Params, Is_Base, Updated_At::text FROM Retirement_Plans WHERE Owner_Users_Id IS NOT DISTINCT FROM %s "
+                        "ORDER BY Is_Base DESC, Retirement_Plans_Id", (_owner(),))
             return [{"id": r[0], "name": r[1], "params": r[2], "is_base": r[3], "updated_at": r[4]} for r in cur.fetchall()]
     finally:
         conn.close()
@@ -695,19 +703,20 @@ def save_plan(plan_id: int | None, name: str, params: dict, is_base: bool | None
     try:
         with conn.cursor() as cur:
             if plan_id:
-                cur.execute("UPDATE Retirement_Plans SET Name = %s, Params = %s, Updated_At = NOW() WHERE Retirement_Plans_Id = %s RETURNING Retirement_Plans_Id",
-                            (name, json.dumps(params), plan_id))
+                cur.execute("UPDATE Retirement_Plans SET Name = %s, Params = %s, Updated_At = NOW() WHERE Retirement_Plans_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s "
+                            "RETURNING Retirement_Plans_Id", (name, json.dumps(params), plan_id, _owner()))
                 row = cur.fetchone()
                 if not row:
                     raise ValueError("That plan no longer exists.")
             else:
-                cur.execute("SELECT COUNT(*) FROM Retirement_Plans")
+                cur.execute("SELECT COUNT(*) FROM Retirement_Plans WHERE Owner_Users_Id IS NOT DISTINCT FROM %s", (_owner(),))
                 first = cur.fetchone()[0] == 0
-                cur.execute("INSERT INTO Retirement_Plans (Name, Params, Is_Base) VALUES (%s, %s, %s) RETURNING Retirement_Plans_Id", (name, json.dumps(params), first))
+                cur.execute("INSERT INTO Retirement_Plans (Name, Params, Is_Base, Owner_Users_Id) VALUES (%s, %s, %s, %s) RETURNING Retirement_Plans_Id",
+                            (name, json.dumps(params), first, _owner()))
                 row = cur.fetchone()
             pid = row[0]
             if is_base:
-                cur.execute("UPDATE Retirement_Plans SET Is_Base = (Retirement_Plans_Id = %s)", (pid,))
+                cur.execute("UPDATE Retirement_Plans SET Is_Base = (Retirement_Plans_Id = %s) WHERE Owner_Users_Id IS NOT DISTINCT FROM %s", (pid, _owner()))
         conn.commit()
     finally:
         conn.close()
@@ -719,9 +728,9 @@ def delete_plan(plan_id: int) -> None:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM Retirement_Plans WHERE Retirement_Plans_Id = %s", (plan_id,))
-            cur.execute("UPDATE Retirement_Plans SET Is_Base = TRUE WHERE Retirement_Plans_Id = (SELECT MIN(Retirement_Plans_Id) FROM Retirement_Plans) "
-                        "AND NOT EXISTS (SELECT 1 FROM Retirement_Plans WHERE Is_Base)")
+            cur.execute("DELETE FROM Retirement_Plans WHERE Retirement_Plans_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (plan_id, _owner()))
+            cur.execute("UPDATE Retirement_Plans SET Is_Base = TRUE WHERE Retirement_Plans_Id = (SELECT MIN(Retirement_Plans_Id) FROM Retirement_Plans WHERE Owner_Users_Id IS NOT DISTINCT FROM %s) "
+                        "AND NOT EXISTS (SELECT 1 FROM Retirement_Plans WHERE Is_Base AND Owner_Users_Id IS NOT DISTINCT FROM %s)", (_owner(), _owner()))
         conn.commit()
     finally:
         conn.close()

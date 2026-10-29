@@ -1301,7 +1301,9 @@ def get_portfolio_signals(selected_acc_id=None):
     """
     now = time.time()
     stop_pct = _get_trailing_stop_pct()
-    cache_key = (selected_acc_id, stop_pct)
+    from api.access import scope_now
+    mine = scope_now()
+    cache_key = (selected_acc_id, stop_pct, tuple(mine) if mine is not None else None)       # a restricted user's signals cover their own accounts
     cached = _portfolio_signals_cache.get(cache_key)
     if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
         return cached[1].copy()
@@ -2829,12 +2831,16 @@ def confirm_draft_transaction(tx_id: int) -> bool:
         conn.close()
 
 
-def confirm_all_draft_transactions() -> int:
-    """Confirm every pending draft, creating transfer mirror legs as needed."""
+def confirm_all_draft_transactions(account_ids: list[int] | None = None) -> int:
+    """Confirm every pending draft (those of `account_ids` only, when given), creating transfer mirror legs as needed."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE ORDER BY Transactions_Id")
+        if account_ids is None:
+            cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE ORDER BY Transactions_Id")
+        else:
+            cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE AND Accounts_Id = ANY(%s) AND (Accounts_Id_Target IS NULL OR Accounts_Id_Target = ANY(%s)) "
+                        "ORDER BY Transactions_Id", (account_ids, account_ids))
         tx_ids = [r[0] for r in cur.fetchall()]
         for tx_id in tx_ids:
             _confirm_draft_row(cur, tx_id)
@@ -3689,6 +3695,10 @@ def ensure_budgets_table():
             UNIQUE(Year, Categories_Id)
         )
     """)
+    # A budget is the household's (an admin's: no owner) or a restricted user's own — one per category and year for each of them.
+    cur.execute("ALTER TABLE Annual_Budgets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+    cur.execute("ALTER TABLE Annual_Budgets DROP CONSTRAINT IF EXISTS annual_budgets_year_categories_id_key")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_annual_budgets_owner ON Annual_Budgets (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)))")
     conn.commit()
     cur.close()
     conn.close()
@@ -3699,12 +3709,13 @@ def upsert_budget(year: int, categories_id: int, amount: float):
     ensure_budgets_table()
     conn = get_connection()
     cur = conn.cursor()
+    from api.access import owner_now
     cur.execute("""
-        INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (Year, Categories_Id)
+        INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount, Owner_Users_Id)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)))
         DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
-    """, (year, categories_id, amount))
+    """, (year, categories_id, amount, owner_now()))
     conn.commit()
     cur.close()
     conn.close()
@@ -4920,7 +4931,14 @@ def get_all_securities_for_filter() -> pd.DataFrame:
     return df
 
 
+_PREFS_READY = False
+_CUSTOM_REPORTS_READY = False
+
+
 def _ensure_user_preferences_table(conn):
+    global _PREFS_READY
+    if _PREFS_READY:
+        return
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS User_Preferences (
@@ -4929,16 +4947,33 @@ def _ensure_user_preferences_table(conn):
                 Updated_At TIMESTAMP DEFAULT NOW()
             )
         """)
+        # One set per user: Users_Id is the person the preference belongs to. NULL is the household's — 'app-settings' (the settings the scheduler and the alerts
+        # read) and what existed before preferences were kept per user, which an admin who has not set their own yet still starts from.
+        cur.execute("ALTER TABLE User_Preferences ADD COLUMN IF NOT EXISTS Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE User_Preferences DROP CONSTRAINT IF EXISTS user_preferences_pkey")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_preferences_owner ON User_Preferences (Pref_Key, (COALESCE(Users_Id, 0)))")
     conn.commit()
+    _PREFS_READY = True
+
+
+HOUSEHOLD_PREFS = ("app-settings",)       # shared by everyone and kept under no user
 
 
 def get_user_preferences() -> dict:
-    """Fetch all persisted UI preferences as a single {key: value} dict."""
+    """The current user's preferences as a single {key: value} dict: their own, over the household's (an admin also starts from the older, shared ones)."""
+    from api.access import user_id_now, restricted_now
+    uid = user_id_now()
     conn = get_connection()
     try:
         _ensure_user_preferences_table(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT Pref_Key, Pref_Value FROM User_Preferences")
+            if uid is None:
+                cur.execute("SELECT Pref_Key, Pref_Value FROM User_Preferences WHERE Users_Id IS NULL")
+            else:
+                # NULL rows first, the user's own after them, so the user's own value wins; a restricted user inherits only the household's settings, not its UI state
+                legacy = "Users_Id IS NULL" if not restricted_now() else "Users_Id IS NULL AND Pref_Key = ANY(%s)"
+                params = (list(HOUSEHOLD_PREFS), uid) if restricted_now() else (uid,)
+                cur.execute(f"SELECT Pref_Key, Pref_Value FROM User_Preferences WHERE {legacy} OR Users_Id = %s ORDER BY (Users_Id IS NOT NULL)", params)
             rows = cur.fetchall()
         return {r[0]: r[1] for r in rows}
     finally:
@@ -4946,24 +4981,40 @@ def get_user_preferences() -> dict:
 
 
 def set_user_preference(key: str, value) -> None:
-    """Insert or update a single UI preference (upsert on key)."""
+    """Insert or update a single UI preference of the current user (the household's, for 'app-settings')."""
     import json
+    from api.access import user_id_now
+    owner = None if key in HOUSEHOLD_PREFS else user_id_now()
     conn = get_connection()
     try:
         _ensure_user_preferences_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO User_Preferences (Pref_Key, Pref_Value, Updated_At)
-                VALUES (%s, %s::jsonb, NOW())
-                ON CONFLICT (Pref_Key) DO UPDATE
+                INSERT INTO User_Preferences (Pref_Key, Pref_Value, Users_Id, Updated_At)
+                VALUES (%s, %s::jsonb, %s, NOW())
+                ON CONFLICT (Pref_Key, (COALESCE(Users_Id, 0))) DO UPDATE
                     SET Pref_Value = EXCLUDED.Pref_Value, Updated_At = NOW()
-            """, (key, json.dumps(value)))
+            """, (key, json.dumps(value), owner))
         conn.commit()
     finally:
         conn.close()
 
 
 def _ensure_custom_reports_table(conn):
+    global _CUSTOM_REPORTS_READY
+    if _CUSTOM_REPORTS_READY:
+        return
+    _ensure_custom_reports_table_base(conn)
+    with conn.cursor() as cur:
+        # a preset is the household's (an admin's: no owner) or a restricted user's own
+        cur.execute("ALTER TABLE Custom_Report_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE Custom_Report_Presets DROP CONSTRAINT IF EXISTS custom_report_presets_preset_name_key")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_report_presets_owner ON Custom_Report_Presets (Preset_Name, (COALESCE(Owner_Users_Id, 0)))")
+    conn.commit()
+    _CUSTOM_REPORTS_READY = True
+
+
+def _ensure_custom_reports_table_base(conn):
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
@@ -6806,7 +6857,9 @@ def _ensure_account_interest_rate_schema():
     is effective on each forecast date in place of the derived-from-history APY% used
     for accounts without a manually-defined schedule.
     """
-    conn = get_connection()
+    from api.access import unscoped
+    with unscoped():                      # a restricted user's connection shadows these tables with views, and an index cannot be made on a view
+        conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -6991,7 +7044,8 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
 
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql       # a restricted user's alerts cover their own accounts' holdings only
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -7005,7 +7059,7 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
             JOIN Securities s ON s.Securities_Id = h.Securities_Id
             JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL
+            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL {scope_sql('h.Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -7062,7 +7116,8 @@ def _get_split_mismatch_alerts() -> list:
     """
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             SELECT t.Transactions_Id AS transactions_id,
                    COALESCE(p.Payees_Name, t.Description, '') AS label,
                    t.Total_Amount AS total_amount,
@@ -7074,7 +7129,7 @@ def _get_split_mismatch_alerts() -> list:
             WHERE t.Is_Draft = FALSE
               AND t.Transfers_Id IS NULL
               AND t.Accounts_Id_Target IS NULL
-              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability') {scope_sql('t.Accounts_Id')}
             GROUP BY t.Transactions_Id, p.Payees_Name, t.Description, t.Total_Amount
             HAVING COUNT(s.Splits_Id) > 0
                AND ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) != 0
@@ -7127,7 +7182,8 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
 
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -7143,7 +7199,7 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
             JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
             WHERE h.Quantity > 0 AND s.Ex_Dividend_Date IS NOT NULL
-              AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL
+              AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL {scope_sql('h.Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -7261,14 +7317,15 @@ def _get_loan_payment_alerts() -> list:
     lead_days = _get_app_setting_lead_days('loanAlertLeadDays', 7)
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             SELECT Accounts_Id AS id, Accounts_Name AS name, Accounts_Balance AS balance,
                    Loan_Next_Due_Date AS next_due_date, Loan_Rate_Type AS rate_type,
                    Loan_Interest_Rate_Pct AS rate_pct, Loan_Compounding_Period AS compounding,
                    Loan_Payment_Frequency AS payment_freq, Loan_Opening_Date AS opening_date,
                    Loan_Original_Length_Value AS length_value, Loan_Original_Length_Unit AS length_unit
             FROM Accounts
-            WHERE Accounts_Type = 'Loan' AND Is_Active = TRUE AND Loan_Next_Due_Date IS NOT NULL
+            WHERE Accounts_Type = 'Loan' AND Is_Active = TRUE AND Loan_Next_Due_Date IS NOT NULL {scope_sql('Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -7737,6 +7794,8 @@ def check_triggered_alerts() -> list:
         from database.sr_alerts import get_sr_alerts
         _source('sr', get_sr_alerts)
 
+        from api.access import restrict_alerts
+        results = restrict_alerts(results)       # a restricted user keeps the alerts on what their accounts hold
         from database.alert_groups import finalize
         return finalize(results, sources_ok)
         return results

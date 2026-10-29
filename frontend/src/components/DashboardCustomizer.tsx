@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { ArrowDown, ArrowUp, GripVertical, X } from 'lucide-react'
 import { Button } from '@/components/ui'
 import { BLOCK_BY_ID, DEFAULT_LAYOUT, layoutRows, moveBefore, moveBy, resolveLayout, type DashLayout, type DashWidth } from '@/lib/dashboardLayout'
+import { useRole } from '@/lib/auth'
 
 // A side panel to choose what the Dashboard shows and in what order. Changes apply to the Dashboard behind it straight away.
 // Drag a row (or use the arrows — dragging does not work on touch screens), tick or untick to show or hide, and choose Full or Half width.
 export function DashboardCustomizer({ layout, onChange, onClose }: { layout: DashLayout; onChange: (l: DashLayout) => void; onClose: () => void }) {
-  const { order, hidden, shown, widthOf } = resolveLayout(layout)
+  const { isAdmin } = useRole()
+  const { order, hidden, shown, widthOf } = resolveLayout(layout, isAdmin)
   const rows = layoutRows(shown, widthOf)
   const paired = new Set(rows.filter(r => r.length === 2).flat())
   const [dragId, setDragId] = useState<string | null>(null)

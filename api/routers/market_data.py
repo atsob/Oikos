@@ -6,6 +6,7 @@ import math
 from datetime import date, timedelta
 import pandas as pd
 from database.connection import get_db
+from api.access import scope_sql, restricted_now, held_securities   # a restricted user sees counts and holdings of their own accounts only
 
 router = APIRouter()
 
@@ -182,9 +183,9 @@ def get_currency_fx_effect(cid: int, period: str = Query("YTD")):
         result = fx_effect.compute(conn, cid, period, today)
         base_id = _storage_base_id(conn)
         stored = _stored_rates(conn, cid) if cid != base_id else pd.Series(dtype=float)
-        cash = pd.read_sql("""
+        cash = pd.read_sql(f"""
             SELECT COALESCE(SUM(Accounts_Balance), 0)::float AS bal FROM Accounts
-            WHERE Is_Active = TRUE AND Accounts_Type NOT IN ('Brokerage','Margin') AND Currencies_Id = %(cid)s
+            WHERE Is_Active = TRUE AND Accounts_Type NOT IN ('Brokerage','Margin') AND Currencies_Id = %(cid)s {scope_sql('Accounts_Id')}
         """, conn, params={"cid": cid})
     balance = float(cash["bal"].iloc[0])
     start = fx_effect.period_start(period, today)
@@ -238,7 +239,7 @@ def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
             WHERE r.Currencies_Id = %(cid)s AND r.Is_Active
             ORDER BY r.Sort_Order, r.Code
         """, conn, params={"cid": cid})
-        accounts = pd.read_sql("""
+        accounts = pd.read_sql(f"""
             WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                         FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC)
             SELECT a.Accounts_Id AS id, a.Accounts_Name AS name, a.Accounts_Type::text AS type,
@@ -246,10 +247,10 @@ def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
                    (a.Accounts_Balance * COALESCE(fx.FX_Rate, 1))::float AS balance_eur
             FROM Accounts a LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE a.Is_Active = TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin')
-              AND a.Currencies_Id = %(cid)s AND a.Accounts_Balance <> 0
+              AND a.Currencies_Id = %(cid)s AND a.Accounts_Balance <> 0 {scope_sql('a.Accounts_Id')}
             ORDER BY ABS(a.Accounts_Balance) DESC
         """, conn, params={"cid": cid})
-        holdings = pd.read_sql("""
+        holdings = pd.read_sql(f"""
             WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                         FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
             prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
@@ -265,23 +266,23 @@ def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
             JOIN Accounts a ON a.Accounts_Id = h.Accounts_Id
             LEFT JOIN prices p ON p.Securities_Id = h.Securities_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0 AND s.Currencies_Id = %(cid)s
+            WHERE h.Quantity > 0 AND s.Currencies_Id = %(cid)s {scope_sql('h.Accounts_Id')}
             ORDER BY value_eur DESC NULLS LAST
         """, conn, params={"cid": cid})
         # Denominator for "% of total": the same exposure summed over every currency.
-        total = pd.read_sql("""
+        total = pd.read_sql(f"""
             WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                         FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
             prices AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close
                        FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
             SELECT COALESCE((SELECT SUM(a.Accounts_Balance * COALESCE(fx.FX_Rate, 1))
                              FROM Accounts a LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
-                             WHERE a.Is_Active = TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin')), 0)
+                             WHERE a.Is_Active = TRUE AND a.Accounts_Type NOT IN ('Brokerage','Margin') {scope_sql('a.Accounts_Id')}), 0)
                  + COALESCE((SELECT SUM(h.Quantity * COALESCE(p.Close, 0) * COALESCE(fx.FX_Rate, 1))
                              FROM Holdings h JOIN Securities s ON s.Securities_Id = h.Securities_Id
                              LEFT JOIN prices p ON p.Securities_Id = h.Securities_Id
                              LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-                             WHERE h.Quantity > 0), 0) AS total_eur
+                             WHERE h.Quantity > 0 {scope_sql('h.Accounts_Id')}), 0) AS total_eur
         """, conn)
 
     def on_or_before(series: pd.Series, d) -> Optional[float]:
@@ -398,8 +399,8 @@ def get_securities(search: Optional[str] = Query(None)):
                    COALESCE((SELECT COUNT(*) FROM Historical_Prices WHERE Securities_Id = s.Securities_Id), 0) AS price_records,
                    (SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS latest_price,
                    (SELECT Date FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1) AS price_date,
-                   COALESCE((SELECT COUNT(*) FROM Investments WHERE Securities_Id = s.Securities_Id), 0) AS investment_count,
-                   COALESCE((SELECT SUM(Quantity) FROM Holdings WHERE Securities_Id = s.Securities_Id), 0) AS held_quantity,
+                   COALESCE((SELECT COUNT(*) FROM Investments WHERE Securities_Id = s.Securities_Id {scope_sql('Accounts_Id')}), 0) AS investment_count,
+                   COALESCE((SELECT SUM(Quantity) FROM Holdings WHERE Securities_Id = s.Securities_Id {scope_sql('Accounts_Id')}), 0) AS held_quantity,
                    -- Quote fields: prefer Historical_Prices (already downloaded daily for
                    -- every security's price chart, so almost always fresher/more complete)
                    -- and fall back to the Securities_Quote cache from the Yahoo quote
@@ -659,30 +660,56 @@ def get_prices_freshness(security_id: Optional[int] = Query(None)):
     return out
 
 
+# A price jump is not an anomaly when a split or reverse split explains it: a recorded Split / Reverse Split whose date falls within SPLIT_WINDOW_DAYS of the jump (the
+# data providers and the recorded date rarely agree to the day) and whose price factor (Ratio_Old / Ratio_New — 8 for a 1-for-8 reverse split) is within SPLIT_TOLERANCE of the
+# jump. Both sides of a row are looked at: a row is "explained" when every side that crossed the threshold is explained by a split.
+SPLIT_WINDOW_DAYS = 20
+SPLIT_TOLERANCE = 0.15
+
+
+def price_anomaly_sql(security_filter: str = "") -> str:
+    """The anomaly query for the Anomalies tab (all securities) and a security's Price Anomalies tab (`security_filter`, e.g. 'AND hp.Securities_Id = %(sid)s'). Parameter: %(r)s,
+    the ratio threshold. Each row carries `explained_by_split`."""
+    lo, hi = 1 - SPLIT_TOLERANCE, 1 + SPLIT_TOLERANCE
+    split_match = lambda change, lo_date, hi_date: f"""EXISTS (
+                SELECT 1 FROM Corporate_Actions ca
+                WHERE ca.Securities_Id = f.Securities_Id AND ca.Action_Type IN ('Split', 'Reverse Split')
+                  AND ca.Ratio_New > 0 AND ca.Ratio_Old > 0 AND ca.Effective_Date IS NOT NULL
+                  AND ca.Effective_Date BETWEEN {lo_date} - {SPLIT_WINDOW_DAYS} AND {hi_date} + {SPLIT_WINDOW_DAYS}
+                  AND ({change}) / (ca.Ratio_Old::numeric / ca.Ratio_New) BETWEEN {lo} AND {hi})"""
+    return f"""
+        WITH pn AS (
+            SELECT hp.Securities_Id, hp.Date, hp.Close,
+                   LAG(hp.Close)  OVER w AS prev_close, LEAD(hp.Close) OVER w AS next_close,
+                   LAG(hp.Date)   OVER w AS prev_date,  LEAD(hp.Date)  OVER w AS next_date
+            FROM Historical_Prices hp
+            WHERE hp.Close > 0 {security_filter}
+            WINDOW w AS (PARTITION BY hp.Securities_Id ORDER BY hp.Date)
+        ),
+        f AS (
+            SELECT pn.*,
+                   COALESCE(Close / NULLIF(prev_close, 0) >= %(r)s OR prev_close / NULLIF(Close, 0) >= %(r)s, FALSE) AS flag_prev,
+                   COALESCE(Close / NULLIF(next_close, 0) >= %(r)s OR next_close / NULLIF(Close, 0) >= %(r)s, FALSE) AS flag_next
+            FROM pn
+        )
+        SELECT f.Securities_Id AS security_id, s.Securities_Name AS security_name, f.Date::text AS date,
+               f.Close AS close, f.prev_close, f.next_close,
+               ROUND((f.Close / NULLIF(f.prev_close, 0))::numeric, 3) AS ratio_prev,
+               ROUND((f.Close / NULLIF(f.next_close, 0))::numeric, 3) AS ratio_next,
+               ((NOT f.flag_prev OR {split_match('f.Close / f.prev_close', 'f.prev_date', 'f.Date')})
+                AND (NOT f.flag_next OR {split_match('f.next_close / f.Close', 'f.Date', 'f.next_date')})) AS explained_by_split
+        FROM f JOIN Securities s ON s.Securities_Id = f.Securities_Id
+        WHERE f.flag_prev OR f.flag_next
+        ORDER BY s.Securities_Name, f.Date
+    """
+
+
 @router.get("/price-anomalies")
 def get_price_anomalies(threshold_pct: float = Query(100.0)):
-    """Prices that deviate more than threshold_pct% from their neighbours."""
+    """Prices that deviate more than threshold_pct% from their neighbours. Each row says whether a recorded split or reverse split explains it (`explained_by_split`)."""
     ratio = 1.0 + threshold_pct / 100.0
     with get_db() as conn:
-        df = pd.read_sql("""
-            WITH price_neighbors AS (
-                SELECT hp.Securities_Id, s.Securities_Name AS security_name,
-                       hp.Date::text AS date, hp.Close,
-                       LAG(hp.Close)  OVER (PARTITION BY hp.Securities_Id ORDER BY hp.Date) AS prev_close,
-                       LEAD(hp.Close) OVER (PARTITION BY hp.Securities_Id ORDER BY hp.Date) AS next_close
-                FROM Historical_Prices hp
-                JOIN Securities s ON s.Securities_Id = hp.Securities_Id
-                WHERE hp.Close > 0
-            )
-            SELECT Securities_Id AS security_id, security_name, date,
-                   Close AS close, prev_close, next_close,
-                   ROUND((Close / NULLIF(prev_close, 0))::numeric, 3) AS ratio_prev,
-                   ROUND((Close / NULLIF(next_close, 0))::numeric, 3) AS ratio_next
-            FROM price_neighbors
-            WHERE (Close / NULLIF(prev_close, 0) >= %(ratio)s OR prev_close / NULLIF(Close, 0) >= %(ratio)s
-                OR Close / NULLIF(next_close, 0) >= %(ratio)s OR next_close / NULLIF(Close, 0) >= %(ratio)s)
-            ORDER BY security_name, date ASC
-        """, conn, params={"ratio": ratio})
+        df = pd.read_sql(price_anomaly_sql(), conn, params={"r": ratio})
     return _df(df)
 
 
@@ -956,6 +983,8 @@ def delete_fx_rate(currency_id: int, date: str):
 
 @router.get("/watchlist")
 def get_watchlist_endpoint():
+    if restricted_now():              # the watchlist is the household's own list of candidates (targets, stops, notes) — a restricted user has none of their own
+        return []
     from database.queries import get_watchlist
     return _df(get_watchlist())
 
@@ -990,7 +1019,11 @@ def delete_watchlist(watchlist_id: int):
 @router.get("/alerts")
 def get_alerts_endpoint():
     from database.queries import get_alerts
-    return _df(get_alerts())
+    rows = _df(get_alerts())
+    mine = held_securities()
+    if mine is not None:              # a restricted user sees the alerts on what their accounts hold, and the ones on currencies and markets
+        rows = [r for r in rows if r.get("securities_id") is None or int(r["securities_id"]) in mine]
+    return rows
 
 
 @router.post("/alerts")
