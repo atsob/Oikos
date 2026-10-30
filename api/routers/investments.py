@@ -301,6 +301,8 @@ def create_investment(data: dict):
         conn.commit()
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
         return {"id": inv_id}
     except Exception as e:
         conn.rollback()
@@ -380,6 +382,8 @@ def update_investment(inv_id: int, data: dict):
         conn.commit()
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
         return {"id": inv_id}
     except HTTPException:
         raise
@@ -473,6 +477,8 @@ def batch_update_investments(data: dict):
 
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         # Non-blocking heads-up: a Sell/ShrOut/etc. row moved into an account with
         # no matching prior holding can leave that (account, security) negative —
@@ -549,6 +555,8 @@ def batch_delete_investments(data: dict):
 
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         return {"deleted": deleted}
     except HTTPException:
@@ -600,6 +608,8 @@ def delete_investment(inv_id: int):
         # Recalculate holdings after the commit so the deleted row is gone
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         return {"deleted": inv_id}
     except HTTPException:

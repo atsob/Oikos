@@ -373,7 +373,13 @@ def linked_accounts(account_ids: list[int]) -> set[int]:
                            WHERE a.Accounts_Id = ANY(%s) AND a.Accounts_Id_Linked IS NOT NULL
                              AND NOT EXISTS (SELECT 1 FROM Accounts o WHERE o.Accounts_Id_Linked = a.Accounts_Id_Linked AND o.Accounts_Id <> ALL(%s))""",
                         (account_ids, account_ids))
-            return {r[0] for r in cur.fetchall()}
+            out = {r[0] for r in cur.fetchall()}
+            try:                                       # a mapped Margin account's financing account (database/margin.py) goes with it
+                cur.execute("SELECT Offset_Accounts_Id FROM Margin_Offset_Accounts WHERE Accounts_Id = ANY(%s)", (account_ids,))
+                out |= {r[0] for r in cur.fetchall()}
+            except Exception:
+                conn.rollback()                        # no such table yet: nothing has been converted
+            return out
     finally:
         conn.close()
 

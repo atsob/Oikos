@@ -692,6 +692,8 @@ def upsert_account(data: dict):
                   exclude_alerts, statement_day))
             aid = cur.fetchone()[0]
         conn.commit()
+        from database.margin import resync_quietly      # an account turned into (or out of) a Margin account: its FX Spot / CFD trades follow (database/margin.py)
+        resync_quietly()
         return {"id": aid}
     except Exception as e:
         conn.rollback()

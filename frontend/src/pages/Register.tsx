@@ -84,7 +84,8 @@ function SelectAllHeaderCheckbox({ checked, indeterminate, disabled, onToggle }:
 const makeColDefs = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
   { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
-  { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description' },
+  { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description',
+    valueFormatter: (p: { value?: string; data?: { managed?: boolean } }) => p.data?.managed ? `🔒 ${p.value ?? ''}` : (p.value ?? '') },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140, cellRenderer: CategoryCell, cellRendererParams: { currency } },
   { field: 'target_account', headerName: 'Transfer To', width: 130, sortable: false,
     valueFormatter: (p: { value?: string; data?: { external_transfer?: boolean } }) => p.data?.external_transfer ? `🔒 ${p.value ?? ''}` : (p.value ?? '') },
@@ -240,7 +241,7 @@ export default function Register() {
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => getAccounts(), refetchInterval: liveRefetchMs })
   const { data: accountsFuture = [] } = useQuery({ queryKey: ['accounts', 'future'], queryFn: () => getAccounts(true), refetchInterval: liveRefetchMs })
   const cashAccounts = (accounts as Record<string, unknown>[])
-    .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')))
+    .filter(a => CASH_ACCOUNT_TYPES.includes(String(a.type ?? '')) || Boolean(a.is_margin_financing))      // a Margin financing account can be opened here, to be read
     .filter(a => showInactive || Boolean(a.is_active))
   const { data: payees = [] } = useQuery({ queryKey: ['payees', 'lite'], queryFn: () => getPayees(undefined, false) })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
@@ -396,6 +397,8 @@ export default function Register() {
   // A transfer to or from an account that is not the user's cannot be changed from here — the other half of it is somebody else's. (The server refuses it too.)
   const openRow = (row: Record<string, unknown>) => {
     if (row.external_transfer) { setBatchMsg('Error: this transfer is with an account that is not yours, so it can be viewed here but not changed.'); return }
+    // a leg Oikos keeps from a margin (FX Spot / CFD) trade: its amount, date and description follow the trade
+    if (row.managed) { setBatchMsg('Error: this entry is kept by Oikos from a margin trade — change the trade in Investments instead.'); return }
     tx.openEdit(row, accountId!)
   }
   const onRowClicked = (e: RowClickedEvent) => {
@@ -468,7 +471,7 @@ export default function Register() {
             <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => { setReconcileMsg(null); setReconcileOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Reconcile
             </Button>
-            <Button size="sm" className="hidden sm:inline-flex" onClick={() => tx.openNew(accountId!)} disabled={!accountId}><Plus size={14} /> New Transaction</Button>
+            <Button size="sm" className="hidden sm:inline-flex" onClick={() => tx.openNew(accountId!)} disabled={!accountId || Boolean(selectedAccount?.is_margin_financing)}><Plus size={14} /> New Transaction</Button>
             </>}
             {isAdmin && <div className="hidden sm:block">
               <SyncBalancesButton
@@ -656,7 +659,7 @@ export default function Register() {
                 onFirstDataRendered={e => e.api.sizeColumnsToFit()}
                 defaultColDef={{ resizable: true, sortable: true }}
                 rowSelection="multiple"
-                isRowSelectable={n => !n.data?.external_transfer}
+                isRowSelectable={n => !n.data?.external_transfer && !n.data?.managed}
                 onSelectionChanged={e => { if (e.source !== 'api') setSelectedIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id))) }}
                 suppressCellFocus={false}
                 getRowId={p => p.data ? String(p.data.id) : `placeholder-${p.data?.__placeholderIndex}`}
@@ -666,7 +669,7 @@ export default function Register() {
         )}
       </div>
 
-      {!readOnly && <Fab label="New transaction" onClick={() => tx.openNew(accountId!)} disabled={!accountId} />}
+      {!readOnly && <Fab label="New transaction" onClick={() => tx.openNew(accountId!)} disabled={!accountId || Boolean(selectedAccount?.is_margin_financing)} />}
 
       {/* Transaction Modal */}
       {tx.modalOpen && tx.form && (

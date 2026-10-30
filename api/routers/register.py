@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import pandas as pd
 from database.connection import get_db, get_connection
 from database import crud
+from database.margin import ensure_schema as _margin_schema, managed_sql, refuse_managed, refuse_financing_account
 from api.access import in_scope_sql, EXTERNAL_ACCOUNT   # a transfer to an account that is not the user's shows as an external account
 
 router = APIRouter()
@@ -68,6 +69,7 @@ def get_transactions(
         search_clause = "AND (t.description ILIKE %(search)s OR p.payees_name ILIKE %(search)s)"
         search_param = f"%{search}%"
 
+    _margin_schema()          # the tables the `managed` flag looks at (database/margin.py)
     sort_expr = _SORTABLE_COLUMNS.get(sort_by, "t.date")
     sort_direction = "ASC" if sort_dir == "asc" else "DESC"
     order_clause = f"{sort_expr} {sort_direction}, t.transactions_id {sort_direction}"
@@ -137,6 +139,7 @@ def get_transactions(
             sa.splits_detail AS splits,
             CASE WHEN t.accounts_id_target IS NULL OR {in_scope_sql('t.accounts_id_target')} THEN ta.accounts_name ELSE '{EXTERNAL_ACCOUNT}' END AS target_account,
             (t.accounts_id_target IS NOT NULL AND NOT {in_scope_sql('t.accounts_id_target')}) AS external_transfer,
+            {managed_sql('t')} AS managed,
             (ai.accounts_balance - at2.grand_total + at2.cumulative_total) AS running_balance
         FROM Transactions t
         JOIN all_txns at2 ON at2.transactions_id = t.transactions_id
@@ -244,6 +247,7 @@ class TransactionIn(BaseModel):
 
 @router.post("/transactions")
 def create_transaction(tx: TransactionIn):
+    refuse_financing_account(tx.accounts_id, tx.accounts_id_target)
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -320,6 +324,7 @@ def update_transaction(tx_id: int, data: dict[str, Any]):
 
     if not tx_updates and not split_updates:
         raise HTTPException(400, "No valid fields to update")
+    refuse_managed([tx_id], set(tx_updates) | set(split_updates))      # a margin leg: only its flags (and a cash leg's payee / category) can change here
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -449,6 +454,7 @@ def get_splits(tx_id: int):
 
 @router.put("/transactions/{tx_id}/splits")
 def upsert_splits(tx_id: int, splits: list[dict]):
+    refuse_managed([tx_id], {"splits"})
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -494,6 +500,7 @@ def batch_delete_transactions(data: dict):
     ids = [int(i) for i in (data.get("ids") or [])]
     if not ids:
         raise HTTPException(400, "ids required")
+    refuse_managed(ids)
 
     conn = get_connection()
     try:
@@ -563,6 +570,8 @@ def batch_move_transactions(data: dict):
     if not ids or not new_accounts_id:
         raise HTTPException(400, "ids and accounts_id are required")
     new_accounts_id = int(new_accounts_id)
+    refuse_managed(ids)
+    refuse_financing_account(new_accounts_id)
 
     conn = get_connection()
     try:
@@ -605,6 +614,7 @@ def batch_move_transactions(data: dict):
 
 @router.delete("/transactions/{tx_id}")
 def delete_transaction(tx_id: int):
+    refuse_managed([tx_id])
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -664,6 +674,7 @@ def create_transfer(data: dict):
 
     if not from_account or not to_account or not date or amount is None:
         raise HTTPException(400, "from_account_id, to_account_id, date and amount are required")
+    refuse_financing_account(from_account, to_account)
 
     conn = get_connection()
     try:

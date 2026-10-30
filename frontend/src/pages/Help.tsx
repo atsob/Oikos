@@ -442,6 +442,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Transactions</b> — the full Buy/Sell/Dividend/Reinvest/etc. history, editable.</li>
           <li><b>Cash</b> — the cash-side movements linked to investment accounts (deposits, withdrawals, fees).</li>
         </Ul>
+        <Note>
+          <b>Margin positions (FX Spot, CFDs).</b> A margin product — XAGEUR on Saxo, a CFD on an ETF — does not move its notional through your cash: opening it costs only the spread or commission, closing it
+          moves only the profit or loss, and holding it costs the financing charges. Oikos books the cash side that way, so the broker's cash account matches the broker's own cash figure. For every Buy or Sell in a <b>Margin</b> account whose
+          Instrument is FX Spot or a CFD type (both conditions: the same trade in an ordinary brokerage account keeps the full amount in cash), the linked cash transaction is the <b>commission</b> (Buy) or the <b>realised profit or loss</b> against the lots closed, first in, first out (Sell); the notional goes to
+          a liability account named <i>… (Margin financing)</i>, made automatically, which holds minus the open cost. The position itself is unchanged — quantity, price, cost and market value — so net worth is the same as
+          before: cash + positions + Margin financing = the broker's equity. It is kept up to date whenever you add, change or delete such a trade or an import runs; the cash legs read "— margin: commission" or "— margin: realised P&amp;L". An <b>Account Preset</b> that holds a Margin account together with its linked cash account gets the Margin financing account added automatically (without it the cash would be counted without its offset), so existing presets need no editing; a Limited user mapped to a Margin account gets it with the account. The Margin financing account can be opened in the <b>Cash Register</b> to read how each amount came about, but it is <b>read-only</b>: its entries, and the cash entries of margin trades (marked 🔒), are kept by Oikos from the trades — their amount, date and description cannot be edited, deleted or moved, and nothing is entered in the financing account by hand; change the trade in Investments instead. Flags (cleared, reconciled) and a cash entry's payee and category can still be set.
+        </Note>
         <P>
           <b>Sync Balances</b> (top-right) refreshes Investments, Pension, and Holdings — the account types this
           page manages (not Bank &amp; Cash).

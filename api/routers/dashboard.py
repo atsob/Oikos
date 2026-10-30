@@ -200,6 +200,8 @@ def get_accounts(include_future: bool = Query(False), request: Request = None):
               AND t.Is_Draft = FALSE
         ), 0)
     """
+    from database.margin import ensure_schema
+    ensure_schema()                                    # the Margin_Offset_Accounts table the query below joins
     with get_db() as conn:
         df = pd.read_sql(f"""
             WITH latest_fx AS (
@@ -240,6 +242,9 @@ def get_accounts(include_future: bool = Query(False), request: Request = None):
                 COALESCE(lfx.FX_Rate, 1) AS fx_rate,
                 i.Institutions_Name    AS institution,
                 a.Institutions_Id      AS institutions_id,
+                a.Accounts_Id_Linked   AS accounts_id_linked,
+                mo.Offset_Accounts_Id  AS margin_offset_id,      -- a Margin account's financing account (database/margin.py)
+                EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = a.Accounts_Id) AS is_margin_financing,
                 COALESCE(a.Credit_Limit, 0) AS credit_limit,
                 a.Loan_Type                     AS loan_type,
                 a.Loan_Rate_Type                 AS loan_rate_type,
@@ -266,6 +271,7 @@ def get_accounts(include_future: bool = Query(False), request: Request = None):
             LEFT JOIN Institutions i    ON a.Institutions_Id = i.Institutions_Id
             LEFT JOIN latest_fx lfx     ON lfx.Currencies_Id_1 = c.Currencies_Id
             LEFT JOIN holdings_value hv ON hv.Accounts_Id = a.Accounts_Id
+            LEFT JOIN Margin_Offset_Accounts mo ON mo.Accounts_Id = a.Accounts_Id
             ORDER BY a.Is_Active DESC, a.Accounts_Type, a.Accounts_Name
         """, conn)
     mine = scope_now()

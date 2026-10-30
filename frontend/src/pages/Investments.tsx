@@ -881,7 +881,7 @@ export default function Investments() {
             )}
             {tab === 'cash' && (!accountId
               ? <p className="text-sm text-slate-400 text-center py-12">Select an account to view cash transactions.</p>
-              : <TxCards rows={cashRows} currency={String(selectedAccount?.currency ?? 'EUR')} loading={cashLoading} onOpen={r => cashTx.openEdit(r, accountId)} />)}
+              : <TxCards rows={cashRows} currency={String(selectedAccount?.currency ?? 'EUR')} loading={cashLoading} onOpen={r => (r.managed ? setCashBatchMsg('Error: this entry is kept by Oikos from a margin trade — change the trade instead.') : cashTx.openEdit(r, accountId))} />)}
           </div>
         ) : (
         <Card className="overflow-hidden">
@@ -944,8 +944,9 @@ export default function Investments() {
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       columnTypes={AG_GRID_COLUMN_TYPES}
                       rowSelection="multiple"
+                      isRowSelectable={n => !n.data?.managed}
                       onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
-                      onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
+                      onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) { if (e.data?.managed) setCashBatchMsg('Error: this entry is kept by Oikos from a margin trade — change the trade instead.'); else cashTx.openEdit(e.data as Record<string, unknown>, accountId!) } }}
                       onGridReady={onCashGridReady}
                       initialState={cashGridScroll.initialState}
                       onStateUpdated={cashGridScroll.onStateUpdated}

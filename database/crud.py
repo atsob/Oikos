@@ -298,6 +298,10 @@ def create_linked_cash_transactions_for_unlinked(
         update_accounts_balances(linked_acc_id)
         update_investment_balances()
 
+        # CFDs and FX Spot (a margin position) move only their commission and realised P&L through the cash — see database/margin.py
+        from database.margin import resync_quietly
+        resync_quietly()
+
     except Exception as outer_err:
         conn.rollback()
         errors.append(f"Outer error: {outer_err}")

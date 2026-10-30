@@ -4879,6 +4879,17 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey
 
   const savedIds = selPreset === FULL_PORTFOLIO ? eligibleAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
   const currentIds = draftIds ?? new Set(savedIds)
+  // A Margin account's cash is the broker's cash, its positions are at market, and its "Margin financing" account holds minus the open cost: cash + positions + financing is the
+  // broker's equity. So a selection that holds a Margin account and its cash account must hold the financing account too, or the cash is counted without its offset.
+  // (A preset saved before the financing account existed needs no editing.)
+  const withFinancing = (ids: number[]): number[] => {
+    const have = new Set(ids)
+    for (const a of accounts as Row[]) {
+      const off = a.margin_offset_id != null ? Number(a.margin_offset_id) : null
+      if (off != null && have.has(Number(a.id)) && a.accounts_id_linked != null && have.has(Number(a.accounts_id_linked))) have.add(off)
+    }
+    return Array.from(have)
+  }
 
   // A remembered selection that is not a preset of this scope (deleted, or remembered under another scope) would mean "no accounts" and an empty report:
   // once the presets have loaded, fall back to the Full Portfolio (a preset just saved is already in the list: it is refetched before it is selected).
@@ -4899,15 +4910,15 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey
     // not two-plus. Full Portfolio needs no such gate — its `onChange(undefined)`
     // doesn't depend on presetMap at all.
     if (selPreset !== FULL_PORTFOLIO && !presetsLoaded) return
-    onChange(selPreset === FULL_PORTFOLIO ? undefined : Array.from(currentIds))
+    onChange(selPreset === FULL_PORTFOLIO ? undefined : withFinancing(Array.from(currentIds)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selPreset, presetMap, presetsLoaded])
+  }, [selPreset, presetMap, presetsLoaded, accounts])
 
   const toggleAccount = (id: number) => {
     const next = new Set(draftIds ?? savedIds)
     if (next.has(id)) next.delete(id); else next.add(id)
     setDraftIds(next)
-    if (selPreset !== FULL_PORTFOLIO) onChange(Array.from(next))
+    if (selPreset !== FULL_PORTFOLIO) onChange(withFinancing(Array.from(next)))
   }
 
   const handleSave = async () => {
@@ -4919,7 +4930,7 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey
     await refetchPresets()
     setSelPreset(name)
     setDraftIds(null)
-    onChange(ids)
+    onChange(withFinancing(ids))
   }
 
   const handleDelete = async () => {
