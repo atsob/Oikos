@@ -13,6 +13,10 @@ conditions, so a CFD row in an ordinary brokerage account is left as it was unti
   Sell  cash leg  = proceeds - cost of the lots closed (first in, first out): the realised profit or loss
         offset leg = + the cost of the lots closed
 
+When the broker says what it booked for a trade (Investments.Booked_Cash_AccCur — Saxo's "Booked amount"), that signed amount is the cash leg, for margin trades and for every
+other trade that carries one; the rules above are only the derivation used when it is not known. It is set by the importer, and for Saxo's history from its Transaction and
+balance report; editing a trade by hand (quantity, price, amounts, date, action) drops it again.
+
 The positions themselves are untouched — quantity, price, cost basis, holdings, every report — so the position still shows at its market value, as the broker's own
 Market value / Exposure does. The Margin financing account holds minus the open cost, so cash + positions + financing = the broker's equity: net worth is exactly what it
 was, and the cash is the broker's cash. Each Investments row's offset leg is kept in Margin_Legs.
@@ -132,7 +136,7 @@ def resync_all(conn=None) -> dict:
         types = list(MARGIN_TYPES)
         cur.execute("""
             SELECT i.Investments_Id, i.Accounts_Id, i.Securities_Id, s.Ticker, i.Date, i.Action, i.Quantity, i.Price_Per_Share, COALESCE(i.Commission, 0),
-                   i.Total_Amount_AccCur, i.Transactions_Id, t.Accounts_Id, t.Total_Amount, t.Description
+                   i.Total_Amount_AccCur, i.Transactions_Id, t.Accounts_Id, t.Total_Amount, t.Description, i.Booked_Cash_AccCur
             FROM Investments i
             JOIN Securities s ON s.Securities_Id = i.Securities_Id
             JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id AND a.Accounts_Type = 'Margin'
@@ -144,9 +148,9 @@ def resync_all(conn=None) -> dict:
         legs = {r[0]: r[1:] for r in cur.fetchall()}
 
         series: dict[tuple, list[dict]] = {}
-        for (iid, acc, sec, tick, dt, act, qty, px, comm, total, txid, cash_acc, tx_amt, tx_desc) in rows:
+        for (iid, acc, sec, tick, dt, act, qty, px, comm, total, txid, cash_acc, tx_amt, tx_desc, booked) in rows:
             series.setdefault((acc, sec), []).append(dict(id=iid, acc=acc, sec=sec, ticker=tick, date=dt, action=act, quantity=qty, price=px, commission=comm,
-                                                         total=total, tx=txid, cash_acc=cash_acc, tx_amt=tx_amt, tx_desc=tx_desc))
+                                                         total=total, tx=txid, cash_acc=cash_acc, tx_amt=tx_amt, tx_desc=tx_desc, booked=booked))
         touched, wanted, qualified, off_cache = set(), set(), set(), {}
         for rs in series.values():
             plan = plan_series(rs)
@@ -154,6 +158,8 @@ def resync_all(conn=None) -> dict:
                 if r["id"] not in plan or not r["tx"]:
                     continue                                   # not a cash-moving row, or no linked cash leg to adjust
                 cash, offset = plan[r["id"]]
+                if r["booked"] is not None:                    # what the broker booked beats the derivation (commission estimates, FX on the P&L, credits)
+                    cash = _q(Decimal(r["booked"]))
                 qualified.add(r["id"])
                 # cash leg
                 base = (r["tx_desc"] or "").replace(SUFFIX_COMMISSION, "").replace(SUFFIX_PNL, "")
@@ -181,6 +187,18 @@ def resync_all(conn=None) -> dict:
                     cur.execute("UPDATE Transactions SET Total_Amount = %s, Date = %s, Description = %s WHERE Transactions_Id = %s", (offset, r["date"], label, leg[0]))
                     result["offset_legs"] += 1
                     touched.add(off_acc)
+        # every other trade that carries a booked amount: its cash leg is that amount
+        cur.execute("""SELECT i.Investments_Id, t.Transactions_Id, t.Accounts_Id, i.Accounts_Id, i.Booked_Cash_AccCur, t.Total_Amount
+                       FROM Investments i JOIN Transactions t ON t.Transactions_Id = i.Transactions_Id WHERE i.Booked_Cash_AccCur IS NOT NULL""")
+        for iid, txid, cash_acc, inv_acc, booked, tx_amt in cur.fetchall():
+            if iid in qualified:
+                continue
+            want = _q(Decimal(booked))
+            if Decimal(tx_amt) != want:
+                cur.execute("UPDATE Transactions SET Total_Amount = %s, Total_Amount_Target = %s WHERE Transactions_Id = %s", (want, abs(want), txid))
+                result["cash_legs"] += 1
+                touched.add(cash_acc)
+                touched.add(inv_acc)
         # legs of rows that are gone, no longer margin, or now offset nothing
         cur.execute("SELECT l.Transactions_Id, l.Investments_Id, t.Accounts_Id FROM Margin_Legs l JOIN Transactions t USING (Transactions_Id)")
         for txid, iid, acc in cur.fetchall():
@@ -209,14 +227,16 @@ def resync_all(conn=None) -> dict:
 
 def _restore_cash_leg(cur, inv_id: int, touched: set) -> None:
     """Give a trade that is no longer a margin position the cash leg of an ordinary one: the whole amount (net of withholding tax), out for a Buy, in for a Sell."""
-    cur.execute("""SELECT i.Action, i.Total_Amount_AccCur, COALESCE(i.Tax_Amount, 0), i.Transactions_Id, t.Accounts_Id, t.Description
+    cur.execute("""SELECT i.Action, i.Total_Amount_AccCur, COALESCE(i.Tax_Amount, 0), i.Transactions_Id, t.Accounts_Id, t.Description, i.Booked_Cash_AccCur
                    FROM Investments i JOIN Transactions t ON t.Transactions_Id = i.Transactions_Id WHERE i.Investments_Id = %s""", (inv_id,))
     row = cur.fetchone()
     if not row or row[0] not in ("Buy", "Sell"):
         return
-    action, total, tax, txid, cash_acc, desc = row
+    action, total, tax, txid, cash_acc, desc, booked = row
     net = abs(Decimal(total or 0) + Decimal(tax or 0))
     signed = -net if action == "Buy" else net
+    if booked is not None:
+        signed, net = Decimal(booked), abs(Decimal(booked))
     cur.execute("UPDATE Transactions SET Total_Amount = %s, Total_Amount_Target = %s, Description = %s WHERE Transactions_Id = %s",
                 (signed, net, (desc or "").replace(SUFFIX_COMMISSION, "").replace(SUFFIX_PNL, ""), txid))
     touched.add(cash_acc)

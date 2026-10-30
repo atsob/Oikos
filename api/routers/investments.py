@@ -57,6 +57,10 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
     tax   = float(tax_amount or 0.0)
     net   = gross + tax          # tax is negative, so this reduces the receipt
     signed = -abs(net) if cash_out else abs(net)
+    cur.execute("SELECT Booked_Cash_AccCur FROM Investments WHERE Investments_Id = %s", (inv_id,))
+    booked = (cur.fetchone() or [None])[0]
+    if booked is not None:       # what the broker booked is the cash leg, whatever the trade's own total says (database/margin.py)
+        signed, net = float(booked), abs(float(booked))
 
     if existing_tx_id:
         # payee_id is only resolved here when the investment row has a security
@@ -318,6 +322,13 @@ def update_investment(inv_id: int, data: dict):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # A trade edited by hand no longer matches what the broker booked: its booked amount is dropped and the cash leg follows the trade again.
+        cur.execute("SELECT Action::text, Quantity, Price_Per_Share, Commission, Total_Amount_AccCur, Date FROM Investments WHERE Investments_Id = %s", (inv_id,))
+        old = cur.fetchone()
+        def _same(a, b):
+            return (a is None and b is None) or (a is not None and b is not None and abs(float(a) - float(b)) < 1e-6)
+        trade_changed = bool(old) and not (str(old[0]) == str(data.get("action")) and _same(old[1], data.get("quantity")) and _same(old[2], data.get("price_per_share"))
+                                           and _same(old[3] or 0, data.get("commission") or 0) and _same(old[4], data.get("total_amount_acccur")) and str(old[5]) == str(data.get("date"))[:10])
         cur.execute("""
             UPDATE Investments SET
                 Accounts_Id          = %s,
@@ -332,7 +343,8 @@ def update_investment(inv_id: int, data: dict):
                 Total_Amount_SecCur  = %s,
                 Instrument_Type      = %s,
                 Description          = %s,
-                Tax_Amount           = %s
+                Tax_Amount           = %s,
+                Booked_Cash_AccCur   = CASE WHEN %s THEN NULL ELSE Booked_Cash_AccCur END
             WHERE Investments_Id = %s
             RETURNING Transactions_Id
         """, (
@@ -341,7 +353,7 @@ def update_investment(inv_id: int, data: dict):
             data.get("commission", 0), data.get("fx_rate", 1),
             data.get("total_amount_acccur"), data.get("total_amount_seccur"),
             data.get("instrument_type") or None, data.get("description"),
-            data.get("tax_amount") or None, inv_id,
+            data.get("tax_amount") or None, trade_changed, inv_id,
         ))
         if cur.rowcount == 0:
             raise HTTPException(404, "Not found")
@@ -659,6 +671,21 @@ def staking_reinvest(entries: List[Dict[str, Any]] = Body(...)):
         return {"inserted": len(entries)}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.get("/saxo-margin")
+def get_saxo_margin(account_id: int = Query(...)):
+    """Saxo's own margin figures (utilization, margin available, cash available, account value) for a Saxo account, read live — admin only, see data/saxo_margin.py.
+    `available: false` with a reason when the account is not a connected Saxo account or Saxo cannot be reached."""
+    from data.saxo_margin import fetch_margin, SaxoMarginUnavailable
+    try:
+        data = fetch_margin(account_id)
+        data.pop("raw", None)                                # Saxo's full answer is for diagnosis, not for the page
+        return {"available": True, **data}
+    except SaxoMarginUnavailable as e:
+        return {"available": False, "reason": str(e)}
+    except Exception as e:                                   # Saxo unreachable, an entitlement missing…: say so, do not fail the page
+        return {"available": False, "reason": f"Could not read the margin from Saxo: {e}"[:400], "transient": True}
 
 
 @router.get("/holdings")

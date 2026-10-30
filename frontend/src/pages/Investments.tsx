@@ -11,6 +11,7 @@ import {
   syncBalances, batchUpdateInvestments, batchDeleteInvestments,
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
+import SaxoMargin from '@/components/SaxoMargin'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty, todayLocal, toLocalISODate } from '@/lib/utils'
@@ -777,6 +778,7 @@ export default function Investments() {
       </div>
 
       <div className="px-3 sm:px-6 py-4 space-y-4">
+        {isAdmin && accountId != null && selectedAccount && String(selectedAccount.type) === 'Margin' && <SaxoMargin accountId={accountId} />}
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap">
           <select className="w-full sm:w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value) || null)}>

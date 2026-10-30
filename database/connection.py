@@ -372,6 +372,8 @@ def _seed_reference_data(conn) -> None:
 def _run_startup_migrations():
     """Run idempotent DDL migrations on startup (once per process)."""
     _STMTS = [
+        # Investments: the cash the broker actually booked for a trade (signed, account currency); NULL = derive it from Total_Amount_AccCur. See database/margin.py.
+        "ALTER TABLE Investments ADD COLUMN IF NOT EXISTS Booked_Cash_AccCur NUMERIC(28, 18)",
         # Historical_Prices: provenance columns
         "ALTER TABLE Historical_Prices ADD COLUMN IF NOT EXISTS Source        VARCHAR(50)",
         "ALTER TABLE Historical_Prices ADD COLUMN IF NOT EXISTS Downloaded_At TIMESTAMPTZ",

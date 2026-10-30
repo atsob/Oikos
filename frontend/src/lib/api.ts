@@ -177,6 +177,9 @@ export const getHoldings = (accountId?: number, includeClosed = false) =>
 export const updateHolding = (id: number, data: Record<string, unknown>) =>
   api.put(`/investments/holdings/${id}`, data).then(r => r.data)
 
+export const getSaxoMargin = (accountId: number) =>
+  api.get('/investments/saxo-margin', { params: { account_id: accountId } }).then(r => r.data)
+
 export const getLinkedAccount = (accountId: number) =>
   api.get(`/investments/linked-account/${accountId}`).then(r => r.data)
 

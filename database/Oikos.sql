@@ -656,6 +656,7 @@ CREATE TABLE Investments (
     Instrument_Type  instrument_type,  -- optional: actual traded instrument (e.g. CFDOnETF, CFDOnStock)
                                                   -- overrides Security.Is_Tax_Exempt for tax calculations when set
     Tax_Amount          NUMERIC(18, 6),              -- withholding tax (negative = tax withheld, in account currency)
+    Booked_Cash_AccCur  NUMERIC(28, 18),             -- the cash the broker actually booked for the trade (signed); NULL = derive from Total_Amount_AccCur
     Corporate_Actions_Id INTEGER REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE SET NULL,
     Transfers_Id     INTEGER,                        -- shared value links the legs of an inter-account transfer/conversion
     embedding        vector(768)

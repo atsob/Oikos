@@ -809,6 +809,18 @@ def parse_trades(
                 if currency and acc_currency and currency == acc_currency:
                     total_acc = max(0.0, round(booked_amt - commission, 2))
 
+        # What SAXO actually booked to the cash account for this trade (BookedAmountAccountCurrency — the "Booked amount" of its Transaction and balance
+        # report), signed: out for a Buy, in for a Sell, and for a CFD / FX Spot close its profit or loss, which can be negative. This is the cash leg;
+        # everything else here describes the trade. A Buy is always out and a (non-position) Sell always in, whatever sign the field carries.
+        _raw_booked = t.get("BookedAmountAccountCurrency")
+        booked_cash = None
+        if _raw_booked not in (None, ""):
+            _bv = float(_raw_booked)
+            if action == "Buy":
+                booked_cash = -abs(_bv)
+            elif action == "Sell":
+                booked_cash = _bv if is_position else abs(_bv)
+
         # ── Dedup key / description ──────────────────────────────────────────
         trade_id = t.get("TradeId") or t.get("OrderId") or ""
         if trade_id:
@@ -851,6 +863,7 @@ def parse_trades(
             "total_sec_cur":  round(notional, 2) if cross_ccy_position else None,
             "exchange":       exchange,
             "account_id_str": t.get("AccountId", ""),
+            "booked_cash":    round(booked_cash, 2) if booked_cash is not None else None,
         })
 
     return records
@@ -1533,8 +1546,8 @@ def run_import(
                            (Accounts_Id, Securities_Id, Date, Action, Quantity,
                             Price_Per_Share, Commission,
                             Total_Amount_AccCur, Total_Amount_SecCur, FX_Rate,
-                            Description, Instrument_Type)
-                       VALUES (%s, %s, %s, %s::investments_action, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                            Description, Instrument_Type, Booked_Cash_AccCur)
+                       VALUES (%s, %s, %s, %s::investments_action, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
                         _db_acc_id_int,
                         sec_id,
@@ -1548,6 +1561,7 @@ def run_import(
                         _fx,
                         rec["desc"],
                         _instr_type or None,
+                        rec.get("booked_cash"),
                     ),
                 )
                 counts["investments"] += 1
