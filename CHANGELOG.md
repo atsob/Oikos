@@ -18,6 +18,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 - **Saxo cash entries are what Saxo booked.** The Saxo import now records, for each trade, the cash Saxo actually booked (its *Booked amount*) and uses it as the trade's cash entry, instead of deriving it from the trade's price, a flat commission estimate and an exchange rate. The derivation was off by small amounts that added up: a flat €4.00 assumed for CFD ETF opens where Saxo booked about €3.41, a currency gain or loss counted on a CFD's notional that Saxo does not book, the commission added twice on some older share trades, and Saxo's commission credit on closing CFDs. Applies to every Saxo trade, whatever its type, and to a margin trade's cash entry as well; the position, cost basis and reports are unchanged. For your history the 115 trades were set from Saxo's *Transaction and balance report* (2025-01-01 to 2026-10-29), so the Saxo cash is now **€2,229.47, exactly Saxo's figure** (it was €2,244.57 before, €506.46 before the margin change); the previous cash entries are saved in `database_backups/saxo_cash_legs_before_booked_2026-10-30.json`. A trade edited by hand loses its booked amount. New column `Investments.Booked_Cash_AccCur` (added automatically on start).
 - **Anomalies: the security name opens its Security Detail.** On Market Data → Anomalies the security's name is a link, as on the other Market Data grids.
 
+### Fixed
+- **Investment Performance: the first row slid over the header.** In an account's drill-down (Reports → Inv. Performance) the pinned Security column was drawn above the sticky header, so after a scroll the first security's name overlapped the column titles while its figures hid underneath. The header now stays on top.
+
 ## 2026-10-29
 
 ### Added

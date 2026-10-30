@@ -2726,7 +2726,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           <WithCopy scrollKey="pnl-report-main">
             <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
               <table data-cards className="w-full text-sm">
-                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <thead className="sticky top-0 z-20"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." className="bg-slate-50 md:sticky md:left-0 md:z-20" />
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
