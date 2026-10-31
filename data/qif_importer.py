@@ -5,7 +5,7 @@ Handles importing QIF files into the PostgreSQL database
 
 import quiffen
 import csv
-import streamlit as st
+import logging
 import pandas as pd
 import tempfile
 import os
@@ -17,6 +17,20 @@ from database.crud import (
     save_nwr_account_selection,
 )
 from database.queries import get_nwr_account_selection
+
+
+class _Progress:
+    """The importer used to report its progress to a Streamlit page; with that UI gone (and Streamlit no longer installed) it goes to the log."""
+    _log = logging.getLogger(__name__)
+
+    def info(self, message): self._log.info(message)
+    def success(self, message): self._log.info(message)
+    def write(self, message): self._log.info(message)
+    def warning(self, message): self._log.warning(message)
+    def error(self, message): self._log.error(message)
+
+
+st = _Progress()
 
 # Suggested Oikos Accounts_Type per QIF AccountType — QIF can't distinguish
 # Checking from Savings (both are just "Bank"), so that split is always a

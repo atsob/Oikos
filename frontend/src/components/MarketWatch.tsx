@@ -4,7 +4,7 @@
 import type React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { getMarketWatch, getMarketWatchSummary, getMarketWatchEvents, getMarketWatchPlaybook, saveMarketWatchPlaybook, getLocalWatchEvents, getLocalWatchPlaybook, saveLocalWatchPlaybook, getMarketWatchBacktest, getMarketWatchBacktestHistory, runMarketWatchBacktest } from '@/lib/api'
@@ -14,7 +14,6 @@ import { useTheme } from '@/lib/theme'
 
 // react-plotly.js is CommonJS: depending on the bundler the component is the default export or its .default
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
 export type Level = 'good' | 'warn' | 'bad' | 'na'
 export type Trend = 'improving' | 'worsening' | 'flat' | undefined
@@ -96,7 +95,7 @@ function FcfCard({ d }: { d: Ind }) {
   const cos = (d.companies ?? []) as { ticker: string; name: string; ttm: number | null; ttm_capex: number | null; last_q: number; last_q_yoy: number | null; q: { fcf: number }[]; last_quarter: string }[]
   return (
     <Shell title="Free cash flow of the hyperscalers" why="Shows whether the AI capex pays back" good="rising trend" warn="two quarters in a row negative in total, or trailing 4 quarters below zero (amber: capex over 90% of operating cash flow)" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Last quarter" value={`$${fmtNum(d.last_q_bn, 1)}bn`} tone={d.last_q_bn < 0 ? 'text-red-600' : ''} sub="all five, summed" />
         <Stat label="vs a year ago" value={d.last_q_yoy_pct == null ? '—' : signed(d.last_q_yoy_pct, 0, '%')} tone={tone(d.last_q_yoy_pct)} sub="same quarter" />
         <Stat label="Trailing 4 quarters" value={`$${fmtNum(d.ttm_bn, 0)}bn`} />
@@ -133,12 +132,12 @@ function SpreadsCard({ d }: { d: Ind }) {
   return (
     <Shell title="Bond spreads / CDS" why="The cost of funding — credit stress shows up here first" good="stable spreads" warn={oas ? "high yield up 0.75 pp in 20 days, or at 4.5%, or up 1.0 pp in 60 days; investment grade at 1.3%" : "high-yield ratio down 3% in 20 days"} ind={d}>
       {oas ? (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Stat label="High yield OAS" value={`${fmtNum(d.hy, 2)}%`} sub={`${signed(d.hy_chg_60d, 2, ' pp')} in 60 days`} /><Stat label="20-day change" value={signed(d.hy_chg_20d, 2, ' pp')} tone={tone(d.hy_chg_20d, true)} />
           <Stat label="Investment grade OAS" value={`${fmtNum(d.ig, 2)}%`} /><Stat label="20-day change" value={signed(d.ig_chg_20d, 2, ' pp')} tone={tone(d.ig_chg_20d, true)} />
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <Stat label="High yield vs Treasuries, 20 days" value={signed(d.hy_ratio_chg_20d_pct, 2, '%')} tone={tone(d.hy_ratio_chg_20d_pct)} sub="HYG ÷ IEF price" />
           <Stat label="Inv. grade vs Treasuries, 20 days" value={signed(d.ig_ratio_chg_20d_pct, 2, '%')} tone={tone(d.ig_ratio_chg_20d_pct)} sub="LQD ÷ IEF price" />
           <Stat label="High-yield ratio vs 200-day average" value={d.below_200d ? 'below' : 'above'} tone={d.below_200d ? 'text-red-600' : 'text-green-700'} />
@@ -153,7 +152,7 @@ function SpreadsCard({ d }: { d: Ind }) {
 function TenYearCard({ d }: { d: Ind }) {
   return (
     <Shell title="10-year Treasury" why="Sets the cost of capital" good="below 5% and stable" warn="up 0.75 pp in about 3 months — or above 5.5% and up 0.5 pp (speed, not level)" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Yield" value={`${fmtNum(d.yield_pct, 2)}%`} tone={d.yield_pct > 5.5 ? 'text-red-600' : d.yield_pct >= 5 ? 'text-amber-600' : ''} />
         <Stat label="1 month" value={signed(d.chg_1m, 2, ' pp')} tone={tone(d.chg_1m, true)} />
         <Stat label="3 months" value={signed(d.chg_3m, 2, ' pp')} tone={tone(d.chg_3m, true)} />
@@ -168,7 +167,7 @@ function BreadthCard({ d }: { d: Ind }) {
   const has = d.pct_above_200d != null
   return (
     <Shell title="Market breadth" why="How wide the rally is" good="more stocks taking part" warn="the S&P 500 within 5% of its high while under 40% of stocks are above the 200-day average — or under 25% above the 50-day with the 200-day under 50%" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {has && <Stat label="S&P 500 above 200-day" value={`${fmtNum(d.pct_above_200d, 1)}%`} tone={d.pct_above_200d < 40 ? 'text-red-600' : d.pct_above_200d < 50 ? 'text-amber-600' : ''} sub={`${signed(d.pct_above_200d_chg_20d, 1, ' pts')} in 20 days`} />}
         {has && <Stat label="…above 50-day" value={`${fmtNum(d.pct_above_50d, 1)}%`} />}
         {d.sectors_total != null && <Stat label="Sector ETFs above 200-day" value={`${d.sectors_above_200d} of ${d.sectors_total}`} tone={d.sectors_above_200d / d.sectors_total < 0.5 ? 'text-amber-600' : ''} sub={`${d.sectors_above_50d} above 50-day`} />}
@@ -339,7 +338,7 @@ export function RecentChanges({ scope = 'market' }: { scope?: 'market' | 'local'
 function FranceCard({ d }: { d: Ind }) {
   return (
     <Shell title="France–Germany 10-year spread" why="Context for the French-bond and counterparty rules — not part of the banner" good="below 0.9 pp" warn="1.3 pp or more, or +0.4 pp in 3 months" ind={d}>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Stat label="Spread" value={`${fmtNum(d.spread_pp, 2)} pp`} tone={d.spread_pp >= 1.3 ? 'text-red-600' : d.spread_pp >= 0.9 ? 'text-amber-600' : ''} sub={`monthly, as of ${d.as_of}`} />
         <Stat label="3 months" value={signed(d.chg_3m, 2, ' pp')} tone={tone(d.chg_3m, true)} />
         <Stat label="Amber from" value="0.9 pp" sub="2024–25 political stress peaked near 0.85" />
@@ -352,7 +351,7 @@ function FranceCard({ d }: { d: Ind }) {
 function ErpCard({ d }: { d: Ind }) {
   return (
     <Shell title="Equity risk premium" why="Valuation context — slow-moving, not a timing signal and not part of the banner" good="above 2%" warn="below 0 (shares yield less than inflation-protected Treasuries)" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Risk premium" value={signed(d.erp_pp, 2, ' pp')} tone={d.erp_pp < 0 ? 'text-red-600' : d.erp_pp < 2 ? 'text-amber-600' : 'text-green-700'} />
         <Stat label="Earnings yield" value={`${fmtNum(d.earnings_yield_pct, 2)}%`} sub={`1 ÷ CAPE ${fmtNum(d.cape, 1)}`} />
         <Stat label="10-year real yield" value={`${fmtNum(d.real_yield_pct, 2)}%`} sub="TIPS, FRED DFII10" />

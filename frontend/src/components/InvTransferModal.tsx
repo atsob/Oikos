@@ -138,7 +138,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92dvh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">Transfer / Convert Holding</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -156,7 +156,7 @@ export function InvTransferModal({ accounts, onClose, onDone }: {
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2 border border-slate-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-slate-500 uppercase">From</p>
               <div>

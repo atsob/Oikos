@@ -44,33 +44,39 @@ MISMATCH_RATIO = 2.0
 PERIODS = {"day": "day", "week": "week", "month": "month"}
 
 
+def _ids(account_ids: Optional[str]) -> list[int]:
+    return [int(x) for x in (account_ids or "").split(",") if x.strip().isdigit()]
+
+
 def _num(v):
     return None if v is None or (isinstance(v, float) and math.isnan(v)) else v
 
 
 @router.get("/years")
-def get_years(account_id: Optional[int] = Query(None)):
-    """Calendar years with trading activity for the account (or all investment accounts)."""
-    acct = "AND i.Accounts_Id = %(a)s" if account_id else "AND a.Accounts_Type::text = ANY(%(t)s)"
+def get_years(account_id: Optional[int] = Query(None), account_ids: Optional[str] = Query(None)):
+    """Calendar years with trading activity for the account, the accounts of a preset (account_ids, comma-separated) or all investment accounts."""
+    ids = _ids(account_ids)
+    acct = "AND i.Accounts_Id = %(a)s" if account_id else "AND i.Accounts_Id = ANY(%(ids)s)" if ids else "AND a.Accounts_Type::text = ANY(%(t)s)"
     with get_db() as conn:
         df = pd.read_sql(f"""
             SELECT DISTINCT EXTRACT(YEAR FROM i.Date)::int AS yr
             FROM Investments i JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
             WHERE i.Securities_Id IS NOT NULL {acct} ORDER BY yr DESC
-        """, conn, params={"a": account_id, "t": list(INVESTMENT_TYPES)})
+        """, conn, params={"a": account_id, "t": list(INVESTMENT_TYPES), "ids": ids})
     return [int(y) for y in df["yr"]]
 
 
 @router.get("")
 def get_day_extremes(
     account_id: Optional[int] = Query(None),
+    account_ids: Optional[str] = Query(None),
     year: Optional[int] = Query(None),
     n: int = Query(10),
     min_base: float = Query(100.0),
     period: str = Query("day"),
 ):
     """The `n` best and worst days (`period` = day), weeks (week) or months (month) of `year` for
-    one account (or all investment accounts when account_id is omitted). Periods whose base (see
+    one account, the accounts of a preset (account_ids, comma-separated) or all investment accounts when neither is given. Periods whose base (see
     module docstring) is under `min_base` EUR are ignored — a near-empty account would otherwise
     produce absurd percentages."""
     today = date.today()
@@ -82,11 +88,12 @@ def get_day_extremes(
     start, end = date(year, 1, 1), min(date(year, 12, 31), today)
     if end < start:
         raise HTTPException(400, "year is in the future")
-    acct_clause = "AND i.Accounts_Id = %(a)s" if account_id else "AND a.Accounts_Type::text = ANY(%(t)s)"
-    params = {"a": account_id, "t": list(INVESTMENT_TYPES), "end": end}
+    ids = [] if account_id else _ids(account_ids)
+    acct_clause = "AND i.Accounts_Id = %(a)s" if account_id else "AND i.Accounts_Id = ANY(%(ids)s)" if ids else "AND a.Accounts_Type::text = ANY(%(t)s)"
+    params = {"a": account_id, "t": list(INVESTMENT_TYPES), "end": end, "ids": ids}
 
     with get_db() as conn:
-        name = "All investment accounts"
+        name = f"{len(ids)} account{'s' if len(ids) != 1 else ''}" if ids else "All investment accounts"
         if account_id:
             nm = pd.read_sql("SELECT Accounts_Name FROM Accounts WHERE Accounts_Id = %(a)s", conn, params={"a": account_id})
             if nm.empty:

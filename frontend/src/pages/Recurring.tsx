@@ -141,7 +141,7 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl max-h-[90dvh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{isEdit ? 'Edit Template' : 'New Template'}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -294,18 +294,18 @@ function TemplateModal({ form, onChange, splits, onSplitsChange, accounts, payee
             </div>
             {splits.length > 0 && (
               <div className="space-y-2 border border-slate-200 rounded-lg p-3">
-                <div className="text-xs font-medium text-slate-400 grid grid-cols-12 gap-2">
+                <div className="text-xs font-medium text-slate-400 hidden sm:grid grid-cols-12 gap-2">
                   <span className="col-span-5">Category</span>
                   <span className="col-span-3">Amount</span>
                   <span className="col-span-3">Memo</span>
                 </div>
                 {splits.map((sp, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                    <CategorySelect className="col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
+                  <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center border-b border-slate-100 pb-2 sm:border-0 sm:pb-0">
+                    <CategorySelect className="col-span-2 sm:col-span-5" value={sp.categories_id} onChange={v => setSplit(i, 'categories_id', v)}
                       categories={sortedCategories} onCategoryCreated={onCategoryCreated} />
-                    <Input className="col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
-                    <Input className="col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
-                    <button onClick={() => removeSplit(i)} className="col-span-1 text-slate-400 hover:text-red-500"><X size={14} /></button>
+                    <Input className="sm:col-span-3 text-xs py-1" type="number" step="0.01" value={sp.amount} onChange={e => setSplit(i, 'amount', e.target.value)} placeholder="0.00" />
+                    <Input className="sm:col-span-3 text-xs py-1" value={sp.memo} onChange={e => setSplit(i, 'memo', e.target.value)} placeholder="Memo" />
+                    <button onClick={() => removeSplit(i)} className="col-span-2 sm:col-span-1 justify-self-end p-1 text-slate-400 hover:text-red-500" title="Remove this split"><X size={14} /></button>
                   </div>
                 ))}
                 {tplTotal !== 0 && (
@@ -460,7 +460,7 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92dvh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-50 rounded-t-xl">
           <div className="flex items-center gap-2 flex-wrap text-sm font-medium text-slate-700 min-w-0">
@@ -483,7 +483,7 @@ export function DraftReviewModal({ draft, accounts, payees, categories, onClose,
 
         <div className="px-5 py-4 space-y-4">
           {/* Date + Amount */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-xs font-medium text-slate-500 block mb-1">Date</label>
               <Input type="date" value={form.date} onChange={e => set('date', e.target.value)} />
@@ -752,7 +752,7 @@ function FromTransactionModal({ onCreated, onClose }: { onCreated: (id: number) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80dvh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold text-slate-800">Create Template from Transaction</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -975,7 +975,7 @@ export default function Recurring() {
         }
       />
 
-      <div className="px-6 pt-4 pb-6 space-y-4">
+      <div className="px-3 sm:px-6 pt-4 pb-6 space-y-4">
         {/* Tabs */}
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 flex-wrap">
           <div className="flex gap-1">

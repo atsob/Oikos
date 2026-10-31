@@ -6,6 +6,7 @@ import datetime as _dt
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from database.connection import get_db, get_connection
+from api.access import narrow_ids, scope_now, scope_sql, held_securities, owner_now   # a restricted user's reports cover their own accounts only (api/access.py)
 
 router = APIRouter()
 
@@ -1376,51 +1377,48 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
 def get_pnl_summary(
     start_date: str = Query("2024-01-01"),
     end_date: str = Query("2099-12-31"),
+    account_ids: Optional[str] = Query(None),
+    account_id: Optional[int] = Query(None),
 ):
-    """Monthly P&L summary: realized gains + dividends per month."""
-    query = """
-    WITH realized AS (
-        SELECT date_trunc('month', i.Date)::date AS month,
-               i.Quantity * (i.Price_Per_Share - COALESCE(h.simple_avg_price, 0))
+    """Monthly P&L summary: realized gains + dividends per month.
+
+    account_ids (comma-separated Accounts_Id; account_id for a single one) limits both figures to those investment accounts — without it
+    every account is included.
+
+    Realized gains are the FIFO figure every other realized-P&L report uses (database.queries._compute_realized_pnl_fifo): each sale is matched
+    against the lots it actually closes, in the account's currency, then converted to EUR. This endpoint used to compute it as quantity x (price -
+    the holding's *current* average cost) — and a position that had been sold out has no holding, so its average cost was 0 and the whole sale
+    proceeds counted as gain. A Treasury bill redeemed at par, or a term deposit repaid, showed up as a gain of its full face value (EUR 101k
+    in January 2026, EUR 72k in October 2024) instead of the few euros of discount earned.
+    """
+    from database.queries import _compute_realized_pnl_fifo
+    accts = _parse_account_ids(account_ids) or ([account_id] if account_id is not None else None)
+    divs_query = """
+    SELECT date_trunc('month', i.Date)::date AS month,
+           SUM(ABS(i.Total_Amount_AccCur)
                * COALESCE(
                    (SELECT FX_Rate FROM Historical_FX
                     WHERE Currencies_Id_1 = c2.Currencies_Id AND Date <= i.Date
                     ORDER BY Date DESC LIMIT 1), 1
-               ) AS value
-        FROM Investments i
-        JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-        JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
-        LEFT JOIN Holdings h ON h.Securities_Id = i.Securities_Id AND h.Accounts_Id = i.Accounts_Id
-        WHERE i.Action IN ('Sell','ShrOut')
-          AND i.Date BETWEEN %(start_date)s AND %(end_date)s
-    ),
-    divs AS (
-        SELECT date_trunc('month', i.Date)::date AS month,
-               ABS(i.Total_Amount_AccCur)
-               * COALESCE(
-                   (SELECT FX_Rate FROM Historical_FX
-                    WHERE Currencies_Id_1 = c2.Currencies_Id AND Date <= i.Date
-                    ORDER BY Date DESC LIMIT 1), 1
-               ) AS value
-        FROM Investments i
-        JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
-        JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
-        WHERE i.Action IN ('Dividend','Reinvest','IntInc','MiscInc','RtrnCap')
-          AND i.Date BETWEEN %(start_date)s AND %(end_date)s
-    )
-    SELECT
-        COALESCE(r.month, d.month) AS month,
-        COALESCE(SUM(r.value), 0) AS realized_gain,
-        COALESCE(SUM(d.value), 0) AS dividend_income
-    FROM (SELECT month, SUM(value) AS value FROM realized GROUP BY month) r
-    FULL OUTER JOIN (SELECT month, SUM(value) AS value FROM divs GROUP BY month) d
-        ON r.month = d.month
+               )) AS dividend_income
+    FROM Investments i
+    JOIN Accounts a ON a.Accounts_Id = i.Accounts_Id
+    JOIN Currencies c2 ON c2.Currencies_Id = a.Currencies_Id
+    WHERE i.Action IN ('Dividend','Reinvest','IntInc','MiscInc','RtrnCap')
+      AND i.Date BETWEEN %(start_date)s AND %(end_date)s""" + (" AND i.Accounts_Id = ANY(%(acct)s)" if accts else "") + """
     GROUP BY 1
-    ORDER BY 1
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"start_date": start_date, "end_date": end_date})
-    return _df_to_list(df)
+        fifo = _compute_realized_pnl_fifo(conn, start_date, end_date, accts)
+        divs = pd.read_sql(divs_query, conn, params={"start_date": start_date, "end_date": end_date, "acct": accts})
+    if fifo is None or fifo.empty:
+        realized = pd.DataFrame({"month": pd.Series(dtype="object"), "realized_gain": pd.Series(dtype="float")})
+    else:
+        realized = fifo.groupby("month_date")["split_amount"].sum().reset_index()
+        realized.columns = ["month", "realized_gain"]
+        realized["month"] = pd.to_datetime(realized["month"]).dt.date
+    df = realized.merge(divs, on="month", how="outer").fillna(0).sort_values("month")
+    return _df_to_list(df[["month", "realized_gain", "dividend_income"]])
 
 
 @router.get("/income-expense-detail")
@@ -1502,8 +1500,10 @@ def get_dividends_tracker(
     period: str = Query("YTD"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    account_ids: Optional[str] = Query(None),
 ):
-    """Monthly dividend/interest income with FIFO cost basis & annualised YOC per security."""
+    """Monthly dividend/interest income with FIFO cost basis & annualised YOC per security. account_ids (comma-separated, an Account Preset)
+    limits the income, and the buys and sells its cost basis is built from, to those accounts."""
     from datetime import date as _date, timedelta as _td
 
     today = _date.today()
@@ -1556,7 +1556,7 @@ def get_dividends_tracker(
             JOIN Accounts   a ON i.Accounts_Id   = a.Accounts_Id
             LEFT JOIN fx      ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
-              AND i.Date BETWEEN %(start_date)s AND %(end_date)s
+              AND i.Date BETWEEN %(start_date)s AND %(end_date)s /*ACCT_I*/
             GROUP BY i.Date, i.Securities_Id, s.Securities_Name, s.Securities_Type,
                      a.Accounts_Id, a.Accounts_Name, a.Currencies_Id, i.Action
         )
@@ -1589,14 +1589,14 @@ def get_dividends_tracker(
                       OR (b.Action = 'Reinvest' AND i.Securities_Type NOT IN ('CD','Bond'))
                   )
                   AND b.Date    <= i.Date
-                  AND b.Quantity > 0
+                  AND b.Quantity > 0 /*ACCT_B*/
             ),
             sells AS (
                 SELECT COALESCE(SUM(s.Quantity), 0) AS total_sell_qty
                 FROM Investments s
                 WHERE s.Securities_Id = i.Securities_Id
                   AND s.Action IN ('Sell','ShrOut','Expire')
-                  AND s.Date     < i.Date
+                  AND s.Date     < i.Date /*ACCT_S*/
             ),
             fifo AS (
                 SELECT
@@ -1612,6 +1612,9 @@ def get_dividends_tracker(
         ) AS fc
         ORDER BY i.Date DESC, i.income_eur DESC
     """
+    acct_ids = _parse_account_ids(account_ids)
+    query = (query.replace("/*ACCT_I*/", _acct_clause(acct_ids, "i.Accounts_Id")).replace("/*ACCT_B*/", _acct_clause(acct_ids, "b.Accounts_Id"))
+             .replace("/*ACCT_S*/", _acct_clause(acct_ids, "s.Accounts_Id")))
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"start_date": str(sd), "end_date": str(ed)})
 
@@ -1745,10 +1748,11 @@ def get_dividends_tracker(
 
 # ── Dividend Forecast ───────────────────────────────────────────────────────────
 @router.get("/dividends-forecast")
-def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$")):
+def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"), account_ids: Optional[str] = Query(None)):
     """Projected dividend income for currently-held dividend-paying securities, over
     a selectable horizon: to end of this calendar year, the next 6 months, or the
-    next 12 months (default, matches the original always-12-month behaviour)."""
+    next 12 months (default, matches the original always-12-month behaviour). account_ids
+    (comma-separated, an Account Preset) limits the holdings and the trailing income to those accounts."""
     import calendar as _cal
     from datetime import date as _date, timedelta as _timedelta
 
@@ -1805,7 +1809,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
             FROM Holdings h
             JOIN Accounts a ON h.Accounts_Id = a.Accounts_Id
             LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
-            WHERE h.Quantity > 0
+            WHERE h.Quantity > 0 /*ACCT_H*/
             GROUP BY h.Securities_Id
         ),
         last_div AS (
@@ -1820,7 +1824,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
             JOIN Accounts a ON i.Accounts_Id = a.Accounts_Id
             LEFT JOIN fx_latest fx ON fx.Currencies_Id_1 = a.Currencies_Id
             WHERE i.Action IN ('Dividend','IntInc','Reinvest')
-              AND i.Date >= CURRENT_DATE - INTERVAL '12 months'
+              AND i.Date >= CURRENT_DATE - INTERVAL '12 months' /*ACCT_I*/
             GROUP BY i.Securities_Id
         )
         SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
@@ -1842,6 +1846,8 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"))
         WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
         ORDER BY s.Securities_Name
     """
+    acct_ids = _parse_account_ids(account_ids)
+    query = query.replace("/*ACCT_H*/", _acct_clause(acct_ids, "h.Accounts_Id")).replace("/*ACCT_I*/", _acct_clause(acct_ids, "i.Accounts_Id"))
     with get_db() as conn:
         df = pd.read_sql(query, conn)
 
@@ -2281,7 +2287,7 @@ def _get_all_inv_txns_for_gains(conn) -> pd.DataFrame:
     return df
 
 
-def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO') -> pd.DataFrame:
+def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO', detail: bool = False) -> pd.DataFrame:
     """FIFO or LIFO lot matching.
 
     Tracks both long lots and short lots per (security, account). A sell first
@@ -2294,6 +2300,8 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
     short lots (recognised now, gain = the original short-sale proceeds minus
     this cover's cost) before any leftover opens a new long lot. Ordinary
     long-only accounts are numerically unaffected.
+
+    detail=True adds a `lots` column: for each gain row, the lots the sale used (when and where they were acquired, how, how much of each and what it cost).
     """
     from collections import deque
     BUY_ACTIONS  = {'Buy', 'Reinvest', 'ShrIn', 'CashIn'}
@@ -2389,11 +2397,12 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                 if cover_qty > 1e-9 and date.year == tax_year:
                     make_row(row, date, action, cover_qty, cover_proceeds, cover_cost, first_short_date)
                 if remaining > 1e-9:
-                    long_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
+                    long_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps, 'action': action, 'account': row.get('account_name')})
 
             elif action in SELL_ACTIONS:
                 remaining = qty
                 close_cost, close_proceeds, close_qty, first_buy_date = 0.0, 0.0, 0.0, None
+                pieces = []
                 while remaining > 1e-9 and long_lots:
                     lot = long_lots[-1] if is_lifo else long_lots[0]
                     if first_buy_date is None:
@@ -2402,12 +2411,18 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
                     close_cost     += consumed * lot['cost_ps']
                     close_proceeds += consumed * cost_ps
                     close_qty      += consumed
+                    if detail:
+                        pieces.append({'date': lot['date'].date().isoformat(), 'quantity': consumed, 'cost_eur': consumed * lot['cost_ps'],
+                                       'action': lot.get('action'), 'account': lot.get('account')})
                     lot['qty']     -= consumed
                     remaining      -= consumed
                     if lot['qty'] < 1e-9:
                         (long_lots.pop() if is_lifo else long_lots.popleft())
                 if close_qty > 1e-9 and date.year == tax_year:
                     make_row(row, date, action, close_qty, close_proceeds, close_cost, first_buy_date)
+                    if detail:
+                        results[-1]['lots'] = pieces
+                        results[-1]['sell_account'] = row.get('account_name')
                 if remaining > 1e-9:
                     short_lots.append({'date': date, 'qty': remaining, 'cost_ps': cost_ps})
 
@@ -2415,6 +2430,8 @@ def _compute_lot_gains(df_all: pd.DataFrame, tax_year: int, method: str = 'FIFO'
             'sell_price','avg_cost','proceeds_eur','cost_eur','gain_loss_eur',
             'holding_type','is_tax_exempt','instrument_type','securities_type',
             'tax_category','gains_taxable','gains_rate','gains_tax_code']
+    if detail:
+        cols = cols + ['lots', 'sell_account']
     return pd.DataFrame(results, columns=cols) if results else pd.DataFrame(columns=cols)
 
 
@@ -2544,8 +2561,8 @@ def _compute_wac_gains(df_all: pd.DataFrame, tax_year: int) -> pd.DataFrame:
 
 
 @router.get("/capital-gains")
-def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
-    """Realized capital gains for a tax year.
+def get_capital_gains(year: int = Query(None), method: str = Query('WAC'), account_ids: Optional[str] = Query(None)):
+    """Realized capital gains for a tax year. account_ids (comma-separated, an Account Preset) limits it to those accounts.
 
     method: WAC (Weighted Average Cost), FIFO, or LIFO.
     - WAC: per-sell WAC using only buys in the current open position (resets after full close).
@@ -2563,6 +2580,9 @@ def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
 
     with get_db() as conn:
         df_all = _get_all_inv_txns_for_gains(conn)
+    _ids = _parse_account_ids(account_ids)
+    if _ids and not df_all.empty:
+        df_all = df_all[df_all['accounts_id'].isin(_ids)]
 
     if method.upper() in ('FIFO', 'LIFO'):
         df = _compute_lot_gains(df_all, year, method=method.upper())
@@ -2570,6 +2590,478 @@ def get_capital_gains(year: int = Query(None), method: str = Query('WAC')):
 
     df = _compute_wac_gains(df_all, year)
     return _df_to_list(df)
+
+
+# ── Crypto tax (Greece) ─────────────────────────────────────────────────────────────────────────────────────
+# What Reports -> Investment Tax -> Crypto adds to the Capital Gains tab: all wallets pooled into one FIFO / LIFO queue per coin (Greek tax counts what
+# you disposed of, not where it sat), moves between your own wallets taken out, a loss carry-forward over the next five years, the tax at the
+# configured rate, the rewards (staking, earn) received, and the figures for the Form E1 codes — the things the TaxApps.gr crypto calculator asks for,
+# worked out from the ledger instead of typed in.
+CRYPTO_LOSS_YEARS = 5
+TRANSFER_QTY_TOLERANCE = 0.03       # an own-wallet transfer arrives a little short of what left: the network fee
+TRANSFER_DAYS = 3
+
+
+def _drop_own_transfers(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Takes out pairs of ShrOut / ShrIn of the same coin within a few days and of nearly the same quantity — a move between your own wallets, which is
+    not a disposal. (A swap is a different coin on each side, so it stays.) Returns the rest and how many pairs were removed."""
+    outs, ins = df[df["action"] == "ShrOut"], df[df["action"] == "ShrIn"]
+    drop, taken = set(), set()
+    for oi, o in outs.sort_values("date").iterrows():
+        q = float(o["quantity"] or 0)
+        if q <= 0:
+            continue
+        cand = ins[(ins["securities_id"] == o["securities_id"]) & (~ins.index.isin(taken))
+                   & ((ins["date"] - o["date"]).abs() <= pd.Timedelta(days=TRANSFER_DAYS))
+                   & (ins["quantity"].astype(float) <= q * 1.0001) & (ins["quantity"].astype(float) >= q * (1 - TRANSFER_QTY_TOLERANCE))]
+        if cand.empty:
+            continue
+        ci = (cand["date"] - o["date"]).abs().idxmin()
+        drop.update([oi, ci]); taken.add(ci)
+    return df.drop(index=list(drop)), len(drop) // 2
+
+
+def _progressive_tax(income: float) -> float:
+    """Greek income tax on `income` alone, on the scale of the retirement planner's Greek profile (no credit): the rewards taxed as income, as if they were
+    the only income — a rough figure, the real one depends on everything else you earned."""
+    from database.retirement import GREEK_TAX
+    tax, lo = 0.0, 0.0
+    for ub, rate in GREEK_TAX["brackets"]:
+        hi = float("inf") if ub is None else float(ub)
+        tax += rate / 100.0 * max(min(income, hi) - lo, 0.0)
+        lo = hi
+    return tax
+
+
+@router.get("/crypto-tax")
+def get_crypto_tax(year: int = Query(None), method: str = Query("FIFO"), exemption: float = Query(0.0), rate: Optional[float] = Query(None),
+                   account_ids: Optional[str] = Query(None), losses_from: int = Query(0), rewards_income: Optional[bool] = Query(None),
+                   exclude_account_ids: Optional[str] = Query(None)):
+    """Crypto tax for a year: disposals (FIFO / LIFO over all wallets together), the loss carry-forward, tax due, rewards and the Form E1 figures.
+    `rate` defaults to the gains rate of the 'Crypto' tax category; `exemption` is a yearly amount of gain left untaxed (0 unless the law gives one);
+    `account_ids` limits it to some accounts (the crypto CFD account, say, can be left out); `losses_from` is the first year whose losses can be carried forward
+    (0 = all — crypto gains were not taxed in every year, so losses from before the tax started may not count).
+    `rewards_income`: staking / earn rewards are income when received (their value then is taxed as income and is the cost of the coins) — the 'Crypto'
+    category's setting unless given; off means they are not taxed on receipt and cost nothing, so the whole value is a gain when sold."""
+    from datetime import date as _date
+    method = method.upper() if method.upper() in ("FIFO", "LIFO") else "FIFO"
+    year = year or _date.today().year
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+        rules = pd.read_sql("SELECT Gains_Rate, Income_Tax_Rate, Reinvest_Taxable FROM Tax_Category_Rules WHERE Tax_Category = 'Crypto'", conn)
+    gains_rate = float(rules["gains_rate"].iloc[0]) if not rules.empty and pd.notna(rules["gains_rate"].iloc[0]) else 15.0
+    income_rate = float(rules["income_tax_rate"].iloc[0]) if not rules.empty and pd.notna(rules["income_tax_rate"].iloc[0]) else 15.0
+    rate = gains_rate if rate is None else float(rate)
+    if rewards_income is None:
+        rewards_income = bool(rules["reinvest_taxable"].iloc[0]) if not rules.empty and pd.notna(rules["reinvest_taxable"].iloc[0]) else True
+
+    notes = ["Estimate, not advice: it does not replace the tax return. Check the rules and the E1 codes with your accountant or the AADE guidance.",
+             "Crypto-to-crypto swaps and spending crypto are treated as disposals, as the TaxApps.gr calculator does; sources disagree about swaps."]
+    empty = {"year": year, "method": method, "rate": rate, "exemption": exemption, "income_rate": income_rate, "accounts": [], "summary": {}, "years": [],
+             "disposals": [], "rewards": {"total": 0.0, "rows": []}, "e1": [], "notes": notes, "transfers_removed": 0}
+    if df_all.empty:
+        return empty
+    is_crypto = (df_all["securities_type"].astype(str) == "Crypto") | (df_all["tax_category"].astype(str) == "Crypto")
+    crypto = df_all[is_crypto].copy()
+    if crypto.empty:
+        return empty
+    accounts = [{"id": int(i), "name": str(n), "rows": int(c)} for (i, n), c in crypto.groupby(["accounts_id", "account_name"]).size().items()]
+    ids = _parse_account_ids(account_ids)
+    if ids:
+        crypto = crypto[crypto["accounts_id"].isin(ids)]
+    skip = _parse_account_ids(exclude_account_ids, scoped=False)
+    if skip:
+        crypto = crypto[~crypto["accounts_id"].isin(skip)]
+    crypto, n_transfers = _drop_own_transfers(crypto)
+    pooled = crypto.copy()
+    pooled["accounts_id"] = 0                      # one queue per coin across wallets; each row keeps its account's name for display
+    if not rewards_income:
+        pooled.loc[pooled["action"] == "Reinvest", "amount_eur"] = 0.0
+
+    first_year = int(pooled["date"].dt.year.min()) if not pooled.empty else year
+    results = {}
+    disposals = []
+    for y in range(first_year, year + 1):
+        g = _compute_lot_gains(pooled, y, method=method, detail=(y == year))
+        results[y] = float(g["gain_loss_eur"].sum()) if not g.empty else 0.0
+        if y == year and not g.empty:
+            for r in g.sort_values("date").to_dict("records"):
+                lots = [{**l, "quantity": float(l["quantity"]), "cost_eur": round(float(l["cost_eur"]), 2),
+                         "how": {"Buy": "Bought", "Reinvest": "Reward (staking / earn)", "ShrIn": "Received (swap or transfer in)", "CashIn": "Cash in"}.get(l["action"], l["action"])}
+                        for l in (r.get("lots") or [])]
+                disposals.append({"date": r["date"], "security": r["security"], "account": r.get("sell_account"), "lots": lots[:200], "lots_total": len(lots),
+                                  "kind": "Swap (coin sold for another)" if r["action"] == "ShrOut" else "Sale", "quantity": float(r["quantity"]), "proceeds_eur": round(float(r["proceeds_eur"]), 2), "cost_eur": round(float(r["cost_eur"]), 2),
+                                  "gain_loss_eur": round(float(r["gain_loss_eur"]), 2), "holding_type": r["holding_type"]})
+
+    pools: list[list[float]] = []                  # [loss year, remaining]
+    years = []
+    for y in range(first_year, year + 1):
+        pools = [pl for pl in pools if y - pl[0] <= CRYPTO_LOSS_YEARS and pl[1] > 0.005]
+        res, used = results[y], 0.0
+        if res > 0:
+            left = res
+            for pl in pools:                       # the oldest loss first
+                take = min(pl[1], left); pl[1] -= take; left -= take; used += take
+            after_losses = left
+        else:
+            after_losses = 0.0
+            if res < 0 and y >= losses_from:
+                pools.append([y, -res])
+        taxable = max(after_losses - max(exemption, 0.0), 0.0)
+        years.append({"year": y, "result": round(res, 2), "losses_used": round(used, 2), "taxable": round(taxable, 2), "tax": round(taxable * rate / 100.0, 2),
+                      "losses_available": round(sum(pl[1] for pl in pools), 2),
+                      "loss_years": [{"year": int(pl[0]), "remaining": round(pl[1], 2), "expires": int(pl[0]) + CRYPTO_LOSS_YEARS} for pl in pools if pl[1] > 0.005]})
+    cur = years[-1] if years else {"year": year, "result": 0.0, "losses_used": 0.0, "taxable": 0.0, "tax": 0.0, "losses_available": 0.0, "loss_years": []}
+
+    yr = crypto[crypto["date"].dt.year == year]
+    purchases = float(yr[yr["action"] == "Buy"]["amount_eur"].sum())
+    rw = yr[yr["action"] == "Reinvest"]
+    rewards_rows = [{"security": str(n), "quantity": float(g["quantity"].sum()), "value_eur": round(float(g["amount_eur"].sum()), 2), "payments": int(len(g))}
+                    for n, g in rw.groupby("securities_name")]      # `crypto`, not `pooled`: the value when received is shown whether or not it is taxed then
+    rewards_rows.sort(key=lambda r: -r["value_eur"])
+    rewards_total = round(sum(r["value_eur"] for r in rewards_rows), 2)
+    proceeds = round(sum(d["proceeds_eur"] for d in disposals), 2)
+    cost = round(sum(d["cost_eur"] for d in disposals), 2)
+    e1 = [
+        {"codes": "743 – 744", "label": "Amount spent purchasing crypto in the year", "amount": round(purchases, 2)},
+        {"codes": "865 – 866", "label": "Capital gain from sales (after losses brought forward)", "amount": cur["taxable"]},
+        {"codes": "781 – 782", "label": "Return of invested capital — the cost of what was sold, not taxed again", "amount": cost},
+    ]
+    return {
+        "year": year, "method": method, "rate": rate, "exemption": exemption, "income_rate": income_rate, "accounts": accounts, "transfers_removed": n_transfers,
+        "summary": {"disposals": len(disposals), "proceeds_eur": proceeds, "cost_eur": cost, "result_eur": cur["result"], "losses_used_eur": cur["losses_used"],
+                    "taxable_eur": cur["taxable"], "tax_eur": cur["tax"], "losses_available_eur": cur["losses_available"], "purchases_eur": round(purchases, 2)},
+        "years": years, "disposals": disposals,
+        "rewards": {"total": rewards_total, "rows": rewards_rows, "taxable": bool(rewards_income),
+                    "tax_at_rate": round(rewards_total * income_rate / 100.0, 2) if rewards_income else 0.0,
+                    "tax_progressive": round(_progressive_tax(rewards_total), 2) if rewards_income else 0.0},
+        "e1": e1, "notes": notes,
+    }
+
+
+# ── Tax return summary ───────────────────────────────────────────────────────────────────────────────────
+def _tl(account, security, date, label, amount, proceeds=None, cost=None, withheld=None) -> dict:
+    """One line of what a Tax Report figure is made of (shown account -> security -> line): amount, and where they apply the proceeds / cost / tax withheld."""
+    def n(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return None if v != v else round(v, 2)
+    return {"account": str(account or "—"), "security": str(security or "—"), "date": str(date or "")[:10], "label": str(label or ""),
+            "amount": n(amount) or 0.0, "proceeds": n(proceeds), "cost": n(cost), "withheld": n(withheld)}
+
+
+def _gain_lines(x) -> list[dict]:
+    return [_tl(r["account"], r["security"], r["date"], f"{r['action']} {float(r['quantity']):g} @ {float(r['sell_price']):,.4f}" if pd.notna(r.get("sell_price")) else r["action"],
+                r["gain_loss_eur"], r["proceeds_eur"], r["cost_eur"]) for r in x.sort_values("date").to_dict("records")]
+
+
+def _income_lines(x) -> list[dict]:
+    return [_tl(r["account_name"], r["securities_name"], r["date"], r["action"], r["amount_eur"], withheld=abs(float(r["tax_amount_eur"])) if pd.notna(r.get("tax_amount_eur")) else None)
+            for r in x.sort_values("date").to_dict("records")]
+
+
+def _source_maps() -> tuple[dict, dict]:
+    """(security id -> country, account id -> country of its institution) for the Tax Report: a security's source is where the issuer is registered — its ISIN prefix
+    (XS / EU are not countries) — else the Country set on the security (which is also used for exposure), else its issuer's; an account's country comes from its
+    institution's BIC (characters 5-6), else its IBAN prefix."""
+    with get_db() as conn:
+        sec = pd.read_sql("SELECT s.Securities_Id AS sid, s.Country AS c1, s.ISIN AS isin, i.Country AS c3 FROM Securities s LEFT JOIN Issuers i ON i.Issuers_Id = s.Issuer_Id", conn)
+        acc = pd.read_sql("SELECT a.Accounts_Id AS aid, i.BIC_Code AS bic, a.IBAN AS iban FROM Accounts a LEFT JOIN Institutions i ON i.Institutions_Id = a.Institutions_Id", conn)
+    txt = lambda v: v.strip().upper() if isinstance(v, str) else ""
+    def sec_cc(r):
+        pre = txt(r["isin"])[:2]
+        return (pre if pre and pre not in ("XS", "EU") else "") or txt(r["c1"]) or txt(r["c3"])
+    def acc_cc(r):
+        return txt(r["bic"])[4:6] or txt(r["iban"])[:2]
+    return ({int(r["sid"]): sec_cc(r) for _, r in sec.iterrows()}, {int(r["aid"]): acc_cc(r) for _, r in acc.iterrows()})
+
+
+SECURITIES_LOSS_YEARS = 5          # a loss on securities (ΚΦΕ art. 42) can be offset against the gains of the next five years (Greece)
+
+
+def _category_codes() -> dict:
+    """The tax-return lines set on each Tax Category (Static Data -> Tax Categories): its gains (home issuer / foreign issuer) and its dividends (home / foreign company)."""
+    with get_db() as conn:
+        df = pd.read_sql("SELECT tax_category, gains_tax_code, gains_tax_code_foreign, dividend_tax_code, dividend_tax_code_foreign FROM Tax_Category_Rules", conn)
+    return {r["tax_category"]: {k: (str(r[k]).strip() or None) if pd.notna(r[k]) else None for k in df.columns if k != "tax_category"} for _, r in df.iterrows()}
+
+
+def _taxable_results(g: pd.DataFrame, sec_cc: dict, home: str, by_origin: bool) -> list[dict]:
+    """One result per tax category (and, where the form asks for it, per origin of the issuer — "domestic" when its country is `home`, else "foreign") from a year's
+    capital gains rows, crypto left out: net result, whether the category is taxable (the Capital Gains tab's rule), its rate and the rows."""
+    if g is None or g.empty:
+        return []
+    g = g[(g["tax_category"].astype(str) != "Crypto") & (g["securities_type"].astype(str) != "Crypto")]
+    if g.empty:
+        return []
+    out = []
+    for cat, xc in g.groupby(g["tax_category"].fillna("Other")):
+        taxable = bool(((xc["gains_taxable"] == True) & (xc["is_tax_exempt"] != True)).any())     # noqa: E712 — same rule as the Capital Gains tab
+        rate = float(xc["gains_rate"].dropna().iloc[0]) if xc["gains_rate"].notna().any() else 0.0
+        code_cat = xc["gains_tax_code"].dropna().iloc[0] if xc["gains_tax_code"].notna().any() else None
+        orgs = pd.Series([("domestic" if sec_cc.get(int(s_), "") == home else "foreign") if (by_origin and taxable and pd.notna(s_)) else "" for s_ in xc["securities_id"]], index=xc.index)      # only taxable gains are declared by origin; exempt ones all go to one line
+        for org in sorted(set(orgs)):
+            x = xc[orgs == org]
+            out.append({"cat": cat, "org": org, "x": x, "net": float(x["gain_loss_eur"].astype(float).sum()), "taxable": taxable, "rate": rate, "code_cat": code_cat,
+                        "mixed": len(set(orgs)) > 1})
+    return out
+
+
+def _gains_by_year(years, method: str, account_ids) -> dict:
+    """The capital gains rows of each year, computed from one read of the ledger (the Tax Return's loss carry-forward needs the earlier years)."""
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+    ids = _parse_account_ids(account_ids)
+    if ids and not df_all.empty:
+        df_all = df_all[df_all["accounts_id"].isin(ids)]
+    if df_all.empty:
+        return {}
+    return {y: (_compute_lot_gains(df_all, y, method=method) if method in ("FIFO", "LIFO") else _compute_wac_gains(df_all, y)) for y in years}
+
+
+def _carry_pools(results: dict, year: int, years_kept: int = SECURITIES_LOSS_YEARS) -> list[list[float]]:
+    """Losses still to offset at the start of `year`: [year of the loss, domestic part, foreign part]. `results` maps each earlier year to its (domestic, foreign)
+    net result of the taxable categories. A year's loss is offset against the gains of the following years, the oldest first, for `years_kept` years; the part of
+    a loss that is Greek or foreign follows the origin of the losing results."""
+    pools: list[list[float]] = []
+    for y in range(year - years_kept, year):
+        pools = [p for p in pools if y - p[0] <= years_kept and p[1] + p[2] > 0.005]
+        rd, rf = results.get(y, (0.0, 0.0))
+        net = rd + rf
+        if net > 0:
+            left = net
+            for p in pools:                                    # the oldest loss first
+                tot = p[1] + p[2]
+                take = min(tot, left)
+                p[1], p[2] = p[1] - take * p[1] / tot, p[2] - take * p[2] / tot
+                left -= take
+        elif net < 0:
+            ld, lf = max(-rd, 0.0), max(-rf, 0.0)
+            pools.append([y, -net * ld / (ld + lf), -net * lf / (ld + lf)])
+    return [p for p in pools if year - p[0] <= years_kept and p[1] + p[2] > 0.005]
+
+
+@router.get("/tax-return")
+def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account_ids: Optional[str] = Query(None),
+                   rewards_income: Optional[bool] = Query(None), crypto_exemption: float = Query(0.0), crypto_rate: Optional[float] = Query(None),
+                   crypto_losses_from: int = Query(0), crypto_exclude: Optional[str] = Query(None), securities_losses_from: int = Query(0)):
+    """Every figure a tax return needs for a year, gathered from the other tax reports and labelled with the code of the line it goes on (database/tax_return.py:
+    the codes follow the Country of Usage). Capital gains by tax category, crypto, dividends, interest and bank interest, and an estimate of the tax. account_ids
+    (an Account Preset) limits it to those accounts. The crypto figures follow the Crypto tab's own settings (rewards_income, crypto_exemption, crypto_rate,
+    crypto_losses_from, crypto_exclude), which the screen passes along. securities_losses_from is the first year whose losses on securities count towards the
+    carry-forward (Greece, 873-874): 0 (not set) shows the losses of the last five years for information only and does not net them in the estimate, because they
+    only count if they were declared in those years' returns and a computed old loss (a futures contract closed at 0, say) may not be one. Each figure carries the transactions it is made of (`lines`) and the tax withheld at source
+    on them; the withheld tax also has rows of its own, with codes. Estimates only."""
+    from datetime import date as _date
+    from database.tax_return import country_codes, resolve
+    year = year or _date.today().year
+    method = method.upper() if method.upper() in ("WAC", "FIFO", "LIFO") else "FIFO"
+    setup = country_codes()
+    eur = lambda v: round(float(v or 0), 2)
+    sections: list[dict] = []
+    est_tax = {"gains": 0.0, "crypto": 0.0, "rewards": 0.0, "income": 0.0}
+
+    def row(key, label, amount, detail="", category_code=None, lines=None, info=False, kind=None):
+        default = resolve({**setup, "overrides": {}}, key, category_code)
+        held = [l_["withheld"] for l_ in (lines or []) if l_.get("withheld") is not None]
+        return {"key": key, "label": label, "amount": eur(amount), "detail": detail, "code": resolve(setup, key, category_code), "default": default, "custom": key in setup["overrides"],
+                "lines": lines or [], "withheld": round(sum(held), 2) if held else None, "info": info, "kind": kind}
+
+    # 1. capital gains, one row per tax category (crypto has its own section). Where the country's form asks for it (Greece, Table 4Ε) a category with issuers of both origins has one row for
+    # each: a Greek issuer's gain goes on 829-830 (with its tax number), a foreign one's on 865-866, losses on 871-872 with the origin chosen. Losses of the last five years that are not
+    # yet offset are a figure of their own (873-874), and the tax estimate nets the year's losses and those carried forward.
+    rules = setup.get("income") or {}                       # the country's codes for interest by source and by who withheld the tax (Greece: Table 4Δ1); none for other countries
+    home, home_name = setup["code"], (setup.get("name") or setup["code"])
+    sec_cc, acct_cc = _source_maps() if rules else ({}, {})
+    by_origin = bool(rules.get("gain_domestic") and rules.get("gain_foreign"))
+    cat_codes = _category_codes()                           # the lines set on each Tax Category come first, the country's built-in ones after
+    g = pd.DataFrame(get_capital_gains(year=year, method=method, account_ids=account_ids))
+    rows = []
+    pos = pos_w = neg = 0.0                                 # taxable categories: positive results, their rate-weighted sum, and the losses
+    for gr in _taxable_results(g, sec_cc, home, by_origin):
+        cat, org, x, net, taxable, rate = gr["cat"], gr["org"], gr["x"], gr["net"], gr["taxable"], gr["rate"]
+        gain = x["gain_loss_eur"].astype(float)
+        if taxable:
+            if net > 0:
+                pos, pos_w = pos + net, pos_w + net * rate
+            else:
+                neg -= net
+        split = gr["mixed"]
+        suffix = ":domestic" if split and org == "domestic" else ""
+        tag = ((f" (issuer: {home_name})" if org == "domestic" else " (issuer: abroad)") if split else "")
+        key = f"gains:{cat}{suffix}" if net >= 0 or not taxable else f"losses:{cat}{suffix}"
+        cc_ = cat_codes.get(cat) or {}
+        code = None if (taxable and net < 0) else ((cc_.get("gains_tax_code_foreign") or cc_.get("gains_tax_code")) if org == "foreign" else cc_.get("gains_tax_code"))
+        if not code and by_origin:
+            code = (rules.get(f"gain_{org}") if net >= 0 else None) if taxable else rules.get("gain_exempt")
+        code = code or None
+        rows.append(row(key, f"{cat}{tag} — net {'gain' if net >= 0 else 'loss'}", net,
+                        f"sold for {eur(x['proceeds_eur'].astype(float).sum()):,.2f}, cost {eur(x['cost_eur'].astype(float).sum()):,.2f}, gains {eur(gain[gain > 0].sum()):,.2f}, losses {eur(gain[gain < 0].sum()):,.2f}"
+                        + (f"; taxable at {rate:g}%" if taxable else "; gains exempt in this category")
+                        + ("; enter the issuer's tax number (ΑΦΜ)" if taxable and by_origin and org == "domestic" and net > 0 else ""), code, _gain_lines(x)))
+    carried = []
+    if by_origin:
+        past = _gains_by_year(range(year - SECURITIES_LOSS_YEARS, year), method.upper(), account_ids)
+        results = {}
+        for y_, gy in past.items():
+            rd = rf = 0.0
+            for gr in _taxable_results(gy, sec_cc, home, True):
+                if gr["taxable"]:
+                    if gr["org"] == "domestic":
+                        rd += gr["net"]
+                    else:
+                        rf += gr["net"]
+            results[y_] = (rd, rf)
+        counted = securities_losses_from > 0
+        carried = _carry_pools({y_: v for y_, v in results.items() if not counted or y_ >= securities_losses_from}, year)
+        for org, i_, word in (("domestic", 1, home_name), ("foreign", 2, "abroad")):
+            amt = sum(p[i_] for p in carried)
+            if amt > 0.004:
+                rows.append(row("losses:carried" + (":domestic" if org == "domestic" else ""), f"Losses of earlier years still to offset (issuer: {word})", amt,
+                                (f"losses of the last {SECURITIES_LOSS_YEARS} years not yet offset, the oldest first; they are taken off this year's gains when the return is settled"
+                                 if counted else f"computed from the last {SECURITIES_LOSS_YEARS} years, for information: not counted until you set the first year whose losses were declared (Losses count from)"),
+                                rules.get("loss_carried") or None,
+                                [_tl("All accounts", f"Loss of {p[0]}", "", f"still to offset; usable up to {p[0] + SECURITIES_LOSS_YEARS}", p[i_]) for p in carried if p[i_] > 0.004],
+                                info=not counted))
+    carried_total = sum(p[1] + p[2] for p in carried) if securities_losses_from > 0 else 0.0
+    est_tax["gains"] += max(pos - neg - carried_total, 0.0) * ((pos_w / pos) if pos else 0.0) / 100.0
+    sections.append({"title": "Capital gains and losses (securities, by tax category)", "rows": rows})
+
+    # 2. crypto
+    c = get_crypto_tax(year=year, method="LIFO" if method == "LIFO" else "FIFO", exemption=crypto_exemption, rate=crypto_rate, account_ids=account_ids,
+                       losses_from=crypto_losses_from, rewards_income=rewards_income, exclude_account_ids=crypto_exclude)
+    cs = c["summary"]
+    est_tax["crypto"] += cs.get("tax_eur", 0.0)
+    disp = c.get("disposals") or []
+    crows = [
+        row("crypto:purchases", "Amount spent buying crypto in the year", cs.get("purchases_eur", 0.0)),
+        row("crypto:gain", "Capital gain after losses brought forward", cs.get("taxable_eur", 0.0),
+            f"result {cs.get('result_eur', 0):,.2f}, losses used {cs.get('losses_used_eur', 0):,.2f}; tax at {c['rate']:g}% = {cs.get('tax_eur', 0):,.2f}",
+            category_code=(cat_codes.get("Crypto") or {}).get("gains_tax_code"),
+            lines=[_tl(d_["account"], d_["security"], d_["date"], f"{d_['kind']} {d_['quantity']:g}", d_["gain_loss_eur"], d_["proceeds_eur"], d_["cost_eur"]) for d_ in disp]),
+        row("crypto:capital", "Invested capital returned (cost of what was sold)", cs.get("cost_eur", 0.0), f"sold for {cs.get('proceeds_eur', 0):,.2f}",
+            lines=[_tl(d_["account"], d_["security"], d_["date"], f"{d_['kind']} {d_['quantity']:g}", d_["cost_eur"], d_["proceeds_eur"], d_["cost_eur"]) for d_ in disp]),
+        row("crypto:losses_cf", "Crypto losses still to carry forward", cs.get("losses_available_eur", 0.0), "information, five years", info=True),
+    ]
+    rw = c["rewards"]
+    if rw.get("total"):
+        est_tax["rewards"] += rw.get("tax_at_rate", 0.0)
+        crows.append(row("crypto:rewards", "Crypto rewards received (staking, earn)", rw["total"],
+                         ("income when received; est. tax " + f"{rw.get('tax_at_rate', 0):,.2f} at {c['income_rate']:g}%") if rw.get("taxable") else "not taxed when received",
+                         lines=[_tl("All accounts", w_["security"], "", f"{w_['quantity']:g} received in {w_.get('payments', 0)} payments", w_["value_eur"]) for w_ in (rw.get("rows") or [])],
+                         info=not rw.get("taxable")))
+    sections.append({"title": "Cryptocurrency", "rows": crows})
+
+    # 3. dividends and interest from securities, by category (crypto rewards are above)
+    d = pd.DataFrame(get_dividend_income_tax(year=year, account_ids=account_ids))
+    drows, irows, wrows = [], [], []
+    if not d.empty:
+        d = d[(d["tax_category"].astype(str) != "Crypto") & (d["action"] != "RtrnCap")]
+        # A category with both taxable and tax-exempt income (bond interest: some bonds are exempt, some are not) is reported as two figures, each with its own code.
+        d = d.assign(_cat=d["tax_category"].fillna("Other"), _ex=d["is_tax_exempt"].fillna(False).astype(bool), _src="", _wcls="", _rt="")
+        # interest whose rate changed on a date (Greek listed corporate bonds from 12 Apr 2025) is its own figure: the Tax Return asks for the cause and the rate separately
+        d["_rt"] = [f"{float(r_):g}" if (pd.notna(ch_) and bool(ch_)) else "" for r_, ch_ in zip(d["income_tax_rate"], d["rate_changed"])]
+        if rules and not d.empty:
+            def _source(r):
+                cc = sec_cc.get(int(r["securities_id"])) if pd.notna(r["securities_id"]) else ""
+                cc = cc or acct_cc.get(int(r["accounts_id"]), "")          # a deposit or a bond without a country: where it is held
+                return "domestic" if cc == home else "foreign"
+            def _who(r):                                                   # who withheld: the issuer or bank (home-country interest), a home-country custodian, or a foreign one
+                if r["_src"] == "domestic":
+                    return "domestic"
+                if acct_cc.get(int(r["accounts_id"]), "") != home:
+                    return "abroad"
+                if r["section"] == "dividend":
+                    # A home-country broker does not withhold on a foreign company's dividend (the form calls it a mistake when one does): the tax in the account is the foreign
+                    # country's — Belgium 30%, Canada 25% — unless it is about the home rate (Greece 5%), which only the home country would charge. The home rate is the
+                    # country's own, not the Tax Category's (a category's rate may stand for what the source country usually withholds).
+                    gross, wht, local = r.get("amount_eur"), r.get("tax_amount_eur"), setup.get("dividend_rate")
+                    try:
+                        pct = abs(float(wht)) / float(gross) * 100
+                        return "custodian" if local is not None and abs(pct - float(local)) <= 0.6 else "abroad"
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        return "abroad"
+                return "custodian"
+            d["_src"] = d.apply(_source, axis=1)
+            d["_wcls"] = d.apply(_who, axis=1)
+        mixed_ex = {k for k, v in d.groupby(["section", "_cat"])["_ex"].nunique().items() if v > 1}
+        mixed_src = {k for k, v in d.groupby(["section", "_cat", "_ex"])["_src"].nunique().items() if v > 1}
+        mixed_rt = {k for k, v in d.groupby(["section", "_cat", "_ex", "_src"])["_rt"].nunique().items() if v > 1}
+        for (sec, cat, ex, src, rt), x in d.groupby(["section", "_cat", "_ex", "_src", "_rt"]):
+            word = "dividends" if sec == "dividend" else "interest"
+            split_ex, split_src = (sec, cat) in mixed_ex, (sec, cat, ex) in mixed_src
+            # the taxable domestic part (or a category that is all one kind) keeps the key it always had; exempt interest always has its own key (its code is another table's)
+            suffix = (":exempt" if ex and (split_ex or sec == "interest") else "") + (":foreign" if split_src and src == "foreign" else "") + (f":rate{rt}" if rt else "")
+            tag = ((" (tax-exempt)" if ex else " (taxable)") if split_ex else (" (tax-exempt)" if ex else "")) + ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if split_src else "")
+            rfrom = x["rate_from"].dropna().iloc[0] if "rate_from" in x and x["rate_from"].notna().any() else None
+            if rfrom:                                                       # a rate that changed on a date: say which side of it this figure is
+                when = pd.Timestamp(rfrom).strftime("%d %b %Y").lstrip("0")
+                tag += f" (from {when}: {rt}%)" if rt else (f" (before {when})" if (sec, cat, ex, src) in mixed_rt else "")
+            gross = float(x["amount_eur"].astype(float).sum())
+            wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
+            due = float(x["local_tax_liability"].astype(float).sum() if x["local_tax_liability"].notna().any() else 0.0) + float(x["income_tax_liability"].astype(float).sum() if x["income_tax_liability"].notna().any() else 0.0)
+            est_tax["income"] += due
+            exempt = bool(ex)
+            code_cat = (rules.get(f"{sec}_exempt" if exempt else f"{sec}_{src}") or None) if rules else None
+            if sec == "dividend" and not exempt:                            # the line set on the Tax Category, by where the company is, comes first
+                code_cat = ((cat_codes.get(cat) or {}).get("dividend_tax_code_foreign") if src == "foreign" else None) or (cat_codes.get(cat) or {}).get("dividend_tax_code") or code_cat
+            target = drows if sec == "dividend" else irows
+            target.append(row(f"{'dividends' if sec == 'dividend' else 'interest'}:{cat}{suffix}", f"{cat} — {word}{tag}", gross,
+                              f"withheld abroad {wht:,.2f}; tax still due {due:,.2f}" + ("; exempt category" if exempt else ""), code_cat, _income_lines(x)))
+            # the tax withheld, one figure per who withheld it where the country's form distinguishes them
+            wcls = sorted(set(x["_wcls"])) if rules else [""]
+            for wc in wcls:
+                xw = x[x["_wcls"] == wc] if wc else x
+                w = float(xw["tax_amount_eur"].astype(float).abs().sum()) if xw["tax_amount_eur"].notna().any() else 0.0
+                if w <= 0.004:
+                    continue
+                multi = len(wcls) > 1
+                wsuffix = suffix + (f":{wc}" if multi and wc != "domestic" else "")
+                wtag = tag + ({"custodian": f" (by a bank or custodian in {home_name})", "abroad": " (withheld abroad)"}.get(wc, "") if multi else "")
+                wrows.append(row(f"withheld:{word}:{cat}{wsuffix}", f"{cat} — tax withheld on {word}{wtag}", w, f"on {word} of {float(xw['amount_eur'].astype(float).sum()):,.2f}",
+                                 (rules.get(f"withheld_{sec}_{wc}") or None) if wc else None,
+                                 [{**l_, "amount": l_["withheld"], "withheld": None} for l_ in _income_lines(xw) if l_["withheld"]], kind="withheld"))
+    sections.append({"title": "Dividends", "rows": drows})
+    b = pd.DataFrame(get_bank_interest_tax(year=year, account_ids=account_ids))
+    if not b.empty:
+        # Bank and savings interest: by the country of the bank (a Greek bank's interest is of Greek source, another's from abroad), each with the country's codes when it has them
+        b = b.assign(_src=[("domestic" if acct_cc.get(int(a_), "") == home else "foreign") if rules else "" for a_ in b["accounts_id"]])
+        multi_src = b["_src"].nunique() > 1
+        for src, x in b.groupby("_src"):
+            gross = float(x["amount_eur"].astype(float).sum())
+            wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
+            suffix = ":foreign" if multi_src and src == "foreign" else ""
+            tag = ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if multi_src else "")
+            recs = x.sort_values("date").to_dict("records")
+            irows.append(row(f"bank_interest{suffix}", f"Bank and savings interest{tag}", gross, f"withheld at source {wht:,.2f}", (rules.get(f"interest_{src}") or None) if src else None,
+                             [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], r["amount_eur"], withheld=abs(float(r["tax_amount_eur"])) if pd.notna(r.get("tax_amount_eur")) else None)
+                              for r in recs]))
+            if wht > 0.004:
+                wcode = rules.get("withheld_interest_domestic" if src == "domestic" else "withheld_interest_abroad") if src else None
+                wrows.append(row(f"withheld:bank_interest{suffix}", f"Bank and savings interest — tax withheld{tag}", wht, f"on interest of {gross:,.2f}", wcode or None,
+                                 [_tl(r["account_name"], r["payee"] or r["category"], r["date"], r["category"], abs(float(r["tax_amount_eur"]))) for r in recs
+                                  if pd.notna(r.get("tax_amount_eur")) and abs(float(r["tax_amount_eur"])) > 0.004], kind="withheld"))
+    sections.append({"title": "Interest", "rows": irows})
+    sections.append({"title": "Tax withheld at source (to credit against the tax due)", "rows": wrows})
+
+    total = sum(est_tax.values())
+    sections.append({"title": "Estimated tax (indicative)", "rows": [
+        row("est:gains", "On capital gains of taxable categories", est_tax["gains"], "net of the year's losses and, for Greece, the losses carried forward from the last five years"),
+        row("est:crypto", "On crypto gains", est_tax["crypto"]), row("est:rewards", "On crypto rewards", est_tax["rewards"]),
+        row("est:income", "Still due on dividends and interest", est_tax["income"], "after tax withheld abroad"), row("est:total", "Total", total)]})
+    return {"year": year, "method": method, "country": {k: setup[k] for k in ("code", "name", "form", "has_profile")}, "sections": sections,
+            "codes_set": {k: setup["overrides"][k] for k in setup["overrides"]},
+            "notes": ["Estimates, not advice: they do not replace the return. Check every amount and code against the form's instructions or with your accountant.",
+                      "Dividends and interest use the tax rules of each category (Static Data -> Tax Categories); the crypto figures follow the Crypto tab's rules."]}
+
+
+@router.put("/tax-return/codes")
+def put_tax_return_codes(body: dict):
+    """Save the codes typed over on the Tax Return screen, for the Country of Usage ({key: code}; an empty code removes the override's text)."""
+    from database.tax_return import save_overrides
+    return save_overrides(body.get("codes") or {})
 
 
 @router.get("/budget-vs-actual")
@@ -2650,7 +3142,7 @@ def get_budget_vs_actual(year: int = Query(2024), ref_years: int = Query(2)):
     ),
     budgets AS (
         SELECT Categories_Id, Budget_Amount
-        FROM Annual_Budgets WHERE Year = %(year)s
+        FROM Annual_Budgets WHERE Year = %(year)s AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s
     )
     SELECT
         c.Categories_Id                                          AS categories_id,
@@ -2678,7 +3170,7 @@ def get_budget_vs_actual(year: int = Query(2024), ref_years: int = Query(2)):
     from database.queries import ensure_budgets_table
     ensure_budgets_table()
     with get_db() as conn:
-        df = pd.read_sql(query, conn, params={"year": year, "ref_years": ref_years})
+        df = pd.read_sql(query, conn, params={"year": year, "ref_years": ref_years, "owner": owner_now()})
     return _df_to_list(df)
 
 
@@ -2820,6 +3312,8 @@ def _ttl_cached(key: str, ttl_seconds: float, fn):
     """Cache a DataFrame-returning call for a short time. The two helpers it wraps are global (not
     per account) and take 1-2 seconds each, which dominated the forecast's response time."""
     import time as _time
+    mine = scope_now()
+    key = f"{key}|{sorted(mine) if mine is not None else 'all'}"      # what a restricted user's connection sees is not what an admin's does
     hit = _TTL_CACHE.get(key)
     if hit and _time.time() - hit[0] < ttl_seconds:
         return hit[1].copy()
@@ -3571,44 +4065,53 @@ def get_cash_flow_forecast_full(
 
 @router.get("/budgets")
 def get_budgets(year: int = Query(2024), month: Optional[int] = Query(None)):
-    """Budget entries by category and year."""
+    """Budget entries by category and year — the user's own (the household's, for an admin)."""
+    from database.queries import ensure_budgets_table
+    ensure_budgets_table()
     with get_db() as conn:
         df = pd.read_sql("""
             SELECT b.Budget_Id AS id, b.Year AS year, b.Categories_Id AS categories_id,
                    c.Categories_Name AS category_name, b.Budget_Amount AS budget_amount
             FROM Annual_Budgets b
             JOIN Categories c ON c.Categories_Id = b.Categories_Id
-            WHERE b.Year = %(year)s
+            WHERE b.Year = %(year)s AND b.Owner_Users_Id IS NOT DISTINCT FROM %(owner)s
             ORDER BY c.Categories_Name
-        """, conn, params={"year": year})
+        """, conn, params={"year": year, "owner": owner_now()})
     return _df_to_list(df)
 
 
 @router.post("/budgets")
 def upsert_budget(data: dict):
     from database.connection import get_connection
+    from database.queries import ensure_budgets_table
     from fastapi import HTTPException
+    ensure_budgets_table()
     conn = get_connection()
     try:
         cur = conn.cursor()
         bid = data.get('id')
         if bid:
             cur.execute(
-                "UPDATE Annual_Budgets SET Budget_Amount=%s WHERE Budget_Id=%s",
-                (data.get('budget_amount'), bid)
+                "UPDATE Annual_Budgets SET Budget_Amount=%s WHERE Budget_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s",
+                (data.get('budget_amount'), bid, owner_now())
             )
+            if cur.rowcount == 0:
+                raise HTTPException(404, "No such budget")
         else:
             cur.execute("""
-                INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (Year, Categories_Id) DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
+                INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount, Owner_Users_Id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0))) DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
                 RETURNING Budget_Id
-            """, (data.get('year'), data.get('categories_id'), data.get('budget_amount')))
+            """, (data.get('year'), data.get('categories_id'), data.get('budget_amount'), owner_now()))
             row = cur.fetchone()
             if row:
                 bid = row[0]
         conn.commit()
         return {"id": bid}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -3623,7 +4126,7 @@ def delete_budget(bid: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM Annual_Budgets WHERE Budget_Id=%s", (bid,))
+        cur.execute("DELETE FROM Annual_Budgets WHERE Budget_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (bid, owner_now()))
         conn.commit()
         return {"deleted": bid}
     except Exception as e:
@@ -4313,8 +4816,10 @@ def get_xray_style_box(account_ids: Optional[str] = Query(None), compare_date: O
             if r["sec_type"] in ("ETF", "Mutual Fund"):
                 items.append({**base, "kind": "Fund", **_fund_style_row(r)})
             else:
-                kind = {"Stock": "Direct Stocks", "Bond": "Direct Bonds"}.get(r["sec_type"], "Direct Other")
-                items.append({**base, "kind": kind, "style_box": None, "other": kind, "category": kind, "broad_category": kind,
+                kind = {"Stock": "Direct Stocks", "Bond": "Direct Bonds", "Commodity": "Direct Commodities"}.get(r["sec_type"], "Direct Other")
+                # in the grid view's plain buckets a direct commodity joins the commodity funds; the Category view keeps it as a direct holding
+                other = "Commodities" if r["sec_type"] == "Commodity" else kind
+                items.append({**base, "kind": kind, "style_box": None, "other": other, "category": kind, "broad_category": kind,
                               "manual_style": False, "manual_category": False})
         for r in cash_df.to_dict(orient="records"):
             if r["value_eur"] is None or pd.isna(r["value_eur"]):
@@ -4388,6 +4893,8 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
         JOIN Fund_Composition fc ON fc.Securities_Id = hv.Securities_Id
         CROSS JOIN LATERAL jsonb_each_text(COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings)) AS je(key, value)
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND COALESCE(fc.Manual_Overrides->'Bond_Ratings', fc.Bond_Ratings) IS NOT NULL
+          -- a fund pinned to another asset class (cash, commodities, "other" — e.g. a swap-based fund) holds no credit exposure to rate
+          AND (fc.Asset_Class_Override IS NULL OR fc.Asset_Class_Override = 'Bonds')
     ),
     direct_bond AS (
         -- Maps a linked Issuer's Moody's notch straight to a quality bucket;
@@ -4452,7 +4959,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT quality, ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
-           ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
+           ROUND((SUM(value_eur * duration_years) / NULLIF(SUM(CASE WHEN duration_years IS NOT NULL THEN value_eur END), 0))::numeric,2) AS avg_duration_years
     FROM rated GROUP BY quality ORDER BY {_quality_rank('quality')}
     """
         us_gov_query = holdings_cte + detail_cte + """
@@ -4460,7 +4967,7 @@ def get_xray_bond_quality(account_ids: Optional[str] = Query(None), compare_date
     , totals AS (SELECT SUM(value_eur) AS grand_total FROM rated)
     SELECT ROUND(SUM(value_eur)::numeric,2) AS value_eur,
            ROUND((SUM(value_eur)/NULLIF((SELECT grand_total FROM totals),0)*100)::numeric,2) AS pct,
-           ROUND(AVG(duration_years)::numeric,2) AS avg_duration_years
+           ROUND((SUM(value_eur * duration_years) / NULLIF(SUM(CASE WHEN duration_years IS NOT NULL THEN value_eur END), 0))::numeric,2) AS avg_duration_years
     FROM detail_combined WHERE quality = 'Us Government'
     """
         detail_query = holdings_cte + detail_cte + f"""
@@ -5183,7 +5690,9 @@ def get_benchmark_candidates_endpoint(
 
 # ── Tax-Loss Harvesting ───────────────────────────────────────────────────────
 @router.get("/tax-loss-harvesting")
-def get_tax_loss_harvesting():
+def get_tax_loss_harvesting(account_ids: Optional[str] = Query(None)):
+    """Positions held at an unrealized loss (account_ids: only in those accounts), each with its effective tax category and whether a loss there is worth anything for tax (`tax_value`:
+    "taxable" when gains in the category are taxed, "none" when they are exempt — a loss that nothing can be offset against)."""
     query = """
     WITH fx AS (SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC),
     latest_price AS (SELECT DISTINCT ON (Securities_Id) Securities_Id, Close FROM Historical_Prices ORDER BY Securities_Id, Date DESC)
@@ -5199,19 +5708,94 @@ def get_tax_loss_harvesting():
     JOIN Securities s ON s.Securities_Id=h.Securities_Id
     LEFT JOIN latest_price lp ON lp.Securities_Id=h.Securities_Id
     LEFT JOIN fx ON fx.Currencies_Id_1=s.Currencies_Id
-    WHERE h.Quantity > 0
+    WHERE h.Quantity > 0 /*ACCT_H*/
     GROUP BY s.Securities_Id, s.Securities_Name, s.Securities_Type, s.Ticker, lp.Close, fx.FX_Rate
     HAVING (SUM(h.Quantity * lp.Close) - SUM(h.Quantity * h.Fifo_Avg_Price)) * COALESCE(fx.FX_Rate,1) < 0
     ORDER BY unrealized_loss_eur ASC
     """
+    query = query.replace("/*ACCT_H*/", _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id"))
     with get_db() as conn:
         df = pd.read_sql(query, conn)
+        meta = pd.read_sql("""
+            SELECT s.Securities_Id AS securities_id,
+                   COALESCE(ito.Tax_Category_Override, s.Tax_Category) AS tax_category,
+                   tcr.Gains_Taxable AS gains_taxable, tcr.Gains_Rate AS gains_rate,
+                   CASE WHEN ito.Tax_Category_Override IS NOT NULL THEN FALSE ELSE COALESCE(s.Is_Tax_Exempt, FALSE) END AS is_tax_exempt
+            FROM Securities s
+            LEFT JOIN Instrument_Type_Tax_Override ito ON ito.Instrument_Type = s.Securities_Type::text
+            LEFT JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = COALESCE(ito.Tax_Category_Override, s.Tax_Category)
+        """, conn)
+    if df.empty:
+        return []
+    df = df.merge(meta, on="securities_id", how="left")
+    df["tax_category"] = df["tax_category"].fillna("Unclassified")
+    taxable = (df["gains_taxable"] == True) & (df["is_tax_exempt"] != True)          # same rule as the Capital Gains tab: no rule or exempt = not taxed
+    df["tax_value"] = taxable.map({True: "taxable", False: "none"})
     return _df_to_list(df)
+
+
+@router.get("/tax-loss-harvesting/summary")
+def get_tax_loss_harvesting_summary(year: int = Query(None), method: str = Query("FIFO"), rewards_income: Optional[bool] = Query(None), exemption: float = Query(0.0),
+                                    losses_from: int = Query(0), crypto_rate: Optional[float] = Query(None), exclude_account_ids: Optional[str] = Query(None),
+                                    account_ids: Optional[str] = Query(None)):
+    """Tax-loss harvesting by tax category for a tax year. A loss only helps against gains of its own taxable category, so for each one: the loss on offer,
+    the gains realised so far in `year` (Crypto: what is left taxable after the losses already carried forward — the Crypto tab's figure, worked out with the Crypto
+    tab's own settings: `rewards_income`, `exemption`, `losses_from`, `crypto_rate` and the accounts left out), and the most
+    tax the loss could save, loss (up to the gain) × rate. Positions in exempt categories are totalled separately: selling them offsets nothing."""
+    from datetime import date as _date
+    year = year or _date.today().year
+    method = method.upper() if method.upper() in ("WAC", "FIFO", "LIFO") else "FIFO"
+    rows = pd.DataFrame(get_tax_loss_harvesting(account_ids=account_ids))
+    out = {"year": year, "method": method, "categories": [], "exempt": {"loss_eur": 0.0, "positions": 0, "categories": []},
+           "totals": {"taxable_loss_eur": 0.0, "saving_eur": 0.0, "exempt_loss_eur": 0.0}}
+    if rows.empty:
+        return out
+    rows["unrealized_loss_eur"] = rows["unrealized_loss_eur"].astype(float)
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+        rules = pd.read_sql("SELECT Tax_Category, Display_Name, Gains_Rate FROM Tax_Category_Rules", conn).set_index("tax_category")
+    _ids = _parse_account_ids(account_ids)
+    if _ids and not df_all.empty:
+        df_all = df_all[df_all["accounts_id"].isin(_ids)]
+    gains = _compute_wac_gains(df_all, year) if method == "WAC" else _compute_lot_gains(df_all, year, method=method)
+    realised = {}
+    if not gains.empty:
+        eff = gains[(gains["gains_taxable"] == True) & (gains["is_tax_exempt"] != True)]
+        realised = eff.groupby(eff["tax_category"].fillna("Other"))["gain_loss_eur"].sum().to_dict()
+
+    for cat, g in rows[rows["tax_value"] == "taxable"].groupby("tax_category"):
+        loss = round(float(-g["unrealized_loss_eur"].sum()), 2)
+        rate = float(g["gains_rate"].dropna().iloc[0]) if g["gains_rate"].notna().any() else 0.0
+        item = {"category": cat, "display_name": (rules["display_name"].get(cat) if cat in rules.index else None) or cat, "rate": rate, "loss_eur": loss,
+                "positions": int(len(g)), "gains_eur": round(float(realised.get(cat, 0.0)), 2), "carry_forward_eur": None, "note": ""}
+        if cat == "Crypto":
+            c = get_crypto_tax(year=year, method="LIFO" if method == "LIFO" else "FIFO", exemption=exemption, rate=crypto_rate, account_ids=account_ids, losses_from=losses_from,
+                               rewards_income=rewards_income, exclude_account_ids=exclude_account_ids)
+            item["rate"] = rate = c["rate"]
+            item["gains_eur"] = c["summary"]["result_eur"]
+            item["capacity_eur"] = c["summary"]["taxable_eur"]
+            item["carry_forward_eur"] = c["summary"]["losses_available_eur"]
+            item["note"] = ("Crypto losses offset crypto gains only, for the next five years. The Crypto tab's gain after the losses already carried forward is what is left to offset."
+                            if c["summary"]["taxable_eur"] <= 0 else "Crypto losses offset crypto gains only; this is the gain left after the losses already carried forward.")
+        else:
+            item["capacity_eur"] = round(max(item["gains_eur"], 0.0), 2)
+            item["note"] = "Offsets realised gains of this category in the same year; an excess may carry forward up to five years (not modelled here)."
+        item["saving_eur"] = round(min(loss, item["capacity_eur"]) * rate / 100.0, 2)
+        out["categories"].append(item)
+    out["categories"].sort(key=lambda i: -i["loss_eur"])
+    ex = rows[rows["tax_value"] != "taxable"]
+    if not ex.empty:
+        out["exempt"] = {"loss_eur": round(float(-ex["unrealized_loss_eur"].sum()), 2), "positions": int(len(ex)),
+                         "categories": [{"category": c, "loss_eur": round(float(-g["unrealized_loss_eur"].sum()), 2), "positions": int(len(g))}
+                                        for c, g in ex.groupby("tax_category")]}
+    out["totals"] = {"taxable_loss_eur": round(sum(i["loss_eur"] for i in out["categories"]), 2), "saving_eur": round(sum(i["saving_eur"] for i in out["categories"]), 2),
+                     "exempt_loss_eur": out["exempt"]["loss_eur"]}
+    return out
 
 
 # ── Dividend Income for Tax ───────────────────────────────────────────────────
 @router.get("/dividend-income-tax")
-def get_dividend_income_tax(year: int = Query(None)):
+def get_dividend_income_tax(year: int = Query(None), account_ids: Optional[str] = Query(None)):
     """Investment income (dividends, reinvested, interest, RtrnCap) for a tax year.
     Uses effective tax category (instrument-type override > security tax_category) to:
     - Route CD/Bond IntInc to 'interest' section, others to 'dividend'
@@ -5253,6 +5837,9 @@ def get_dividend_income_tax(year: int = Query(None)):
         -- Tax rates from the effective tax category rules
         tcr.Dividend_Local_Tax_Rate         AS dividend_local_tax_rate,
         tcr.Income_Tax_Rate                 AS income_tax_rate,
+        s.Sector                            AS sector,
+        iss.Issuers_Name                    AS issuer,
+        iss.Is_Government                   AS issuer_gov,
         -- amount_eur: convert Total_Amount_AccCur using the *account* currency
         CASE
             WHEN ca.Currencies_ShortName = 'EUR'
@@ -5286,6 +5873,7 @@ def get_dividend_income_tax(year: int = Query(None)):
     JOIN Accounts     a   ON a.Accounts_Id    = i.Accounts_Id
     JOIN Currencies   ca  ON ca.Currencies_Id = a.Currencies_Id
     JOIN eff              ON eff.Investments_Id = i.Investments_Id
+    LEFT JOIN Issuers iss ON iss.Issuers_Id = s.Issuer_Id
     LEFT JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = eff.eff_tax_cat
     WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
       AND EXTRACT(YEAR FROM i.Date) = %(year)s
@@ -5315,6 +5903,7 @@ def get_dividend_income_tax(year: int = Query(None)):
         i.Date::text                        AS date,
         s.Securities_Id                     AS securities_id,
         s.Securities_Name                   AS securities_name,
+        a.Accounts_Id                       AS accounts_id,
         a.Accounts_Name                     AS account_name,
         'MaturityInc'                       AS action,
         s.Tax_Category                      AS tax_category,
@@ -5345,6 +5934,9 @@ def get_dividend_income_tax(year: int = Query(None)):
     if not df_mat.empty:
         df = pd.concat([df, df_mat], ignore_index=True)
         df = df.sort_values('date', ascending=False)
+    _ids = _parse_account_ids(account_ids)
+    if _ids and not df.empty:
+        df = df[df['accounts_id'].isin(_ids)]
     # Compute local_tax_liability in Python: max(0, gross_eur * rate/100 - abs(withholding_eur))
     def _local_liability(row):
         if row.get('action') == 'RtrnCap':
@@ -5367,6 +5959,28 @@ def get_dividend_income_tax(year: int = Query(None)):
         return max(0.0, round(gross * float(rate) / 100 - wht, 4))
 
     records = _df_to_list(df)
+    # A rate that changes on a date (Greece: listed corporate bond interest, 15% up to 11 Apr 2025, 5% after): the row's own date picks the rate, so the tax still due is right
+    # on both sides of the date. rate_changed marks the rows whose rate is not the Tax Category's; rate_from is the date of the rule that covers the row.
+    from database.tax_return import rate_change, PROFILES
+    from database.local_markets import home_country
+    from api.routers.country_exposure import _is_government
+    cc = home_country()
+    # A Tax Category's dividend rate also pre-fills the tax withheld when a dividend is entered (Security Detail -> Corporate Actions), so a foreign category carries the
+    # source country's rate (Canada 25%, Belgium 30%). What the home country charges is its own flat rate (Greece 5%): the tax still due is worked out at the lower of the two,
+    # so a category set to 0 (exempt) stays exempt and the source country's withholding is credited against 5%, not against 25% or 30%.
+    home_rate = (PROFILES.get(cc) or {}).get('dividend_rate')
+    for r in records:
+        r['dividend_category_rate'] = r.get('dividend_local_tax_rate')
+        if home_rate is not None and r.get('dividend_local_tax_rate') is not None and not pd.isna(r['dividend_local_tax_rate']):
+            r['dividend_local_tax_rate'] = min(float(r['dividend_local_tax_rate']), float(home_rate))
+        r['rate_changed'], r['rate_from'] = False, None
+        if r.get('section') == 'interest' and not r.get('is_tax_exempt') and r.get('tax_category'):
+            gov = _is_government(r.get('sector'), r.get('issuer'), r.get('securities_name'), r.get('issuer_gov'))
+            rule = rate_change(cc, 'interest', str(r['tax_category']), gov, r.get('date') or '')
+            if rule:
+                r['rate_from'] = rule['from']
+                if rule['applies']:
+                    r['income_tax_rate'], r['rate_changed'] = rule['rate'], True
     for r in records:
         r['local_tax_liability'] = _local_liability(r)
         r['income_tax_liability'] = _income_tax_liability(r)
@@ -5374,7 +5988,7 @@ def get_dividend_income_tax(year: int = Query(None)):
 
 
 @router.get("/bank-interest-tax")
-def get_bank_interest_tax(year: int = Query(None)):
+def get_bank_interest_tax(year: int = Query(None), account_ids: Optional[str] = Query(None)):
     """Bank & Savings interest from non-investment accounts for a tax year.
     Mirrors Streamlit get_bank_interest_report.
     """
@@ -5451,6 +6065,9 @@ def get_bank_interest_tax(year: int = Query(None)):
     """
     with get_db() as conn:
         df = pd.read_sql(query, conn, params={"year": year})
+    _ids = _parse_account_ids(account_ids)
+    if _ids and not df.empty:
+        df = df[df['accounts_id'].isin(_ids)]
     return _df_to_list(df)
 
 
@@ -5524,6 +6141,8 @@ def _ensure_goals_table(cur):
             Created_At TIMESTAMP DEFAULT NOW()
         )
     """)
+    # the household's goals (an admin's: no owner) or a restricted user's own
+    cur.execute("ALTER TABLE Goals ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
 
 
 @router.get("/goals")
@@ -5541,8 +6160,8 @@ def get_goals():
                    Target_Amount AS target_amount, Current_Amount AS current_amount,
                    Target_Date::text AS target_date, Notes AS notes,
                    CASE WHEN Target_Amount > 0 THEN ROUND((Current_Amount / Target_Amount * 100)::numeric,1) ELSE 0 END AS progress_pct
-            FROM Goals WHERE Is_Active=TRUE ORDER BY Target_Date ASC NULLS LAST, Goal_Id
-        """, conn)
+            FROM Goals WHERE Is_Active=TRUE AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Target_Date ASC NULLS LAST, Goal_Id
+        """, conn, params={"owner": owner_now()})
     return _df_to_list(df)
 
 
@@ -5556,20 +6175,25 @@ def upsert_goal(data: dict):
         if gid:
             cur.execute("""
                 UPDATE Goals SET Goal_Name=%s, Target_Amount=%s, Target_Date=%s,
-                    Current_Amount=%s, Notes=%s WHERE Goal_Id=%s
+                    Current_Amount=%s, Notes=%s WHERE Goal_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s
             """, (data.get("goal_name"), data.get("target_amount"),
                   data.get("target_date") or None, data.get("current_amount", 0),
-                  data.get("notes") or None, gid))
+                  data.get("notes") or None, gid, owner_now()))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "No such goal")
         else:
             cur.execute("""
-                INSERT INTO Goals (Goal_Name, Target_Amount, Target_Date, Current_Amount, Notes)
-                VALUES (%s, %s, %s, %s, %s) RETURNING Goal_Id
+                INSERT INTO Goals (Goal_Name, Target_Amount, Target_Date, Current_Amount, Notes, Owner_Users_Id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING Goal_Id
             """, (data.get("goal_name"), data.get("target_amount"),
                   data.get("target_date") or None, data.get("current_amount", 0),
-                  data.get("notes") or None))
+                  data.get("notes") or None, owner_now()))
             gid = cur.fetchone()[0]
         conn.commit()
         return {"goal_id": gid}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(500, str(e))
@@ -5582,7 +6206,7 @@ def delete_goal(goal_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE Goals SET Is_Active=FALSE WHERE Goal_Id=%s", (goal_id,))
+        cur.execute("UPDATE Goals SET Is_Active=FALSE WHERE Goal_Id=%s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (goal_id, owner_now()))
         conn.commit()
         return {"deleted": goal_id}
     except Exception as e:
@@ -6242,7 +6866,8 @@ def get_savings_recommendations():
 
 # ── Bond Schedule ─────────────────────────────────────────────────────────────
 @router.get("/bond-schedule")
-def get_bond_schedule():
+def get_bond_schedule(account_ids: Optional[str] = Query(None)):
+    """Bond holdings with their coupons and maturities; account_ids (comma-separated, an Account Preset) limits them to those accounts."""
     query = """
     WITH fx AS (
         SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
@@ -6255,7 +6880,7 @@ def get_bond_schedule():
         FROM Holdings h
         JOIN Securities s ON h.Securities_Id = s.Securities_Id
         JOIN Currencies c ON s.Currencies_Id = c.Currencies_Id
-        WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond'
+        WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' /*ACCT_H*/
     )
     SELECT
         bh.securities_id,
@@ -6281,16 +6906,19 @@ def get_bond_schedule():
     LEFT JOIN fx ON fx.Currencies_Id_1 = bh.Currencies_Id
     ORDER BY bh.Maturity_Date ASC NULLS LAST
     """
+    query = query.replace("/*ACCT_H*/", _acct_clause(_parse_account_ids(account_ids), "h.Accounts_Id"))
     with get_db() as conn:
         df = pd.read_sql(query, conn)
     return _df_to_list(df)
 
 
-def _parse_account_ids(account_ids: Optional[str]) -> Optional[list]:
-    if not account_ids:
-        return None
-    ids = [int(x) for x in account_ids.split(",") if x.strip()]
-    return ids or None
+def _parse_account_ids(account_ids: Optional[str], scoped: bool = True) -> Optional[list]:
+    """The accounts a report covers: those asked for (comma-separated Accounts_Id), or None for all of them. For a restricted user the list is always held to
+    their own accounts — when they ask for none, it is all of theirs — so every report built on it is scoped without further ado. `scoped=False` is for a list that
+    only *removes* accounts (an exclusion list), where narrowing to the user's accounts would turn 'none' into 'all'."""
+    ids = [int(x) for x in account_ids.split(",") if x.strip()] if account_ids else None
+    ids = ids or None
+    return narrow_ids(ids) if scoped else ids
 
 
 def _acct_clause(account_ids: Optional[list], col: str = "h.Accounts_Id") -> str:
@@ -6355,6 +6983,9 @@ def _pit_cash_balance_expr(as_of: Optional[str]) -> str:
 # ('inv_performance' | 'net_worth' | 'inv_positions') — see the ALTER TABLE in
 # database/connection.py's _run_startup_migrations for how an existing table
 # (created before Report_Scope existed) gets upgraded.
+_PRESETS_READY = False
+
+
 def _ensure_presets_table(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS Portfolio_Presets (
@@ -6367,6 +6998,13 @@ def _ensure_presets_table(cur):
             UNIQUE (Report_Scope, Preset_Name)
         )
     """)
+    global _PRESETS_READY
+    if not _PRESETS_READY:
+        # a preset is the household's (an admin's: no owner) or a restricted user's own, and the same name can be used by each of them
+        cur.execute("ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE Portfolio_Presets DROP CONSTRAINT IF EXISTS portfolio_presets_report_scope_preset_name_key")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_presets_owner ON Portfolio_Presets (Report_Scope, Preset_Name, (COALESCE(Owner_Users_Id, 0)))")
+        _PRESETS_READY = True
 
 
 @router.get("/portfolio-presets")
@@ -6378,9 +7016,13 @@ def get_portfolio_presets(report_scope: str = Query("inv_performance")):
         conn.commit()
         df = pd.read_sql("""
             SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Account_Ids AS account_ids
-            FROM Portfolio_Presets WHERE Report_Scope = %(report_scope)s ORDER BY Preset_Name
-        """, conn, params={"report_scope": report_scope})
-        return _df_to_list(df)
+            FROM Portfolio_Presets WHERE Report_Scope = %(report_scope)s AND Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Preset_Name
+        """, conn, params={"report_scope": report_scope, "owner": owner_now()})
+        rows = _df_to_list(df)
+        mine = scope_now()
+        if mine is not None:           # a restricted user sees only their own presets, and of those only what is still made of their accounts
+            rows = [r for r in rows if r.get("account_ids") and set(r["account_ids"]) <= set(mine)]
+        return rows
     finally:
         conn.close()
 
@@ -6392,16 +7034,19 @@ def upsert_portfolio_preset(data: dict):
     report_scope = data.get("report_scope") or "inv_performance"
     if not name:
         raise HTTPException(400, "Preset name is required")
+    mine = scope_now()
+    if mine is not None and not set(int(a) for a in account_ids) <= set(mine):
+        raise HTTPException(403, "That account is not one of yours")
     conn = get_connection()
     try:
         cur = conn.cursor()
         _ensure_presets_table(cur)
         cur.execute("""
-            INSERT INTO Portfolio_Presets (Report_Scope, Preset_Name, Account_Ids, Updated_At)
-            VALUES (%s, %s, %s, NOW())
-            ON CONFLICT (Report_Scope, Preset_Name) DO UPDATE
+            INSERT INTO Portfolio_Presets (Report_Scope, Preset_Name, Account_Ids, Owner_Users_Id, Updated_At)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (Report_Scope, Preset_Name, (COALESCE(Owner_Users_Id, 0))) DO UPDATE
                 SET Account_Ids = EXCLUDED.Account_Ids, Updated_At = NOW()
-        """, (report_scope, name, account_ids))
+        """, (report_scope, name, account_ids, owner_now()))
         conn.commit()
         return {"saved": name}
     except Exception as e:
@@ -6417,7 +7062,7 @@ def delete_portfolio_preset(preset_id: int):
     try:
         cur = conn.cursor()
         _ensure_presets_table(cur)
-        cur.execute("DELETE FROM Portfolio_Presets WHERE Preset_Id = %s", (preset_id,))
+        cur.execute("DELETE FROM Portfolio_Presets WHERE Preset_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (preset_id, owner_now()))
         conn.commit()
         return {"deleted": preset_id}
     except Exception as e:
@@ -6428,7 +7073,7 @@ def delete_portfolio_preset(preset_id: int):
 
 
 # ── Benchmark comparison ───────────────────────────────────────────────────────
-def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) -> Optional["pd.Series"]:
+def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int, total_return: bool = False) -> Optional["pd.Series"]:
     """A daily-linked return index for the given account scope, indexed to 100 at the
     first day it has a holding — reconstructed from the ACTUAL securities held on each
     day (replayed from Investments transactions, not today's holdings extrapolated
@@ -6454,7 +7099,12 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     a sell for a position opened before it (and hold-with-no-trade positions wouldn't
     show up in the window at all), understating quantity or driving it negative for the
     days it's still actually held — which, multiplied against that day's price, is what
-    produced a spurious four-digit-percent one-day swing on real data before this fix."""
+    produced a spurious four-digit-percent one-day swing on real data before this fix.
+
+    total_return=True adds the distributions back (Securities_Dividends): a security's amount per share on its ex-date is added to that
+    day's price in the numerator, for the quantity held the day before — the distribution is reinvested at the ex-date close, as in a
+    total-return index, so a distributing fund and an accumulating one are on the same footing. The number of distributions counted is left
+    on the result's .attrs['distributions']."""
     from datetime import date as _date, timedelta
     tx_clause = _acct_clause(acct_ids, "i.Accounts_Id")
     tx_df = pd.read_sql(f"""
@@ -6547,7 +7197,10 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     qty_daily = qty_cum.reindex(full_idx).ffill().reindex(price_wide.index).fillna(0)
 
     prior_qty = qty_daily.shift(1)
-    value_at_prior_qty_today = (prior_qty * price_ffill).sum(axis=1)
+    div_wide = None
+    if total_return:
+        div_wide, _n = _distributions_wide(conn, list(common), price_ffill.index)
+    value_at_prior_qty_today = (prior_qty * (price_ffill + div_wide if div_wide is not None else price_ffill)).sum(axis=1)
     value_at_prior_qty_yesterday = (prior_qty * price_ffill.shift(1)).sum(axis=1)
     port_ret = (value_at_prior_qty_today / value_at_prior_qty_yesterday.replace(0, pd.NA) - 1).fillna(0)
 
@@ -6560,7 +7213,56 @@ def _account_weighted_index(conn, acct_ids: Optional[list], lookback_days: int) 
     port_ret = port_ret[port_ret.index >= has_basis.idxmax()]
     port_ret.iloc[0] = 0
 
-    return (1 + port_ret).cumprod() * 100
+    out = (1 + port_ret).cumprod() * 100
+    if div_wide is not None:                       # only the distributions that fell on a day the account held the security
+        held = (prior_qty > 0).reindex(div_wide.index).fillna(False)
+        out = out.copy()
+        out.attrs["distributions"] = int(((div_wide > 0) & held).to_numpy().sum())
+    return out
+
+
+def _distributions_wide(conn, tickers: list, index):
+    """Amount per share of every distribution (Securities_Dividends) of the given securities (by name), laid on the price calendar `index`:
+    each lands on the first priced day on or after its ex-date, none before the second day of the window. -> (DataFrame, count)"""
+    out = pd.DataFrame(0.0, index=index, columns=tickers)
+    if len(index) < 2 or not tickers:
+        return out, 0
+    df = pd.read_sql("""
+        SELECT s.Securities_Name AS ticker, d.Ex_Date AS ex_date, d.Amount AS amount
+        FROM Securities_Dividends d JOIN Securities s ON s.Securities_Id = d.Securities_Id
+        WHERE s.Securities_Name IN %(t)s AND d.Ex_Date > %(from)s AND d.Amount > 0
+    """, conn, params={"t": tuple(tickers), "from": index[0].date()})
+    n = 0
+    for r in df.itertuples():
+        pos = index.searchsorted(pd.Timestamp(r.ex_date))
+        if 0 < pos < len(index):
+            out.iloc[pos, out.columns.get_loc(r.ticker)] += float(r.amount)
+            n += 1
+    return out, n
+
+
+def _total_return_close(close: "pd.Series", divs: "pd.DataFrame") -> tuple:
+    """A price series turned into a total-return one: each distribution (columns ex_date, amount) is added to the price on its ex-date
+    (first priced day on or after it) and reinvested there. The first price is kept as the start, so the result is on the price's own scale.
+    -> (series, number of distributions added)"""
+    c = close.dropna()
+    if len(c) < 2 or divs is None or divs.empty:
+        return close, 0
+    extra = pd.Series(0.0, index=c.index)
+    n = 0
+    for r in divs.itertuples():
+        pos = c.index.searchsorted(pd.Timestamp(r.ex_date))
+        if 0 < pos < len(c):
+            extra.iloc[pos] += float(r.amount)
+            n += 1
+    ratio = (c + extra) / c.shift(1)
+    ratio.iloc[0] = 1.0
+    return c.iloc[0] * ratio.cumprod(), n
+
+
+def _security_distributions(conn, sec_id: int, from_date) -> "pd.DataFrame":
+    return pd.read_sql("SELECT Ex_Date AS ex_date, Amount AS amount FROM Securities_Dividends WHERE Securities_Id = %(i)s AND Ex_Date > %(f)s AND Amount > 0 ORDER BY Ex_Date",
+                       conn, params={"i": sec_id, "f": from_date})
 
 
 def _clamp_lookback_to_inception(conn, acct_ids: Optional[list], lookback_days: int) -> int:
@@ -6598,6 +7300,7 @@ def get_benchmark(
     resample: str = Query("Daily"),
     ytd: bool = Query(False),
     base_securities_id: Optional[int] = Query(None),
+    total_return: bool = Query(False),
 ):
     """Portfolio (weighted avg of holdings) vs any number of comparison series — market
     indexes/securities (benchmark_ids, comma-separated Securities_Id) and/or other
@@ -6615,6 +7318,10 @@ def get_benchmark(
     "portfolio", <key>: value, ...}, ...]} — one row per date, with a dynamically-named
     column per comparison series (rather than a single fixed "benchmark" column) since
     there can now be any number of them.
+
+    total_return=true adds distributions back (the Dividends data, Securities_Dividends) to every line — a security's price series and the
+    account lines alike — as if each were reinvested on its ex-date, so a distributing fund is compared with an accumulating one (or with an
+    index) on the same footing. Each series says how many distributions were added ("distributions"); a market index has none.
     """
     if ytd:
         from datetime import date as _date
@@ -6623,7 +7330,10 @@ def get_benchmark(
 
     acct_ids = _parse_account_ids(account_ids)
     bench_ids = [b for b in (_parse_account_ids(benchmark_ids) or []) if b != base_securities_id]
-    cmp_acct_ids = _parse_account_ids(compare_account_ids)
+    cmp_acct_ids = _parse_account_ids(compare_account_ids, scoped=False)
+    if cmp_acct_ids and scope_now() is not None:           # a restricted user compares only their own accounts
+        cmp_acct_ids = [i for i in cmp_acct_ids if i in set(scope_now())] or None
+    base_dist = None
 
     with get_db() as conn:
         if base_securities_id:
@@ -6643,6 +7353,8 @@ def get_benchmark(
                 return {"base_label": base_label, "series": [], "rows": []}
             base_df["date"] = pd.to_datetime(base_df["date"])
             base_close = base_df.set_index("date")["close"]
+            if total_return:
+                base_close, base_dist = _total_return_close(base_close, _security_distributions(conn, base_securities_id, base_close.index[0].date()))
             first = base_close.iloc[0] if not pd.isna(base_close.iloc[0]) else (base_close.dropna().iloc[0] if not base_close.dropna().empty else None)
             port_idx = base_close / first * 100 if first else None
             if port_idx is None:
@@ -6650,9 +7362,11 @@ def get_benchmark(
         else:
             base_label = "Portfolio"
             lookback_days = _clamp_lookback_to_inception(conn, acct_ids, lookback_days)
-            port_idx = _account_weighted_index(conn, acct_ids, lookback_days)
+            port_idx = _account_weighted_index(conn, acct_ids, lookback_days, total_return)
             if port_idx is None:
                 return {"base_label": base_label, "series": [], "rows": []}
+            if total_return:
+                base_dist = port_idx.attrs.get("distributions", 0)
 
         acct_names: dict = {}
         if cmp_acct_ids:
@@ -6674,12 +7388,13 @@ def get_benchmark(
         raw = {"portfolio": port_idx}                    # every series on its own, before they are lined up
 
         for aid in (cmp_acct_ids or []):
-            idx = _account_weighted_index(conn, [aid], lookback_days)
+            idx = _account_weighted_index(conn, [aid], lookback_days, total_return)
             if idx is None:
                 continue
             key = f"acct_{aid}"
             raw[key] = idx
-            series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account"})
+            series_meta.append({"key": key, "label": acct_names.get(aid, f"Account {aid}"), "type": "account",
+                                "distributions": idx.attrs.get("distributions", 0) if total_return else None})
 
         for bid in (bench_ids or []):
             bench_df = pd.read_sql("""
@@ -6691,9 +7406,12 @@ def get_benchmark(
                 continue
             bench_df["date"] = pd.to_datetime(bench_df["date"])
             idx = bench_df.set_index("date")["close"]
+            n_dist = None
+            if total_return:
+                idx, n_dist = _total_return_close(idx, _security_distributions(conn, bid, idx.index[0].date()))
             key = f"idx_{bid}"
             raw[key] = idx
-            series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index"})
+            series_meta.append({"key": key, "label": sec_names.get(bid, f"Security {bid}"), "type": "index", "distributions": n_dist})
 
     # One common window: it starts on the LATEST first price of any line. A security with a shorter history than the lookback used to be drawn
     # flat at 100 before its first price and then rebased to 100 at that first price, so it was never on the same footing as the others (a fund
@@ -6734,7 +7452,7 @@ def get_benchmark(
             entry[s["key"]] = round(float(v), 4) if v is not None and not pd.isna(v) else None
         rows.append(entry)
 
-    return {"base_label": base_label, "series": series_meta, "rows": rows,
+    return {"base_label": base_label, "series": series_meta, "rows": rows, "total_return": total_return, "base_distributions": base_dist,
             "from_date": common_start.strftime("%Y-%m-%d"), "requested_from": requested_from.strftime("%Y-%m-%d"), "limited_by": limited_by}
 
 
@@ -6906,12 +7624,84 @@ def get_monte_carlo(
 
 # ── Portfolio Signals (Securities & Portfolio Analysis) ────────────────────────
 @router.get("/portfolio-signals")
-def get_portfolio_signals_endpoint():
+def get_portfolio_signals_endpoint(held_only: bool = Query(False)):
+    """Every active security's signals — prices and changes, volatility, Sharpe, moving averages and their direction, trailing stop, analyst
+    and fair-value upside, F/Z scores, the Final Signal and the Action verdict. held_only=true limits it to open positions."""
     from database.queries import get_portfolio_signals
     df = get_portfolio_signals(None)
     if df is None or df.empty:
         return []
-    return _df_to_list(df)
+    if held_only:
+        df = df[df["current_qty"].fillna(0).astype(float) > 0]
+    rows = _df_to_list(df)
+    # Action: the stored, smoothed verdict (database/action_signal.py), worded for held / not held; and sector
+    from database.action_signal import action_map, label
+    am = action_map()
+    with get_db() as conn:
+        meta = pd.read_sql("SELECT Securities_Id AS sid, Securities_Type::text AS stype, Sector AS sector FROM Securities", conn)
+    meta_by = {int(r.sid): r for r in meta.itertuples()}
+    for r in rows:
+        m = meta_by.get(int(r["securities_id"]))
+        r["sector"] = (m.sector if m is not None and isinstance(m.sector, str) else None)
+        a = am.get(int(r["securities_id"]))
+        held = float(r.get("current_qty") or 0) > 0
+        r["action"] = label(a["level"], held) if a else None
+        r["action_score"] = a["score"] if a else None
+        r["action_why"] = a["why"] if a else ""
+    return rows
+
+
+@router.get("/action-signals")
+def get_action_signals_endpoint(held_only: bool = Query(False), action: Optional[str] = Query(None), changed_only: bool = Query(False),
+                                types: Optional[str] = Query(None), shortlist: bool = Query(False), min_score: float = Query(6.0), per_sector: int = Query(2)):
+    """The Action verdict of every security, compact: name, ticker, held, value, verdict (Add / Hold / Reduce / Sell for positions, Buy / Watch / Avoid
+    otherwise), the smoothed score, the reasons behind it, the last move between Reduce / Sell, Hold and Add, and the Final Signal. Held positions
+    first, biggest first. held_only=true: open positions only. action: comma-separated verdicts to keep (e.g. "Reduce,Sell").
+    changed_only=true: those whose last move between the outer groups has not been dismissed yet (the Dashboard's Action Change alerts).
+    types: comma-separated security types to keep (e.g. "Stock,ETF"). shortlist=true: Buy candidates only — not held, verdict Buy, score at least
+    min_score (default 6), best first, at most per_sector (default 2) from one sector; of the given types, by default all but indexes, CDs and employee options."""
+    from database.action_signal import action_rows, shortlist as _shortlist
+    rows = action_rows()
+    tset = {t.strip() for t in types.split(",") if t.strip()} if types else None
+    if shortlist:
+        return _shortlist(rows, min_score, per_sector, tset)
+    if tset:
+        rows = [r for r in rows if r.get("type") in tset]
+    if held_only:
+        rows = [r for r in rows if r["held"]]
+    if action:
+        want = {a.strip().lower() for a in action.split(",") if a.strip()}
+        rows = [r for r in rows if (r["action"] or "").lower() in want]
+    if changed_only:
+        rows = [r for r in rows if r["alert_pending"]]
+    return rows
+
+
+@router.post("/action-backtest")
+def start_action_backtest(data: dict):
+    """Start a back-test of the Action score against a benchmark (data/action_backtest.py) in the background; returns {job_id}.
+    Body: mode ("price" = the price-driven points since 2016, "log" = the daily Action log), scope ("all" | "holdings" | "accounts" | "security"),
+    account_ids, securities_id, benchmark_id (omit for the one set under App Settings, 0 = the average of what is tested), start."""
+    from data.action_backtest import start_job
+    return {"job_id": start_job(data or {})}
+
+
+@router.get("/action-backtest/{job_id}")
+def get_action_backtest(job_id: str):
+    """Progress and, when done, the result of a back-test started with POST /action-backtest."""
+    from data.action_backtest import job_status
+    j = job_status(job_id)
+    if j is None:
+        raise HTTPException(404, "Unknown or expired back-test")
+    return j
+
+
+@router.get("/action-history")
+def get_action_history_endpoint(securities_id: Optional[int] = Query(None), from_date: Optional[str] = Query(None), limit: int = Query(5000)):
+    """The daily log of every security's Action (score, raw score, verdict, held, the reasons), newest first — what the score is later tested against.
+    One row per security per day since logging began."""
+    from database.action_signal import history_rows
+    return history_rows(securities_id, from_date, min(max(limit, 1), 50000))
 
 
 @router.get("/fundamental-scores")
@@ -6966,8 +7756,8 @@ def _fetch_presets_fresh() -> list:
         _ensure_custom_reports_table(conn)
         df = pd.read_sql(
             "SELECT Preset_Id AS preset_id, Preset_Name AS preset_name, Config AS config "
-            "FROM Custom_Report_Presets ORDER BY Preset_Name",
-            conn,
+            "FROM Custom_Report_Presets WHERE Owner_Users_Id IS NOT DISTINCT FROM %(owner)s ORDER BY Preset_Name",
+            conn, params={"owner": owner_now()},
         )
     finally:
         conn.close()
@@ -6998,11 +7788,11 @@ def save_custom_report_preset(body: dict):
         _ensure_custom_reports_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO Custom_Report_Presets (Preset_Name, Config, Updated_At)
-                VALUES (%s, %s::jsonb, NOW())
-                ON CONFLICT (Preset_Name) DO UPDATE
+                INSERT INTO Custom_Report_Presets (Preset_Name, Config, Owner_Users_Id, Updated_At)
+                VALUES (%s, %s::jsonb, %s, NOW())
+                ON CONFLICT (Preset_Name, (COALESCE(Owner_Users_Id, 0))) DO UPDATE
                     SET Config = EXCLUDED.Config, Updated_At = NOW()
-            """, (name, json.dumps(config)))
+            """, (name, json.dumps(config), owner_now()))
         conn.commit()
     finally:
         conn.close()
@@ -7014,7 +7804,7 @@ def remove_custom_report_preset(preset_id: int):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM Custom_Report_Presets WHERE Preset_Id = %s", (preset_id,))
+            cur.execute("DELETE FROM Custom_Report_Presets WHERE Preset_Id = %s AND Owner_Users_Id IS NOT DISTINCT FROM %s", (preset_id, owner_now()))
         conn.commit()
     finally:
         conn.close()

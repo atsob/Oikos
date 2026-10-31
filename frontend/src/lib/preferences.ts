@@ -37,6 +37,18 @@ export function initPreferences(): Promise<void> {
     })
 }
 
+/** Forget everything kept for the person who was signed in — the local copy of their preferences and the few screen settings kept only in this browser — so the next person to
+ *  sign in here starts from their own, not the previous one's. Called on sign-in and sign-out; initPreferences() then loads the new user's. */
+export function resetPreferences(): void {
+  _cache = {}
+  _loaded = false
+  try {
+    localStorage.removeItem(CACHE_KEY)
+    for (const k of Object.keys(localStorage)) if (k.startsWith('oikos-') && k !== 'oikos-theme') localStorage.removeItem(k)
+  } catch { /* ignore */ }
+  _listeners.forEach(fn => fn('*'))
+}
+
 export function isPreferencesLoaded(): boolean {
   return _loaded
 }

@@ -3,11 +3,15 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useTheme, type Theme } from '@/lib/theme'
 import { usePersist } from '@/lib/hooks'
+import { PhoneTitleContext } from '@/lib/phoneTitle'
+import { useRole } from '@/lib/auth'
+import { useCardTables } from '@/lib/useCardTables'
 import { logout } from '@/lib/api'
 import { queryClient } from '@/lib/queryClient'
+import { resetPreferences } from '@/lib/preferences'
 import AccountModal from '@/components/AccountModal'
 import {
-  LayoutDashboard, BookOpen, RefreshCw, BarChart2,
+  LayoutDashboard, BookOpen, Bell, CalendarCheck, RefreshCw, BarChart2,
   Database, TrendingUp, Upload, Wrench, BrainCircuit, PieChart, Newspaper,
   Sun, Moon, Monitor, PanelLeftClose, PanelLeftOpen, HelpCircle, History, Menu, X, LogOut, UserCircle,
 } from 'lucide-react'
@@ -18,50 +22,87 @@ const THEME_OPTIONS: { value: Theme; icon: React.ReactNode; label: string }[] = 
   { value: 'dark',   icon: <Moon   size={13} />, label: 'Dark'   },
 ]
 
+// The menu, in groups separated by a thin line: overview, everyday money work, analysis, setup & data, support.
 const nav = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { to: '/register', label: 'Cash Register', icon: BookOpen },
-  { to: '/investments', label: 'Investments', icon: PieChart },
-  { to: '/recurring', label: 'Recurring', icon: RefreshCw },
-  { to: '/reports', label: 'Reports', icon: BarChart2 },
-  { to: '/static-data', label: 'Static Data', icon: Database },
-  { to: '/market-data', label: 'Market Data', icon: TrendingUp },
-  { to: '/news', label: 'News', icon: Newspaper },
-  { to: '/importers', label: 'Importers', icon: Upload },
-  { to: '/tools', label: 'Tools', icon: Wrench },
-  { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
-  { to: '/help', label: 'Help', icon: HelpCircle },
-  { to: '/releases', label: 'Release Notes', icon: History },
+  [
+    { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    { to: '/alerts', label: 'Alerts', icon: Bell },
+    { to: '/plan', label: 'Plan', icon: CalendarCheck },
+  ],
+  [
+    { to: '/register', label: 'Cash Register', icon: BookOpen },
+    { to: '/investments', label: 'Investments', icon: PieChart },
+    { to: '/recurring', label: 'Recurring', icon: RefreshCw },
+  ],
+  [
+    { to: '/reports', label: 'Reports', icon: BarChart2 },
+    { to: '/market-data', label: 'Market Data', icon: TrendingUp },
+    { to: '/news', label: 'News', icon: Newspaper },
+    { to: '/ai', label: 'AI Assistant', icon: BrainCircuit },
+  ],
+  [
+    { to: '/static-data', label: 'Static Data', icon: Database },
+    { to: '/importers', label: 'Importers', icon: Upload },
+    { to: '/tools', label: 'Tools', icon: Wrench },
+  ],
+  [
+    { to: '/help', label: 'Help', icon: HelpCircle },
+    { to: '/releases', label: 'Release Notes', icon: History },
+  ],
 ]
+
+// What a limited or read-only user does not get: the AI Assistant, the Importers and Tools.
+const ADMIN_ONLY = ['/ai', '/importers', '/tools']
 
 export default function Layout() {
   const { theme, setTheme } = useTheme()
   const [collapsed, setCollapsed] = usePersist('sidebar_collapsed', false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
+  const [phoneTitle, setPhoneTitle] = useState('')
+  const { isAdmin } = useRole()
+  const [refused, setRefused] = useState<string | null>(null)
+  // A limited or read-only user gets the whole app over their own accounts, except the admin's tools (api/access.py).
+  const menu = isAdmin ? nav : nav.map(g => g.filter(n => !ADMIN_ONLY.includes(n.to))).filter(g => g.length > 0)
+  // Static Data, Market Data and the security / currency pages are read-only for a limited or read-only user: the controls that add, edit, delete, merge,
+  // save or download are hidden (index.css, by their icon) while one of these pages is open. The server refuses the changes whatever the screen shows.
+  const loc = useLocation()
+  const dataPageReadOnly = !isAdmin && /^\/(static-data|market-data|securities|currencies)(\/|$)/.test(loc.pathname)
+  React.useEffect(() => {
+    document.body.classList.toggle('oikos-readonly-data', dataPageReadOnly)
+    return () => document.body.classList.remove('oikos-readonly-data')
+  }, [dataPageReadOnly])
+  React.useEffect(() => {
+    let timer: number | undefined
+    const onRefused = (e: Event) => { setRefused(String((e as CustomEvent).detail)); window.clearTimeout(timer); timer = window.setTimeout(() => setRefused(null), 6000) }
+    window.addEventListener('oikos-forbidden', onRefused)
+    return () => { window.removeEventListener('oikos-forbidden', onRefused); window.clearTimeout(timer) }
+  }, [])
+  useCardTables()
   const location = useLocation()
   const navigate = useNavigate()
 
   // Close the mobile drawer whenever the route changes (e.g. after tapping a nav link).
-  React.useEffect(() => { setMobileOpen(false) }, [location.pathname])
+  React.useEffect(() => { setMobileOpen(false); setPhoneTitle('') }, [location.pathname])
+  // The app bar's title: what the page's header says, else the menu entry for this address.
+  const barTitle = phoneTitle || menu.flat().find(n => 'exact' in n && n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to))?.label || 'Oikos'
 
   const handleLogout = async () => {
     try { await logout() } catch { /* revoke server-side if reachable; proceed regardless */ }
     queryClient.clear()
+    resetPreferences()
     navigate('/login', { replace: true })
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Mobile top bar — hamburger to open the drawer sidebar. Hidden on desktop,
-          where the sidebar is always part of the normal flex flow instead. */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        title="Open menu"
-        className="md:hidden fixed top-3 left-3 z-30 flex items-center justify-center w-9 h-9 rounded-md bg-slate-900 text-white shadow-lg"
-      >
-        <Menu size={18} />
-      </button>
+    <div className="flex h-dvh overflow-hidden">
+      {/* Phone app bar — the menu button and the page's title; hidden on desktop, where the sidebar is always part of the normal flex flow instead. */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-30 box-content h-14 pt-[env(safe-area-inset-top)] pl-[max(0.25rem,env(safe-area-inset-left))] pr-3 flex items-center gap-1 bg-slate-900 text-white shadow-md">
+        <button onClick={() => setMobileOpen(true)} title="Open menu" aria-label="Open menu" className="flex items-center justify-center w-11 h-11 rounded-md active:bg-slate-700">
+          <Menu size={20} />
+        </button>
+        <span className="text-base font-semibold truncate">{barTitle}</span>
+      </div>
 
       {/* Backdrop, mobile-only, shown while the drawer is open */}
       {mobileOpen && (
@@ -107,25 +148,29 @@ export default function Layout() {
           </button>
         )}
         <nav className="flex-1 px-2 py-3 space-y-0.5">
-          {nav.map(({ to, label, icon: Icon, exact }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exact}
-              title={collapsed ? label : undefined}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-                  collapsed && 'md:justify-center md:px-0',
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white',
-                )
-              }
-            >
-              <Icon size={16} />
-              <span className={collapsed ? 'md:hidden' : undefined}>{label}</span>
-            </NavLink>
+          {menu.map((group, gi) => (
+            <div key={gi} className={cn('space-y-0.5', gi > 0 && 'mt-2 pt-2 border-t border-slate-700/70')}>
+              {group.map(({ to, label, icon: Icon, ...rest }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={'exact' in rest ? rest.exact : undefined}
+                  title={collapsed ? label : undefined}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-2.5 px-3 py-2 pointer-coarse:py-3 rounded-md text-sm font-medium transition-colors',
+                      collapsed && 'md:justify-center md:px-0',
+                      isActive
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-300 hover:bg-slate-700 hover:text-white',
+                    )
+                  }
+                >
+                  <Icon size={16} />
+                  <span className={collapsed ? 'md:hidden' : undefined}>{label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className={cn('px-4 py-3 border-t border-slate-700 space-y-2', collapsed && 'md:hidden')}>
@@ -161,8 +206,8 @@ export default function Layout() {
             info@allabout360c.com
           </a>
           <p className="text-xs text-slate-500">v2.0 · React + FastAPI</p>
-          <p className="text-xs text-slate-600" title={__GIT_DATE__ ? `Built from commit ${__GIT_HASH__} on ${__GIT_DATE__}` : undefined}>
-            {__GIT_HASH__}{__GIT_DATE__ && ` · ${__GIT_DATE__}`}
+          <p className="text-xs text-slate-600" title={__GIT_DATE__ ? `${__APP_VERSION__ ? `Release ${__APP_VERSION__} — ` : ''}built from commit ${__GIT_HASH__} on ${__GIT_DATE__}` : undefined}>
+            {__APP_VERSION__ || `${__GIT_HASH__}${__GIT_DATE__ ? ` · ${__GIT_DATE__}` : ''}`}
           </p>
           {window.location.protocol === 'https:' && window.location.hostname !== 'localhost' && (
             <a
@@ -177,8 +222,16 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto bg-slate-50 pt-14 md:pt-0">
-        <Outlet />
+      <main className="flex-1 min-w-0 overflow-y-auto overscroll-contain bg-slate-50 pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        {refused && (
+          <div role="alert" className="sticky top-0 z-30 flex items-start justify-between gap-3 bg-red-50 border-b border-red-200 text-red-700 text-sm px-4 py-2">
+            <span>{refused}</span>
+            <button className="text-red-400 hover:text-red-600" onClick={() => setRefused(null)} aria-label="Dismiss">✕</button>
+          </div>
+        )}
+        <PhoneTitleContext.Provider value={setPhoneTitle}>
+          <Outlet />
+        </PhoneTitleContext.Provider>
       </main>
 
       {accountOpen && <AccountModal onClose={() => setAccountOpen(false)} />}

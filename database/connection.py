@@ -43,6 +43,58 @@ def _apply_tz(conn) -> None:
         log.debug("_apply_tz failed: %s", exc)
 
 
+# ── a restricted user's reads ─────────────────────────────────────────────────────────────────────
+# For a limited / read-only user's *read* requests (api/access.py binds the accounts to the request) the tables that hold account data are shadowed, on that
+# connection only, by temporary views showing nothing but the user's accounts. A temp schema is searched before `public`, so every unqualified query — the
+# Dashboard's, the reports', the forecasts', the alerts' — sees only those accounts without a line of it knowing so. It is a second layer behind the explicit
+# scoping in the endpoints, and it fails closed: if the views cannot be made, the request fails. Writes never see the views: the balance trigger and the checks
+# that look up what a row belongs to must see every row.
+_SCOPED_VIEWS = (
+    ("Accounts",                        "SELECT * FROM public.Accounts WHERE Accounts_Id IN ({ids})"),
+    ("Transactions",                    "SELECT * FROM public.Transactions WHERE Accounts_Id IN ({ids})"),
+    ("Splits",                          "SELECT * FROM public.Splits WHERE Transactions_Id IN (SELECT Transactions_Id FROM public.Transactions WHERE Accounts_Id IN ({ids}))"),
+    ("Investments",                     "SELECT * FROM public.Investments WHERE Accounts_Id IN ({ids})"),
+    ("Holdings",                        "SELECT * FROM public.Holdings WHERE Accounts_Id IN ({ids})"),
+    ("Recurring_Templates",             "SELECT * FROM public.Recurring_Templates WHERE Accounts_Id IN ({ids})"),
+    ("Recurring_Template_Splits",       "SELECT * FROM public.Recurring_Template_Splits WHERE Templates_Id IN (SELECT Templates_Id FROM public.Recurring_Templates WHERE Accounts_Id IN ({ids}))"),
+    ("Account_Interest_Rate_Schedules", "SELECT * FROM public.Account_Interest_Rate_Schedules WHERE Accounts_Id IN ({ids})"),
+    ("Account_Interest_Rate_Tiers",     "SELECT * FROM public.Account_Interest_Rate_Tiers WHERE Account_Interest_Rate_Schedules_Id IN "
+                                        "(SELECT Account_Interest_Rate_Schedules_Id FROM public.Account_Interest_Rate_Schedules WHERE Accounts_Id IN ({ids}))"),
+    ("V_Transactions_Eur",              "SELECT * FROM public.V_Transactions_Eur WHERE Accounts_Id IN ({ids})"),
+)
+
+
+def _apply_scope(conn) -> bool:
+    """Shadow the account tables with the current user's views (see above). Returns True when it did, so the checkout can undo it."""
+    try:
+        from api.access import view_scope
+    except Exception:
+        return False
+    ids = view_scope()
+    if ids is None:
+        return False
+    id_list = ",".join(str(int(i)) for i in ids) or "NULL"
+    conn.autocommit = True                 # autocommit, so a later rollback in the request cannot take the views with it
+    try:
+        with conn.cursor() as cur:
+            for name, body in _SCOPED_VIEWS:
+                cur.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS " + body.format(ids=id_list))
+    finally:
+        conn.autocommit = False
+    return True
+
+
+def _clear_scope(conn) -> None:
+    """Take the views off a pooled connection before it goes back."""
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            for name, _ in _SCOPED_VIEWS:
+                cur.execute(f"DROP VIEW IF EXISTS pg_temp.{name}")
+    finally:
+        conn.autocommit = False
+
+
 _RETRY_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 1.5   # seconds; doubles each attempt
 
@@ -120,6 +172,14 @@ def get_db():
     # Enforce local timezone on every checkout (handles pool connections that
     # were created before the DB_CONFIG `options` setting was in place).
     _apply_tz(conn)
+    try:
+        scoped = _apply_scope(conn)
+    except Exception:
+        try:
+            p.putconn(conn, close=True)         # a connection that half-made the views is never reused, and the request fails rather than run unscoped
+        except Exception:
+            pass
+        raise
 
     try:
         yield conn
@@ -132,7 +192,18 @@ def get_db():
                 pass
         raise
     finally:
-        if _is_conn_alive(conn):
+        if scoped:
+            try:
+                _clear_scope(conn)
+            except Exception:
+                try:
+                    p.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = None
+        if conn is None:
+            pass
+        elif _is_conn_alive(conn):
             p.putconn(conn)
         else:
             try:
@@ -227,6 +298,12 @@ def _seed_reference_data(conn) -> None:
                Show_In_Capital_Gains = EXCLUDED.Show_In_Capital_Gains""",
         sd.TAX_CATEGORY_RULES,
     )
+    cur.executemany(
+        """UPDATE Tax_Category_Rules
+           SET Gains_Tax_Code = %s, Gains_Tax_Code_Foreign = %s, Dividend_Tax_Code = %s, Dividend_Tax_Code_Foreign = %s
+           WHERE Tax_Category = %s""",
+        [(g, gf, d, df, cat) for cat, (g, gf, d, df) in sd.TAX_CATEGORY_CODES.items()],
+    )
 
     cur.executemany(
         """INSERT INTO Instrument_Type_Tax_Override (Instrument_Type, Tax_Category_Override, Notes)
@@ -301,6 +378,12 @@ def _seed_reference_data(conn) -> None:
 def _run_startup_migrations():
     """Run idempotent DDL migrations on startup (once per process)."""
     _STMTS = [
+        # Tax_Category_Rules: the tax-return line of a category's gains on a foreign issuer's securities (Gains_Tax_Code is the home issuer's) and of its dividends, by issuer
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Gains_Tax_Code_Foreign    VARCHAR(20)",
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code         VARCHAR(20)",
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code_Foreign VARCHAR(20)",
+        # Investments: the cash the broker actually booked for a trade (signed, account currency); NULL = derive it from Total_Amount_AccCur. See database/margin.py.
+        "ALTER TABLE Investments ADD COLUMN IF NOT EXISTS Booked_Cash_AccCur NUMERIC(28, 18)",
         # Historical_Prices: provenance columns
         "ALTER TABLE Historical_Prices ADD COLUMN IF NOT EXISTS Source        VARCHAR(50)",
         "ALTER TABLE Historical_Prices ADD COLUMN IF NOT EXISTS Downloaded_At TIMESTAMPTZ",
@@ -540,6 +623,17 @@ def _run_startup_migrations():
                Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
                Created_At  TIMESTAMPTZ DEFAULT now(),
                Expires_At  TIMESTAMPTZ NOT NULL
+           )""",
+        # Roles: admin (everything), limited (read and write on the accounts mapped to the user) and readonly (read only on those accounts) — see api/access.py.
+        # Every user that existed before is an admin.
+        "ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin'",
+        # Currency alerts (fx_above / fx_below on Alerts): the currency and the one its rate is quoted in
+        "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",
+        "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",
+        """CREATE TABLE IF NOT EXISTS User_Account_Access (
+               Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
+               Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+               PRIMARY KEY (Users_Id, Accounts_Id)
            )""",
         # Installment series (migration 015) — a Recurring_Templates row with
         # Total_Occurrences set generates its first occurrence like any normal
@@ -943,6 +1037,11 @@ def get_connection() -> extensions.connection:
     """
     conn = _retry(lambda: psycopg2.connect(**DB_CONFIG), "get_connection")
     _apply_tz(conn)
+    try:
+        _apply_scope(conn)                  # the connection is the caller's to close, and the views go with it
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 

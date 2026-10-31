@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
@@ -11,6 +11,7 @@ import {
   syncBalances, batchUpdateInvestments, batchDeleteInvestments,
   batchDeleteTransactions, batchMoveTransactions,
 } from '@/lib/api'
+import SaxoMargin from '@/components/SaxoMargin'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty, todayLocal, toLocalISODate } from '@/lib/utils'
@@ -19,6 +20,10 @@ import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
 import { TxModal, useTxModal } from '@/components/TxModal'
+import { usePhone } from '@/lib/useMedia'
+import { useRole } from '@/lib/auth'
+import { MoreMenu, Fab } from '@/components/mobile'
+import { TxCards, InvCards, HoldingCards } from '@/components/TxCards'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
 
@@ -71,7 +76,7 @@ const makeInvCols = (navigate: ReturnType<typeof useNavigate>): ColDef[] => [
   { field: 'instrument_type', headerName: 'Instrument', width: 110 },
   { field: 'account', headerName: 'Account', flex: 1, minWidth: 130 },
   { field: 'cash_account', headerName: 'Cash Account', flex: 1, minWidth: 120,
-    valueFormatter: p => p.value ?? '—',
+    valueFormatter: p => p.data?.external ? `🔒 ${p.value ?? ''}` : (p.value ?? '—'),
     cellStyle: p => p.value ? { color: '#2563eb', fontSize: '12px' } : { color: '#cbd5e1', fontSize: '12px' } },
   { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 120 },
 ]
@@ -113,6 +118,7 @@ type HoldingEdit = { quantity: string; staking: boolean }
 
 function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown>[]; onSaved: () => void }) {
   const navigate = useNavigate()
+  const { readOnly } = useRole()
   const [edits, setEdits] = useState<Record<number, HoldingEdit>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -255,14 +261,14 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
                   </td>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{String(row.security_type ?? '')}</td>
                   <td className="py-1 pr-3">
-                    <input type="number" step="any"
+                    <input type="number" step="any" disabled={readOnly}
                       className="w-full rounded border border-slate-300 px-2 py-0.5 text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={edit.quantity}
                       onChange={e => setField(id, row, 'quantity', e.target.value)}
                     />
                   </td>
                   <td className="py-1 pr-3 text-center">
-                    <input type="checkbox" className="rounded"
+                    <input type="checkbox" className="rounded" disabled={readOnly}
                       checked={edit.staking}
                       onChange={e => setField(id, row, 'staking', e.target.checked)}
                     />
@@ -288,12 +294,12 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
         <button onClick={copyHoldingsToExcel} className={`no-print flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${copiedHoldings ? 'bg-green-600 text-white' : 'bg-slate-700 text-white hover:bg-slate-800'}`}>
           {copiedHoldings ? '✓ Copied!' : '📋 Copy to Excel'}
         </button>
-        <div className="flex gap-2">
+        {!readOnly && <div className="flex gap-2">
           <Button variant="secondary" size="sm" disabled={changedIds.length === 0} onClick={() => { setEdits({}); setMsg(null) }}>Reset</Button>
           <Button size="sm" disabled={saving || changedIds.length === 0} onClick={handleSave}>
             <Save size={14} /> {saving ? 'Saving…' : `Save${changedIds.length > 0 ? ` (${changedIds.length})` : ''}`}
           </Button>
-        </div>
+        </div>}
       </div>
     </div>
   )
@@ -303,6 +309,7 @@ function HoldingsTable({ holdings, onSaved }: { holdings: Record<string, unknown
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Investments() {
   const navigate = useNavigate()
+  const { readOnly, isAdmin } = useRole()  // read-only: no editing controls; limited/read-only: no balance sync (admin job)
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const [tab, setTab] = usePersist<'holdings' | 'transactions' | 'cash'>('investments_tab', 'holdings')
@@ -328,6 +335,8 @@ export default function Investments() {
   const [activePeriod, setActivePeriod] = useState('6M')
   const [actionFilter, setActionFilter] = useState('')
   const [txSearch, setTxSearch] = useState('')
+  const phone = usePhone()
+  const [showDates, setShowDates] = useState(false)      // phone: the From / To fields stay folded until asked for
   const [cashSearch, setCashSearch] = useState('')
   const PAGE_SIZE = 200
 
@@ -393,7 +402,8 @@ export default function Investments() {
   // grid — just tell the infinite row model's currently-loaded blocks to refetch).
   const refreshTxGrid = useCallback(() => {
     txGridRef.current?.api?.refreshInfiniteCache()
-  }, [])
+    qc.invalidateQueries({ queryKey: ['inv-cards'] })      // the phone's list
+  }, [qc])
 
   // Transaction count for the "N transactions" label — updated from whatever the
   // datasource's most recent response said; reset on any filter change so a stale
@@ -435,6 +445,29 @@ export default function Investments() {
       }).catch(() => params.failCallback())
     },
   }), [accountId, fromDate, toDate, actionFilter, txSearch])
+
+  // Phone: the same transactions as cards, 50 at a time, newest first
+  type InvPage = { investments: Record<string, unknown>[]; total: number }
+  const invCards = useInfiniteQuery({
+    queryKey: ['inv-cards', accountId, fromDate, toDate, actionFilter, txSearch],
+    enabled: phone && tab === 'transactions',
+    initialPageParam: 0,
+    queryFn: ({ pageParam }): Promise<InvPage> => getInvestments({
+      account_id: accountId ?? undefined, from_date: fromDate, to_date: toDate, action: actionFilter || undefined, search: txSearch || undefined,
+      sort_by: 'date', sort_dir: 'desc', limit: 50, offset: pageParam,
+    }),
+    getNextPageParam: (last: InvPage, all: InvPage[]) => {
+      const n = all.reduce((t, p) => t + p.investments.length, 0)
+      return n < last.total ? n : undefined
+    },
+  })
+  const invCardRows = (invCards.data?.pages ?? []).flatMap(p => p.investments)
+  useEffect(() => {
+    if (phone && invCards.data?.pages?.length) {
+      setTxTotalCount(invCards.data.pages[0].total)
+      setInvLatestBalance(invCards.data.pages[0].investments.length > 0 ? Number(invCards.data.pages[0].investments[0].running_balance ?? 0) : 0)
+    }
+  }, [phone, invCards.data])
 
   // ── Cash tab state ────────────────────────────────────────────────────────
   const [cashFromDate, setCashFromDate] = useState(monthsAgo(6))
@@ -606,6 +639,9 @@ export default function Investments() {
   }
 
   const openEdit = useCallback((row: Record<string, unknown>) => {
+    if (readOnly) return
+    // A trade whose cash leg (or paired share transfer) is in an account that is not the user's is half somebody else's: viewable, not changeable. (The server refuses it too.)
+    if (row.external) { setBatchMsg('Error: this transaction involves an account that is not yours, so it can be viewed here but not changed.'); return }
     const acc = (accounts as Record<string, unknown>[]).find(a => String(a.name) === String(row.account))
     const sec = (securities as Record<string, unknown>[]).find(s => String(s.ticker) === String(row.ticker))
     const accId = acc ? String(acc.id) : ''
@@ -635,7 +671,7 @@ export default function Investments() {
         setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
       }).catch(() => {})
     }
-  }, [accounts, securities])
+  }, [accounts, securities, readOnly])
 
   // Arriving here via a "?investmentId=123" deep link (e.g. Reports → Inv.
   // Portfolio → Costs by Broker, double-click on a transaction row) — open
@@ -657,6 +693,23 @@ export default function Investments() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, setSearchParams, accounts, securities])
+
+  const openNewInv = () => {
+    if (readOnly) return
+    setEditId(null)
+    setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
+    setSaveError(null); setModalOpen(true)
+    getLinkedAccount(accountId!).then(r => {
+      setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
+    }).catch(() => {})
+  }
+  const syncInv = async (target: string) => {
+    await syncBalances(target)
+    await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+    await qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
+    refreshTxGrid()
+    await qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
+  }
 
   return (
     <div>
@@ -681,40 +734,41 @@ export default function Investments() {
                 <div className="w-px h-5 bg-slate-200" />
               </>
             )}
-            <Button size="sm" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined}
-              onClick={() => {
-                setEditId(null)
-                setForm({ ...emptyInvForm(), accounts_id: String(accountId ?? '') })
-                setSaveError(null); setModalOpen(true)
-                getLinkedAccount(accountId!).then(r => {
-                  setForm(f => ({ ...f, cash_account_id: r.linked_account_id ? String(r.linked_account_id) : '' }))
-                }).catch(() => {})
-              }}>
+            {!readOnly && <>
+            <Button size="sm" className="hidden sm:inline-flex" disabled={!accountId} title={!accountId ? 'Select an account first' : undefined} onClick={openNewInv}>
               <Plus size={14} /> New Transaction
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => setTransferOpen(true)}>
+            <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => setTransferOpen(true)}>
               <ArrowLeftRight size={14} /> Transfer
             </Button>
-            <SyncBalancesButton
-              options={[
-                { label: '📈 Investments', target: 'investment' },
-                { label: '🏛️ Pension', target: 'pension' },
-                { label: '📊 Holdings', target: 'holdings' },
-              ]}
-              onSync={async target => {
-                await syncBalances(target)
-                await qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-                await qc.invalidateQueries({ queryKey: ['holdings'], exact: false })
-                refreshTxGrid()
-                await qc.invalidateQueries({ queryKey: ['inv-cash'], exact: false })
-              }}
-            />
+            </>}
+            {isAdmin && <div className="hidden sm:block">
+              <SyncBalancesButton
+                options={[
+                  { label: '📈 Investments', target: 'investment' },
+                  { label: '🏛️ Pension', target: 'pension' },
+                  { label: '📊 Holdings', target: 'holdings' },
+                ]}
+                onSync={syncInv}
+              />
+            </div>}
+            {isAdmin && <div className="sm:hidden">
+              <MoreMenu items={[
+                { label: 'Transfer between accounts…', onClick: () => setTransferOpen(true) },
+                { label: 'Sync investments', onClick: () => { void syncInv('investment') } },
+                { label: 'Sync pension', onClick: () => { void syncInv('pension') } },
+                { label: 'Sync holdings', onClick: () => { void syncInv('holdings') } },
+              ]} />
+            </div>}
+            {!isAdmin && !readOnly && <div className="sm:hidden">
+              <MoreMenu items={[{ label: 'Transfer between accounts…', onClick: () => setTransferOpen(true) }]} />
+            </div>}
           </div>
         }
       />
 
       {/* Tabs */}
-      <div className="px-6 pt-4 flex gap-1 border-b border-slate-200">
+      <div className="px-3 sm:px-6 pt-4 flex gap-1 border-b border-slate-200">
         {(['holdings', 'transactions', 'cash'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 capitalize transition-colors ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -723,10 +777,11 @@ export default function Investments() {
         ))}
       </div>
 
-      <div className="px-6 py-4 space-y-4">
+      <div className="px-3 sm:px-6 py-4 space-y-4">
+        {isAdmin && accountId != null && selectedAccount && String(selectedAccount.type) === 'Margin' && <SaxoMargin accountId={accountId} />}
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap">
-          <select className="w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value) || null)}>
+          <select className="w-full sm:w-52 rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value) || null)}>
             <option value="">All accounts</option>
             <AccountOptions accounts={investmentAccounts as Record<string, unknown>[]} />
           </select>
@@ -738,14 +793,16 @@ export default function Investments() {
           {tab === 'transactions' && (
             <>
               {/* Period shortcuts */}
-              <div className="flex gap-1">
+              <div className="flex gap-1 w-full sm:w-auto">
                 {PERIODS.map(p => (
                   <button key={p.label} onClick={() => setPeriod(p.label, p.from())}
-                    className={`px-2.5 py-1 text-xs rounded border transition-colors ${activePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                    className={`flex-1 sm:flex-none px-2.5 py-1 pointer-coarse:py-2 text-xs rounded border transition-colors ${activePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
                     {p.label}
                   </button>
                 ))}
               </div>
+              <button className="sm:hidden text-xs text-blue-600 underline px-1" onClick={() => setShowDates(v => !v)}>{showDates ? 'Hide dates' : 'Custom dates'}</button>
+              <div className={`${showDates ? 'flex' : 'hidden'} sm:flex items-center gap-2 flex-wrap`}>
               <Input type="date" className="w-36" value={fromDate} onChange={e => { setFromDate(e.target.value); setActivePeriod('') }} />
               <span className="text-slate-400 text-sm">to</span>
               <div className="flex items-center gap-2">
@@ -755,7 +812,8 @@ export default function Investments() {
                   <span className="text-xs text-slate-500">Today</span>
                 </label>
               </div>
-              <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={actionFilter} onChange={e => setActionFilter(e.target.value)}>
+              </div>
+              <select className="w-full sm:w-auto rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={actionFilter} onChange={e => setActionFilter(e.target.value)}>
                 <option value="">All actions</option>
                 {ACTIONS.map(a => <option key={a}>{a}</option>)}
               </select>
@@ -764,14 +822,16 @@ export default function Investments() {
 
           {tab === 'cash' && accountId && (
             <>
-              <div className="flex gap-1">
+              <div className="flex gap-1 w-full sm:w-auto">
                 {PERIODS.map(p => (
                   <button key={p.label} onClick={() => { setCashFromDate(p.from()); setCashActivePeriod(p.label) }}
-                    className={`px-2.5 py-1 text-xs rounded border transition-colors ${cashActivePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                    className={`flex-1 sm:flex-none px-2.5 py-1 pointer-coarse:py-2 text-xs rounded border transition-colors ${cashActivePeriod === p.label ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
                     {p.label}
                   </button>
                 ))}
               </div>
+              <button className="sm:hidden text-xs text-blue-600 underline px-1" onClick={() => setShowDates(v => !v)}>{showDates ? 'Hide dates' : 'Custom dates'}</button>
+              <div className={`${showDates ? 'flex' : 'hidden'} sm:flex items-center gap-2 flex-wrap`}>
               <Input type="date" className="w-36" value={cashFromDate} onChange={e => { setCashFromDate(e.target.value); setCashActivePeriod('') }} />
               <span className="text-slate-400 text-sm">to</span>
               <div className="flex items-center gap-2">
@@ -781,9 +841,10 @@ export default function Investments() {
                   <span className="text-xs text-slate-500">Today</span>
                 </label>
               </div>
-              <Button size="sm" onClick={() => cashTx.openNew(accountId!)} disabled={!accountId}>
+              </div>
+              {!readOnly && <Button size="sm" className="hidden sm:inline-flex" onClick={() => cashTx.openNew(accountId!)} disabled={!accountId}>
                 <Plus size={14} /> New
-              </Button>
+              </Button>}
             </>
           )}
 
@@ -804,6 +865,27 @@ export default function Investments() {
           )}
         </div>
 
+        {phone ? (
+          <div>
+            {tab === 'holdings' && (holdingsLoading
+              ? <div className="flex justify-center py-12"><Spinner /></div>
+              : <HoldingCards holdings={holdings as Record<string, unknown>[]} onOpen={h => h.securities_id != null && navigate(`/securities/${String(h.securities_id)}`)} />)}
+            {tab === 'transactions' && (
+              <>
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Input className="pl-8 w-full" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
+                </div>
+                <p className="text-xs text-slate-400 mt-2">{txTotalCount != null ? `${txTotalCount.toLocaleString()} transactions` : ''}</p>
+                <InvCards rows={invCardRows} loading={invCards.isLoading} hasMore={!!invCards.hasNextPage} loadingMore={invCards.isFetchingNextPage}
+                  onMore={() => invCards.fetchNextPage()} onOpen={r => openEdit(r)} />
+              </>
+            )}
+            {tab === 'cash' && (!accountId
+              ? <p className="text-sm text-slate-400 text-center py-12">Select an account to view cash transactions.</p>
+              : <TxCards rows={cashRows} currency={String(selectedAccount?.currency ?? 'EUR')} loading={cashLoading} onOpen={r => (r.managed ? setCashBatchMsg('Error: this entry is kept by Oikos from a margin trade — change the trade instead.') : cashTx.openEdit(r, accountId))} />)}
+          </div>
+        ) : (
         <Card className="overflow-hidden">
           {tab === 'holdings' && (
             holdingsLoading
@@ -840,8 +922,8 @@ export default function Investments() {
                       {selectedCashIds.length > 0 && (
                         <>
                           <span className="text-xs text-slate-500 whitespace-nowrap">{selectedCashIds.length} selected</span>
-                          <Button variant="secondary" size="sm" onClick={() => setCashBatchMoveOpen(true)}>Move to Account…</Button>
-                          <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>
+                          {!readOnly && <Button variant="secondary" size="sm" onClick={() => setCashBatchMoveOpen(true)}>Move to Account…</Button>}
+                          {!readOnly && <Button variant="destructive" size="sm" disabled={cashBatchSaving} onClick={handleCashBatchDelete}>Delete Selected</Button>}
                         </>
                       )}
                       {cashGridFilter.hasFilters && (
@@ -854,7 +936,7 @@ export default function Investments() {
                       <CopyToExcelButton gridApi={cashGridApi} />
                     </div>
                   </div>
-                  <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
+                  <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 320px)', width: '100%' }}>
                     <AgGridReact
                       theme="legacy"
                       ref={cashGridRef}
@@ -864,8 +946,9 @@ export default function Investments() {
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       columnTypes={AG_GRID_COLUMN_TYPES}
                       rowSelection="multiple"
+                      isRowSelectable={n => !n.data?.managed}
                       onSelectionChanged={e => setSelectedCashIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
-                      onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) cashTx.openEdit(e.data as Record<string, unknown>, accountId!) }}
+                      onRowClicked={e => { if (e.event && (e.event as MouseEvent).detail === 2) { if (e.data?.managed) setCashBatchMsg('Error: this entry is kept by Oikos from a margin trade — change the trade instead.'); else cashTx.openEdit(e.data as Record<string, unknown>, accountId!) } }}
                       onGridReady={onCashGridReady}
                       initialState={cashGridScroll.initialState}
                       onStateUpdated={cashGridScroll.onStateUpdated}
@@ -911,9 +994,9 @@ export default function Investments() {
                   {selectedTxIds.length > 0 && (
                     <>
                       <span className="text-xs text-slate-500 whitespace-nowrap">{selectedTxIds.length} selected</span>
-                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>
-                      <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>
-                      <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>
+                      {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchAction('account')}>Move to Account…</Button>}
+                      {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchAction('cash')}>Change Cash Account…</Button>}
+                      {!readOnly && <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>}
                     </>
                   )}
                   <ColumnsMenu columns={txGridCols.columns} onToggle={txGridCols.toggleColumn} />
@@ -922,7 +1005,7 @@ export default function Investments() {
               </div>
               {/* Infinite row model: rows stream in as you scroll instead of clicking through
                   numbered pages — see invDatasource above for how blocks are fetched. */}
-              <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', width: '100%' }}>
+              <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 320px)', width: '100%' }}>
                 <AgGridReact
                   theme="legacy"
                   ref={txGridRef}
@@ -932,6 +1015,7 @@ export default function Investments() {
                   columnDefs={txGridCols.colDefs}
                   defaultColDef={{ resizable: true, sortable: true }}
                   rowSelection="multiple"
+                  isRowSelectable={n => !n.data?.external}
                   onSelectionChanged={e => setSelectedTxIds(e.api.getSelectedRows().map((r: Record<string, unknown>) => Number(r.id)))}
                   onRowClicked={e => { if (e.data && e.event && (e.event as MouseEvent).detail === 2) openEdit(e.data as Record<string, unknown>) }}
                   onGridReady={onTxGridReady}
@@ -945,7 +1029,10 @@ export default function Investments() {
             </>
           )}
         </Card>
+        )}
       </div>
+
+      {!readOnly && <Fab label={tab === 'cash' ? 'New cash transaction' : 'New transaction'} disabled={!accountId} onClick={() => (tab === 'cash' ? cashTx.openNew(accountId!) : openNewInv())} />}
 
       {cashTx.modalOpen && cashTx.form && (
         <TxModal

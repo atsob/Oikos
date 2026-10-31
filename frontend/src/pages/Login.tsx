@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, CardBody, Input, Button } from '@/components/ui'
 import { login, getMe } from '@/lib/api'
+import { initPreferences, resetPreferences } from '@/lib/preferences'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -22,6 +23,8 @@ export default function Login() {
     setError(null)
     try {
       await login(username, password)
+      resetPreferences()                 // what the last person here had set is not theirs
+      await initPreferences()
       await qc.invalidateQueries({ queryKey: ['auth-me'] })
       navigate('/', { replace: true })
     } catch (err: unknown) {
@@ -33,7 +36,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="min-h-dvh flex items-center justify-center bg-slate-50 px-4">
       <Card className="w-full max-w-sm">
         <CardBody className="space-y-5">
           <div className="flex flex-col items-center gap-2 text-center">

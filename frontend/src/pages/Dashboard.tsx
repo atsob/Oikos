@@ -1,12 +1,12 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 import {
   getNetWorth, getAccounts, getMonthlySummaries, getWeeklySummaries,
   getRecurringDrafts, confirmDraft, confirmAllDrafts, deleteDraft, getInsights,
   getUncategorizedTransactions, getPayees, getCategories,
-  generateMonthlySummary, generateWeeklySummary, getAlerts, dismissAlert, dismissAlertGroup,
+  generateMonthlySummary, generateWeeklySummary,
   getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary,
 } from '@/lib/api'
 import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip } from '@/components/ui'
@@ -15,7 +15,12 @@ import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
 import { fmtEur, fmtDate, fmtNum, plotLayout, plotAxis, todayLocal, toLocalISODate } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
-import { usePersist, useLiveRefetchInterval, useScrollRestore } from '@/lib/hooks'
+import { useRole } from '@/lib/auth'
+import { usePersist, useLiveRefetchInterval, useScrollRestore, useSettings } from '@/lib/hooks'
+import { ALERT_GROUPS, AlertItem, alertGroupOf, groupAlerts, levelDot, useTriggeredAlerts, worstLevel } from '@/components/alerts'
+import { DashboardCustomizer } from '@/components/DashboardCustomizer'
+import { DEFAULT_LAYOUT, layoutRows, resolveLayout, type DashLayout } from '@/lib/dashboardLayout'
+import { PlanPanel } from '@/components/PlanBlock'
 import { MarketWatchPanel } from '@/components/MarketWatch'
 import { LocalWatchPanel } from '@/components/LocalWatch'
 import { setPref } from '@/lib/preferences'
@@ -29,7 +34,6 @@ import {
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
 // (the Dashboard options live in '@/lib/dashboardOpts', shared with the account pages the KPI cards open)
 
@@ -143,8 +147,8 @@ function MarketValuationPanel() {
 
   return (
     <Card>
-      <CardBody className="flex items-center justify-between gap-3 py-3">
-        <div className="flex items-center gap-3">
+      <CardBody className="flex items-center justify-between gap-x-3 gap-y-1 py-3 flex-wrap">
+        <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap">
           <Tooltip text={`U.S. Shiller CAPE: S&P 500 price divided by 10 years of inflation-adjusted earnings. ${s.percentile.toFixed(0)}th percentile since 1881 (median ${s.median.toFixed(1)}×) — describes the next decade's starting valuation base rate, not a crash-timing signal.`}>
             <span className="text-sm text-slate-500">U.S. Shiller CAPE</span>
           </Tooltip>
@@ -171,66 +175,18 @@ function MarketValuationPanel() {
   )
 }
 
-type AlertRow = Record<string, unknown>
-
-// Alert groups, in display order — the same groups as database/alert_groups.py. Each has
-// its own header, count, collapse state and "Dismiss group".
-const ALERT_GROUPS: { id: string; label: string; hint: string }[] = [
-  { id: 'sr', label: 'Support / Resistance', hint: 'Holdings, Watchlist and the currencies you are exposed to approaching or breaking a support or resistance level (1-year daily closes).' },
-  { id: 'price', label: 'Price Alerts', hint: 'Your own above/below thresholds (Market Data → Alerts). Dismissing one silences it until the price crosses back and triggers again.' },
-  { id: 'signals', label: 'Signals', hint: 'Signal changes, golden/death cross, trailing stop and Altman Z-Score zone changes.' },
-  { id: 'events', label: 'Upcoming Events', hint: 'Bond maturities and coupons, dividend payments and loan payments due soon. Dismissing one silences that event only.' },
-  { id: 'corporate', label: 'Corporate Actions & Data', hint: 'Stock splits and split-amount mismatches.' },
-  { id: 'portfolio', label: 'Portfolio', hint: 'Allocation drift beyond your thresholds.' },
-]
-const LEVEL_RANK: Record<string, number> = { error: 0, warning: 1, info: 2 }
-const SCOPE_LABEL: Record<string, string> = { holding: 'Holding', watchlist: 'Watchlist', currency: 'Currency' }
-
-// Messages mark emphasis with **…** — render it as bold instead of showing the asterisks.
-function AlertText({ text }: { text: string }) {
-  const parts = text.split(/\*\*(.+?)\*\*/g)
-  return <>{parts.map((p, i) => (i % 2 ? <b key={i}>{p}</b> : <React.Fragment key={i}>{p.replace(/(^|\s)_(.+?)_(?=\s|$)/g, '$1$2')}</React.Fragment>))}</>
-}
-
 function SecuritiesAlertsPanel() {
-  const qc = useQueryClient()
+  const [appSettings] = useSettings()
   const navigate = useNavigate()
-  const { data: alerts = [], isLoading } = useQuery({
-    queryKey: ['triggered-alerts'],
-    queryFn: getAlerts,
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
-  })
-  // Dismissing removes the just-dismissed row(s) from the cached list directly
-  // instead of invalidating/refetching — /dashboard/alerts recomputes several
-  // live checks (Golden/Death Cross, Trailing Stop, Support / Resistance, etc.) that
-  // take several seconds, and a dismiss doesn't change any of that, only which rows
-  // are dismissed. The 5-minute refetchInterval above still keeps the list
-  // eventually consistent with the server.
-  const removeAlerts = (predicate: (a: AlertRow) => boolean) => {
-    qc.setQueryData<AlertRow[]>(['triggered-alerts'], (old) => (old ?? []).filter(a => !predicate(a)))
-  }
-  const dismissOne = useMutation({
-    mutationFn: (a: AlertRow) => dismissAlert(a),
-    onSuccess: (_d, a) => removeAlerts(x => x.key === a.key),
-  })
-  const dismissGroup = useMutation({
-    mutationFn: (group: string) => dismissAlertGroup(group),
-    onSuccess: (_d, group) => removeAlerts(x => x.group === group),
-  })
+  const { alerts, isLoading, dismissOne, dismissGroup } = useTriggeredAlerts()
+  const { isAdmin } = useRole()
   const [open, setOpen] = usePersist('dashboard_alerts_open', false)
   const [groupOpen, setGroupOpen] = usePersist<Record<string, boolean>>('dashboard_alert_groups_open', {})
 
-  const rows = alerts as AlertRow[]
-  const byGroup = React.useMemo(() => {
-    const m = new Map<string, AlertRow[]>()
-    for (const a of rows) {
-      const g = ALERT_GROUPS.some(x => x.id === a.group) ? String(a.group) : 'portfolio'
-      m.set(g, [...(m.get(g) ?? []), a])
-    }
-    for (const list of m.values()) list.sort((x, y) => (LEVEL_RANK[String(x.level)] ?? 3) - (LEVEL_RANK[String(y.level)] ?? 3))
-    return m
-  }, [rows])
+  // Groups switched off under Tools → App Settings → Dashboard Alerts are not shown here (every group is, by default);
+  // the Alerts page lists them all.
+  const rows = alerts.filter(a => appSettings.dashboardAlertGroups?.[alertGroupOf(a)] !== false)
+  const byGroup = React.useMemo(() => groupAlerts(rows), [rows])
 
   // /dashboard/alerts recomputes several live checks and can take a few seconds,
   // during which `alerts` is still just its `[]` default — without this, the whole
@@ -247,21 +203,6 @@ function SecuritiesAlertsPanel() {
   }
   if (!rows.length) return null
 
-  const levelStyle = (level: string) => {
-    if (level === 'error') return 'bg-red-50 border-red-300'
-    if (level === 'warning') return 'bg-amber-50 border-amber-300'
-    return 'bg-blue-50 border-blue-300'
-  }
-  const levelIcon = (level: string) => {
-    if (level === 'error') return <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
-    if (level === 'warning') return <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
-    return <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
-  }
-  const worst = (list: AlertRow[]) => list.reduce((w, a) => Math.min(w, LEVEL_RANK[String(a.level)] ?? 3), 3)
-  const dot = (rank: number) => rank === 0 ? 'bg-red-500' : rank === 1 ? 'bg-amber-500' : 'bg-blue-500'
-  const target = (a: AlertRow) => a.securities_id != null ? `/securities/${a.securities_id}`
-    : a.currencies_id != null ? `/currencies/${a.currencies_id}` : null
-
   return (
     <Card>
       <button className="w-full flex items-center gap-2 px-4 py-3 text-left flex-wrap" onClick={() => setOpen(!open)}>
@@ -270,10 +211,14 @@ function SecuritiesAlertsPanel() {
         </span>
         {ALERT_GROUPS.filter(g => byGroup.has(g.id)).map(g => (
           <span key={g.id} className="inline-flex items-center gap-1 text-xs text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">
-            <span className={`w-1.5 h-1.5 rounded-full ${dot(worst(byGroup.get(g.id)!))}`} />{g.label} {byGroup.get(g.id)!.length}
+            <span className={`w-1.5 h-1.5 rounded-full ${levelDot(worstLevel(byGroup.get(g.id)!))}`} />{g.label} {byGroup.get(g.id)!.length}
           </span>
         ))}
-        <span className="ml-auto">{open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}</span>
+        <span className="ml-auto flex items-center gap-3">
+          <span role="link" className="text-xs text-blue-600 hover:underline" title="Every alert, a tab per group — including groups hidden here"
+            onClick={(e) => { e.stopPropagation(); navigate('/alerts') }}>All alerts →</span>
+          {open ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
+        </span>
       </button>
       {open && (
         <CardBody className="pt-0 space-y-3">
@@ -284,47 +229,23 @@ function SecuritiesAlertsPanel() {
               <div key={g.id} className="rounded-lg border border-slate-200">
                 <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-t-lg">
                   <button className="flex-1 flex items-center gap-2 text-left" onClick={() => setGroupOpen({ ...groupOpen, [g.id]: !isOpen })}>
-                    <span className={`w-2 h-2 rounded-full ${dot(worst(list))}`} />
+                    <span className={`w-2 h-2 rounded-full ${levelDot(worstLevel(list))}`} />
                     <span className="text-sm font-semibold text-slate-700"><Tooltip text={g.hint}>{g.label}</Tooltip></span>
                     <span className="text-xs text-slate-400">{list.length}</span>
                     {isOpen ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                   </button>
-                  <button
-                    className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
-                    disabled={dismissGroup.isPending}
-                    onClick={() => dismissGroup.mutate(g.id)}
-                    title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
-                    {dismissGroup.isPending && dismissGroup.variables === g.id ? 'Dismissing…' : list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
-                  </button>
+                  {isAdmin && (
+                    <button
+                      className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline"
+                      onClick={() => dismissGroup.mutate({ group: g.id, list })}
+                      title={`Dismiss all ${list.length} ${g.label} alert${list.length !== 1 ? 's' : ''} — the other groups are untouched`}>
+                      {list.length > 1 ? `Dismiss all ${list.length}` : 'Dismiss'}
+                    </button>
+                  )}
                 </div>
                 {isOpen && (
                   <div className="p-2 space-y-2">
-                    {list.map(a => {
-                      const level = String(a.level ?? 'info')
-                      const to = target(a)
-                      return (
-                        <div key={String(a.key)}
-                          className={`flex gap-2 p-3 rounded-lg border ${levelStyle(level)} ${to ? 'cursor-pointer hover:brightness-95' : ''}`}
-                          onClick={to ? () => navigate(to) : undefined}
-                          title={to ? (a.currencies_id != null ? 'View currency details' : 'View security details') : undefined}>
-                          {levelIcon(level)}
-                          <p className="text-sm text-slate-700 flex-1">
-                            {a.scope != null && (
-                              <span className="mr-1.5 text-[10px] uppercase tracking-wide font-semibold text-slate-500 bg-white/70 border border-slate-200 rounded px-1 py-px">
-                                {SCOPE_LABEL[String(a.scope)] ?? String(a.scope)}
-                              </span>
-                            )}
-                            <AlertText text={String(a.message ?? '')} />
-                          </p>
-                          <button
-                            className="shrink-0 text-xs text-slate-400 hover:text-slate-600 underline self-start"
-                            onClick={(e) => { e.stopPropagation(); dismissOne.mutate(a) }}
-                            title="Dismiss this alert — it comes back only if the event happens afresh">
-                            Dismiss
-                          </button>
-                        </div>
-                      )
-                    })}
+                    {list.map(a => <AlertItem key={String(a.key)} a={a} onOpen={navigate} onDismiss={x => dismissOne.mutate(x)} />)}
                   </div>
                 )}
               </div>
@@ -921,6 +842,7 @@ function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChang
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { isDark } = useTheme()
+  const { isAdmin } = useRole()
   const qc = useQueryClient()
   const navigate = useNavigate()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -933,6 +855,8 @@ export default function Dashboard() {
   )
   const setNwPeriodSaved = (v: string) => { setNwPeriod(v); localStorage.setItem('oikos-nw-period', v) }
   const [showKWave, setShowKWave] = usePersist('nw_show_kwave', false)
+  const [savedLayout, setSavedLayout] = usePersist<DashLayout>('dashboard_layout', DEFAULT_LAYOUT)
+  const [customizing, setCustomizing] = React.useState(false)
   const [kwPhases, setKwPhases] = usePersist<KWavePhase[]>('kwave_phases', DEFAULT_KWAVE_PHASES)
 
   const NW_PERIODS: Record<string, string> = {
@@ -965,11 +889,13 @@ export default function Dashboard() {
   const { data: monthlySummaries = [] } = useQuery({
     queryKey: ['monthly-summaries'],
     queryFn: () => getMonthlySummaries(24),
+    enabled: isAdmin,
   })
 
   const { data: weeklySummaries = [] } = useQuery({
     queryKey: ['weekly-summaries'],
     queryFn: () => getWeeklySummaries(12),
+    enabled: isAdmin,
   })
 
   // Same rows/queryKey as Recurring → Pending Drafts (Transactions.Is_Draft=TRUE) —
@@ -1107,33 +1033,13 @@ export default function Dashboard() {
     if (!weekPeriods.includes(ws)) weekPeriods.push(ws)
   })
 
-  return (
-    <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle="Net worth overview"
-        actions={
-          <>
-          <PricesUpdatedAuto />
-          <SyncBalancesButton
-            options={[
-              { label: '🏦 Bank & Cash', target: 'cash' },
-              { label: '📈 Investments', target: 'investment' },
-              { label: '🏛️ Pension', target: 'pension' },
-              { label: '📊 Holdings', target: 'holdings' },
-              { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
-            ]}
-            onSync={handleSync}
-          />
-          </>
-        }
-      />
-
-      <div className="p-6 space-y-4">
-        {/* KPI row — Net Worth gets extra width as the "hero" card; the rest stay compact
-            so all five fit on one line instead of wrapping. */}
+  // The Dashboard's blocks — each a piece of its own. Which of them show, and in what order, is the user's choice (Customize);
+  // the list and its default order are in lib/dashboardLayout.ts.
+  const blockNodes: Record<string, React.ReactNode> = {
+    kpi: (
         <div className="grid grid-cols-2 md:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-3">
           <StatCard
+            className="col-span-2 md:col-span-1"
             label="Net Worth"
             value={fmtEur(totalNetWorth)}
             subs={[
@@ -1198,19 +1104,14 @@ export default function Dashboard() {
             onClick={() => navigate('/dashboard/assets')}
           />
         </div>
-
-        {/* Insights + Drafts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 space-y-3">
-            <InsightsPanel insights={insights as Insight[]} />
-            <MarketValuationPanel />
-            <MarketWatchPanel />
-            <LocalWatchPanel />
-            <SecuritiesAlertsPanel />
-            <UncategorizedTransactionsPanel />
-          </div>
-
-          {/* Pending Drafts */}
+    ),
+    insights: <InsightsPanel insights={insights as Insight[]} />,
+    valuation: <MarketValuationPanel />,
+    marketwatch: <MarketWatchPanel />,
+    localwatch: <LocalWatchPanel />,
+    alerts: <SecuritiesAlertsPanel />,
+    uncategorized: <UncategorizedTransactionsPanel />,
+    drafts: (
           <Card>
             <CardHeader className="flex items-center justify-between">
               <CardTitle>Pending Drafts ({drafts.length})</CardTitle>
@@ -1252,26 +1153,8 @@ export default function Dashboard() {
               )}
             </CardBody>
           </Card>
-        </div>
-
-        {reviewDraft && (
-          <DraftReviewModal
-            draft={reviewDraft}
-            accounts={accounts as Record<string, unknown>[]}
-            payees={draftPayees as Record<string, unknown>[]}
-            categories={draftCategories as Record<string, unknown>[]}
-            onClose={() => setReviewDraft(null)}
-            onSaved={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
-            onConfirmed={() => {
-              qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
-              qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
-              setReviewDraft(null)
-            }}
-            onDeleted={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
-          />
-        )}
-
-        {/* Net Worth Breakdown */}
+    ),
+    breakdown: (
         <Card>
           <CardHeader><CardTitle>Net Worth Breakdown</CardTitle></CardHeader>
           <CardBody className="p-0">
@@ -1312,9 +1195,8 @@ export default function Dashboard() {
             })()}
           </CardBody>
         </Card>
-
-        {/* Net Worth Trend */}
-        {!nwLoading && nwData.length > 1 && (() => {
+    ),
+    trend: !nwLoading && nwData.length > 1 && (() => {
           const kwFrom = nwData[0]?.date ? String(nwData[0].date).slice(0, 10) : undefined
           const kwTo = nwData[nwData.length - 1]?.date ? String(nwData[nwData.length - 1].date).slice(0, 10) : undefined
           const kwOverlay = showKWave && kwFrom && kwTo ? getKWaveOverlay(kwPhases, kwFrom, kwTo) : null
@@ -1371,22 +1253,13 @@ export default function Dashboard() {
             )}
           </Card>
           )
-        })()}
-
-        {/* Options & Account selection */}
-        <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />
-
-        {/* Accounts (collapsible, folded by default) */}
-        <AccountsPanel accounts={accsForNw} opts={opts} />
-
-        {/* Upcoming Bills + Unusual Transactions */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <UpcomingBillsPanel />
-          <AnomaliesPanel />
-        </div>
-
-        {/* AI Summaries */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        })(),
+    options: <OptionsPanel accounts={visibleAccsForNw} opts={opts} onChange={setOpts} />,
+    accounts: <AccountsPanel accounts={accsForNw} opts={opts} />,
+    plan: <PlanPanel />,
+    bills: <UpcomingBillsPanel />,
+    anomalies: <AnomaliesPanel />,
+    weekly: (
           <AISummaryPanel
             label="Weekly AI Summary"
             summaries={weeklySummaries as Record<string, unknown>[]}
@@ -1395,6 +1268,8 @@ export default function Dashboard() {
             queryKey="weekly-summaries"
             dateField="week_start"
           />
+    ),
+    monthly: (
           <AISummaryPanel
             label="Monthly AI Summary"
             summaries={monthlySummaries as Record<string, unknown>[]}
@@ -1403,7 +1278,71 @@ export default function Dashboard() {
             queryKey="monthly-summaries"
             dateField="month_start"
           />
+    ),
+  }
+  const layout = resolveLayout(savedLayout, isAdmin)
+
+  return (
+    <div>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Net worth overview"
+        actions={
+          <>
+          <PricesUpdatedAuto />
+          {isAdmin && (
+            <SyncBalancesButton
+              options={[
+                { label: '🏦 Bank & Cash', target: 'cash' },
+                { label: '📈 Investments', target: 'investment' },
+                { label: '🏛️ Pension', target: 'pension' },
+                { label: '📊 Holdings', target: 'holdings' },
+                { label: '🚀 Run Full Sync', target: 'all', emphasize: true },
+              ]}
+              onSync={handleSync}
+            />
+          )}
+          <Button size="sm" variant="secondary" onClick={() => setCustomizing(true)} title="Choose which blocks the Dashboard shows, and in what order">
+            <SlidersHorizontal size={13} /> Customize
+          </Button>
+          </>
+        }
+      />
+
+      <div className="p-3 sm:p-6">
+        {/* Rows of one block, or two half-width blocks side by side from 1024px up (stacked below that). A block with nothing to show
+            disappears, and its neighbour then takes the whole row; a row with nothing in it takes no room. */}
+        <div className="flex flex-col gap-4">
+          {layoutRows(layout.shown, layout.widthOf).map(row => (
+            <div key={row.join('+')} className="flex flex-col lg:flex-row gap-4 [&:not(:has(>:not(:empty)))]:hidden">
+              {row.map(id => <div key={id} className="min-w-0 lg:flex-1 empty:hidden">{blockNodes[id]}</div>)}
+            </div>
+          ))}
         </div>
+        {layout.shown.length === 0 && (
+          <p className="text-sm text-slate-400 text-center py-12">
+            Every block is hidden. <button className="text-blue-600 hover:underline" onClick={() => setCustomizing(true)}>Customize</button> to bring some back.
+          </p>
+        )}
+
+        {reviewDraft && (
+          <DraftReviewModal
+            draft={reviewDraft}
+            accounts={accounts as Record<string, unknown>[]}
+            payees={draftPayees as Record<string, unknown>[]}
+            categories={draftCategories as Record<string, unknown>[]}
+            onClose={() => setReviewDraft(null)}
+            onSaved={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+            onConfirmed={() => {
+              qc.invalidateQueries({ queryKey: ['recurring-drafts'] })
+              qc.invalidateQueries({ queryKey: ['accounts'], exact: false })
+              setReviewDraft(null)
+            }}
+            onDeleted={() => { qc.invalidateQueries({ queryKey: ['recurring-drafts'] }); setReviewDraft(null) }}
+          />
+        )}
+
+        {customizing && <DashboardCustomizer layout={savedLayout} onChange={setSavedLayout} onClose={() => setCustomizing(false)} />}
       </div>
     </div>
   )

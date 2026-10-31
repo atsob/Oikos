@@ -1,11 +1,12 @@
-import React, { useState, useMemo, useCallback, useEffect, Fragment } from 'react'
-import type { CountryExposureCountry } from '@/lib/api'
+import React, { useState, useMemo, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
+import type { CountryExposureCountry, TaxReturnLine, TaxReturnResult } from '@/lib/api'
 import { usePersist, useLiveRefetchInterval, useGridColumnState, useGridApi, useGridFilterState, useGridScrollState, useScrollRestore, useMainScrollRestore, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
+import RetirementPlanner from '@/components/RetirementPlanner'
+import PrivateFunds from '@/components/PrivateFunds'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 import {
   getPortfolioSummary,
   getHoldingsSnapshot,
@@ -15,11 +16,11 @@ import {
   getNetWorthByAccount, getInvestmentPositionsHistory,
   getXraySectorWeighting, getXrayAssetAllocation, getXrayAssetAllocationTargets, saveXrayAssetAllocationTargets, getXrayStyleBox, getXrayBondQuality, getXrayStockOverlap, getXrayExpenseRatio, getCountryExposure, getCurrencyExposure,
   getSpendingTrends, getSavingsRateDetail,
-  getTwr, getRiskMetrics, getTaxLossHarvesting, getDividendIncomeTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
+  getTwr, getRiskMetrics, getTaxLossHarvesting, getTaxLossHarvestingSummary, getTaxReturn, putTaxReturnCodes, getDividendIncomeTax, getBankInterestTax, getPriceChanges, getPortfolioSignals, getFundamentalScores,
   getGoals, upsertGoal, deleteGoal,
   getBondSchedule, getBenchmarkCandidates, getBenchmark, getCorrelation, getSavingsAccounts,
   getSavingsForecast, getSavingsRecommendations,
-  getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts,
+  getDividendsTracker, getDividendsForecast, getDividendRecommendations, getAccounts, getCryptoTax,
   getPortfolioPresets, upsertPortfolioPreset, deletePortfolioPreset, getMonteCarlo,
   getIncomeExpenseFull, getCostsByBroker,
   getCustomReportPresets, saveCustomReportPreset, deleteCustomReportPreset,
@@ -40,11 +41,12 @@ import { useTheme } from '@/lib/theme'
 import { Trash2, Plus, Pencil, RefreshCw, ChevronRight, ChevronDown, Printer, X } from 'lucide-react'
 import { TxModal, useNoOpRecurring, addPeriod, PERIODICITIES } from '@/components/TxModal'
 import type { TxForm, SplitRow } from '@/components/TxModal'
-import { AgGridReact } from 'ag-grid-react'
+import AppGrid from '@/components/AppGrid'
 import StressTestTab from '@/pages/StressTest'
 import DayExtremesTab from '@/pages/DayExtremes'
 import type { ColDef } from 'ag-grid-community'
 import { CurrencyLink, CurrencyCell } from '@/components/CurrencyLink'
+import { useRole } from '@/lib/auth'
 
 type Row = Record<string, unknown>
 
@@ -68,6 +70,7 @@ const REPORT_TABS = [
   { key: 'tax',             label: '🧾 Investment Tax' },
   { key: 'securities',      label: '🔍 Securities Analysis' },
   { key: 'planning',        label: '🏖️ Financial Planning' },
+  { key: 'private-funds',   label: '🏛️ Private Funds' },
   { key: 'custom',          label: '📋 Custom Reports' },
 ]
 
@@ -77,7 +80,7 @@ function SubTabs({ tabs, active, onChange }: { tabs: string[]; active: string; o
     <div className="flex gap-0.5 border-b border-slate-200 mb-4 overflow-x-auto">
       {tabs.map(t => (
         <button key={t} onClick={() => onChange(t)}
-          className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${active === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          className={`px-3 py-1.5 pointer-coarse:py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${active === t ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           {t}
         </button>
       ))}
@@ -154,8 +157,8 @@ function PivotTable({ data, groupBy, colKey, valKey, showTotal = true, idKey, li
   }
   return (
     <WithCopy scrollKey="inv-positions-summary">
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+        <table data-matrix className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 min-w-40">{groupBy}</th>
@@ -348,8 +351,8 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
   return (
     <div className="space-y-4">
       <WithCopy scrollKey="nw-account-balances">
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-        <table className="w-full border-collapse">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+        <table data-matrix className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
               <th className="text-left px-2 py-1.5 border-b border-slate-200 sticky left-0 bg-slate-50 min-w-52">
@@ -431,7 +434,7 @@ function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPerio
   return (
     <div className="space-y-3">
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50">
@@ -754,6 +757,21 @@ function InvPositionsSummary({ startDate, accountIds }: { startDate: string; acc
 // on MarketData/SecurityDetail Downloads tabs) blended with direct stock/bond
 // holdings — see api/routers/reports.py's xray/* endpoints for the blend logic.
 
+// Totals for the Portfolio Analysis summary tables: the sum of what is listed and, with a compare date, the as-of total and its change.
+const sumVal = (list: Row[]) => list.reduce((t, r) => t + Number(r.value_eur ?? 0), 0)
+function CompareTotalCells({ current, asOf, withPp = false }: { current: number; asOf: number; withPp?: boolean }) {
+  const d = current - asOf
+  return (
+    <>
+      <td className="px-2 py-1.5 text-right tabular-nums text-slate-600 bg-amber-50 border-t border-slate-200">{fmtEur(asOf)}</td>
+      <td className={`px-2 py-1.5 text-right tabular-nums bg-amber-50 border-t border-slate-200 ${d > 0 ? 'text-green-600' : d < 0 ? 'text-red-500' : ''}`}>{d > 0 ? '+' : ''}{fmtEur(d)}</td>
+      {withPp && <td className="px-2 py-1.5 bg-amber-50 border-t border-slate-200"></td>}
+    </>
+  )
+}
+const TOTAL_TR = 'font-semibold text-slate-700 bg-slate-50'
+const TOTAL_TD = 'px-2 py-1.5 border-t border-slate-200'
+
 const SECTOR_NO_INDUSTRY_BUCKET = 'Fund Look-Through (No Industry Data)'
 
 function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
@@ -825,7 +843,7 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
           if (label) selectSector(label)
         }} />
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
@@ -865,6 +883,14 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(rows))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              {compareDate && <CompareTotalCells current={sumVal(rows)} asOf={sumVal(Object.values(compareMap))} withPp />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -876,7 +902,7 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
             <button onClick={() => { setSelectedSector(null); setSelectedIndustry(null) }} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy>
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -908,7 +934,7 @@ function XraySectorWeightingTab({ accountIds, compareDate }: { accountIds?: numb
             <button onClick={() => setSelectedIndustry(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy scrollKey="xray-sector-weighting-securities">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -992,13 +1018,14 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
     const labels = grid.rows.flatMap(r => grid.cols.map(c => grid.cell(r.name, c)))
     const max = Math.max(1, ...labels.map(l => cur[l] ?? 0))
     const sum = labels.reduce((s, l) => s + (cur[l] ?? 0), 0)
+    const sumCmp = labels.reduce((s, l) => s + (cmp[l] ?? 0), 0)
     return (
       <div className="flex-1 min-w-[300px]">
         <div className="flex items-baseline justify-between mb-1">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
-          <p className="text-xs text-slate-400">{fmtEur(sum)} · {fmtPct(pctOf(sum, total))}</p>
+          <p className="text-xs text-slate-400">Total {fmtEur(sum)} · {fmtPct(pctOf(sum, total))}{compareDate ? ` · as of ${compareDate}: ${fmtEur(sumCmp)} (${sum - sumCmp >= 0 ? '+' : ''}${fmtEur(sum - sumCmp)})` : ''}</p>
         </div>
-        <table className="w-full border-collapse text-xs table-fixed">
+        <table data-matrix className="w-full border-collapse text-xs table-fixed">
           <thead>
             <tr><th className="w-24 text-left px-1 py-1 text-slate-400 font-normal">{rowHead} ↓ / {colHead} →</th>
               {grid.cols.map(c => <th key={c} className="px-1 py-1 text-slate-500 font-medium text-center">{c}</th>)}</tr>
@@ -1060,7 +1087,7 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Without a grid</p>
             <p className="text-xs text-slate-400 mb-2">Direct holdings, cash, and funds Morningstar gives no Style Box (commodity and money-market funds, funds it does not cover).</p>
-            <StyleTable rows={otherRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head="Group" />
+            <StyleTable rows={otherRows} sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort} compareDate={compareDate} selected={selected} pick={pick} head="Group" totalLabel="Total without a grid" />
           </div>
         </>
       ) : (
@@ -1092,7 +1119,7 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
             <button onClick={() => setSelected(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy scrollKey="xray-style-box-securities">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1123,13 +1150,13 @@ function XrayStyleBoxTab({ accountIds, compareDate }: { accountIds?: number[]; c
   )
 }
 
-function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected, pick, head }: {
+function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected, pick, head, totalLabel = 'Total' }: {
   rows: { style: string; value_eur: number; pct: number; cmpValue: number | null; cmpPct: number | null }[]
-  sortKey: string | null; sortDir: 'asc' | 'desc'; toggleSort: (k: string) => void; compareDate?: string; selected: string | null; pick: (g: string) => void; head: string
+  sortKey: string | null; sortDir: 'asc' | 'desc'; toggleSort: (k: string) => void; compareDate?: string; selected: string | null; pick: (g: string) => void; head: string; totalLabel?: string
 }) {
   return (
     <WithCopy>
-    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
       <table className="w-full border-collapse">
         <thead className="sticky top-0 z-10 bg-slate-50">
           <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1162,13 +1189,25 @@ function StyleTable({ rows, sortKey, sortDir, toggleSort, compareDate, selected,
             )
           })}
         </tbody>
+        <tfoot className="sticky bottom-0 z-10">
+          <tr className={TOTAL_TR}>
+            <td className={TOTAL_TD}>{totalLabel}</td>
+            <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(rows.reduce((t, r) => t + r.value_eur, 0))}</td>
+            <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + r.pct, 0))}</td>
+            {compareDate && <CompareTotalCells current={rows.reduce((t, r) => t + r.value_eur, 0)} asOf={rows.reduce((t, r) => t + (r.cmpValue ?? 0), 0)} withPp />}
+          </tr>
+        </tfoot>
       </table>
     </div>
     </WithCopy>
   )
 }
 
+// Set while Portfolio Analysis shows two presets side by side: each half is narrow, so charts that sit two across stack instead.
+const XRayCompactContext = createContext(false)
+
 function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: number[]; compareDate?: string }) {
+  const compact = useContext(XRayCompactContext)
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -1223,7 +1262,7 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
           <span>⚙️ Edit Target Allocations</span>
         </button>
         {editOpen && (
-          <div className="p-4 space-y-3">
+          <div className="p-3 sm:p-4 space-y-3">
             <p className="text-xs text-slate-500">Rows are pre-filled from your current look-through holdings and any previously saved targets. All changes are saved on click.</p>
             <div className="overflow-x-auto text-xs">
               <table className="w-full border-collapse">
@@ -1270,17 +1309,17 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${compact ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <div>
           <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Allocation</h3>
           <Plot
             data={[{
               values: rows.map(r => Number(r.value_eur)), labels: rows.map(r => String(r.asset_class)),
-              type: 'pie', hole: 0.45, textinfo: 'label+percent',
+              type: 'pie', hole: 0.45, textinfo: compact ? 'percent' : 'label+percent',
               pull: rows.map(r => String(r.asset_class) === selectedClass ? 0.06 : 0),
             }]}
             layout={{
-              height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: { orientation: 'v' },
+              height: 360, margin: { t: 10, r: 10, b: 10, l: 10 }, showlegend: true, legend: compact ? { orientation: 'h', y: -0.05 } : { orientation: 'v' },
               annotations: [{ text: `<b>${fmtEur(total)}</b><br>Total`, showarrow: false, font: { size: 14 }, x: 0.5, y: 0.5 }],
               ...plotLayout(isDark),
             }}
@@ -1361,7 +1400,8 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
               <td className="px-2 py-1.5 border-t border-slate-200">Total</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">{fmtEur(total)}</td>
               <td className="px-2 py-1.5 text-right tabular-nums border-t border-slate-200">100.0%</td>
-              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={compareDate ? 6 : 3}></td>
+              <td className="px-2 py-1.5 border-t border-slate-200" colSpan={3}></td>
+              {compareDate && <CompareTotalCells current={total} asOf={sumVal(Object.values(compareMap))} withPp />}
             </tr>
           </tfoot>
         </table>
@@ -1375,7 +1415,7 @@ function XrayAssetAllocationTab({ accountIds, compareDate }: { accountIds?: numb
             <button onClick={() => setSelectedClass(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy scrollKey="xray-asset-allocation-securities">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1496,12 +1536,22 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
               )
             })}
           </tbody>
+          <tfoot>
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(rows))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(rows.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              <td className={TOTAL_TD}></td>
+              {compareDate && <CompareTotalCells current={sumVal(rows)} asOf={sumVal(Object.values(compareMap))} withPp />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
       <p className="text-xs text-slate-400">
         Percentages are of total bond-like exposure (direct bonds + the bond portion of held funds), not the whole portfolio.
         "Direct / Unrated" duration is an approximation (years to maturity), not modified duration like the fund-sourced figures.
+        Avg. duration is weighted by value; funds pinned to a non-bond asset class (cash, commodities, other) are left out.
       </p>
 
       {usGov && (
@@ -1523,7 +1573,7 @@ function XrayBondQualityTab({ accountIds, compareDate }: { accountIds?: number[]
             <button onClick={() => setSelectedQuality(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy scrollKey="xray-bond-quality-securities">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1612,7 +1662,7 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
   return (
     <div className="space-y-4">
       <WithCopy>
-      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1664,6 +1714,15 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD} colSpan={2}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(bySymbol.reduce((t, [, v]) => t + v.total, 0))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(totalPortfolio > 0 ? bySymbol.reduce((t, [, v]) => t + v.total, 0) / totalPortfolio * 100 : 0)}</td>
+              <td className={TOTAL_TD} colSpan={2}></td>
+              {compareDate && <CompareTotalCells current={bySymbol.reduce((t, [, v]) => t + v.total, 0)} asOf={Object.values(compareBySymbol).reduce((t, v) => t + v, 0)} />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -1679,7 +1738,7 @@ function XrayStockOverlapTab({ accountIds, compareDate }: { accountIds?: number[
             <button onClick={() => setSelectedSymbol(null)} className="text-xs text-slate-400 hover:text-slate-600 underline">Clear</button>
           </div>
           <WithCopy>
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1762,7 +1821,7 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
         <XrayExpenseRatioNotes />
       </div>
       <WithCopy>
-      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-500px)] text-xs">
+      <div ref={scroll.ref} onScroll={scroll.onScroll} className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-500px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50 text-xs text-slate-500">
@@ -1800,6 +1859,15 @@ function XrayExpenseRatioTab({ accountIds, compareDate }: { accountIds?: number[
               )
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-10">
+            <tr className={TOTAL_TR}>
+              <td className={TOTAL_TD}>Total</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtEur(sumVal(funds))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{fmtPct(funds.reduce((t, r) => t + Number(r.pct ?? 0), 0))}</td>
+              <td className={`${TOTAL_TD} text-right tabular-nums`}>{summary?.weighted_expense_ratio_pct != null ? fmtPct(Number(summary.weighted_expense_ratio_pct), 3) : ''}</td>
+              {compareDate && <CompareTotalCells current={sumVal(funds)} asOf={sumVal(resp?.compare?.funds ?? [])} />}
+            </tr>
+          </tfoot>
         </table>
       </div>
       </WithCopy>
@@ -1979,14 +2047,15 @@ function XrayCountryExposureTab({ accountIds, mode = 'country' }: { accountIds?:
   )
 }
 
-function XRayTab({ accountIds }: { accountIds?: number[] }) {
+// hideControls: the second column of a side-by-side comparison, which follows the first one's sub-tab and "Compare vs" date (same remembered values).
+function XRayTab({ accountIds, hideControls = false }: { accountIds?: number[]; hideControls?: boolean }) {
   const [tab, setTab] = usePersist('xray_tab', 'Asset Allocation')
   const [compareDate, setCompareDate] = usePersist('xray_compare_date', '')
   const today = todayLocal()
   return (
     <div className="space-y-3">
-      <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Country Exposure', 'Currency Exposure', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />
-      {tab !== 'Country Exposure' && tab !== 'Currency Exposure' && (
+      {!hideControls && <SubTabs tabs={['Asset Allocation', 'Sector Weighting', 'Style Box', 'Bond Quality', 'Country Exposure', 'Currency Exposure', 'Stock Overlap', 'Expense Ratio']} active={tab} onChange={setTab} />}
+      {!hideControls && tab !== 'Country Exposure' && tab !== 'Currency Exposure' && (
       <div className="flex flex-wrap items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
         <Tooltip text="Show current values alongside a past date's, reconstructed from your transaction history and historical prices/FX. Sector weights, asset mix, credit ratings, category, and expense ratio always reflect today's fund data — Oikos has no historical version of a fund's own internal makeup.">
           <span className="text-slate-500 cursor-help underline decoration-dotted">Compare vs</span>
@@ -2021,7 +2090,7 @@ function HoldingsSnapshotTab({ accountIds }: { accountIds?: number[] }) {
     <div className="space-y-3">
       <KpiCard label="Total Portfolio Value" value={fmtEur(total)} color="text-blue-700" />
       <WithCopy scrollKey="holdings-snapshot">
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500">
             <ColHeader label="Security" sortKey="security" currentKey={holdSK} currentDir={holdSD} onSort={holdSort} className="text-left px-2 py-1.5 border-b border-slate-200" />
@@ -2088,7 +2157,7 @@ function DetailAnalysisTab({ asOf, accountIds }: { asOf: string; accountIds?: nu
       )}
     {isLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
     <WithCopy scrollKey="detail-analysis">
-    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-320px)] text-xs">
+    <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-320px)] text-xs">
       <table className="w-full border-collapse">
         <thead className="sticky top-0 z-10 bg-slate-50">
           <tr className="text-xs text-slate-500">
@@ -2281,6 +2350,12 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
   // 'FX Exposure' was folded into Portfolio Analysis → Currency Exposure; send a persisted old value there.
   useEffect(() => { if (tab === 'X-Ray' || tab === 'FX Exposure') setTab('Portfolio Analysis') }, [tab, setTab])
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  // Portfolio Analysis can set a second Account Preset beside the first, to compare two sets of accounts (family members, brokers, entities) side by side.
+  const [selPreset] = usePersist<string>('preset_sel_inv_positions', FULL_PORTFOLIO)
+  const [comparePreset, setComparePreset] = usePersist<string>('xray_compare_preset', '')
+  const { data: savedPresets = EMPTY_PRESET_ROWS } = useQuery({ queryKey: ['portfolio-presets', 'inv_positions'], queryFn: () => getPortfolioPresets('inv_positions') })
+  const presetRows = savedPresets as { preset_id: number; preset_name: string; account_ids: number[] }[]
+  const compareIds: number[] | undefined | null = !comparePreset ? null : comparePreset === FULL_PORTFOLIO ? undefined : (presetRows.find(p => p.preset_name === comparePreset)?.account_ids ?? null)
 
   // Default to Dec 31 of the previous calendar year
   const defaultDate = `${new Date().getFullYear() - 1}-12-31`
@@ -2317,7 +2392,29 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       {tab === 'Detail Analysis' && <DetailAnalysisTab asOf={asOf} accountIds={presetAccountIds} />}
       {tab === 'Costs by Broker' && <CostsByBrokerTab />}
       {tab === 'Current Holdings' && <HoldingsSnapshotTab accountIds={presetAccountIds} />}
-      {tab === 'Portfolio Analysis' && <XRayTab accountIds={presetAccountIds} />}
+      {tab === 'Portfolio Analysis' && (
+        <>
+          <div className={`flex flex-wrap items-center gap-2 text-sm rounded-lg border px-3 py-2 ${compareIds !== null ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-slate-50'}`}>
+            <span className="font-semibold text-slate-700">⚖️ Compare two presets</span>
+            <label className="text-slate-500">with</label>
+            <select className="rounded border border-slate-300 px-2 py-1 text-sm bg-white" value={comparePreset} onChange={e => setComparePreset(e.target.value)}>
+              <option value="">— none —</option>
+              <option value={FULL_PORTFOLIO}>{FULL_PORTFOLIO}</option>
+              {[...presetRows].sort((a, b) => a.preset_name.localeCompare(b.preset_name)).map(p => <option key={p.preset_id} value={p.preset_name}>{p.preset_name}</option>)}
+            </select>
+            {compareIds !== null
+              ? <><span className="text-xs text-slate-600">shows <b>{selPreset}</b> and <b>{comparePreset}</b> side by side; the sub-tab and date follow the left one</span>
+                  <button className="text-xs text-blue-600 hover:underline ml-auto" onClick={() => setComparePreset('')}>Stop comparing</button></>
+              : <span className="text-xs text-slate-400">pick a second preset to see it next to <b>{selPreset}</b></span>}
+          </div>
+          {compareIds !== null ? (
+            <XRayCompactContext.Provider value={true}><div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+              <div className="min-w-0 border border-slate-200 rounded-lg p-3"><p className="text-sm font-semibold text-slate-700 mb-2">{selPreset}</p><XRayTab accountIds={presetAccountIds} /></div>
+              <div className="min-w-0 border border-slate-200 rounded-lg p-3"><p className="text-sm font-semibold text-slate-700 mb-2">{comparePreset}</p><XRayTab accountIds={compareIds} hideControls /></div>
+            </div></XRayCompactContext.Provider>
+          ) : <XRayTab accountIds={presetAccountIds} />}
+        </>
+      )}
     </div>
   )
 }
@@ -2421,7 +2518,7 @@ function ChkBox({ label, checked, onChange }: { label: string; checked: boolean;
   )
 }
 
-function PnlReport() {
+function PnlReport({ accountIds }: { accountIds?: number[] }) {
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
   const [win, setWin] = usePersist<PnlWindow>('pnl_win', 'ytd')
@@ -2446,9 +2543,11 @@ function PnlReport() {
   const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
 
   // Derive all data BEFORE any early return so hooks are always called in the same order
+  // Only the accounts of the Account Preset (undefined = Full Portfolio).
   const rows = useMemo(
-    () => mergeLongTermPnl(data as Row[], ltYears ? pnlKey(win) : null, ltYears ? `pnl_${win}_percent` : null, ltMap),
-    [data, win, ltYears, ltMap],
+    () => mergeLongTermPnl(data as Row[], ltYears ? pnlKey(win) : null, ltYears ? `pnl_${win}_percent` : null, ltMap)
+      .filter(r => !accountIds || accountIds.includes(Number(r.accounts_id))),
+    [data, win, ltYears, ltMap, accountIds],
   )
   const pk = pnlKey(win)
   const mktKey = win === 'dtd' ? 'pnl_dtd_market_eur' : win === 'ytd' ? 'pnl_ytd_market_eur' : null
@@ -2511,8 +2610,8 @@ function PnlReport() {
   // filter); account-level only once a row's been drilled into, scoped to that one account —
   // the endpoint already supports this account_ids filter, so no backend change was needed.
   const { data: portfolioVar } = useQuery({
-    queryKey: ['risk-metrics', 756, null, 'all'],
-    queryFn: () => getRiskMetrics(756, null),
+    queryKey: ['risk-metrics', 756, null, 'all', accountIds ?? null],
+    queryFn: () => getRiskMetrics(756, null, accountIds),
     staleTime: 300_000,
   })
   const { data: accountVar } = useQuery({
@@ -2625,10 +2724,10 @@ function PnlReport() {
             </span>
           </div>
           <WithCopy scrollKey="pnl-report-main">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                  <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." />
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
+              <table data-cards className="w-full text-sm">
+                <thead className="sticky top-0 z-20"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <ColHeader label="Security" sortKey="securities_name" currentKey={drSK} currentDir={drSD} onSort={drSort} tooltip="Security name as recorded in your portfolio." className="bg-slate-50 md:sticky md:left-0 md:z-20" />
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
                   <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current market value of the position in EUR." />
@@ -2642,8 +2741,9 @@ function PnlReport() {
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {sortedDrill.map((r, i) => (
-                    <tr key={i} className={`hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
-                      <td className="px-3 py-2 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</td>
+                    <tr key={i} className={`bg-white hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
+                      {/* The Security column is pinned on the left while the numbers scroll. One line per security on a wide screen (a very long name is cut with an ellipsis, full name on hover); the phone's card layout keeps the whole name. */}
+                      <td className="px-3 py-2 font-medium bg-inherit md:whitespace-nowrap md:sticky md:left-0 md:z-10 md:shadow-[1px_0_0_0_#e2e8f0] md:w-full md:max-w-0 md:min-w-[9rem]"><div className="md:truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</div></td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
                       <EditablePriceCell
                         securitiesId={r.securities_id}
@@ -2689,8 +2789,8 @@ function PnlReport() {
       })() : (
         <div className="space-y-3">
           <WithCopy>
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)]">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
                 <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
@@ -3074,7 +3174,7 @@ function RiskMetricsTab({ accountIds }: { accountIds?: number[] }) {
 const DIV_PERIODS = ['YTD', 'Previous Year', '1 Year', '2 Years', '3 Years', '5 Years', 'All Time', 'Custom']
 const PIE_COLORS = ['#6366f1', '#ef4444', '#10b981', '#a855f7', '#f59e0b', '#3b82f6', '#ec4899', '#84cc16']
 
-function DividendTrackerTab() {
+function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const [divView, setDivView] = usePersist<'actual' | 'forecast' | 'recommendations'>('div_view', 'actual')
@@ -3086,8 +3186,8 @@ function DividendTrackerTab() {
   const [detailOpen, setDetailOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null],
-    queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined),
+    queryKey: ['dividends-tracker', period, period === 'Custom' ? customFrom : null, period === 'Custom' ? customTo : null, accountIds ?? null],
+    queryFn: () => getDividendsTracker(period, period === 'Custom' ? customFrom : undefined, period === 'Custom' ? customTo : undefined, accountIds),
     refetchInterval: liveRefetchMs,
   })
 
@@ -3096,8 +3196,8 @@ function DividendTrackerTab() {
   const [fcPeriod, setFcPeriod] = usePersist<'eoy' | '6m' | '12m'>('div_forecast_period', '12m')
 
   const { data: fcData, isLoading: fcLoading } = useQuery({
-    queryKey: ['dividends-forecast', fcPeriod],
-    queryFn: () => getDividendsForecast(fcPeriod),
+    queryKey: ['dividends-forecast', fcPeriod, accountIds ?? null],
+    queryFn: () => getDividendsForecast(fcPeriod, accountIds),
     enabled: divView === 'forecast',
   })
 
@@ -3233,7 +3333,7 @@ function DividendTrackerTab() {
             <p className="text-slate-400 text-sm py-8 text-center">No forecast data for this period — no holdings with an expected dividend payment before {FC_PERIOD_LABELS[fcPeriod].toLowerCase()}.</p>
           ) : (
           <>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Total projected dividend and interest income ${fcPeriod === 'eoy' ? 'between now and the end of this year' : `over the ${fcPeriod === '6m' ? 'next 6 months' : 'next 12 months'}`}, based on current holdings' real expected payment dates.`}>Projected ({FC_PERIOD_SHORT[fcPeriod]})</Tooltip></p>
                 <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_period_eur)}</p>
@@ -3267,8 +3367,8 @@ function DividendTrackerTab() {
             )}
 
             <WithCopy scrollKey="dividend-tracker-1">
-              <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
-                <table className="w-full text-sm table-fixed">
+              <div className="overflow-y-auto max-h-[calc(100dvh-300px)]">
+                <table data-matrix className="w-full text-sm table-fixed">
                   <colgroup>
                     <col className="w-[20%]" />
                     <col className="w-[9%]" />
@@ -3426,7 +3526,7 @@ function DividendTrackerTab() {
             <p className="text-slate-400 text-sm py-8 text-center">No securities match the selected filters.</p>
           ) : (
           <WithCopy scrollKey="dividend-tracker-2">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-260px)]">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-260px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <ColHeader label="Security"     sortKey="securities_name"     currentKey={recSK} currentDir={recSD} onSort={recSort} />
@@ -3525,7 +3625,7 @@ function DividendTrackerTab() {
       ) : (
         <>
           <h4 className="text-sm font-semibold text-slate-700">Income by Security — {result.period_label}</h4>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total dividend and interest income received in the selected period, in EUR.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.total_income_eur ?? 0))}</p></div>
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total income for the selected period divided by the number of months it spans.">Monthly Average</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.avg_monthly_income_eur ?? 0))}</p></div>
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities that paid dividends or interest in the selected period.">Securities paying</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.securities_paying ?? 0)}</p></div>
@@ -3551,7 +3651,7 @@ function DividendTrackerTab() {
           />
 
           <WithCopy scrollKey="dividend-tracker-3">
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="w-6 px-1 py-2 border-b border-slate-200"></th>
@@ -3683,7 +3783,7 @@ const PERF_PERIOD_MAP: Record<string, [string, string, string | null]> = {
   'All-Time': ['pnl_net_all_time_eur', 'pnl_net_all_time_percent', 'gross_invested_all_time_eur'],
 }
 
-function PerformanceTab() {
+function PerformanceTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl-all'], queryFn: () => getPnl(), refetchInterval: liveRefetchMs })
@@ -3695,8 +3795,9 @@ function PerformanceTab() {
   const ltYears = LONG_TERM_YEARS[period] ?? null
   const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
   const rows = useMemo(
-    () => mergeLongTermPnl(data as Row[], ltYears ? PERF_PERIOD_MAP[period][0] : null, null, ltMap),
-    [data, period, ltYears, ltMap],
+    () => mergeLongTermPnl(data as Row[], ltYears ? PERF_PERIOD_MAP[period][0] : null, null, ltMap)
+      .filter(r => !accountIds || accountIds.includes(Number(r.accounts_id))),
+    [data, period, ltYears, ltMap, accountIds],
   )
 
   const bySec = useMemo(() => {
@@ -3762,7 +3863,8 @@ function PerformanceTab() {
   const PerfRow = ({ v, rank }: { v: Record<string, unknown>; rank?: number }) => (
     <tr className="hover:bg-slate-50">
       {rank != null && <td className="px-3 py-2 text-slate-400">{rank}</td>}
-      <td className="px-3 py-2 font-medium text-blue-700 whitespace-nowrap"><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
+      {/* One line per security: the name takes the width the numbers leave and is cut with an ellipsis (full name on hover). */}
+      <td className="px-3 py-2 font-medium text-blue-700 w-full max-w-0 min-w-[8rem] truncate" title={String(v.securities_name)}><SecLink id={v.securities_id}>{String(v.securities_name)}</SecLink></td>
       {viewPct ? (
         <>
           <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${Number(v[pctCol] ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{Number(v[pctCol] ?? 0) >= 0 ? '+' : ''}{Number(v[pctCol] ?? 0).toFixed(2)}%</td>
@@ -3827,7 +3929,7 @@ function PerformanceTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-slate-50 rounded-lg p-4 text-center">
           <p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of distinct securities with a P&L value for the selected period.">Securities</Tooltip></p>
           <p className="text-xl font-bold">{valid.length}</p>
@@ -3850,7 +3952,7 @@ function PerformanceTab() {
         <div>
           <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-green-700">📈 Top {topN} Gainers</div>
           <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-96">
+            <div className="overflow-x-hidden overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
@@ -3871,7 +3973,7 @@ function PerformanceTab() {
         <div>
           <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-2 mb-2 text-sm font-medium text-red-600">📉 Top {topN} Losers</div>
           <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-96">
+            <div className="overflow-x-hidden overflow-y-auto max-h-96">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left whitespace-nowrap"><Tooltip text="Security name as recorded in your holdings.">Security</Tooltip></th>
@@ -4056,7 +4158,7 @@ function SavingsAccountsTab() {
             <p className="text-slate-400 text-sm py-8 text-center">No forecast data for this period — no savings account has a last real interest period to project from yet.</p>
           ) : (
           <>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Total projected interest ${fcPeriod === 'eoy' ? 'between now and the end of this year' : `over the ${fcPeriod === '6m' ? 'next 6 months' : 'next 12 months'}`}, compounding each account's current balance forward at its last real interest period's APY%.`}>Projected ({FC_PERIOD_SHORT[fcPeriod]})</Tooltip></p>
                 <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_period_eur)}</p>
@@ -4090,7 +4192,7 @@ function SavingsAccountsTab() {
             )}
 
             <WithCopy scrollKey="savings-accounts-1">
-              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                     <ColHeader label="Account" sortKey="accounts_name" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="Savings account name." className="sticky left-0 bg-slate-50" />
@@ -4253,7 +4355,7 @@ function SavingsAccountsTab() {
           </div>
 
           <h4 className="text-sm font-semibold text-slate-700">Interest by Account — {result.period_label}</h4>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest received across all savings accounts in the selected period.">Total ({result.period_label})</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(Number(result.summary.total_interest_eur ?? 0))}</p></div>
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Total interest for the selected period divided by the number of calendar months it spans.">Monthly Average</Tooltip></p><p className="text-xl font-bold">{fmtEur(Number(result.summary.avg_monthly_interest_eur ?? 0))}</p></div>
             <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of savings accounts with principal or interest activity in the selected period.">Accounts</Tooltip></p><p className="text-xl font-bold">{Number(result.summary.savings_accounts_count ?? 0)}</p></div>
@@ -4281,7 +4383,7 @@ function SavingsAccountsTab() {
           <div>
             <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail — {result.period_label}</h4>
             <WithCopy scrollKey="savings-accounts-4">
-              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+              <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                     <ColHeader label="Account" sortKey="accounts_name" currentKey={detailSK} currentDir={detailSD} onSort={detailSort} tooltip="Savings account name." className="sticky left-0 bg-slate-50" />
@@ -4321,7 +4423,7 @@ function SavingsAccountsTab() {
       <div>
         <h4 className="text-sm font-semibold text-slate-700 mb-2">Detail for Last Interest Period</h4>
         <WithCopy scrollKey="savings-accounts-5">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <th className="px-3 py-2 text-left whitespace-nowrap sticky left-0 bg-slate-50"><Tooltip text="Savings account name.">Account</Tooltip></th>
@@ -4361,10 +4463,10 @@ function SavingsAccountsTab() {
   )
 }
 
-function BondScheduleTab() {
+function BondScheduleTab({ accountIds }: { accountIds?: number[] }) {
   const { isDark } = useTheme()
   const liveRefetchMs = useLiveRefetchInterval()
-  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule, refetchInterval: liveRefetchMs })
+  const { data = [], isLoading } = useQuery({ queryKey: ['bond-schedule', accountIds ?? null], queryFn: () => getBondSchedule(accountIds), refetchInterval: liveRefetchMs })
   const rows = data as Row[]
   const { sorted: bondSorted, sortKey: bondSK, sortDir: bondSD, toggleSort: bondSort } = useSortTablePersisted(rows, 'bond-schedule-sort', 'days_to_maturity', 'asc')
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -4382,7 +4484,7 @@ function BondScheduleTab() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Sum of face (par) values across all held bonds, converted to EUR. This is the amount you will receive back at maturity for each bond.">Total Face Value (EUR)</Tooltip></p><p className="text-xl font-bold">{fmtEur(totalFace)}</p></div>
         <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Expected annual coupon payments from all held bonds based on stated coupon rates and current quantities.">Annual Coupon Income (EUR)</Tooltip></p><p className="text-xl font-bold text-green-700">{fmtEur(totalCoupon)}</p></div>
         <div className="bg-slate-50 rounded-lg p-4 text-center"><p className="text-xs text-slate-500 mb-1"><Tooltip text="Number of bond positions maturing within the next 12 months — these will return face value and stop paying coupons.">Maturing in 12 months</Tooltip></p><p className="text-xl font-bold text-amber-600">{maturingIn12m}</p></div>
@@ -4393,7 +4495,7 @@ function BondScheduleTab() {
         config={{ displayModeBar: false }} style={{ width: '100%' }}
       />
       <WithCopy scrollKey="bond-schedule">
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <ColHeader label="Security" sortKey="securities_name" currentKey={bondSK} currentDir={bondSD} onSort={bondSort} tooltip="Bond security name." />
@@ -4442,6 +4544,9 @@ type BenchmarkTarget = { type: 'index' | 'account'; id: number }
 // to a single security's own price history (Security Detail's own Benchmark tab) —
 // accountIds is ignored in that mode, and the comparison-securities picker also offers
 // ETFs/ETCs (not just Market Indexes), excluding the base security itself.
+// Under a Benchmark card in Total return mode: how many distributions were added back to that line.
+const distNote = (n?: number | null) => n == null ? '' : n === 0 ? 'no distributions in the data' : `incl. ${n} distribution${n === 1 ? '' : 's'}`
+
 export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = false, baseSecuritiesId, baseLabel }: {
   accountIds?: number[]; keyPrefix?: string; defaultYtd?: boolean
   baseSecuritiesId?: number; baseLabel?: string
@@ -4458,6 +4563,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const [lookback, setLookback] = usePersist(`${keyPrefix}_lookback`, 365)
   const [ytd, setYtd] = usePersist(`${keyPrefix}_ytd`, defaultYtd)
   const [resample, setResample] = usePersist(`${keyPrefix}_resample`, 'Daily')
+  const [totalReturn, setTotalReturn] = usePersist(`${keyPrefix}_total_return`, false)
   const cands = candidates as Row[]
   const otherAccounts = (allAccounts as Row[])
     .filter(a => INV_ACCOUNT_TYPES.includes(String(a.type)))
@@ -4503,12 +4609,12 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
   const compareAccountIds = effectiveTargets.filter(t => t.type === 'account').map(t => t.id)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample, baseSecuritiesId],
-    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd, baseSecuritiesId),
+    queryKey: ['benchmark', benchmarkIds, compareAccountIds, lookback, ytd, accountIds, resample, baseSecuritiesId, totalReturn],
+    queryFn: () => getBenchmark(benchmarkIds, compareAccountIds, lookback, accountIds, resample, ytd, baseSecuritiesId, totalReturn),
     enabled: effectiveTargets.length > 0,
     refetchInterval: liveRefetchMs,
   })
-  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account'; first_date?: string | null }[]; rows: Record<string, unknown>[]; from_date?: string; requested_from?: string; limited_by?: string | null } | undefined
+  const result = data as { base_label: string; series: { key: string; label: string; type: 'index' | 'account'; first_date?: string | null; distributions?: number | null }[]; rows: Record<string, unknown>[]; total_return?: boolean; base_distributions?: number | null; from_date?: string; requested_from?: string; limited_by?: string | null } | undefined
   const series = result?.series ?? []
   const rows = result?.rows ?? []
   const portLabel = result?.base_label ?? baseLabel ?? 'Portfolio'
@@ -4570,6 +4676,10 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" className="rounded" checked={totalReturn} onChange={e => setTotalReturn(e.target.checked)} />
+          <Tooltip text="Adds the distributions back, from the Dividends data (each security's Dividends tab): every amount per share is added to the price on its ex-date and reinvested there, for every line — the securities and the accounts. Use it to compare a distributing fund with an accumulating one, or with an index, on the same footing; without it a distributing fund looks worse by roughly its yield each year. A market index has no distributions in the data, so it stays as it is (a price index). Only as good as the Dividends data: a distribution missing there is missing here, and a price series that already includes its distributions would be counted twice.">Total return</Tooltip>
+        </label>
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500"><Tooltip text="Frequency at which data points are plotted. Daily shows every trading day; Weekly/Monthly reduce noise and improve readability for long windows.">Resample</Tooltip></label>
           <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={resample} onChange={e => setResample(e.target.value)}>
@@ -4590,6 +4700,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
           <div className="bg-slate-50 rounded-lg p-4 text-center min-w-[160px] flex-1">
             <p className="text-xs text-slate-500 mb-1"><Tooltip text={baseSecuritiesId ? `${portLabel}'s own total return over the selected period (indexed: end value ÷ start value − 1).` : "Portfolio's total return over the selected period (indexed: end value ÷ start value − 1). Value-weighted by current holdings."}>{portLabel} Return</Tooltip></p>
             <p className={`text-xl font-bold ${portReturn >= 0 ? 'text-green-700' : 'text-red-600'}`}>{portReturn >= 0 ? '+' : ''}{portReturn.toFixed(2)}%</p>
+            {result?.total_return && <p className="text-[10px] text-slate-400 mt-0.5">{distNote(result.base_distributions)}</p>}
           </div>
           {series.map((s, i) => {
             const r = lastReturn(s.key)
@@ -4600,6 +4711,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
                   <Tooltip text={s.type === 'account' ? "This account's own total return over the same period, indexed to the same start date." : `This benchmark's total return over the same period, indexed to the same start date as ${portLabel}.`}>{s.label} Return</Tooltip>
                 </p>
                 <p className={`text-xl font-bold ${r == null ? 'text-slate-400' : r >= 0 ? 'text-green-700' : 'text-red-600'}`}>{r != null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}%` : '—'}</p>
+                {result?.total_return && <p className="text-[10px] text-slate-400 mt-0.5">{distNote(s.distributions)}</p>}
               </div>
             )
           })}
@@ -4615,7 +4727,7 @@ export function BenchmarkTab({ accountIds, keyPrefix = 'bench', defaultYtd = fal
               line: { color: BENCHMARK_PALETTE[i % BENCHMARK_PALETTE.length], width: 2, dash: 'dot' as const },
             })),
           ]}
-          layout={{ height: 380, yaxis: { title: 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
+          layout={{ height: 380, yaxis: { title: result?.total_return ? 'Total return, indexed (100 = start)' : 'Indexed (100 = start)', tickformat: '.1f' }, xaxis: { title: '' }, legend: { orientation: 'h', y: -0.2 }, margin: { t: 20, b: 60, l: 70, r: 20 }, ...plotLayout(isDark) }}
           config={{ displayModeBar: false }} style={{ width: '100%' }}
         />
       )}
@@ -4672,8 +4784,8 @@ function CorrelationTab({ accountIds }: { accountIds?: number[] }) {
       {isLoading ? <div className="flex justify-center py-12"><Spinner /></div>
         : !result || !result.tickers.length ? <p className="text-slate-400 text-sm py-8 text-center">No price data available.</p>
         : (
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-            <table className="text-xs border-collapse">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
+            <table data-matrix className="text-xs border-collapse">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr>
                   <th className="px-2 py-1 text-left text-slate-500 font-normal min-w-32"></th>
@@ -4723,9 +4835,11 @@ const INV_POSITION_ACCOUNT_TYPES = ['Brokerage', 'Margin', 'Pension', 'Other Inv
 // (Report_Scope keeps each report section's saved preset names in their own
 // namespace — see api/routers/reports.py's portfolio-presets endpoints).
 const EMPTY_PRESET_ROWS: never[] = []
-function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void }) {
+// `selectionKey` gives a report its own remembered choice while still offering the presets saved under `reportScope`.
+function PortfolioPresetBar({ reportScope, eligibleTypes, onChange, selectionKey }: { reportScope: string; eligibleTypes: string[]; onChange: (ids: number[] | undefined) => void; selectionKey?: string }) {
+  const { canWrite } = useRole()         // presets are each user's own (the admin's are not shown to others); a read-only user can use them but not save
   const [open, setOpen] = useState(false)
-  const [selPreset, setSelPreset] = usePersist(`preset_sel_${reportScope}`, FULL_PORTFOLIO)
+  const [selPreset, setSelPreset] = usePersist(`preset_sel_${selectionKey ?? reportScope}`, FULL_PORTFOLIO)
   const [nameInput, setNameInput] = useState('')
   const [draftIds, setDraftIds] = useState<Set<number> | null>(null)
   const [showInactive, setShowInactive] = useState(false)
@@ -4765,6 +4879,24 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
 
   const savedIds = selPreset === FULL_PORTFOLIO ? eligibleAccounts.map(a => Number(a.id)) : (presetMap[selPreset] ?? [])
   const currentIds = draftIds ?? new Set(savedIds)
+  // A Margin account's cash is the broker's cash, its positions are at market, and its "Margin financing" account holds minus the open cost: cash + positions + financing is the
+  // broker's equity. So a selection that holds a Margin account and its cash account must hold the financing account too, or the cash is counted without its offset.
+  // (A preset saved before the financing account existed needs no editing.)
+  const withFinancing = (ids: number[]): number[] => {
+    const have = new Set(ids)
+    for (const a of accounts as Row[]) {
+      const off = a.margin_offset_id != null ? Number(a.margin_offset_id) : null
+      if (off != null && have.has(Number(a.id)) && a.accounts_id_linked != null && have.has(Number(a.accounts_id_linked))) have.add(off)
+    }
+    return Array.from(have)
+  }
+
+  // A remembered selection that is not a preset of this scope (deleted, or remembered under another scope) would mean "no accounts" and an empty report:
+  // once the presets have loaded, fall back to the Full Portfolio (a preset just saved is already in the list: it is refetched before it is selected).
+  useEffect(() => {
+    if (presetsLoaded && selPreset !== FULL_PORTFOLIO && !(selPreset in presetMap)) setSelPreset(FULL_PORTFOLIO)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetsLoaded, selPreset, presetMap])
 
   useEffect(() => {
     // A saved preset's account list lives in `presets` (a real network fetch, never
@@ -4778,15 +4910,15 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
     // not two-plus. Full Portfolio needs no such gate — its `onChange(undefined)`
     // doesn't depend on presetMap at all.
     if (selPreset !== FULL_PORTFOLIO && !presetsLoaded) return
-    onChange(selPreset === FULL_PORTFOLIO ? undefined : Array.from(currentIds))
+    onChange(selPreset === FULL_PORTFOLIO ? undefined : withFinancing(Array.from(currentIds)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selPreset, presetMap, presetsLoaded])
+  }, [selPreset, presetMap, presetsLoaded, accounts])
 
   const toggleAccount = (id: number) => {
     const next = new Set(draftIds ?? savedIds)
     if (next.has(id)) next.delete(id); else next.add(id)
     setDraftIds(next)
-    if (selPreset !== FULL_PORTFOLIO) onChange(Array.from(next))
+    if (selPreset !== FULL_PORTFOLIO) onChange(withFinancing(Array.from(next)))
   }
 
   const handleSave = async () => {
@@ -4798,7 +4930,7 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
     await refetchPresets()
     setSelPreset(name)
     setDraftIds(null)
-    onChange(ids)
+    onChange(withFinancing(ids))
   }
 
   const handleDelete = async () => {
@@ -4828,11 +4960,13 @@ function PortfolioPresetBar({ reportScope, eligibleTypes, onChange }: { reportSc
                 <option key={p.preset_id} value={p.preset_name}>{p.preset_name}</option>
               ))}
             </select>
-            <input className="rounded border border-slate-300 px-2 py-1 text-sm flex-1 min-w-[160px]" placeholder="Name to save as…"
-              value={nameInput} onChange={e => setNameInput(e.target.value)} />
-            <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
-            <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
-              className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+            {canWrite && (<>
+              <input className="rounded border border-slate-300 px-2 py-1 text-sm flex-1 min-w-[160px]" placeholder="Name to save as…"
+                value={nameInput} onChange={e => setNameInput(e.target.value)} />
+              <button onClick={handleSave} className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white font-medium hover:bg-blue-700">💾 Save</button>
+              <button onClick={handleDelete} disabled={selPreset === FULL_PORTFOLIO}
+                className="px-3 py-1.5 text-xs rounded bg-red-50 text-red-600 font-medium hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">🗑️ Delete</button>
+            </>)}
             <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none ml-auto">
               <input type="checkbox" className="rounded" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
               Show inactive
@@ -4931,7 +5065,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
         {(overrideOpen || unrealistic) && (
           <div className="p-3 border-t border-slate-200 space-y-2">
             {unrealistic && <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1.5">⚠️ Calibrated return looks unrealistic — consider overriding below.</p>}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-slate-500 block mb-1">Override Return %</label>
                 <input type="number" step="0.1" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" placeholder={result ? result.calibration.ann_return_pct.toFixed(2) : ''} value={overrideReturn} onChange={e => setOverrideReturn(e.target.value)} />
@@ -4961,7 +5095,7 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
             config={{ displayModeBar: false }} style={{ width: '100%' }}
           />
           <h4 className="text-sm font-semibold text-slate-700"><Tooltip text="Percentage of simulated paths that reach or exceed each target value at any point within the projection horizon.">Probability of Reaching Target Amounts</Tooltip></h4>
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {result.probabilities.map(p => (
               <div key={p.target} className="bg-slate-50 rounded-lg p-3 text-center">
                 <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Probability that the portfolio reaches €${fmtNum(p.target, 0)} within ${yearsAhead} years across ${numSims} simulated scenarios.`}>€{fmtNum(p.target, 0)}</Tooltip></p>
@@ -4978,31 +5112,33 @@ function MonteCarloTab({ accountIds }: { accountIds?: number[] }) {
 function InvPerformanceSection() {
   const [tab, setTab] = usePersist('inv_perf_tab', 'P&L')
   const [presetAccountIds, setPresetAccountIds] = useState<number[] | undefined>(undefined)
+  const { isAdmin } = useRole()
   const TABS = ['P&L', 'Performance', 'Best / Worst Days', 'Savings', 'Dividend Tracker', 'Bond Schedule', 'Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR']
+    .filter(t => isAdmin || t !== 'Stress Test')
   const qc = useQueryClient()
   useEffect(() => {
     qc.prefetchQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01') })
     qc.prefetchQuery({ queryKey: ['price-changes'], queryFn: getPriceChanges })
-    qc.prefetchQuery({ queryKey: ['bond-schedule'], queryFn: getBondSchedule })
-    qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null], queryFn: () => getDividendsTracker('YTD') })
+    qc.prefetchQuery({ queryKey: ['bond-schedule', null], queryFn: () => getBondSchedule() })
+    qc.prefetchQuery({ queryKey: ['dividends-tracker', 'YTD', null, null, null], queryFn: () => getDividendsTracker('YTD') })
   }, [])
-  const needsPreset = ['Benchmark', 'Risk Metrics', 'Correlation', 'Monte Carlo', 'Stress Test', 'TWR/MWR'].includes(tab)
+  const needsPreset = tab !== 'Savings'            // every tab that looks at investment accounts shares one Account Preset
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
       {needsPreset && <PortfolioPresetBar reportScope="inv_performance" eligibleTypes={INV_ACCOUNT_TYPES} onChange={setPresetAccountIds} />}
-      {tab === 'P&L'              && <PnlReport />}
-      {tab === 'Performance'      && <PerformanceTab />}
+      {tab === 'P&L'              && <PnlReport accountIds={presetAccountIds} />}
+      {tab === 'Performance'      && <PerformanceTab accountIds={presetAccountIds} />}
       {tab === 'TWR/MWR'          && <TwrTab accountIds={presetAccountIds} />}
       {tab === 'Savings'          && <SavingsAccountsTab />}
-      {tab === 'Dividend Tracker' && <DividendTrackerTab />}
-      {tab === 'Bond Schedule'    && <BondScheduleTab />}
+      {tab === 'Dividend Tracker' && <DividendTrackerTab accountIds={presetAccountIds} />}
+      {tab === 'Bond Schedule'    && <BondScheduleTab accountIds={presetAccountIds} />}
       {tab === 'Benchmark'        && <BenchmarkTab accountIds={presetAccountIds} />}
       {tab === 'Risk Metrics'     && <RiskMetricsTab accountIds={presetAccountIds} />}
       {tab === 'Correlation'      && <CorrelationTab accountIds={presetAccountIds} />}
       {tab === 'Monte Carlo'      && <MonteCarloTab accountIds={presetAccountIds} />}
       {tab === 'Stress Test'      && <StressTestTab accountIds={presetAccountIds} />}
-      {tab === 'Best / Worst Days' && <DayExtremesTab />}
+      {tab === 'Best / Worst Days' && <DayExtremesTab accountIds={presetAccountIds} />}
     </div>
   )
 }
@@ -5092,8 +5228,8 @@ function PriceChangesTab() {
         <CopyToExcelButton gridApi={gridApi} />
       </div>
 
-      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 300px)', width: '100%' }}>
-        <AgGridReact
+      <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 300px)', width: '100%' }}>
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -5176,10 +5312,16 @@ type Signal = {
   current_qty: number | null
   ma50: number | null
   ma200: number | null
+  ma50_chg_pct: number | null
+  ma200_chg_pct: number | null
   above_ma200: boolean | null
   ma_trend: string | null
   ma_cross_event: string | null
   trailing_high_1y: number | null
+  action: string | null          // the stored Action verdict (database/action_signal.py)
+  action_score: number | null
+  action_why: string | null
+  sector: string | null
 }
 
 // ── Volatility Tab ────────────────────────────────────────────────────────────
@@ -5207,19 +5349,20 @@ function VolatilityTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   const VolTable = ({ items, label, style }: { items: typeof highVol; label: string; style: string }) => (
-    <div>
+    <div className="min-w-0">
       <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${style}`}>{label}</div>
       <WithCopy scrollKey="investment-signals">
         <table className="w-full text-sm">
           <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-            <th className="px-3 py-2 text-left">Security</th>
-            <th className="px-3 py-2 text-right">Volatility %</th>
+            <th className="px-3 py-2 text-left whitespace-nowrap">Security</th>
+            <th className="px-3 py-2 text-right whitespace-nowrap">Volatility %</th>
           </tr></thead>
           <tbody className="divide-y divide-slate-100">
             {items.map((r, i) => (
               <tr key={i} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium"><SecLink id={r.id}>{r.name}</SecLink></td>
-                <td className="px-3 py-2 text-right tabular-nums">{r.vol.toFixed(2)}%</td>
+                {/* One line per security: the name takes the width the number leaves, cut with an ellipsis (full name on hover). */}
+                <td className="px-3 py-2 font-medium w-full max-w-0 min-w-[8rem] truncate" title={r.name}><SecLink id={r.id}>{r.name}</SecLink></td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.vol.toFixed(2)}%</td>
               </tr>
             ))}
           </tbody>
@@ -5380,7 +5523,7 @@ function InvestmentSignalsTab() {
       <div>
         <p className="text-sm font-semibold text-slate-700 mb-2">🏆 Top Efficiency Picks (High Sharpe Ratio)</p>
         <WithCopy scrollKey="portfolio-action-signals-secondary">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label={<Tooltip text="Security name.">Security</Tooltip>} sortKey="securities_name" currentKey={tpSK} currentDir={tpSD} onSort={tpSort} align="left" className="text-xs text-slate-500 uppercase tracking-wide" />
@@ -5425,6 +5568,18 @@ function InvestmentSignalsTab() {
 const PORTFOLIO_SIGNALS_DEFAULT_COL_DEF = { resizable: true, sortable: true, filter: true }
 
 // ── Portfolio Action Signals Tab ──────────────────────────────────────────────
+// Direction of a moving average: its change over the last week (5 trading days), flat inside ±0.05%.
+const MA_FLAT_PCT = 0.05
+const maDir = (v: unknown): 'up' | 'down' | 'flat' | null => v == null ? null : Number(v) > MA_FLAT_PCT ? 'up' : Number(v) < -MA_FLAT_PCT ? 'down' : 'flat'
+const maDirCell = (p: { value: unknown }) => {
+  const d = maDir(p.value)
+  return `text-xs font-semibold ${d === 'up' ? 'text-green-700' : d === 'down' ? 'text-red-600' : 'text-slate-400'}`
+}
+const maDirFmt = (p: { value: unknown }) => {
+  const d = maDir(p.value)
+  return d == null ? '—' : `${d === 'up' ? '▲' : d === 'down' ? '▼' : '▬'} ${Number(p.value) >= 0 ? '+' : ''}${Number(p.value).toFixed(2)}%`
+}
+
 function PortfolioActionSignalsTab() {
   const navigate = useNavigate()
   const { data = [], isLoading } = usePortfolioSignals()
@@ -5433,7 +5588,10 @@ function PortfolioActionSignalsTab() {
   // All-time realized P&L per security, same FIFO-based figure Security Detail's
   // Overview/Investment Transactions tabs show, summed across every account.
   const { data: pnlData = [] } = useQuery({ queryKey: ['pnl-all-time'], queryFn: () => getPnl(), staleTime: 300_000 })
-  const [view, setView] = usePersist<'all' | 'open_only'>('sig_view', 'all')
+  const [view, setView] = usePersist<'all' | 'open_only' | 'shortlist'>('sig_view', 'all')
+  const [minScore, setMinScore] = usePersist<number>('sig_short_min6', 6)
+  const [shortTypes, setShortTypes] = usePersist<string[] | null>('sig_short_types', null)      // null = every type except those that cannot be bought as such
+  const [perSector, setPerSector] = usePersist<number>('sig_short_cap', 2)
   const [settings] = useSettings()
 
   const secById = useMemo(() => {
@@ -5478,6 +5636,10 @@ function PortfolioActionSignalsTab() {
       ...r,
       trailing_stop_price: trailingStopPrice,
       trailing_stop_triggered: trailingStopTriggered,
+      ma_rising: (() => {
+        const a = maDir(r.ma50_chg_pct) === 'up', b = maDir(r.ma200_chg_pct) === 'up'
+        return r.ma50_chg_pct == null && r.ma200_chg_pct == null ? null : a && b ? 'Both rising' : a ? 'MA50 rising' : b ? 'MA200 rising' : 'Neither'
+      })(),
       unrealized_pnl_pct: r.unrealized_pnl_eur != null && costBasis != null && costBasis > 0
         ? Number(r.unrealized_pnl_eur) / costBasis * 100
         : null,
@@ -5511,10 +5673,33 @@ function PortfolioActionSignalsTab() {
     }
   }), [data, secById, fundamentalsById, realizedById, settings.trailingStopPct])
 
-  const filtered = useMemo(() => rows.filter(r => {
-    if (view === 'open_only') return Number(r.current_value_eur ?? 0) > 0
-    return true
-  }), [rows, view])
+  // Shortlist: Buy candidates only — not held, verdict Buy, of the instrument types you choose (all but indexes, CDs and employee options by default),
+  // a score of at least the minimum, best first, and at most N per sector so it is not ten versions of one bet (funds and securities with no sector are
+  // not capped).
+  const NOT_BOUGHT_AS_SUCH = ['Market Index', 'CD', 'Emp. Stock Opt.']
+  const shortTypeList = useMemo(() => [...new Set(rows.filter(r => r.action === 'Buy' && Number(r.current_qty ?? 0) === 0).map(r => String(r.sec_type ?? '')).filter(Boolean))].sort(), [rows])
+  const typeOn = (t: string) => shortTypes ? shortTypes.includes(t) : !NOT_BOUGHT_AS_SUCH.includes(t)
+  const toggleType = (t: string) => setShortTypes(shortTypeList.filter(x => (x === t ? !typeOn(x) : typeOn(x))))
+  const shortlist = useMemo(() => {
+    const pool = rows
+      .filter(r => Number(r.current_qty ?? 0) === 0 && r.action === 'Buy' && typeOn(String(r.sec_type ?? '')) && Number(r.action_score ?? -99) >= minScore)
+      .sort((a, b) => Number(b.action_score) - Number(a.action_score))
+    const per = new Map<string, number>()
+    const kept = pool.filter(r => {
+      const k = r.sector as string | null
+      if (!k) return true
+      if ((per.get(k) ?? 0) >= Math.max(perSector, 1)) return false
+      per.set(k, (per.get(k) ?? 0) + 1)
+      return true
+    })
+    return { kept, capped: pool.length - kept.length }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, minScore, perSector, shortTypes])
+
+  const filtered = useMemo(() => {
+    if (view === 'shortlist') return shortlist.kept
+    return rows.filter(r => view !== 'open_only' || Number(r.current_value_eur ?? 0) > 0)
+  }, [rows, view, shortlist])
 
   const [search, setSearch] = usePersist('sig_search', '')
 
@@ -5563,6 +5748,16 @@ function PortfolioActionSignalsTab() {
       { field: 'final_signal', headerName: 'Final Signal', width: 160, sort: 'asc' as const,
         headerTooltip: 'Combined signal: math signal + analyst rating. Conviction signals appear when both agree.',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${signalStyle(p.value)}` },
+      { field: 'action', headerName: 'Action', width: 120,
+        headerTooltip: 'A rules-based verdict from everything in this grid — trend (Golden/Death, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value and analyst target, F-Score and Z-Score. Held positions read Add / Hold / Reduce / Sell, others Buy / Watch / Avoid. It uses the 5-day average of the score and changes only after a clear, confirmed move, so it does not flap day to day (refreshed by the scheduler). A triggered trailing stop or a Death Cross never reads as a buy. A screen to review, not advice — see "Why" for the reasons.',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Add' || p.value === 'Buy' ? 'text-green-700' : p.value === 'Hold / Add' ? 'text-green-600' : p.value === 'Reduce' ? 'text-amber-700' : p.value === 'Sell' || p.value === 'Avoid' ? 'text-red-600' : 'text-slate-500'}`,
+        valueFormatter: p => p.value ?? '—' },
+      { field: 'action_score', headerName: 'Action Score', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 110,
+        headerTooltip: 'The 5-day average of the points behind Action: +6 or more Add/Buy, +3 to +5 Hold-Add/Buy, −2 to +2 Hold/Watch, −3 to −5 Reduce/Avoid, −6 or less Sell/Avoid.',
+        valueFormatter: p => p.value != null ? `${Number(p.value) > 0 ? '+' : ''}${Number(p.value).toFixed(1)}` : '—',
+        cellClass: (p: { value: unknown }) => `font-semibold ${Number(p.value ?? 0) > 0 ? 'text-green-700' : Number(p.value ?? 0) < 0 ? 'text-red-600' : 'text-slate-500'}` },
+      { field: 'action_why', headerName: 'Why', width: 360, hide: true, tooltipField: 'action_why',
+        headerTooltip: 'The factors behind Action, biggest first, each with its points.' },
       { field: 'recommendation_signal', headerName: 'Math Signal', width: 140,
         headerTooltip: 'Quantitative signal derived from Sharpe ratio and quality score.',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${signalStyle(p.value)}` },
@@ -5630,6 +5825,16 @@ function PortfolioActionSignalsTab() {
         headerTooltip: '50-day MA vs 200-day MA regime: Golden (bullish, 50 above 200) or Death (bearish, 50 below 200).',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Golden' ? 'text-green-700' : p.value === 'Death' ? 'text-red-600' : 'text-slate-400'}`,
         valueFormatter: p => p.value ?? '—' },
+      { field: 'ma50_chg_pct', headerName: 'MA50 Direction', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 130,
+        headerTooltip: `Where the 50-day average is heading: its change over the last week (5 trading days). ▲ rising, ▼ falling, ▬ flat (within ±${MA_FLAT_PCT}%). Sort or filter (e.g. greater than 0) to find the rising ones.`,
+        cellClass: maDirCell, valueFormatter: maDirFmt },
+      { field: 'ma200_chg_pct', headerName: 'MA200 Direction', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 140,
+        headerTooltip: `Where the 200-day average is heading: its change over the last week (5 trading days). ▲ rising, ▼ falling, ▬ flat (within ±${MA_FLAT_PCT}%). Needs 200+ days of prices plus a week.`,
+        cellClass: maDirCell, valueFormatter: maDirFmt },
+      { field: 'ma_rising', headerName: 'MA Rising', width: 130,
+        headerTooltip: 'Which of the two averages are rising: Both rising, MA50 rising, MA200 rising, or Neither. Filter on it to list, for example, every security whose MA50 and/or MA200 points up.',
+        cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Both rising' ? 'text-green-700' : p.value === 'Neither' ? 'text-red-600' : p.value ? 'text-amber-600' : 'text-slate-400'}`,
+        valueFormatter: p => p.value ?? '—' },
       { field: 'ma_cross_event', headerName: 'Cross Event', width: 120, hide: true,
         headerTooltip: 'Set only on the trading day the 50/200-day MAs actually crossed — a golden cross (buy signal) or death cross (sell/avoid signal).',
         cellClass: (p: { value: string | null }) => `text-xs font-semibold ${p.value === 'Golden Cross' ? 'text-green-700' : p.value === 'Death Cross' ? 'text-red-600' : ''}`,
@@ -5670,6 +5875,8 @@ function PortfolioActionSignalsTab() {
         valueFormatter: p => typeof p.value === 'string' ? p.value.slice(0, 10) : '—' },
       { field: 'sec_type', headerName: 'Type', width: 100, hide: true },
       { field: 'industry', headerName: 'Industry', width: 160, hide: true },
+      { field: 'sector', headerName: 'Sector', width: 150,
+        headerTooltip: "The security's sector — what the Shortlist's max per sector counts." },
       { field: 'currency', headerName: 'Currency', width: 90, hide: true, cellRenderer: CurrencyCell },
       { field: 'exchange', headerName: 'Exchange', width: 100, hide: true },
       { field: 'upside_pct', headerName: 'Upside %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100,
@@ -5715,6 +5922,11 @@ function PortfolioActionSignalsTab() {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
   })
 
+  // Switching to the shortlist sorts it best-first (the Action Score column, descending)
+  useEffect(() => {
+    if (view === 'shortlist' && gridApi) gridApi.applyColumnState({ state: [{ colId: 'action_score', sort: 'desc' }], defaultState: { sort: null } })
+  }, [view, gridApi])
+
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
@@ -5724,12 +5936,25 @@ function PortfolioActionSignalsTab() {
         {([
           ['all',       'Show All'],
           ['open_only', 'Open Positions Only'],
+          ['shortlist', 'Shortlist'],
         ] as const).map(([v, label]) => (
           <button key={v} onClick={() => setView(v)}
             className={`px-3 py-1.5 text-xs rounded border font-medium ${view === v ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
             {label}
           </button>
         ))}
+        {view === 'shortlist' && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500" title="Buy candidates you do not hold: verdict Buy, of the chosen types, best score first, at most N per sector">
+            score at least
+            <input type="number" step="0.5" value={minScore} onChange={e => setMinScore(Number(e.target.value))} className="w-14 px-1.5 py-1 text-xs border border-slate-300 rounded" />
+            max per sector
+            <input type="number" min={1} step={1} value={perSector} onChange={e => setPerSector(Math.max(1, Number(e.target.value)))} className="w-12 px-1.5 py-1 text-xs border border-slate-300 rounded" />
+            {shortTypeList.map(t => (
+              <label key={t} className="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" className="rounded" checked={typeOn(t)} onChange={() => toggleType(t)} />{t}</label>
+            ))}
+            <span className="text-slate-400">{shortlist.kept.length} shown{shortlist.capped ? `, ${shortlist.capped} held back by the sector cap` : ''}</span>
+          </span>
+        )}
         <input
           type="text"
           placeholder="Search…"
@@ -5747,8 +5972,8 @@ function PortfolioActionSignalsTab() {
         <CopyToExcelButton gridApi={gridApi} />
       </div>
 
-      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 300px)', width: '100%' }}>
-        <AgGridReact
+      <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 300px)', width: '100%' }}>
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -5769,10 +5994,257 @@ function PortfolioActionSignalsTab() {
   )
 }
 
+// ── Action Backtest Tab ───────────────────────────────────────────────────────
+// Does the Action score work? The score at each month-end (or each day of the daily log) against what the prices did next, measured against a
+// benchmark. Runs in the background on the server (data/action_backtest.py) and is polled here.
+type BtHorizon = { n: number; mean: number | null; median: number | null; hit: number | null }
+type BtGroup = { name: string; n: number; h: Record<string, BtHorizon> }
+type BtResult = {
+  mode: string; scope: string; samples: number; securities: number; from?: string; to?: string
+  benchmark: { id: number; name: string } | null; groups: BtGroup[]; by_score: { score: number; n: number; h: Record<string, BtHorizon> }[]
+  timeline: { date: string; score: number | null; '3m': number | null; '6m': number | null; '12m': number | null }[]; notes: string[]
+  verdict?: { horizon: string; level: 'works' | 'weak' | 'inverted'; headline: string; lines: string[] } | null
+  best_worst?: { horizon: string; tested: number; score_cuts: [number, number]; rows: BtSecurity[] } | null
+}
+type BtSecurity = { id: number; name: string; n: number; excess: number | null; ret: number | null; hit: number | null; avg_score: number | null; last_score: number | null }
+const BT_HORIZONS = ['3m', '6m', '12m'] as const
+
+function ActionBacktestTab() {
+  const { isDark } = useTheme()
+  const [scope, setScope] = usePersist<'all' | 'holdings' | 'accounts' | 'security'>('ab_scope', 'all')
+  const [mode, setMode] = usePersist<'price' | 'log'>('ab_mode', 'price')
+  const [bench, setBench] = usePersist<string>('ab_bench', 'default')
+  const [secId, setSecId] = usePersist<number>('ab_security', 0)
+  const [topN, setTopN] = usePersist<number>('ab_top_n', 10)
+  const [secFilter, setSecFilter] = useState('')
+  const [accountIds, setAccountIds] = useState<number[] | undefined>(undefined)
+  const [result, setResult] = useState<BtResult | null>(null)
+  const [running, setRunning] = useState<{ stage: string; seconds: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
+  const secs = (securities as Row[]).filter(s => s.is_active !== false)
+  const byName = (a: Row, b: Row) => String(a.name).localeCompare(String(b.name))
+
+  const run = async () => {
+    setError(null); setResult(null); setRunning({ stage: 'Starting…', seconds: 0 })
+    try {
+      const body: Record<string, unknown> = { mode, scope, account_ids: scope === 'accounts' ? accountIds : undefined, securities_id: scope === 'security' ? secId : undefined }
+      if (bench !== 'default') body.benchmark_id = Number(bench)
+      const { job_id } = (await api.post('/reports/action-backtest', body)).data as { job_id: string }
+      for (;;) {
+        await new Promise(r => setTimeout(r, 1500))
+        const j = (await api.get(`/reports/action-backtest/${job_id}`)).data as { status: string; stage: string; seconds: number; result?: BtResult; error?: string }
+        if (j.status === 'running') { setRunning({ stage: j.stage, seconds: j.seconds }); continue }
+        if (j.status === 'error') setError(j.error ?? 'The back-test failed.')
+        else setResult(j.result ?? null)
+        break
+      }
+    } catch (e) {
+      setError((e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'The back-test could not be started.')
+    } finally { setRunning(null) }
+  }
+
+  const cell = (h: BtHorizon) => h.n === 0 || h.mean == null
+    ? <span className="text-slate-300">not yet</span>
+    : <span title={`${h.n} cases`}>
+        <span className="tabular-nums">{h.mean >= 0 ? '+' : ''}{h.mean.toFixed(1)}</span><span className="text-slate-400"> / </span>
+        <span className="tabular-nums">{(h.median ?? 0) >= 0 ? '+' : ''}{(h.median ?? 0).toFixed(1)}</span>
+        <span className={`ml-2 font-semibold tabular-nums ${(h.hit ?? 0) >= 55 ? 'text-green-600' : (h.hit ?? 0) < 45 ? 'text-red-600' : 'text-slate-600'}`}>{(h.hit ?? 0).toFixed(0)}%</span>
+      </span>
+
+  const filteredSecs = secs.filter(s => !secFilter || `${s.name} ${s.ticker}`.toLowerCase().includes(secFilter.toLowerCase())).sort(byName).slice(0, 300)
+
+  const pp = (v: number | null) => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}`
+  // Did the score see it coming? A security's typical score is "high" in the upper third of the tested securities, "low" in the lower third.
+  // Among the best, a low score is a miss and a high one a call; among the worst, the other way round. The middle third says nothing either way.
+  const scoreCall = (r: BtSecurity, best: boolean, cuts: [number, number]): 'called' | 'missed' | null => {
+    if (r.avg_score == null) return null
+    const high = r.avg_score >= cuts[1], low = r.avg_score <= cuts[0]
+    return high ? (best ? 'called' : 'missed') : low ? (best ? 'missed' : 'called') : null
+  }
+  const securityTable = (rows: BtSecurity[], title: string, tone: string, best: boolean, cuts: [number, number]) => (
+    <div className="min-w-0">
+      <div className={`rounded-lg px-4 py-2 mb-2 text-sm font-medium ${tone}`}>{title}</div>
+      <table className="w-full text-sm">
+        <thead><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+          <th className="px-3 py-2 text-left whitespace-nowrap">Security</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Average of the security's return minus the benchmark's over the horizon, across every date tested, in percentage points.">Excess</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Share of the dates on which the security beat the benchmark.">Beat it</th>
+          <th className="px-3 py-2 text-right whitespace-nowrap" title="Average Action score it had on the dates tested, and the latest one.">Score avg → now</th>
+          <th className="px-3 py-2 text-left whitespace-nowrap" title="Whether its typical score pointed the right way: high for the best, low for the worst = called it; the opposite = missed it.">Score</th>
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map(r => {
+            const call = scoreCall(r, best, cuts)
+            return (
+              <tr key={r.id} className={call === 'missed' ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'}>
+                <td className="px-3 py-2 font-medium w-full max-w-0 min-w-[8rem] truncate" title={`${r.name} — ${r.n} dates tested`}><SecLink id={r.id}>{r.name}</SecLink></td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${(r.excess ?? 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{pp(r.excess)} pp</td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{r.hit == null ? '—' : `${r.hit.toFixed(0)}%`}</td>
+                <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-slate-500">{r.avg_score == null ? '—' : r.avg_score.toFixed(1)} → {r.last_score == null ? '—' : r.last_score.toFixed(0)}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-xs font-medium">
+                  {call === 'missed' ? <span className="text-amber-700" title={best ? 'It beat the benchmark although its typical score was low.' : 'It trailed the benchmark although its typical score was high.'}>⚠ missed</span>
+                    : call === 'called' ? <span className="text-green-700" title={best ? 'It beat the benchmark and its typical score was high.' : 'It trailed the benchmark and its typical score was low.'}>✓ called it</span>
+                    : <span className="text-slate-400" title="Its typical score was in the middle third — neither high nor low.">—</span>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500 max-w-3xl">
+        Does the Action score work? For each month-end since 2016 (or each day of the log) it takes the score a security had, then looks at what it returned over
+        the next 3, 6 and 12 months <i>in excess of the benchmark</i> — +5 means it beat the benchmark by 5 percentage points. Each row is a group of cases with a similar score.
+        A score that works shows better numbers in the higher-scoring rows; a hit rate near 50% is a coin flip.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-slate-500">Test
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm" value={scope} onChange={e => setScope(e.target.value as typeof scope)}>
+            <option value="all">All stocks and ETFs I follow</option>
+            <option value="holdings">What I hold now</option>
+            <option value="accounts">Chosen accounts</option>
+            <option value="security">One security</option>
+          </select>
+        </label>
+        <label className="text-xs text-slate-500">Score from
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm" value={mode} onChange={e => setMode(e.target.value as typeof mode)}>
+            <option value="price">Price-driven points, since 2016 (available now)</option>
+            <option value="log">The daily log — the whole score (fills as time passes)</option>
+          </select>
+        </label>
+        <label className="text-xs text-slate-500">Benchmark
+          <select className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm max-w-xs" value={bench} onChange={e => setBench(e.target.value)}>
+            <option value="default">My default (Tools → App Settings → Benchmark)</option>
+            <option value="0">The average of what is tested</option>
+            {(['ETF', 'Market Index', 'Stock'] as const).map(t => (
+              <optgroup key={t} label={t === 'ETF' ? 'ETFs' : t === 'Market Index' ? 'Indexes' : 'Stocks'}>
+                {secs.filter(s => String(s.type) === t).sort(byName).map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        {scope === 'security' && (
+          <div className="flex items-end gap-2">
+            <label className="text-xs text-slate-500">Find
+              <input className="block mt-0.5 border border-slate-300 rounded px-2 py-1.5 text-sm w-36" placeholder="name or ticker" value={secFilter} onChange={e => setSecFilter(e.target.value)} />
+            </label>
+            <select className="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-xs" value={secId || ''} onChange={e => setSecId(Number(e.target.value))}>
+              <option value="">Choose a security…</option>
+              {filteredSecs.map(s => <option key={String(s.id)} value={String(s.id)}>{String(s.name)}{s.ticker ? ` (${String(s.ticker)})` : ''}</option>)}
+            </select>
+          </div>
+        )}
+        <Button onClick={run} disabled={!!running || (scope === 'security' && !secId) || (scope === 'accounts' && !(accountIds && accountIds.length))}>{running ? 'Running…' : 'Run back-test'}</Button>
+      </div>
+      {scope === 'accounts' && <PortfolioPresetBar reportScope="action_backtest" eligibleTypes={INV_ACCOUNT_TYPES} onChange={setAccountIds} />}
+
+      {running && <div className="flex items-center gap-2 text-sm text-slate-500"><Spinner size={14} /> {running.stage} <span className="text-slate-400">({running.seconds}s — all securities takes a couple of minutes, one account or security a few seconds)</span></div>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {result && (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            {result.samples.toLocaleString()} observations · {result.securities} securit{result.securities === 1 ? 'y' : 'ies'}{result.from ? ` · ${result.from} → ${result.to}` : ''} · benchmark: <b>{result.benchmark?.name ?? '—'}</b>
+          </p>
+          {result.notes.length > 0 && (
+            <ul className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5 list-disc pl-5 max-w-4xl">{result.notes.map(n => <li key={n}>{n}</li>)}</ul>
+          )}
+          {result.verdict && (
+            <div className={`rounded-lg border p-3 max-w-4xl space-y-1.5 ${result.verdict.level === 'works' ? 'bg-green-50 border-green-200' : result.verdict.level === 'inverted' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+              <p className="text-sm font-semibold text-slate-800">What this says — {result.verdict.headline}</p>
+              {result.verdict.lines.map(l => <p key={l} className="text-xs text-slate-600">{l}</p>)}
+            </div>
+          )}
+          {result.groups.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 border-b border-slate-200">
+                    <th className="text-left py-1 pr-6">Group (score on that date)</th><th className="text-right px-3">Cases</th>
+                    {BT_HORIZONS.map(h => <th key={h} className="text-left px-4">{({ '3m': 'After 3 months', '6m': 'After 6 months', '12m': 'After 12 months' })[h]}<span className="block font-normal text-slate-400">average / median excess · % beat it</span></th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.groups.map(g => (
+                    <tr key={g.name} className={`border-b border-slate-100 ${g.name === 'All' ? 'font-semibold bg-slate-50' : ''}`}>
+                      <td className="py-1 pr-6">{g.name}</td><td className="text-right px-3 tabular-nums">{g.n.toLocaleString()}</td>
+                      {BT_HORIZONS.map(h => <td key={h} className="px-4">{cell(g.h[h])}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {result.by_score.length > 1 && (
+            <Plot
+              data={(['6m', '12m'] as const).map((h, i) => ({
+                type: 'bar', name: `${h}: beat the benchmark (%)`, x: result.by_score.map(r => `${r.score}`), y: result.by_score.map(r => r.h[h].hit),
+                marker: { color: i ? '#2563eb' : '#f59e0b' },
+                hovertemplate: result.by_score.map(r => `score ${r.score}<br>${r.n} cases<br>${r.h[h].hit ?? '—'}% beat it<extra>${h}</extra>`),
+              }))}
+              layout={{ title: { text: 'Share of cases that beat the benchmark, by score (dotted line = 50%, a coin flip)', font: { size: 12 } }, height: 300, barmode: 'group', margin: { t: 40, r: 10, b: 40, l: 45 }, yaxis: { title: { text: '% beating the benchmark' }, range: [30, 70] }, xaxis: { title: { text: 'score' } },
+                shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 50, y1: 50, line: { color: '#94a3b8', dash: 'dot' } }], legend: { orientation: 'h', y: -0.3 }, ...plotLayout(isDark) }}
+              config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} useResizeHandler />
+          )}
+          {result.best_worst && (() => {
+            const bw = result.best_worst
+            const n = Math.max(1, Math.min(topN, Math.floor(bw.rows.length / 2)))
+            const best = bw.rows.slice(0, n), worst = bw.rows.slice(-n).reverse()
+            const tally = (rows: BtSecurity[], isBest: boolean) => rows.map(r => scoreCall(r, isBest, bw.score_cuts))
+            const calls = [...tally(best, true), ...tally(worst, false)]
+            const called = calls.filter(c => c === 'called').length, missed = calls.filter(c => c === 'missed').length
+            return (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-end gap-x-6 gap-y-1">
+                  <p className="text-sm font-semibold text-slate-700">Best and worst against the benchmark
+                    <span className="font-normal text-slate-500"> — over {({ '3m': '3', '6m': '6', '12m': '12' } as Record<string, string>)[bw.horizon]} months, averaged across every date tested ({bw.tested} securities with enough history)</span></p>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">Show
+                    <button onClick={() => setTopN(Math.max(3, n - 1))} className="px-2 py-0.5 rounded border border-slate-300 hover:bg-slate-50">−</button>
+                    <span className="w-8 text-center tabular-nums text-sm text-slate-700">{n}</span>
+                    <button onClick={() => setTopN(Math.min(50, n + 1))} className="px-2 py-0.5 rounded border border-slate-300 hover:bg-slate-50">+</button>
+                    each
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500 max-w-4xl space-y-1">
+                  <p><b>Excess</b> — average return minus the benchmark's, in percentage points. <b>Beat it</b> — on how many dates it did better than the benchmark. <b>Score avg → now</b> — the Action score it typically had on those dates, and has today.</p>
+                  <p><b>Score</b> asks: did the score point the right way? The tested securities are split by their typical score into a lower, a middle and an upper third.
+                    <span className="text-green-700 font-medium"> ✓ called it</span> — a best security whose typical score was in the upper third, or a worst one in the lower third.
+                    <span className="text-amber-700 font-medium"> ⚠ missed</span> (row highlighted) — a best one that the score rated in the lower third, or a worst one it rated in the upper third:
+                    the score would have steered you the wrong way. In the {n * 2} shown, the score <b>called {called}</b> and <b>missed {missed}</b>; the rest sat in the middle third. If the score worked, "called" would clearly outnumber "missed".</p>
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  {securityTable(best, '🏆 Best', 'bg-green-50 border border-green-100 text-green-700', true, bw.score_cuts)}
+                  {securityTable(worst, '📉 Worst', 'bg-red-50 border border-red-100 text-red-600', false, bw.score_cuts)}
+                </div>
+              </div>
+            )
+          })()}
+          {result.timeline.length > 0 && (
+            <Plot
+              data={[
+                { type: 'bar', name: '6-month excess (pp)', x: result.timeline.map(t => t.date), y: result.timeline.map(t => t['6m']), marker: { color: '#94a3b8' }, yaxis: 'y2', opacity: 0.6 },
+                { type: 'scatter', mode: 'lines+markers', name: 'Score', x: result.timeline.map(t => t.date), y: result.timeline.map(t => t.score), line: { color: '#2563eb', width: 2 } },
+              ]}
+              layout={{ height: 300, margin: { t: 10, r: 50, b: 40, l: 45 }, yaxis: { title: { text: 'score' } }, yaxis2: { overlaying: 'y', side: 'right', title: { text: '6m excess (pp)' }, showgrid: false },
+                legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark) }}
+              config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} useResizeHandler />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Securities Section ────────────────────────────────────────────────────────
 function SecuritiesSection() {
   const [tab, setTab] = usePersist('sec_tab', 'Price Changes')
-  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals']
+  const { isAdmin } = useRole()
+  const TABS = ['Price Changes', 'Volatility', 'Investment Signals', 'Portfolio Action Signals', 'Action Backtest'].filter(t => isAdmin || t !== 'Action Backtest')
   return (
     <div>
       <SubTabs tabs={TABS} active={tab} onChange={setTab} />
@@ -5780,6 +6252,7 @@ function SecuritiesSection() {
       {tab === 'Volatility'                && <VolatilityTab />}
       {tab === 'Investment Signals'        && <InvestmentSignalsTab />}
       {tab === 'Portfolio Action Signals'  && <PortfolioActionSignalsTab />}
+      {tab === 'Action Backtest'           && <ActionBacktestTab />}
     </div>
   )
 }
@@ -6381,8 +6854,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <p className="text-sm font-semibold text-slate-700">{reportType} — {periodType} Breakdown</p>
           <p className="text-xs text-slate-400">Click any period cell to drill down into the underlying transactions.</p>
           <WithCopy scrollKey="income-expense-1">
-          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-340px)] text-xs">
-            <table className="w-full border-collapse">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-340px)] text-xs">
+            <table data-cards className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50 whitespace-nowrap">Category</th>
@@ -6442,7 +6915,7 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                   <button onClick={() => setDrillCell(null)} className="text-blue-400 hover:text-blue-600 text-xs">✕ Close</button>
                 </div>
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
-                  <table className="w-full border-collapse text-xs">
+                  <table data-cards className="w-full border-collapse text-xs">
                     <thead className="sticky top-0 bg-blue-50">
                       <tr>
                         <th className="text-left px-2 py-1.5 font-semibold text-slate-600 border-b border-blue-200 whitespace-nowrap">Date</th>
@@ -6546,8 +7019,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <div>
             <p className="text-xs font-semibold text-slate-600 mb-1">Category Detail</p>
             <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-              <table className="w-full border-collapse">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+              <table data-cards className="w-full border-collapse">
                 <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr className="bg-slate-50">
                     <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Category</th>
@@ -6587,8 +7060,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
               const drillRows = drillCat === 'All Categories' ? rows : rows.filter(r => r.category_full_path === drillCat)
               return (
                 <WithCopy scrollKey="income-expense-2">
-                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-                  <table className="w-full border-collapse">
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+                  <table data-cards className="w-full border-collapse">
                     <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                       <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
@@ -6665,8 +7138,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
           <div>
             <p className="text-xs font-semibold text-slate-600 mb-1">Payee Summary</p>
             <WithCopy>
-            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-              <table className="w-full border-collapse">
+            <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+              <table data-cards className="w-full border-collapse">
                 <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                   <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold sticky left-0 bg-slate-50">Payee</th>
                   <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Total (€)</th>
@@ -6709,8 +7182,8 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
                     </div>
                   )}
                   <WithCopy scrollKey="income-expense-3">
-                  <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-                    <table className="w-full border-collapse">
+                  <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
+                    <table data-cards className="w-full border-collapse">
                       <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold whitespace-nowrap">Date</th>
                         <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Description</th>
@@ -6922,7 +7395,7 @@ function CashFlowAlerts({ data, isDark }: { data: CfAlerts; isDark: boolean }) {
               <p className="text-xs text-slate-400 mb-1">Each payment is what the card owes on the statement it settles — its balance at the latest statement date on or before the due date, less payments made since — projected from the card's own spending.</p>
               <WithCopy>
                 <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-                  <table className="w-full text-sm">
+                  <table data-cards className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr className="text-xs text-slate-500 uppercase tracking-wide">
                         <th className="px-3 py-2 text-left">Due</th>
@@ -6960,7 +7433,7 @@ function CashFlowAlerts({ data, isDark }: { data: CfAlerts; isDark: boolean }) {
             <div className="mt-2">
               <WithCopy>
                 <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-                  <table className="w-full text-sm">
+                  <table data-cards className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-slate-50">
                       <tr className="text-xs text-slate-500 uppercase tracking-wide">
                         <th className="px-3 py-2 text-left">Account</th>
@@ -7223,7 +7696,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="cashflow-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Date</th>
@@ -7266,7 +7739,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="cashflow-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Due Date</th>
@@ -7312,7 +7785,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Projected Date</th>
@@ -7355,7 +7828,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="budget-1">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Pay Date</th>
@@ -7396,7 +7869,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Pay Date</th>
@@ -7439,7 +7912,7 @@ function CashFlowSection() {
         ) : (
           <WithCopy scrollKey="budget-2">
           <div className="overflow-x-auto overflow-y-auto max-h-72 border border-slate-200 rounded-lg">
-            <table className="w-full text-sm">
+            <table data-cards className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="text-xs text-slate-500 uppercase tracking-wide">
                   <th className="px-3 py-2 text-left">Date</th>
@@ -7641,7 +8114,7 @@ function BudgetReport() {
           )}
         </div>
         {saveMsg && <div className="text-sm mb-2 text-green-700">{saveMsg}</div>}
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] border border-slate-200 rounded-lg">
+        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] border border-slate-200 rounded-lg">
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
               <th className="px-3 py-2 text-left">Category</th>
@@ -7854,7 +8327,7 @@ function SavingsRateTab() {
         layout={{ barmode: 'group', height: 380, margin: { t: 10, r: 60, b: 40, l: 70 }, yaxis: { tickformat: ',.0f', tickprefix: '€' }, yaxis2: { overlaying: 'y', side: 'right', ticksuffix: '%', showgrid: false }, legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark), hovermode: 'x unified' }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
             <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Month</th>
@@ -8016,7 +8489,7 @@ function CgTable({ rows, method, forceExpandAll }: { rows: Row[]; method: string
   )
 }
 
-function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; forceExpandAll?: boolean }) {
+function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; forceExpandAll?: boolean; accountIds?: number[] }) {
   // HTML radio-button grouping is by `name` across the whole DOM, not scoped to
   // a component instance — since TaxPrintExport always mounts a second, hidden
   // copy of this component (sharing the same method/setMethod), a hardcoded
@@ -8039,8 +8512,9 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
       window.setTimeout(() => setHighlighted(h => h === id ? null : h), 1500)
     }, expand ? 50 : 0)
   }
-  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method], queryFn: () => getCapitalGains(year, method) })
-  const d = data as Row[]
+  const { data = [], isLoading } = useQuery({ queryKey: ['capital-gains', year, method, accountIds ?? null], queryFn: () => getCapitalGains(year, method, accountIds) })
+  // Cryptocurrency is on the Crypto tab (every wallet pooled, losses carried forward, rewards, E1) — not counted a second time here.
+  const d = (data as Row[]).filter(r => String(r.tax_category) !== 'Crypto' && String(r.securities_type) !== 'Crypto')
 
   const sum = (rows: Row[]) => rows.reduce((s, r) => s + Number(r.gain_loss_eur ?? 0), 0)
   const fmt2 = (n: number) => `€ ${n >= 0 ? '+' : ''}${fmtNum(n, 2)}`
@@ -8077,6 +8551,9 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
         Realized gains/losses for the selected tax year. Tax treatment is driven by each position's{' '}
         <strong>effective tax category</strong> (instrument-type override → security tax category → Tax Rules settings).
         Exempt categories (e.g. Local Listed, UCITS) are shown separately. All amounts in EUR.
+      </p>
+      <p className="text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 max-w-4xl">
+        <b>Cryptocurrency is on the Crypto tab</b>, not here — all your wallets pooled, losses carried forward, rewards and the Form E1 figures.
       </p>
 
       {/* Controls */}
@@ -8246,49 +8723,128 @@ function CapitalGainsReport({ year, method, setMethod, forceExpandAll = false }:
   )
 }
 
-function TaxLossHarvestingTab() {
-  const { data = [], isLoading } = useQuery({ queryKey: ['tax-loss-harvesting'], queryFn: getTaxLossHarvesting })
+// Tax-loss harvesting: a loss only helps if it can be set against a gain, and only against gains of its own taxable category — so the candidates are grouped
+// by tax category, the categories whose gains are exempt (a loss there offsets nothing) are set apart, and each taxable category shows the gains it could be
+// set against in the tax year. Server side: /reports/tax-loss-harvesting and /summary.
+function TaxLossHarvestingTab({ year, method, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean; accountIds?: number[] }) {
+  const { data = [], isLoading } = useQuery({ queryKey: ['tax-loss-harvesting', accountIds ?? null], queryFn: () => getTaxLossHarvesting(accountIds) })
+  // The crypto figures use the Crypto tab's own settings (same remembered values), so the two tabs always agree.
+  const [rewardsIncome] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
+  const [cryptoExemption] = usePersist('crypto_tax_exemption', 0)
+  const [cryptoRate] = usePersist<number | null>('crypto_tax_rate', null)
+  const [cryptoLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [cryptoExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const { data: sum } = useQuery({
+    queryKey: ['tax-loss-harvesting-summary', year, method, rewardsIncome, cryptoExemption, cryptoRate, cryptoLossesFrom, cryptoExcluded, accountIds ?? null],
+    queryFn: () => getTaxLossHarvestingSummary(year, method, { rewardsIncome, exemption: cryptoExemption, rate: cryptoRate, lossesFrom: cryptoLossesFrom, excluded: cryptoExcluded }, accountIds),
+  })
+  const [showExempt, setShowExempt] = useState(false)
+  const [catFilter, setCatFilter] = useState<string | null>(null)
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const rows = data as Row[]
-  const totalLoss = rows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const taxableRows = rows.filter(r => r.tax_value === 'taxable')
+  const exemptRows = rows.filter(r => r.tax_value !== 'taxable')
+  const shown = catFilter ? taxableRows.filter(r => r.tax_category === catFilter) : taxableRows
+  const totalTaxable = taxableRows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const totalExempt = exemptRows.reduce((s, r) => s + Number(r.unrealized_loss_eur ?? 0), 0)
+  const th = 'text-right px-2 py-1.5 border-b border-slate-200 font-semibold'
+
+  const positions = (rs: Row[]) => (
+    <WithCopy>
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-420px)] text-xs">
+        <table className="w-full border-collapse">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th>
+            <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
+            <th className={th}>Qty</th><th className={th}>Cur. Price</th><th className={th}>Cost Basis</th><th className={th}>Cur. Value</th><th className={th}>Cost Total</th><th className={th}>Loss (€)</th><th className={th}>Loss %</th>
+          </tr></thead>
+          <tbody>
+            {rs.map((r, i) => (
+              <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
+                <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{String(r.tax_category)}</td>
+                <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toFixed(4)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_price ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-red-600 font-medium">{fmtEur(Number(r.unrealized_loss_eur ?? 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{Number(r.loss_pct ?? 0).toFixed(2)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </WithCopy>
+  )
+
   return (
     <div className="space-y-4">
-      <KpiCard label="Total Harvestable Loss" value={fmtEur(totalLoss)} color="text-red-600" />
-      {rows.length === 0 ? (
-        <p className="text-slate-500 text-sm py-4">No positions with unrealized losses.</p>
-      ) : (
-        <WithCopy scrollKey="tax-loss-harvesting">
-        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Security</th>
-              <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Ticker</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Qty</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cur. Price</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cost Basis</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cur. Value</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Cost Total</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Loss (€)</th>
-              <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Loss %</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 font-medium"><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
-                  <td className="px-2 py-1.5 font-mono text-slate-500"><SecLink id={r.securities_id}>{String(r.ticker ?? '—')}</SecLink></td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(r.quantity).toFixed(4)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_price ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-red-600 font-medium">{fmtEur(Number(r.unrealized_loss_eur ?? 0))}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{Number(r.loss_pct ?? 0).toFixed(2)}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <p className="text-xs text-slate-500 max-w-4xl">
+        A loss helps only if it can be set against a gain, and only against gains of its <b>own taxable category</b> (crypto against crypto, FX Spot against FX Spot…). So the positions below are grouped by tax category; categories whose gains are exempt
+        are set apart, because selling them at a loss offsets nothing. The gains are those realised in {year} ({method}).
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard label="Loss with tax value" value={fmtEur(totalTaxable)} color="text-red-600" tooltip="Unrealized losses in categories whose gains are taxed — the only ones that could offset anything." />
+        <KpiCard label={`Tax it could save in ${year}`} value={fmtEur(sum?.totals.saving_eur ?? 0)} color="text-green-700" tooltip="For each taxable category: the loss, up to the gains of that category realised this year (Crypto: the gain left after the losses already carried forward), times the rate." />
+        <KpiCard label="No tax value (exempt)" value={fmtEur(totalExempt)} color="text-slate-500" tooltip="Unrealized losses in categories whose gains are exempt (Local Listed, UCITS, foreign listed shares…): selling them offsets nothing." />
+      </div>
+
+      {sum && sum.categories.length > 0 && (
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">By taxable category <span className="font-normal text-xs text-slate-400">— click one to list its positions</span></p>
+          <WithCopy>
+            <div className="overflow-x-auto text-xs">
+              <table className="w-full border-collapse">
+                <thead><tr className="bg-slate-50">
+                  <th className="text-left px-2 py-1.5 border-b border-slate-200 font-semibold">Category</th><th className={th}>Positions</th><th className={th}>Loss on offer</th><th className={th}>Gains realised {year}</th>
+                  <th className={th}><Tooltip text="What the loss could be set against: this year's realised gains of the category (Crypto: what is still taxable after the losses already carried forward).">Left to offset</Tooltip></th><th className={th}>Could save</th>
+                </tr></thead>
+                <tbody>
+                  {sum.categories.map(c => (
+                    <React.Fragment key={c.category}>
+                      <tr className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 ${catFilter === c.category ? 'bg-blue-50' : ''}`} onClick={() => setCatFilter(f => f === c.category ? null : c.category)}>
+                        <td className="px-2 py-1.5 font-medium">{c.display_name} <span className="text-slate-400 font-normal">· {c.rate}%</span></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{c.positions}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-red-600">{fmtEur(c.loss_eur)}</td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums ${c.gains_eur >= 0 ? 'text-green-700' : 'text-red-600'}`}>{c.gains_eur >= 0 ? '+' : '−'}{fmtEur(Math.abs(c.gains_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(c.capacity_eur)}</td>
+                        <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${c.saving_eur > 0 ? 'text-green-700' : 'text-slate-400'}`}>{fmtEur(c.saving_eur)}</td>
+                      </tr>
+                      <tr className="border-b border-slate-100"><td colSpan={6} className="px-2 pb-1.5 text-slate-400">
+                        {c.note}{c.carry_forward_eur != null && c.carry_forward_eur > 0 && <> <b className="text-slate-500">{fmtEur(c.carry_forward_eur)}</b> of crypto losses are already carried forward (Crypto tab), so more crypto losses would only add to that.</>}
+                      </td></tr>
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
         </div>
-        </WithCopy>
+      )}
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">Positions with a loss that has tax value{catFilter ? ` — ${catFilter}` : ''}
+          {catFilter && <button className="ml-2 text-xs font-normal text-blue-600 hover:underline" onClick={() => setCatFilter(null)}>show all</button>}</p>
+        {shown.length === 0 ? <p className="text-slate-500 text-sm py-2">No positions with unrealized losses in a taxable category.</p> : positions(shown)}
+      </div>
+
+      {exemptRows.length > 0 && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <button onClick={() => setShowExempt(o => !o)} className="w-full flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 text-left">
+            <span className="text-xs">{showExempt || forceExpandAll ? '▼' : '▶'}</span>
+            <span>No tax value — {exemptRows.length} position{exemptRows.length === 1 ? '' : 's'}, {fmtEur(totalExempt)}</span>
+            <span className="text-xs font-normal text-slate-400">gains in these categories are exempt, so a loss offsets nothing</span>
+          </button>
+          {(showExempt || forceExpandAll) && (
+            <div className="p-3 space-y-2">
+              {sum && <p className="text-xs text-slate-500">{sum.exempt.categories.map(c => `${c.category}: ${fmtEur(c.loss_eur)} (${c.positions})`).join(' · ')}</p>}
+              {positions(exemptRows)}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Reference note */}
@@ -8458,7 +9014,7 @@ function IncomeTable({ rows, showSecLink = true, showIncomeTax = false, forceExp
   )
 }
 
-function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; forceExpandAll?: boolean }) {
+function DividendIncomeTaxTab({ year, forceExpandAll = false, accountIds }: { year: number; forceExpandAll?: boolean; accountIds?: number[] }) {
   const [showRoc, setShowRoc] = useState(true)
   const rocOpen = forceExpandAll || showRoc
   const [highlighted, setHighlighted] = useState<string | null>(null)
@@ -8474,8 +9030,8 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
   }
   const qc = useQueryClient()
   useEffect(() => { qc.removeQueries({ queryKey: ['bank-interest-tax'] }) }, [])
-  const invQ = useQuery({ queryKey: ['dividend-income-tax', year], queryFn: () => getDividendIncomeTax(year) })
-  const bankQ = useQuery({ queryKey: ['bank-interest-tax', year], queryFn: () => api.get('/reports/bank-interest-tax', { params: { year } }).then(r => r.data), staleTime: 0, gcTime: 0 })
+  const invQ = useQuery({ queryKey: ['dividend-income-tax', year, accountIds ?? null], queryFn: () => getDividendIncomeTax(year, accountIds) })
+  const bankQ = useQuery({ queryKey: ['bank-interest-tax', year, accountIds ?? null], queryFn: () => getBankInterestTax(year, accountIds), staleTime: 0, gcTime: 0 })
   if (invQ.isLoading || bankQ.isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   const invRows  = Array.isArray(invQ.data)  ? invQ.data  as Row[] : []
   const bankRows = Array.isArray(bankQ.data) ? bankQ.data as Row[] : []
@@ -8637,12 +9193,12 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
         <div>
           <strong>Dividends (5%):</strong> Greek-source dividends are subject to <strong>5% withholding tax</strong> (Art. 36, L.4172/2013), withheld at source.
           Foreign dividends are grossed up and taxed at 5%; foreign WHT is credited up to the Greek rate.
-          Declare in <strong>E1 Table 4D, Codes 289–294</strong> (foreign) or <strong>Codes 285–288</strong> (domestic).
+          Declare in <strong>E1 Table 4Δ1</strong>: gross <strong>291–292</strong> (Greek companies) or <strong>295–296</strong> (foreign); tax withheld <strong>293–294</strong> (by the Greek company), <strong>297–298</strong> (by a Greek bank or custodian on foreign dividends), <strong>683–684</strong> (withheld abroad) — codes from the 2016 instructions, check the year you file. The Tax Report tab works these out.
         </div>
         <div>
           <strong>CD / Bond Coupon Interest (15%):</strong> Interest from time deposits and bonds is taxed at <strong>15%</strong>, withheld at source by the paying institution (Art. 40, L.4172/2013).
           T-bill discount at maturity is tax-exempt for Greek government securities (Is_Tax_Exempt flag).
-          Declare interest income in <strong>E1 Table 4Δ, Codes 595–596</strong>.
+          Declare the gross interest in <strong>E1 Table 4Δ1</strong>: <strong>667–668</strong> from a Greek source, <strong>669–670</strong> from abroad (tax-exempt Greek government securities: Table 6, <strong>659–660</strong>); tax withheld: <strong>675–676</strong> by the Greek issuer or bank, <strong>677–678</strong> by a Greek bank or custodian on interest from abroad, <strong>683–684</strong> withheld abroad. The Tax Report tab works these out.
         </div>
         <div>
           <strong>Bank / Savings Interest (15%):</strong> Taxed at <strong>15%</strong>, withheld at source. Same declaration as bond interest.
@@ -8658,6 +9214,452 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
   )
 }
 
+// ── Crypto tax (Greece) ───────────────────────────────────────────────────────────────────────────
+// The things the TaxApps.gr crypto calculator asks you to type in — total bought, total sold, commissions, losses of earlier years, rewards — worked out
+// from the ledger: every wallet pooled into one FIFO / LIFO queue per coin, moves between your own wallets left out, losses carried forward for five
+// years, the tax at the rate of the Crypto tax category, the rewards received and the figures for the Form E1 codes. Server side: /reports/crypto-tax.
+function CryptoTaxReport({ year, method, forceExpandAll = false, accountIds }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; forceExpandAll?: boolean; accountIds?: number[] }) {
+  const [exemption, setExemption] = usePersist('crypto_tax_exemption', 0)
+  const [rateOverride, setRateOverride] = usePersist<number | null>('crypto_tax_rate', null)
+  const [lossesFrom, setLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [excluded, setExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const [rewardsIncome, setRewardsIncome] = usePersist<boolean | null>('crypto_tax_rewards_income', null)      // null = what the Crypto tax category says
+  const [showAll, setShowAll] = useState(false)
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const m = method === 'LIFO' ? 'LIFO' : 'FIFO'
+  const { data: first } = useQuery({ queryKey: ['crypto-tax-accounts'], queryFn: () => getCryptoTax({ year, method: m, exemption: 0 }), staleTime: 300_000 })
+  // The Account Preset narrows the accounts first; the ticks below then leave some of those out.
+  const inPreset = (first?.accounts ?? []).map(a => a.id).filter(id => !accountIds || accountIds.includes(id))
+  const included = inPreset.filter(id => !excluded.includes(id))
+  const allIncluded = !first || included.length === first.accounts.length
+  const { data, isLoading } = useQuery({
+    queryKey: ['crypto-tax', year, m, exemption, rateOverride, lossesFrom, rewardsIncome, allIncluded ? null : included],
+    queryFn: () => getCryptoTax({ year, method: m, exemption, rate: rateOverride ?? undefined, lossesFrom, rewardsIncome: rewardsIncome ?? undefined, accountIds: allIncluded ? undefined : included }),
+    enabled: !!first,
+  })
+  if (isLoading || !first) return <div className="flex justify-center py-12"><Spinner /></div>
+  if (!data || !data.accounts.length) return <p className="text-sm text-slate-400 py-8 text-center">No cryptocurrency transactions found.</p>
+  const s = data.summary
+  const signed = (v: number) => `${v >= 0 ? '+' : '−'}${fmtEur(Math.abs(v))}`
+  const color = (v: number) => v >= 0 ? 'text-green-700' : 'text-red-600'
+  const rows = showAll || forceExpandAll ? data.disposals : data.disposals.slice(0, 15)
+  const th = 'px-3 py-2 text-right whitespace-nowrap'
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-500 max-w-4xl">
+        Crypto tax for <b>{data.year}</b>, worked out from your ledger the way the <a className="text-blue-600 hover:underline" href="https://taxapps.gr/el/calculators/crypto-tax" target="_blank" rel="noreferrer">TaxApps.gr crypto calculator</a> asks for it:
+        gain = what you sold for − what it cost (fees are inside both), losses of up to five earlier years offset first, then the rate on the rest. All wallets and accounts are pooled into one {m} queue per coin,
+        and moves between your own wallets ({data.transfers_removed} found) are left out — so it can differ from the Capital Gains tab, which works account by account. Swaps and spending crypto count as disposals.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="text-xs text-slate-500"><Tooltip text="The tax rate on the gain. It starts from the gains rate of the Crypto tax category (Tools → Static Data → Tax Categories); type another to try it.">Rate (%)</Tooltip>
+          <Input type="number" className="w-24 mt-0.5" value={rateOverride ?? data.rate} step={0.5} onChange={e => setRateOverride(e.target.value === '' ? null : Number(e.target.value))} />
+        </label>
+        <label className="text-xs text-slate-500"><Tooltip text="A yearly amount of gain left untaxed, after losses. 0 unless the law in force gives one (a €500 exemption has been proposed).">Annual exemption (€)</Tooltip>
+          <Input type="number" className="w-28 mt-0.5" value={exemption} step={100} onChange={e => setExemption(Math.max(Number(e.target.value) || 0, 0))} />
+        </label>
+        <label className="text-xs text-slate-500"><Tooltip text="Only losses of this year and later are carried forward (0 = every year). Crypto gains were not taxed in every year, so losses from before the tax started may not count.">Losses count from</Tooltip>
+          <Input type="number" className="w-24 mt-0.5" value={lossesFrom || ''} placeholder="all" onChange={e => setLossesFrom(Number(e.target.value) || 0)} />
+        </label>
+        {first.accounts.length > 1 && (
+          <div className="text-xs text-slate-500">
+            <p><Tooltip text="Untick an account to leave it out, for example the Capital.com account if its crypto is CFD trading rather than coins you own.">Accounts included</Tooltip></p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+              {first.accounts.filter(a => !accountIds || accountIds.includes(a.id)).map(a => (
+                <label key={a.id} className="flex items-center gap-1 cursor-pointer">
+                  <input type="checkbox" checked={!excluded.includes(a.id)} onChange={e => setExcluded(e.target.checked ? excluded.filter(x => x !== a.id) : [...excluded, a.id])} /> {a.name} <span className="text-slate-400">({a.rows})</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <KpiCard label="Disposals" value={String(s.disposals)} />
+        <KpiCard label="Sold for" value={fmtEur(s.proceeds_eur)} tooltip="What the coins sold, swapped or spent in the year were worth, net of fees." />
+        <KpiCard label="Cost" value={fmtEur(s.cost_eur)} tooltip="What those same coins cost, fees included (the lots they came from)." />
+        <KpiCard label="Result" value={signed(s.result_eur)} color={color(s.result_eur)} />
+        <KpiCard label="Losses used" value={fmtEur(s.losses_used_eur)} tooltip="Losses of the previous five years offset against this year's gain, oldest first." />
+        <KpiCard label="Taxable gain" value={fmtEur(s.taxable_eur)} />
+        <KpiCard label={`Tax at ${data.rate}%`} value={fmtEur(s.tax_eur)} color={s.tax_eur > 0 ? 'text-red-600' : 'text-green-700'} />
+      </div>
+      {s.losses_available_eur > 0 && <p className="text-xs text-slate-500">Losses still to carry forward after {data.year}: <b>{fmtEur(s.losses_available_eur)}</b>{(() => { const ly = data.years[data.years.length - 1]?.loss_years ?? []; return ly.length ? ` — ${ly.map(l => `${fmtEur(l.remaining)} from ${l.year} (until ${l.expires})`).join(', ')}` : '' })()}.</p>}
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-700 mb-2">Loss carry-forward by year</p>
+          <WithCopy>
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0"><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-2 text-left">Year</th><th className={th}>Result</th><th className={th}>Losses used</th><th className={th}>Taxable</th><th className={th}>Tax</th><th className={th}>Losses left</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {[...data.years].reverse().map(y => (
+                    <tr key={y.year} className={y.year === data.year ? 'bg-blue-50 font-semibold' : ''}>
+                      <td className="px-3 py-1.5">{y.year}</td>
+                      <td className={`${th} tabular-nums ${color(y.result)}`}>{signed(y.result)}</td>
+                      <td className={`${th} tabular-nums`}>{y.losses_used ? fmtEur(y.losses_used) : '—'}</td>
+                      <td className={`${th} tabular-nums`}>{y.taxable ? fmtEur(y.taxable) : '—'}</td>
+                      <td className={`${th} tabular-nums`}>{y.tax ? fmtEur(y.tax) : '—'}</td>
+                      <td className={`${th} tabular-nums text-slate-500`}>{y.losses_available ? fmtEur(y.losses_available) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </WithCopy>
+          <p className="text-xs text-slate-400 mt-1">A loss can offset gains for the next five years, oldest first. Years before crypto gains were taxed show a “tax” that was never due: set “Losses count from”.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">For the tax return (Form E1)</p>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-slate-100">
+                {data.e1.map(e => (
+                  <tr key={e.codes}><td className="py-1.5 pr-3 font-mono text-xs text-slate-500 whitespace-nowrap">{e.codes}</td><td className="py-1.5 pr-3 text-slate-700">{e.label}</td><td className="py-1.5 text-right tabular-nums font-semibold whitespace-nowrap">{fmtEur(e.amount)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-400 mt-1">The codes are those the calculator lists for the return on {data.year} income (filed in {data.year + 1}). Check them against the E1 instructions.</p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2">Rewards received in {data.year} (staking, earn)</p>
+            <label className="flex items-start gap-2 text-xs text-slate-600 mb-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={data.rewards.taxable} onChange={e => setRewardsIncome(e.target.checked)} />
+              <span><Tooltip text="On: the value of a reward on the day it arrives is income (taxed then, as the TaxApps.gr text describes staking and lending) and becomes the cost of those coins. Off: nothing is taxed when it arrives, the coins cost nothing, and their whole value is a gain when they are sold — the view if staking rewards are not income until you sell.">Rewards are income when received</Tooltip>
+                {rewardsIncome === null && <span className="text-slate-400"> (as the Crypto tax category says)</span>}</span>
+            </label>
+            {data.rewards.rows.length === 0 ? <p className="text-xs text-slate-400">None recorded.</p> : (
+              <>
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-slate-100">
+                    {data.rewards.rows.map(r => <tr key={r.security}><td className="py-1 pr-3">{r.security}</td><td className="py-1 pr-3 text-right text-slate-400">{r.payments} payment{r.payments === 1 ? '' : 's'}</td><td className="py-1 text-right tabular-nums">{fmtEur(r.value_eur)}</td></tr>)}
+                    <tr className="font-semibold"><td className="py-1 pr-3" colSpan={2}>Total value when received{data.rewards.taxable ? '' : ' (not taxed then)'}</td><td className="py-1 text-right tabular-nums">{fmtEur(data.rewards.total)}</td></tr>
+                  </tbody>
+                </table>
+                {data.rewards.taxable ? (
+                  <p className="text-xs text-slate-600 mt-1">
+                    As income: <b>{fmtEur(data.rewards.tax_at_rate ?? 0)}</b> at the {data.income_rate}% your Crypto tax category sets for income, or about <b>{fmtEur(data.rewards.tax_progressive ?? 0)}</b> on the Greek income-tax scale if they were your only income
+                    (the calculator puts mining, staking and lending on the 9%–44% scale). Their value when received is their cost when sold. The calculator's “holding is not taxed” is about coins you bought; a reward is taxed when it arrives even if you keep it in the wallet.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-600 mt-1">Nothing is taxed when they arrive. They cost nothing, so selling them later is all gain — see the disposals below.</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-1">Disposals in {data.year}</p>
+        <p className="text-xs text-slate-400 mb-2">Click a row to see the sale and the lots it used. A tiny sale is usually dust left in a wallet after a transfer.</p>
+        {data.disposals.length === 0 ? <p className="text-xs text-slate-400">No crypto was sold, swapped or spent in {data.year}.</p> : (
+          <>
+            <WithCopy>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0"><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-2 text-left">Date</th><th className="px-3 py-2 text-left">Coin</th><th className="px-3 py-2 text-left">Account</th><th className="px-3 py-2 text-left">Type</th><th className={th}>Quantity</th><th className={th}>Sold for</th><th className={th}>Cost</th><th className={th}>Gain / loss</th><th className="px-3 py-2 text-left">Held</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {rows.map((d, i) => {
+                      const isOpen = forceExpandAll || open.has(i)
+                      return (
+                        <React.Fragment key={i}>
+                          <tr className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n })}>
+                            <td className="px-3 py-1.5 whitespace-nowrap"><span className="text-slate-400 mr-1">{isOpen ? '▾' : '▸'}</span>{d.date}</td><td className="px-3 py-1.5">{d.security}</td><td className="px-3 py-1.5 text-slate-500">{d.account ?? '—'}</td><td className="px-3 py-1.5 text-slate-500">{d.kind}</td>
+                            <td className={`${th} tabular-nums`}>{fmtNum(d.quantity, 6)}</td><td className={`${th} tabular-nums`}>{fmtEur(d.proceeds_eur)}</td><td className={`${th} tabular-nums`}>{fmtEur(d.cost_eur)}</td>
+                            <td className={`${th} tabular-nums font-semibold ${color(d.gain_loss_eur)}`}>{signed(d.gain_loss_eur)}</td><td className="px-3 py-1.5 text-slate-500">{d.holding_type}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr className="bg-slate-50"><td colSpan={9} className="px-6 py-2">
+                              <p className="text-slate-600 mb-1">
+                                {d.kind === 'Sale' ? 'Sold' : 'Swapped out'} <b>{fmtNum(d.quantity, 8)} {d.security}</b> in <b>{d.account ?? 'the account'}</b> on {d.date} for <b>{fmtEur(d.proceeds_eur)}</b>.
+                                It was taken from these lots ({method === 'LIFO' ? 'newest' : 'oldest'} first), which cost <b>{fmtEur(d.cost_eur)}</b> in all:
+                              </p>
+                              <table className="text-xs">
+                                <thead><tr className="text-slate-400 uppercase"><th className="pr-4 text-left">Acquired</th><th className="pr-4 text-left">How</th><th className="pr-4 text-left">Account</th><th className="pr-4 text-right">Quantity used</th><th className="text-right">Cost</th></tr></thead>
+                                <tbody>
+                                  {d.lots.map((l, j) => <tr key={j}><td className="pr-4 whitespace-nowrap">{l.date}</td><td className="pr-4">{l.how}</td><td className="pr-4 text-slate-500">{l.account ?? '—'}</td><td className="pr-4 text-right tabular-nums">{fmtNum(l.quantity, 8)}</td><td className="text-right tabular-nums">{fmtEur(l.cost_eur)}</td></tr>)}
+                                </tbody>
+                              </table>
+                              {d.lots_total > d.lots.length && <p className="text-slate-400 mt-1">… and {d.lots_total - d.lots.length} more lots.</p>}
+                            </td></tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+            {!forceExpandAll && data.disposals.length > 15 && <button className="text-xs text-blue-600 hover:underline mt-1" onClick={() => setShowAll(v => !v)}>{showAll ? 'Show fewer' : `Show all ${data.disposals.length}`}</button>}
+          </>
+        )}
+      </div>
+      <ul className="text-xs text-slate-400 space-y-0.5 list-disc pl-5">{data.notes.map(n => <li key={n}>{n}</li>)}</ul>
+    </div>
+  )
+}
+
+// ── Tax return summary ────────────────────────────────────────────────────────────────────────────
+// Every figure a return needs for the tax year — capital gains by tax category, crypto, dividends, interest — each with the code of the line it goes on. The codes
+// follow the Country of Usage (database/tax_return.py); click one to type your own, kept per country. Server side: /reports/tax-return.
+// What one figure of the Tax Report is made of, account by account, then security by security, then the transactions (click to open each level).
+function TaxLines({ lines, expandAll }: { lines: TaxReturnLine[]; expandAll?: boolean }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const tree = useMemo(() => {
+    const byAcc = new Map<string, Map<string, TaxReturnLine[]>>()
+    for (const l of lines) {
+      if (!byAcc.has(l.account)) byAcc.set(l.account, new Map())
+      const m = byAcc.get(l.account)!
+      m.set(l.security, [...(m.get(l.security) ?? []), l])
+    }
+    return [...byAcc.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }, [lines])
+  const sum = (ls: TaxReturnLine[], f: (l: TaxReturnLine) => number | null) => ls.reduce((t, l) => t + (f(l) ?? 0), 0)
+  const hasPC = lines.some(l => l.proceeds != null || l.cost != null)
+  const hasW = lines.some(l => l.withheld != null)
+  const money = (v: number | null) => v == null ? '' : `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  const cells = (ls: TaxReturnLine[]) => (
+    <>
+      {hasPC && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.proceeds))}</td>}
+      {hasPC && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.cost))}</td>}
+      {hasW && <td className="px-2 py-1 text-right tabular-nums">{money(sum(ls, l => l.withheld))}</td>}
+      <td className={`px-2 py-1 text-right tabular-nums ${sum(ls, l => l.amount) < 0 ? 'text-red-600' : ''}`}>{money(sum(ls, l => l.amount))}</td>
+    </>
+  )
+  return (
+    <table className="w-full text-xs bg-white border border-slate-200 rounded">
+      <thead><tr className="text-slate-500">
+        <th className="px-2 py-1 text-left">Account · security · transaction</th>
+        {hasPC && <th className="px-2 py-1 text-right">Proceeds</th>}{hasPC && <th className="px-2 py-1 text-right">Cost</th>}{hasW && <th className="px-2 py-1 text-right">Withheld</th>}
+        <th className="px-2 py-1 text-right">Amount</th>
+      </tr></thead>
+      <tbody>
+        {tree.map(([acc, secs]) => {
+          const aOpen = expandAll || open.has(acc)
+          const accLines = [...secs.values()].flat()
+          return (
+            <Fragment key={acc}>
+              <tr className="bg-slate-50 font-medium cursor-pointer hover:bg-slate-100" onClick={() => toggle(acc)}>
+                <td className="px-2 py-1">{aOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{acc} <span className="text-slate-400 font-normal">· {accLines.length}</span></td>
+                {cells(accLines)}
+              </tr>
+              {aOpen && [...secs.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([sec, ls]) => {
+                const k = `${acc}||${sec}`
+                const sOpen = expandAll || open.has(k)
+                return (
+                  <Fragment key={k}>
+                    <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggle(k)}>
+                      <td className="px-2 py-1 pl-6">{sOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{sec} <span className="text-slate-400">· {ls.length}</span></td>
+                      {cells(ls)}
+                    </tr>
+                    {sOpen && ls.map((l, i) => (
+                      <tr key={i} className="text-slate-500">
+                        <td className="px-2 py-0.5 pl-12">{l.date} {l.label}</td>
+                        {cells([l])}
+                      </tr>
+                    ))}
+                  </Fragment>
+                )
+              })}
+            </Fragment>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
+// A code typed or pasted with another dash (a hyphen, a non-breaking hyphen, an en dash) is the same code: "659 - 660", "659 ‑ 660" and "659 – 660".
+const normCode = (c: string) => c.replace(/[‐-―−-]/g, '–').replace(/\s*–\s*/g, ' – ').replace(/\s+/g, ' ').trim()
+type TaxCodeGroup = { code: string; amount: number; withheld: number; figures: string[]; figs: { label: string; amount: number; withheld: number }[]; accounts: Map<string, { amount: number; withheld: number; n: number }> }
+function taxCodeGroups(data: TaxReturnResult): TaxCodeGroup[] {
+  const by = new Map<string, TaxCodeGroup>()
+  for (const s of data.sections) for (const r of s.rows) {
+    if (r.key.startsWith('est:') || r.info) continue
+    const code = normCode(r.code) || '(no code)'
+    if (!by.has(code)) by.set(code, { code, amount: 0, withheld: 0, figures: [], figs: [], accounts: new Map() })
+    const g = by.get(code)!
+    g.amount += r.amount; g.withheld += r.withheld ?? 0; g.figures.push(r.label); g.figs.push({ label: r.label, amount: r.amount, withheld: r.withheld ?? 0 })
+    const add = (acc: string, amount: number, withheld: number, n: number) => { const a = g.accounts.get(acc) ?? { amount: 0, withheld: 0, n: 0 }; a.amount += amount; a.withheld += withheld; a.n += n; g.accounts.set(acc, a) }
+    if (!r.lines?.length) { add('Not split by account', r.amount, r.withheld ?? 0, 0); continue }
+    for (const l of r.lines) add(l.account, l.amount, l.withheld ?? 0, 1)
+    const diff = r.amount - r.lines.reduce((t, l) => t + l.amount, 0)
+    if (Math.abs(diff) > 0.01) add('Adjustment (losses brought forward, exemption, rounding)', diff, 0, 0)
+  }
+  return [...by.values()].sort((a, b) => (a.code === '(no code)' ? 1 : 0) - (b.code === '(no code)' ? 1 : 0) || a.code.localeCompare(b.code, undefined, { numeric: true }))
+}
+
+// The figures added up by the code of the return line they go on, each opening into the accounts it comes from. A figure without transactions of its own (money spent buying
+// crypto) is shown as "Not split by account"; where the figure differs from its transactions (crypto losses brought forward, an exemption) the difference is its own line.
+function TaxByCode({ data, expandAll }: { data: TaxReturnResult; expandAll?: boolean }) {
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const toggle = (k: string) => setOpen(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  const groups = useMemo(() => taxCodeGroups(data), [data])
+  if (!groups.length) return null
+  const money = (v: number) => v === 0 ? '' : `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  return (
+    <div>
+      <p className="text-sm font-semibold text-slate-700 mb-1">Summary by code</p>
+      <p className="text-xs text-slate-400 mb-1">Net of gains and losses sharing a code; the tax withheld has its own codes below. Click a code for the accounts it comes from.</p>
+      <table className="w-full text-xs">
+        <thead><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-1.5 text-left w-28">Code</th><th className="px-3 py-1.5 text-left">Figures</th><th className="px-3 py-1.5 text-right">Amount</th><th className="px-3 py-1.5 text-right">Withheld</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {groups.map(g => {
+            const isOpen = expandAll || open.has(g.code)
+            return (
+              <Fragment key={g.code}>
+                <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggle(g.code)}>
+                  <td className="px-3 py-1.5 font-mono text-slate-700 whitespace-nowrap">{isOpen ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />}{g.code}</td>
+                  <td className="px-3 py-1.5 text-slate-500" title={g.figures.join('\n')}>{g.figures.length === 1 ? g.figures[0] : `${g.figures.length} figures: ${g.figures.slice(0, 2).join('; ')}${g.figures.length > 2 ? '…' : ''}`}</td>
+                  <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${g.amount < 0 ? 'text-red-600' : ''}`}>{money(g.amount)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{money(g.withheld)}</td>
+                </tr>
+                {isOpen && g.figs.length > 0 && <tr><td /><td colSpan={3} className="px-3 pt-1 pl-8 text-[10px] uppercase tracking-wide text-slate-400">Figures</td></tr>}
+                {isOpen && g.figs.map((f, i) => (
+                  <tr key={`f${i}`} className="text-slate-600 bg-slate-50/50">
+                    <td />
+                    <td className="px-3 py-1 pl-8">{f.label}</td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${f.amount < 0 ? 'text-red-600' : ''}`}>{money(f.amount)}</td>
+                    <td className="px-3 py-1 text-right tabular-nums">{money(f.withheld)}</td>
+                  </tr>
+                ))}
+                {isOpen && <tr><td /><td colSpan={3} className="px-3 pt-1 pl-8 text-[10px] uppercase tracking-wide text-slate-400">By account</td></tr>}
+                {isOpen && [...g.accounts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([acc, v]) => (
+                  <tr key={acc} className="text-slate-500 bg-slate-50/50">
+                    <td />
+                    <td className="px-3 py-1 pl-8">{acc}{v.n > 0 && <span className="text-slate-400"> · {v.n}</span>}</td>
+                    <td className={`px-3 py-1 text-right tabular-nums ${v.amount < 0 ? 'text-red-600' : ''}`}>{money(v.amount)}</td>
+                    <td className="px-3 py-1 text-right tabular-nums">{money(v.withheld)}</td>
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TaxReturnSummary({ year, method, accountIds, scope, expandAll }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; accountIds?: number[]; scope: string; expandAll?: boolean }) {
+  const qc = useQueryClient()
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set())
+  const toggleRow = (k: string) => setOpenRows(s => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  // The crypto figures use what is set on the Crypto tab (rewards as income, exemption, rate, losses counted from, accounts left out), so the two tabs agree.
+  const [cExemption] = usePersist('crypto_tax_exemption', 0)
+  const [cRate] = usePersist<number | null>('crypto_tax_rate', null)
+  const [cLossesFrom] = usePersist('crypto_tax_losses_from', 0)
+  const [cExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
+  const [cRewards] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
+  // Losses on securities carried forward (Greece, 873-874) count only from the year the user says they were declared; 0 shows them for information.
+  const [sLossesFrom, setSLossesFrom] = usePersist('tax_securities_losses_from', 0)
+  const { data, isLoading } = useQuery({
+    queryKey: ['tax-return', year, method, accountIds ?? null, cExemption, cRate, cLossesFrom, cExcluded, cRewards, sLossesFrom],
+    queryFn: () => getTaxReturn(year, method, accountIds, { rewardsIncome: cRewards ?? undefined, exemption: cExemption, rate: cRate ?? undefined, lossesFrom: cLossesFrom, exclude: cExcluded, securitiesLossesFrom: sLossesFrom }),
+  })
+  const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
+  const resetCode = useMutation({
+    mutationFn: (key: string) => { const next = { ...(data?.codes_set ?? {}) }; delete next[key]; return putTaxReturnCodes(next) },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax-return'] }),
+  })
+  const saveCode = useMutation({
+    mutationFn: (v: { key: string; value: string }) => putTaxReturnCodes({ ...(data?.codes_set ?? {}), [v.key]: v.value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tax-return'] }),
+  })
+  if (isLoading || !data) return <div className="flex justify-center py-12"><Spinner /></div>
+  const eurFmt = (v: number) => `${v < 0 ? '−' : ''}${fmtEur(Math.abs(v))}`
+  const exportCsv = () => {
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`
+    const num = (v: number | null) => v == null ? '' : v.toFixed(2)
+    const status = (r: { key: string; info: boolean }) => r.info ? 'Information only' : r.key.startsWith('est:') ? 'Estimate' : ''
+    const out: (string | number)[][] = [['Tax year', 'Part', 'Code', 'Section', 'Figure', 'Account', 'Security', 'Date', 'Transaction', 'Proceeds (EUR)', 'Cost (EUR)', 'Withheld (EUR)', 'Amount (EUR)', 'Status', 'Note']]
+    out.push([data.year, 'Report', '', '', '', '', '', '', '', '', '', '', '', '', `${scope}; ${data.method} for the securities' gains; ${data.country.name || data.country.code || 'no country set'} ${data.country.form}`.trim()])
+    for (const g of taxCodeGroups(data)) {
+      out.push([data.year, 'Summary by code', g.code, '', g.figures.join('; '), '', '', '', '', '', '', num(g.withheld || null), g.amount.toFixed(2), '', `${g.figures.length} figure(s)`])
+      for (const f of g.figs) out.push([data.year, 'Code by figure', g.code, '', f.label, '', '', '', '', '', '', num(f.withheld || null), f.amount.toFixed(2), '', ''])
+      for (const [acc, v] of [...g.accounts.entries()].sort((x, y) => x[0].localeCompare(y[0])))
+        out.push([data.year, 'Code by account', g.code, '', '', acc, '', '', '', '', '', num(v.withheld || null), v.amount.toFixed(2), '', v.n ? `${v.n} transaction(s)` : ''])
+    }
+    for (const s of data.sections) for (const r of s.rows) {
+      out.push([data.year, 'Figure', r.code, s.title, r.label, '', '', '', '', '', '', num(r.withheld), r.amount.toFixed(2), status(r), r.detail])
+      for (const l of r.lines ?? []) out.push([data.year, 'Transaction', r.code, s.title, r.label, l.account, l.security, l.date, l.label, num(l.proceeds), num(l.cost), num(l.withheld), l.amount.toFixed(2), status(r), ''])
+    }
+    const blob = new Blob(['\ufeff' + out.map(r => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob); a.download = `tax-report-${data.year}.csv`; a.click(); URL.revokeObjectURL(a.href)
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-slate-500 max-w-3xl">
+          Everything the return for <b>{data.year}</b> needs, gathered from the other tax tabs ({scope}; {data.method} for the securities' gains), each with the code of the line it goes on.
+          {data.country.has_profile
+            ? <> Codes start from <b>{data.country.name}</b>'s {data.country.form} (the Country of Usage). Every code can be changed — click it (✎) and type yours; a changed code is marked <span className="text-blue-600">edited</span> and <b>↺</b> brings back the built-in one. They are kept for this country.</>
+            : <> There are no built-in codes for <b>{data.country.name || 'the country of usage (not set)'}</b> yet: click ✎ on a line to enter yours — they are kept for this country.</>}
+        </p>
+        {data.country.has_profile && data.country.code === 'GR' && (
+          <label className="text-xs text-slate-500"><Tooltip text="A loss on securities can be offset against the gains of the next five years (Greece: declared on 871-872, carried on 873-874). Oikos computes the losses of the last five years from your trades, but they only count if you declared them: enter the first year whose loss was declared. Empty = shown for information and not netted in the estimate.">Securities losses count from</Tooltip>
+            <Input type="number" className="w-24 mt-0.5" value={sLossesFrom || ''} placeholder="not set" onChange={e => setSLossesFrom(Number(e.target.value) || 0)} />
+          </label>
+        )}
+        <Button size="sm" variant="secondary" className="ml-auto" onClick={exportCsv} title="Every transaction behind every figure, with its code, account and tax withheld — one row each, for a spreadsheet or your accountant">Export CSV (all transactions)</Button>
+      </div>
+      <TaxByCode data={data} expandAll={expandAll} />
+      {data.sections.map(s => (
+        <div key={s.title}>
+          <p className="text-sm font-semibold text-slate-700 mb-1">{s.title}</p>
+          {s.rows.length === 0 ? <p className="text-xs text-slate-400 mb-2">Nothing in {data.year}.</p> : (
+            <WithCopy>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-slate-500 uppercase tracking-wide"><th className="px-3 py-1.5 text-left w-28">Code</th><th className="px-3 py-1.5 text-left">Figure</th><th className="px-3 py-1.5 text-right">Amount</th><th className="px-3 py-1.5 text-right">Withheld</th><th className="px-3 py-1.5 text-left">Detail</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {s.rows.map(r => (
+                      <Fragment key={r.key}>
+                      <tr className={`${r.key === 'est:total' ? 'font-semibold bg-slate-50' : ''} ${r.info ? 'bg-amber-50 text-slate-500 italic' : ''} ${r.lines?.length ? 'cursor-pointer hover:bg-slate-50' : ''}`} onClick={() => { if (r.lines?.length) toggleRow(r.key) }}>
+                        <td className="px-3 py-1.5 font-mono text-slate-600 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          {r.key.startsWith('est:') ? '' : editing?.key === r.key ? (
+                            <input autoFocus className="w-24 border border-blue-400 rounded px-1 py-0.5 text-xs" value={editing.value}
+                              onChange={e => setEditing({ key: r.key, value: e.target.value })}
+                              onBlur={() => { if (editing.value !== r.code) saveCode.mutate(editing); setEditing(null) }}
+                              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(null) }} />
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <button className={`text-left rounded px-1 hover:bg-slate-100 ${r.code ? (r.custom ? 'text-blue-600' : '') : 'text-slate-300'}`} title={r.custom ? `Your own code (built-in: ${r.default || 'none'}) — click to change` : 'Click to change the code of this line'} onClick={() => setEditing({ key: r.key, value: r.code })}>{r.code || 'set code'} <span className="text-slate-300 no-print">✎</span></button>
+                              {r.custom && <button className="text-slate-400 hover:text-slate-700 no-print" title={`Back to the built-in code (${r.default || 'none'})`} onClick={() => resetCode.mutate(r.key)}>↺</button>}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5">{r.lines?.length ? ((expandAll || openRows.has(r.key)) ? <ChevronDown size={12} className="inline mr-1" /> : <ChevronRight size={12} className="inline mr-1" />) : null}{r.label}{r.lines?.length ? <span className="text-slate-400"> · {r.lines.length}</span> : null}
+                          {r.info && <span className="ml-2 rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 text-[10px] font-medium uppercase not-italic whitespace-nowrap" title="Shown for your information; it is not a figure of the return and is left out of the estimated tax and the summary by code">Information only</span>}
+                          {r.key.startsWith('est:') && r.key !== 'est:total' && <span className="ml-2 rounded bg-slate-200 text-slate-600 px-1.5 py-0.5 text-[10px] font-medium uppercase not-italic whitespace-nowrap" title="An indication, not advice">Estimate</span>}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums ${r.amount < 0 ? 'text-red-600' : ''}`}>{eurFmt(r.amount)}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-slate-500">{r.withheld ? eurFmt(r.withheld) : ''}</td>
+                        <td className="px-3 py-1.5 text-slate-400">{r.detail}</td>
+                      </tr>
+                      {r.lines?.length > 0 && (expandAll || openRows.has(r.key)) && (
+                        <tr><td colSpan={5} className="px-3 pb-2 pt-0"><TaxLines lines={r.lines} expandAll={expandAll} /></td></tr>
+                      )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </WithCopy>
+          )}
+        </div>
+      ))}
+      <ul className="text-xs text-slate-400 space-y-0.5 list-disc pl-5">{data.notes.map(n => <li key={n}>{n}</li>)}</ul>
+    </div>
+  )
+}
+
 // Renders all three Investment Tax reports stacked, fully expanded, inside a
 // container that's invisible on screen and only shown for printing (see the
 // .printable-area rules in index.css) — lets "Export PDF" produce one document
@@ -8667,24 +9669,32 @@ function DividendIncomeTaxTab({ year, forceExpandAll = false }: { year: number; 
 // and DividendIncomeTaxTab's own react-query calls use the same query keys, so
 // this costs no extra network requests beyond whatever the visible tab already
 // fetched.
-function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void }) {
+function TaxPrintExport({ year, method, setMethod, accountIds, scope }: { year: number; method: 'WAC' | 'FIFO' | 'LIFO'; setMethod: (m: 'WAC' | 'FIFO' | 'LIFO') => void; accountIds?: number[]; scope: string }) {
   return (
     <div className="printable-area p-8 space-y-10 bg-white text-slate-900">
       <div className="text-center border-b border-slate-300 pb-4 mb-2">
         <h1 className="text-2xl font-bold">Investment Tax Report</h1>
-        <p className="text-sm text-slate-500">Tax Year {year} · Generated {new Date().toLocaleDateString()}</p>
+        <p className="text-sm text-slate-500">Tax Year {year} · {scope} · Generated {new Date().toLocaleDateString()}</p>
       </div>
       <section>
+        <h2 className="text-xl font-bold mb-3">Tax Report</h2>
+        <TaxReturnSummary year={year} method={method} accountIds={accountIds} scope={scope} expandAll />
+      </section>
+      <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Capital Gains</h2>
-        <CapitalGainsReport year={year} method={method} setMethod={setMethod} forceExpandAll />
+        <CapitalGainsReport year={year} method={method} setMethod={setMethod} forceExpandAll accountIds={accountIds} />
       </section>
       <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Interest &amp; Dividend Income</h2>
-        <DividendIncomeTaxTab year={year} forceExpandAll />
+        <DividendIncomeTaxTab year={year} forceExpandAll accountIds={accountIds} />
+      </section>
+      <section className="print-break-before">
+        <h2 className="text-xl font-bold mb-3">Crypto</h2>
+        <CryptoTaxReport year={year} method={method} forceExpandAll accountIds={accountIds} />
       </section>
       <section className="print-break-before">
         <h2 className="text-xl font-bold mb-3">Tax-Loss Harvesting</h2>
-        <TaxLossHarvestingTab />
+        <TaxLossHarvestingTab year={year} method={method} forceExpandAll accountIds={accountIds} />
       </section>
     </div>
   )
@@ -8692,8 +9702,13 @@ function TaxPrintExport({ year, method, setMethod }: { year: number; method: 'WA
 
 function TaxSection() {
   const [tab, setTab] = usePersist('tax_tab', 'Capital Gains')
+  useEffect(() => { if (tab === 'Tax Return') setTab('Tax Report') }, [tab, setTab])   // the sub-tab's old name
   const [year, setYear] = usePersist('tax_year', new Date().getFullYear() - 1)
   const [method, setMethod] = useState<'WAC' | 'FIFO' | 'LIFO'>('FIFO')
+  // Which accounts the tax figures cover (an Account Preset; undefined = every account). Its own remembered choice, so a preset left on elsewhere never trims a tax report unseen.
+  const [accountIds, setAccountIds] = useState<number[] | undefined>(undefined)
+  const [presetName] = usePersist<string>('preset_sel_inv_tax', 'Full Portfolio')
+  const scope = accountIds === undefined ? 'All accounts' : `Account preset: ${presetName}`
 
   const handleExportPdf = () => {
     // The dark theme is applied via a `dark` class on <html>, layered on top of
@@ -8720,11 +9735,15 @@ function TaxSection() {
           <Printer size={14} /> Export PDF (All Expanded)
         </Button>
       </div>
-      <SubTabs tabs={['Capital Gains', 'Interest & Dividend Income', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
-      {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} />}
-      {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} />}
-      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab />}
-      <TaxPrintExport year={year} method={method} setMethod={setMethod} />
+      <SubTabs tabs={['Tax Report', 'Capital Gains', 'Interest & Dividend Income', 'Crypto', 'Tax-Loss Harvesting']} active={tab} onChange={setTab} />
+      <PortfolioPresetBar reportScope="net_worth" selectionKey="inv_tax" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={setAccountIds} />
+      {accountIds !== undefined && <p className="text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-800 px-3 py-1.5">These tax figures cover only the accounts of <b>{presetName}</b> ({accountIds.length} account{accountIds.length === 1 ? '' : 's'}) — choose Full Portfolio for the whole return.</p>}
+      {tab === 'Tax Report' && <TaxReturnSummary year={year} method={method} accountIds={accountIds} scope={scope} />}
+      {tab === 'Capital Gains' && <CapitalGainsReport year={year} method={method} setMethod={setMethod} accountIds={accountIds} />}
+      {(tab === 'Interest & Dividend Income' || tab === 'Dividend Income') && <DividendIncomeTaxTab year={year} accountIds={accountIds} />}
+      {tab === 'Crypto' && <CryptoTaxReport year={year} method={method} accountIds={accountIds} />}
+      {tab === 'Tax-Loss Harvesting' && <TaxLossHarvestingTab year={year} method={method} accountIds={accountIds} />}
+      <TaxPrintExport year={year} method={method} setMethod={setMethod} accountIds={accountIds} scope={scope} />
     </div>
   )
 }
@@ -8813,7 +9832,7 @@ function GoalsTab() {
                     </div>
                     <span className="text-xs font-medium text-slate-600 tabular-nums">{g.progress_pct.toFixed(1)}%</span>
                   </div>
-                  <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
                     <div><span className="text-slate-500">Current: </span><span className="font-medium">{fmtEur(g.current_amount)}</span></div>
                     <div><span className="text-slate-500">Target: </span><span className="font-medium">{fmtEur(g.target_amount)}</span></div>
                     <div><span className="text-slate-500">Remaining: </span><span className="font-medium text-amber-600">{fmtEur(remaining)}</span></div>
@@ -8886,7 +9905,7 @@ function FireCalculatorTab() {
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <div>
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">SWR Sensitivity</p>
-        <table className="text-xs border-collapse">
+        <table data-matrix className="text-xs border-collapse">
           <thead><tr className="bg-slate-50">{[3, 3.5, 4, 4.5, 5].map(s => <th key={s} className="px-3 py-1.5 border border-slate-200 text-center font-semibold">{s}% SWR</th>)}</tr></thead>
           <tbody><tr>{[3, 3.5, 4, 4.5, 5].map(s => <td key={s} className="px-3 py-1.5 border border-slate-200 text-center tabular-nums">{fmtEur(annualExpenses / (s / 100))}</td>)}</tr></tbody>
         </table>
@@ -9189,7 +10208,7 @@ function LoanAmortizationTab() {
       )}
 
       {equity != null && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <KpiCard label={`${String(linkedAsset?.name ?? 'Linked Asset')} Value`} value={fmtEur(linkedAssetValue!)} />
           <KpiCard label="Remaining Loan Balance" value={fmtEur(currentBalanceAbs!)} color="text-red-600" />
           <KpiCard label="Equity" value={fmtEur(equity)} color={equity >= 0 ? 'text-green-700' : 'text-red-600'} />
@@ -9239,7 +10258,7 @@ function LoanAmortizationTab() {
           </label>
         </div>
         {whatIfSchedule && whatIfInterest != null && whatIfPayoffDate && (
-          <div className="grid grid-cols-3 gap-3 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
             <KpiCard label="New Payoff Date" value={whatIfPayoffDate.slice(0, 7)} color="text-green-700" />
             <KpiCard label="Payments Saved" value={String(paymentsToPayoff - whatIfSchedule.length)} color="text-green-700" />
             <KpiCard label="Interest Saved" value={fmtEur(totalInterest - whatIfInterest)} color="text-green-700" />
@@ -9302,7 +10321,7 @@ function LoanAmortizationTab() {
       )}
 
       <WithCopy>
-      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)] text-xs">
+      <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)] text-xs">
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10"><tr className="bg-slate-50">
             <th className="text-right px-2 py-1.5 border-b border-slate-200 font-semibold">Period</th>
@@ -9341,10 +10360,11 @@ function LoanAmortizationTab() {
 }
 
 function PlanningSection() {
-  const [tab, setTab] = usePersist('planning_tab', 'Goals')
+  const [tab, setTab] = usePersist('planning_tab', 'Retirement Planner')
   return (
     <div>
-      <SubTabs tabs={['Goals', 'FIRE Calculator', 'Loan Amortization']} active={tab} onChange={setTab} />
+      <SubTabs tabs={['Retirement Planner', 'Goals', 'FIRE Calculator', 'Loan Amortization']} active={tab} onChange={setTab} />
+      {tab === 'Retirement Planner' && <RetirementPlanner renderPresetBar={onChange => <PortfolioPresetBar reportScope="net_worth" selectionKey="retirement" eligibleTypes={ALL_ACCOUNT_TYPES} onChange={onChange} />} />}
       {tab === 'Goals' && <GoalsTab />}
       {tab === 'FIRE Calculator' && <FireCalculatorTab />}
       {tab === 'Loan Amortization' && <LoanAmortizationTab />}
@@ -9945,7 +10965,7 @@ function CustomReportsSection() {
           : (
             <div className="space-y-6">
               {/* KPIs */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div className="border border-slate-200 rounded-lg p-4">
                   <div className="text-xs text-slate-500 uppercase tracking-wide">Grand Total</div>
                   <div className={`text-2xl font-bold mt-1 ${grandTotal >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmtEur(grandTotal)}</div>
@@ -9981,8 +11001,8 @@ function CustomReportsSection() {
               {/* Pivot table */}
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-2">{investmentMode ? 'Cashflow by Security' : 'Spending by Category'}</h3>
-                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
-                  <table className="w-full text-sm border-collapse">
+                <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-300px)]">
+                  <table data-matrix className="w-full text-sm border-collapse">
                     <thead className="sticky top-0 z-10 bg-white">
                       <tr className="border-b-2 border-slate-200">
                         <th className="text-left px-3 py-2 text-xs text-slate-500 uppercase tracking-wide font-medium sticky left-0 bg-white">{catLabel}</th>
@@ -10115,11 +11135,13 @@ function CustomReportsSection() {
 // MAIN
 // ════════════════════════════════════════════════════════════════════════════
 export default function Reports() {
+  const { isAdmin } = useRole()
+  const tabs = isAdmin ? REPORT_TABS : REPORT_TABS.filter(t => t.key !== 'private-funds')       // the household's private funds stay with the admin
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeTab, setActiveTab] = usePersist('reports_active_tab', searchParams.get('tab') ?? 'net-worth')
   const [startDate, setStartDate] = useState('2020-01-01')
   const [endDate, setEndDate] = useState(todayLocal())
-  const current = REPORT_TABS.find(t => t.key === activeTab)
+  const current = tabs.find(t => t.key === activeTab) ?? tabs[0]
 
   const switchTab = (key: string) => { setActiveTab(key); setSearchParams({ tab: key }, { replace: true }) }
 
@@ -10130,7 +11152,7 @@ export default function Reports() {
           width alongside the app nav on small screens. */}
       <nav className="shrink-0 md:w-48 border-b md:border-b-0 md:border-r border-slate-200 bg-slate-50 flex flex-row md:flex-col overflow-x-auto md:overflow-visible py-1 md:py-4">
         <p className="hidden md:block px-4 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reports</p>
-        {REPORT_TABS.map(t => (
+        {tabs.map(t => (
           <button key={t.key} onClick={() => switchTab(t.key)}
             className={`text-left px-4 py-2 text-sm whitespace-nowrap transition-colors border-b-2 md:border-b-0 md:border-r-2 ${activeTab === t.key ? 'bg-blue-50 text-blue-700 font-semibold border-blue-600' : 'text-slate-600 hover:bg-slate-100 border-transparent'}`}>
             {t.label}
@@ -10153,7 +11175,7 @@ export default function Reports() {
           )}
         </div>
 
-        <div className="p-6">
+        <div className="p-3 sm:p-6">
           <Card>
             <CardBody>
               {activeTab === 'net-worth' && <NetWorthSection />}
@@ -10165,6 +11187,7 @@ export default function Reports() {
               {activeTab === 'budget' && <BudgetSection />}
               {activeTab === 'tax' && <TaxSection />}
               {activeTab === 'planning' && <PlanningSection />}
+              {activeTab === 'private-funds' && <PrivateFunds />}
               {activeTab === 'custom' && <CustomReportsSection />}
             </CardBody>
           </Card>

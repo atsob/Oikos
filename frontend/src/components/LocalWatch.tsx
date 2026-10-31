@@ -18,7 +18,7 @@ function TrendCard({ d, p }: { d: Ind; p: Profile }) {
   return (
     <Shell title={`${p.index_name} trend`} why="The benchmark index against its 52-week high and its 200-day average" good="near the high, above the 200-day average"
       warn="15% or more below the 52-week high and under the 200-day average" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label={p.index_name} value={fmtNum(d.level, 0)} sub={`${signed(d.ret_3m_pct, 1, '%')} in 3 months`} tone={tone(d.ret_3m_pct)} />
         <Stat label="Below its high" value={`−${fmtNum(d.below_high_pct, 1)}%`} tone={d.below_high_pct >= 15 ? 'text-red-600' : d.below_high_pct >= 8 ? 'text-amber-600' : ''} />
         <Stat label="vs 200-day average" value={signed(d.vs_200d_pct, 1, '%')} tone={d.vs_200d_pct < 0 ? 'text-red-600' : 'text-green-700'} />
@@ -33,7 +33,7 @@ function BreadthCard({ d, p }: { d: Ind; p: Profile }) {
   return (
     <Shell title={`${p.name} market breadth`} why={`The share of ${d.stocks ?? 20} large-cap stocks above their moving averages`} good="most stocks above the 200-day average"
       warn="the index within 5% of its high while under 40% are above the 200-day — or under 25% above the 50-day with the 200-day under 50%" ind={d}>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Stat label="Above 200-day" value={`${fmtNum(d.pct_above_200d, 0)}%`} tone={d.pct_above_200d < 40 ? 'text-red-600' : d.pct_above_200d < 50 ? 'text-amber-600' : ''} sub={`${signed(d.pct_above_200d_chg_20d, 0, ' pts')} in 20 days`} />
         <Stat label="Above 50-day" value={`${fmtNum(d.pct_above_50d, 0)}%`} tone={d.pct_above_50d < 25 ? 'text-red-600' : d.pct_above_50d < 30 ? 'text-amber-600' : ''} />
         <Stat label="Index near its high" value={d.index_near_high ? 'yes' : 'no'} sub="within 5%" />
@@ -48,7 +48,7 @@ function BanksCard({ d, p }: { d: Ind; p: Profile }) {
   return (
     <Shell title={`${p.name} banks`} why={`${p.banks.join(', ')}${p.bank_note ? ` — ${p.bank_note}` : ''}`} good="above the 200-day average, near the high"
       warn="30% or more below the 52-week high and under the 200-day average — or lagging the index by 10 points over 3 months (the real sign of bank stress)" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Below their high" value={`−${fmtNum(d.below_high_pct, 1)}%`} tone={d.below_high_pct >= 20 ? 'text-red-600' : d.below_high_pct >= 10 ? 'text-amber-600' : ''} />
         <Stat label="1 month" value={signed(d.ret_1m_pct, 1, '%')} tone={tone(d.ret_1m_pct)} />
         <Stat label="3 months" value={signed(d.ret_3m_pct, 1, '%')} tone={tone(d.ret_3m_pct)} />
@@ -73,7 +73,7 @@ function SovereignCard({ d, p }: { d: Ind; p: Profile }) {
   return (
     <Shell title={`${p.name} sovereign spread`} why={`${p.name} minus German 10-year yield — monthly, about a 6-week lag, so a slow, lagging leg`} good="below 1.0 pp"
       warn="1.8 pp or more and still rising, or up 0.5 pp in 3 months" ind={d}>
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Spread to Germany" value={`${fmtNum(d.spread_pp, 2)} pp`} tone={d.spread_pp >= 1.8 ? 'text-red-600' : d.spread_pp >= 1 ? 'text-amber-600' : ''} sub={`as of ${d.as_of}`} />
         <Stat label="3 months" value={signed(d.chg_3m, 2, ' pp')} tone={tone(d.chg_3m, true)} />
         <Stat label={`${p.name} 10-year`} value={`${fmtNum(d.home_yield, 2)}%`} />

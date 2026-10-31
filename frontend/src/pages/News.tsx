@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getNews, generateNews, markNewsRead, searchNews } from '@/lib/api'
+import { useRole } from '@/lib/auth'
 import { PageHeader, Card, Button, Badge, Spinner, Tooltip, Input } from '@/components/ui'
 import { fmtDate } from '@/lib/utils'
 import { usePersist } from '@/lib/hooks'
@@ -101,6 +102,7 @@ export function NewsList({ items, onOpen }: { items: NewsItem[]; onOpen: (item: 
 
 export default function News() {
   const qc = useQueryClient()
+  const { isAdmin } = useRole()
   const [filter, setFilter] = usePersist('news-filter', 'all')
   const [refreshing, setRefreshing] = useState(false)
   const [searchInput, setSearchInput] = useState('')
@@ -143,7 +145,7 @@ export default function News() {
   }
 
   const handleOpen = (item: NewsItem) => {
-    if (item.id != null && !item.is_read) {
+    if (isAdmin && item.id != null && !item.is_read) {         // read / unread is shared by everyone who signs in: it stays the admin's
       markNewsRead(item.id, true).then(() => qc.invalidateQueries({ queryKey: ['news'] }))
     }
     window.open(item.url, '_blank', 'noopener,noreferrer')
@@ -169,9 +171,11 @@ export default function News() {
                 <Search size={13} /> Search
               </Button>
             </form>
-            <Button size="sm" variant="secondary" onClick={handleRefresh} disabled={refreshing}>
-              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing…' : 'Refresh'}
-            </Button>
+            {isAdmin && (
+              <Button size="sm" variant="secondary" onClick={handleRefresh} disabled={refreshing}>
+                <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing…' : 'Refresh'}
+              </Button>
+            )}
           </>
         }
       />

@@ -237,7 +237,7 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
 DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
-    "recurring_drafts": 10, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
+    "recurring_drafts": 10, "plan_reminders": 5, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
     "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60, "morningstar": 30,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
@@ -566,6 +566,17 @@ def _recurring_drafts_job():
         _record_job("recurring_drafts", "error", str(e))
 
 
+def _plan_reminders_job():
+    """The morning Telegram reminder of the Plan page (database/plan.py): steps due today, overdue, and tomorrow's heads-up."""
+    try:
+        from database.plan import send_reminders
+        sent, detail = send_reminders()
+        _record_job("plan_reminders", "success", detail[:300] if detail else ("sent" if sent else "nothing sent"))
+    except Exception as e:
+        logging.error(f"Plan reminders failed: {e}", exc_info=True)
+        _record_job("plan_reminders", "error", str(e)[:300])
+
+
 def _credit_card_payments_job():
     """Recalculate every credit-card payment template's amount from its card's latest statement."""
     logging.info("Running credit-card payment amounts refresh…")
@@ -673,6 +684,11 @@ def _signal_notifications_job():
     try:
         refresh_signal_notifications()
         refresh_fundamentals_notifications()
+        try:                      # Action verdicts (database/action_signal.py): a failure must not stop the signal refresh above
+            from database.action_signal import refresh_action_signals
+            refresh_action_signals()
+        except Exception as e:
+            logging.warning("Action signals refresh failed: %s", e)
         logging.info("Signal notifications refreshed.")
         msg = "Completed OK"
         # New Dashboard alerts of the groups switched on for Telegram (App Settings).
@@ -799,6 +815,10 @@ if __name__ == "__main__":
     _guard('recurring_drafts', _recurring_drafts_job)
     _last_recurring_drafts_date: date = date.today()
 
+    # Plan reminders: once a day from the configured time; the job's own last run (in the database) stops a restart repeating today's
+    from database.plan import last_reminder_date
+    _last_plan_reminders_date: date = last_reminder_date()
+
     # Securities info: run once at startup
     logging.info("Running initial securities info refresh.")
     _guard('securities_info', _securities_info_job)
@@ -876,6 +896,12 @@ if __name__ == "__main__":
         if _last_recurring_drafts_date != date.today():
             _guard('recurring_drafts', _recurring_drafts_job)
             _last_recurring_drafts_date = date.today()
+
+        # ── Plan reminders: once per calendar day, from the configured time ──
+        pr_h, pr_m = _parse_daily(sc.get('plan_reminders', ''), 8, 0)
+        if _last_plan_reminders_date != date.today() and (now.hour, now.minute) >= (pr_h, pr_m):
+            _guard('plan_reminders', _plan_reminders_job)
+            _last_plan_reminders_date = date.today()
 
         # ── Securities info: once per calendar day ────────────────────────────
         if _last_securities_info_date != date.today():

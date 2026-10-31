@@ -235,7 +235,8 @@ def create_linked_cash_transactions_for_unlinked(
                    i.action,
                    i.total_amount_acccur,
                    i.description,
-                   s.securities_name
+                   s.securities_name,
+                   i.booked_cash_acccur
             FROM   Investments i
             LEFT   JOIN Securities s ON s.securities_id = i.securities_id
             WHERE  i.accounts_id     = %s
@@ -247,7 +248,7 @@ def create_linked_cash_transactions_for_unlinked(
         )
         rows = cur.fetchall()
 
-        for inv_id, inv_date, action, total_acc, description, sec_name in rows:
+        for inv_id, inv_date, action, total_acc, description, sec_name, booked in rows:
             cur.execute("SAVEPOINT cltx_sp")
             try:
                 # Account-level charges (VAT, CustodyFee, ...) have no security and
@@ -265,6 +266,9 @@ def create_linked_cash_transactions_for_unlinked(
                     payee_id    = _get_or_create_payee_in_cur(cur, payee_label)
                 total_f   = float(total_acc or 0)
                 cash_sign = -abs(total_f) if action in _LINKED_TX_CASH_OUT else abs(total_f)
+                if booked is not None:                       # the broker said what it booked: that is the cash leg (database/margin.py)
+                    cash_sign = float(booked)
+                    total_f = abs(cash_sign)
 
                 cur.execute(
                     """
@@ -297,6 +301,10 @@ def create_linked_cash_transactions_for_unlinked(
         # update_investment_balances recalculates the investment account from Investments.
         update_accounts_balances(linked_acc_id)
         update_investment_balances()
+
+        # CFDs and FX Spot (a margin position) move only their commission and realised P&L through the cash — see database/margin.py
+        from database.margin import resync_quietly
+        resync_quietly()
 
     except Exception as outer_err:
         conn.rollback()

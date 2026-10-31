@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS Tax_Category_Rules (
     Gains_Taxable           BOOLEAN      DEFAULT FALSE,
     Gains_Rate              NUMERIC(5,2),
     Gains_Tax_Code          VARCHAR(20),
+    Gains_Tax_Code_Foreign  VARCHAR(20),
+    Dividend_Tax_Code         VARCHAR(20),
+    Dividend_Tax_Code_Foreign VARCHAR(20),
     Dividend_Local_Tax_Rate NUMERIC(5,2),
     Dividend_WHT_Creditable BOOLEAN      DEFAULT TRUE,
     Reinvest_Taxable        BOOLEAN      DEFAULT FALSE,
@@ -78,12 +81,12 @@ INSERT INTO Tax_Category_Rules
      Dividend_Local_Tax_Rate, Dividend_WHT_Creditable, Reinvest_Taxable,
      Income_Tax_Rate, Notes)
 VALUES
-    ('Local Listed',   'Local Listed Shares',   FALSE, NULL, '659-660', 5.00, TRUE,  FALSE, NULL, 'Listed shares on local exchange. Capital gains exempt for retail (<0.5% holding). Dividends taxed at 5% with foreign WHT credit.'),
-    ('Foreign Listed', 'Foreign Listed Shares',  FALSE, NULL, NULL,      5.00, TRUE,  FALSE, NULL, 'Foreign shares under a tax treaty. Capital gains generally exempt. Dividends 5% with WHT credit.'),
+    ('Local Listed',   'Local Listed Shares',   FALSE, NULL, '659 – 660', 5.00, TRUE,  FALSE, NULL, 'Listed shares on local exchange. Capital gains exempt for retail (<0.5% holding). Dividends taxed at 5% with foreign WHT credit.'),
+    ('Foreign Listed', 'Foreign Listed Shares',  FALSE, NULL, NULL,      5.00, TRUE,  FALSE, NULL, 'Foreign shares under a tax treaty. Capital gains generally exempt. The dividend rate is the usual withholding at the source, the default when a dividend is entered; the Tax Return charges the home rate (Greece 5%) and credits the foreign tax against it.'),
     ('UCITS',          'UCITS EU Fund / ETF',    FALSE, NULL, NULL,      0.00, FALSE, FALSE, NULL, 'EU-domiciled UCITS funds. Both capital gains and reinvested dividends are exempt.'),
     ('Non-UCITS',      'Non-UCITS Fund / ETF',   TRUE,  15.00, NULL,     5.00, TRUE,  TRUE,  NULL, 'Non-UCITS funds and leveraged/inverse ETFs. Capital gains taxed at 15%, dividends at 5%.'),
     ('CD',             'Time Deposit / CD',      FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Interest income from time deposits and CDs taxed at 15% (withheld at source).'),
-    ('Bond',           'Bond / Fixed Income',    FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Coupon interest taxed at 15%. Capital gains treatment depends on instrument.'),
+    ('Bond',           'Bond / Fixed Income',    FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Coupon interest taxed at 15%. Greece: interest on listed corporate bonds is 5% from 12 Apr 2025, which the Tax Return applies by payment date. Capital gains treatment depends on instrument.'),
     ('Crypto',         'Cryptocurrency',         TRUE,  15.00, NULL,     NULL, FALSE, TRUE,  15.00,'Capital gains taxed at 15%. Staking and other income taxed at 15% as income at receipt.'),
     ('Other',          'Other / Unclassified',   NULL,  NULL, NULL,      NULL, NULL,  NULL,  NULL, 'Review manually — tax treatment not determined.')
 ON CONFLICT (Tax_Category) DO NOTHING;
@@ -656,6 +659,7 @@ CREATE TABLE Investments (
     Instrument_Type  instrument_type,  -- optional: actual traded instrument (e.g. CFDOnETF, CFDOnStock)
                                                   -- overrides Security.Is_Tax_Exempt for tax calculations when set
     Tax_Amount          NUMERIC(18, 6),              -- withholding tax (negative = tax withheld, in account currency)
+    Booked_Cash_AccCur  NUMERIC(28, 18),             -- the cash the broker actually booked for the trade (signed); NULL = derive from Total_Amount_AccCur
     Corporate_Actions_Id INTEGER REFERENCES Corporate_Actions(Corporate_Actions_Id) ON DELETE SET NULL,
     Transfers_Id     INTEGER,                        -- shared value links the legs of an inter-account transfer/conversion
     embedding        vector(768)
@@ -861,6 +865,14 @@ CREATE TABLE IF NOT EXISTS Users (
     Created_At    TIMESTAMPTZ DEFAULT now()
 );
 
+-- Roles: 'admin' (everything), 'limited' (read and write on the accounts mapped to the user below) or 'readonly' (read only on those accounts) — api/access.py.
+ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin';
+CREATE TABLE IF NOT EXISTS User_Account_Access (
+    Users_Id    INTEGER NOT NULL REFERENCES Users(Users_Id) ON DELETE CASCADE,
+    Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+    PRIMARY KEY (Users_Id, Accounts_Id)
+);
+
 -- Sessions.Token_Hash stores a SHA-256 hash of the session cookie's random token,
 -- never the raw token itself — a leaked DB backup shouldn't hand over live sessions.
 CREATE TABLE IF NOT EXISTS Sessions (
@@ -886,6 +898,8 @@ CREATE TABLE IF NOT EXISTS Goals (
     Is_Active      BOOLEAN DEFAULT TRUE,
     Created_At     TIMESTAMP DEFAULT NOW()
 );
+-- A restricted user's goals, plan steps, retirement plans and budgets are their own: Owner_Users_Id is theirs, NULL is the household's (an admin's) — api/access.py owner_now().
+ALTER TABLE Goals ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
 
 
 -- =============================================================================
@@ -908,6 +922,9 @@ CREATE TABLE IF NOT EXISTS Annual_Budgets (
     Budget_Amount NUMERIC(15, 2) NOT NULL,
     UNIQUE(Year, Categories_Id)
 );
+ALTER TABLE Annual_Budgets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
+ALTER TABLE Annual_Budgets DROP CONSTRAINT IF EXISTS annual_budgets_year_categories_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_annual_budgets_owner ON Annual_Budgets (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)));
 
 
 -- =============================================================================
@@ -1075,12 +1092,15 @@ CREATE TABLE IF NOT EXISTS Country_Cape_Ratios (
 
 -- Server-side UI preferences (decimal/date format, saved report filters, last-used
 -- tabs, etc.) so they follow the user across browsers/devices/origins instead of
--- being trapped in a single browser's localStorage.
+-- being trapped in a single browser's localStorage. One set per user (Users_Id); NULL is
+-- the household's — 'app-settings', and what existed before preferences were per user.
 CREATE TABLE IF NOT EXISTS User_Preferences (
-    Pref_Key   VARCHAR(100) PRIMARY KEY,
+    Pref_Key   VARCHAR(100) NOT NULL,
     Pref_Value JSONB NOT NULL,
-    Updated_At TIMESTAMP DEFAULT NOW()
+    Updated_At TIMESTAMP DEFAULT NOW(),
+    Users_Id   INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_preferences_owner ON User_Preferences (Pref_Key, (COALESCE(Users_Id, 0)));
 
 -- Separate, older generic text key-value store (predates User_Preferences above) —
 -- still actively used for broker-integration credentials/tokens (Saxo, Coinbase,
@@ -1366,7 +1386,9 @@ CREATE TABLE IF NOT EXISTS Alerts (
     Direction     TEXT,
     Is_Active     BOOLEAN DEFAULT TRUE,
     Note          TEXT,
-    Created_At    TIMESTAMP DEFAULT NOW()
+    Created_At    TIMESTAMP DEFAULT NOW(),
+    Currencies_Id       INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE,   -- currency alerts (fx_above / fx_below): the currency ...
+    Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE    -- ... and the one its rate is quoted in (NULL = the storage base, EUR)
 );
 
 CREATE TABLE IF NOT EXISTS Signal_Notifications (
@@ -1400,6 +1422,101 @@ CREATE TABLE IF NOT EXISTS Live_Alert_Dismissals (
     Dismissed_At  TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (Securities_Id, Alert_Type)
 );
+
+-- Dismissed Dashboard alerts that are identified by a key rather than by their own table
+-- (support / resistance, price alerts, upcoming events, split mismatches, allocation drift) —
+-- see database/alert_groups.py. A row is dropped once its alert is no longer active.
+CREATE TABLE IF NOT EXISTS Alert_Dismissals (
+    Alert_Key    TEXT PRIMARY KEY,
+    Alert_Type   TEXT NOT NULL,
+    Dismissed_At TIMESTAMP DEFAULT NOW()
+);
+
+-- Dashboard alerts already sent to Telegram, so each is sent once — database/alert_groups.py::send_new_alert_telegrams.
+CREATE TABLE IF NOT EXISTS Alert_Telegram_Sent (
+    Alert_Key TEXT PRIMARY KEY,
+    Sent_At   TIMESTAMP DEFAULT NOW()
+);
+
+-- A security's Action verdict (Portfolio Action Signals): the smoothed score, its level (0 Sell/Avoid … 4 Add/Buy),
+-- the reasons, and the last move between the three outer groups (Reduce / Sell, Hold, Add) for the Action Change alert —
+-- see database/action_signal.py.
+CREATE TABLE IF NOT EXISTS Action_Signals (
+    Securities_Id    INTEGER PRIMARY KEY REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Level            SMALLINT NOT NULL,
+    Score            NUMERIC(6,1),
+    Why              TEXT,
+    Bucket           TEXT,
+    Previous_Bucket  TEXT,
+    Changed_At       TIMESTAMP DEFAULT NOW(),
+    Acknowledged     BOOLEAN DEFAULT TRUE,
+    Updated_At       TIMESTAMP DEFAULT NOW()
+);
+
+-- The daily log of every security's Action — what the score is later back-tested against (data/action_backtest.py).
+CREATE TABLE IF NOT EXISTS Action_History (
+    Securities_Id  INTEGER NOT NULL REFERENCES Securities(Securities_Id) ON DELETE CASCADE,
+    Log_Date       DATE NOT NULL,
+    Level          SMALLINT NOT NULL,
+    Score          NUMERIC(6,1),
+    Raw_Score      NUMERIC(6,1),
+    Held           BOOLEAN,
+    Why            TEXT,
+    PRIMARY KEY (Securities_Id, Log_Date)
+);
+
+-- The Plan page: dated to-do steps (a rebalancing plan, a tax-year checklist) with a morning Telegram reminder —
+-- Status is open / done / skipped; see database/plan.py.
+CREATE TABLE IF NOT EXISTS Plan_Items (
+    Plan_Items_Id SERIAL PRIMARY KEY,
+    Plan_Name     TEXT NOT NULL DEFAULT 'My plan',
+    Due_Date      DATE NOT NULL,
+    Title         TEXT NOT NULL,
+    Details       TEXT,
+    Status        TEXT NOT NULL DEFAULT 'open',
+    Done_At       TIMESTAMP,
+    Sort_Order    INTEGER NOT NULL DEFAULT 0,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+ALTER TABLE Plan_Items ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_plan_items_due ON Plan_Items (Due_Date) WHERE Status = 'open';
+
+-- Private funds (Reports -> Private Funds): a commitment and its dated calls, distributions and NAVs — see database/private_funds.py.
+CREATE TABLE IF NOT EXISTS Private_Funds (
+    Private_Funds_Id SERIAL PRIMARY KEY,
+    Name          TEXT NOT NULL,
+    Manager       TEXT,
+    Fund_Type     TEXT NOT NULL DEFAULT 'Private Equity',
+    Vintage_Year  INTEGER,
+    Currency      VARCHAR(3) NOT NULL DEFAULT 'EUR',
+    Commitment    NUMERIC(18,2) NOT NULL DEFAULT 0,
+    Accounts_Id   INTEGER REFERENCES Accounts(Accounts_Id) ON DELETE SET NULL,
+    Status        TEXT NOT NULL DEFAULT 'active',
+    Notes         TEXT,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS Private_Fund_Events (
+    Private_Fund_Events_Id SERIAL PRIMARY KEY,
+    Private_Funds_Id INTEGER NOT NULL REFERENCES Private_Funds(Private_Funds_Id) ON DELETE CASCADE,
+    Event_Date    DATE NOT NULL,
+    Event_Type    TEXT NOT NULL,
+    Amount        NUMERIC(18,2) NOT NULL,
+    Note          TEXT,
+    Created_At    TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_private_fund_events_fund ON Private_Fund_Events (Private_Funds_Id, Event_Date);
+
+-- The Retirement Planner (Reports -> Financial Planning): saved plans / scenarios. Params is the whole plan as JSON (database/retirement.py);
+-- one plan is the base the others are compared with.
+CREATE TABLE IF NOT EXISTS Retirement_Plans (
+    Retirement_Plans_Id SERIAL PRIMARY KEY,
+    Name        TEXT NOT NULL,
+    Params      JSONB NOT NULL,
+    Is_Base     BOOLEAN NOT NULL DEFAULT FALSE,
+    Created_At  TIMESTAMP DEFAULT NOW(),
+    Updated_At  TIMESTAMP DEFAULT NOW()
+);
+ALTER TABLE Retirement_Plans ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
 
 
 -- =============================================================================

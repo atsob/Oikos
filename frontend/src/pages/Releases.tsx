@@ -55,7 +55,7 @@ export default function Releases() {
   return (
     <div>
       <PageHeader title="Release Notes" subtitle="What's changed, most recent first" />
-      <div className="px-6 py-6 max-w-3xl">
+      <div className="px-3 sm:px-6 py-6 max-w-3xl">
         {isLoading
           ? <div className="flex justify-center py-12"><Spinner /></div>
           : renderMarkdownLite(data?.content ?? '')}

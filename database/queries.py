@@ -818,13 +818,13 @@ def get_user_by_username(username: str) -> dict | None:
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT Users_Id, Username, Password_Hash FROM Users WHERE Username = %s",
+            "SELECT Users_Id, Username, Password_Hash, Role FROM Users WHERE Username = %s",
             (username,),
         )
         row = cur.fetchone()
         if not row:
             return None
-        return {"users_id": row[0], "username": row[1], "password_hash": row[2]}
+        return {"users_id": row[0], "username": row[1], "password_hash": row[2], "role": row[3] or "admin"}
 
 
 def create_session(users_id: int, token_hash: str, expires_at) -> None:
@@ -842,7 +842,7 @@ def get_session(token_hash: str) -> dict | None:
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT u.Users_Id, u.Username
+            SELECT u.Users_Id, u.Username, u.Role
             FROM Sessions s
             JOIN Users u ON u.Users_Id = s.Users_Id
             WHERE s.Token_Hash = %s AND s.Expires_At > now()
@@ -850,7 +850,12 @@ def get_session(token_hash: str) -> dict | None:
         row = cur.fetchone()
         if not row:
             return None
-        return {"users_id": row[0], "username": row[1]}
+        role = row[2] or "admin"
+        accounts = None                       # None = every account (an admin)
+        if role != "admin":
+            cur.execute("SELECT Accounts_Id FROM User_Account_Access WHERE Users_Id = %s ORDER BY Accounts_Id", (row[0],))
+            accounts = [r[0] for r in cur.fetchall()]
+        return {"users_id": row[0], "username": row[1], "role": role, "accounts": accounts}
 
 
 def delete_session(token_hash: str) -> None:
@@ -879,21 +884,57 @@ def list_users() -> list[dict]:
     """All accounts (no password hashes), oldest first."""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT Users_Id, Username, Created_At FROM Users ORDER BY Users_Id")
-        return [{"users_id": r[0], "username": r[1], "created_at": r[2]} for r in cur.fetchall()]
+        cur.execute("SELECT Users_Id, Username, Created_At, Role FROM Users ORDER BY Users_Id")
+        users = [{"users_id": r[0], "username": r[1], "created_at": r[2], "role": r[3] or "admin", "account_ids": []} for r in cur.fetchall()]
+        cur.execute("SELECT Users_Id, Accounts_Id FROM User_Account_Access ORDER BY Accounts_Id")
+        by_user: dict[int, list[int]] = {}
+        for uid, aid in cur.fetchall():
+            by_user.setdefault(uid, []).append(aid)
+        for u in users:
+            u["account_ids"] = by_user.get(u["users_id"], []) if u["role"] != "admin" else []
+        return users
 
 
-def create_user(username: str, password_hash: str) -> int:
-    """Add a new login account. Raises ValueError if the username is already taken."""
+ROLES = ("admin", "limited", "readonly")
+
+
+def create_user(username: str, password_hash: str, role: str = "admin", account_ids: list[int] | None = None) -> int:
+    """Add a new login account. Raises ValueError if the username is already taken or the role is unknown."""
+    if role not in ROLES:
+        raise ValueError(f"Unknown role '{role}'")
     if get_user_by_username(username):
         raise ValueError(f"Username '{username}' is already taken")
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO Users (Username, Password_Hash) VALUES (%s, %s) RETURNING Users_Id",
-            (username, password_hash),
+            "INSERT INTO Users (Username, Password_Hash, Role) VALUES (%s, %s, %s) RETURNING Users_Id",
+            (username, password_hash, role),
         )
-        return cur.fetchone()[0]
+        uid = cur.fetchone()[0]
+        if role != "admin" and account_ids:
+            cur.executemany("INSERT INTO User_Account_Access (Users_Id, Accounts_Id) VALUES (%s, %s) ON CONFLICT DO NOTHING", [(uid, int(a)) for a in account_ids])
+        return uid
+
+
+def set_user_access(users_id: int, role: str, account_ids: list[int]) -> None:
+    """Set a user's role and the accounts it covers (an admin covers every account, so none are stored). Raises ValueError for an unknown role or
+    when it would leave no admin."""
+    if role not in ROLES:
+        raise ValueError(f"Unknown role '{role}'")
+    with get_db() as conn:
+        cur = conn.cursor()
+        if role != "admin":
+            cur.execute("SELECT COUNT(*) FROM Users WHERE Role = 'admin' AND Users_Id <> %s", (users_id,))
+            if cur.fetchone()[0] == 0:
+                raise ValueError("There must be at least one admin.")
+        cur.execute("UPDATE Users SET Role = %s WHERE Users_Id = %s", (role, users_id))
+        if cur.rowcount == 0:
+            raise ValueError("That user no longer exists.")
+        cur.execute("DELETE FROM User_Account_Access WHERE Users_Id = %s", (users_id,))
+        if role != "admin" and account_ids:
+            cur.executemany("INSERT INTO User_Account_Access (Users_Id, Accounts_Id) VALUES (%s, %s) ON CONFLICT DO NOTHING", [(users_id, int(a)) for a in account_ids])
+        if role != "admin":
+            cur.execute("DELETE FROM Sessions WHERE Users_Id = %s", (users_id,))      # a changed role takes effect at once: sign the user in again
 
 
 def update_password(users_id: int, password_hash: str) -> None:
@@ -912,6 +953,7 @@ def delete_user(users_id: int) -> bool:
         cur.execute("""
             DELETE FROM Users
             WHERE Users_Id = %s AND (SELECT COUNT(*) FROM Users) > 1
+              AND (Role <> 'admin' OR (SELECT COUNT(*) FROM Users WHERE Role = 'admin') > 1)
         """, (users_id,))
         return cur.rowcount > 0
 
@@ -1259,7 +1301,9 @@ def get_portfolio_signals(selected_acc_id=None):
     """
     now = time.time()
     stop_pct = _get_trailing_stop_pct()
-    cache_key = (selected_acc_id, stop_pct)
+    from api.access import scope_now
+    mine = scope_now()
+    cache_key = (selected_acc_id, stop_pct, tuple(mine) if mine is not None else None)       # a restricted user's signals cover their own accounts
     cached = _portfolio_signals_cache.get(cache_key)
     if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
         return cached[1].copy()
@@ -1367,9 +1411,13 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
                    ROUND(cur.ma50::numeric, 4) AS ma50,
                    CASE WHEN cur.n200 >= 200 THEN ROUND(cur.ma200::numeric, 4) ELSE NULL END AS ma200,
                    prev.ma50 AS ma50_prev,
-                   CASE WHEN prev.n200 >= 200 THEN prev.ma200 ELSE NULL END AS ma200_prev
+                   CASE WHEN prev.n200 >= 200 THEN prev.ma200 ELSE NULL END AS ma200_prev,
+                   -- the direction of each average: where it stood 5 trading days (a week) ago — a longer look-back misses a turn that is only days old
+                   CASE WHEN ago.n200 >= 50 THEN ROUND(((cur.ma50 / NULLIF(ago.ma50, 0) - 1) * 100)::numeric, 2) END AS ma50_chg_pct,
+                   CASE WHEN cur.n200 >= 200 AND ago.n200 >= 200 THEN ROUND(((cur.ma200 / NULLIF(ago.ma200, 0) - 1) * 100)::numeric, 2) END AS ma200_chg_pct
             FROM ma_series cur
             LEFT JOIN ma_series prev ON prev.Securities_Id = cur.Securities_Id AND prev.rn = cur.rn + 1
+            LEFT JOIN ma_series ago  ON ago.Securities_Id  = cur.Securities_Id AND ago.rn  = cur.rn + 5
             WHERE cur.rn = 1
         ),
         latest_only AS (
@@ -1458,6 +1506,8 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
                 ROUND(sec.Dividend_Yield::numeric, 2) as fwd_yield_pct,
                 ml.ma50,
                 ml.ma200,
+                ml.ma50_chg_pct,
+                ml.ma200_chg_pct,
                 r1.high_1y AS trailing_high_1y,
                 CASE WHEN ml.ma200 IS NULL THEN NULL
                      ELSE sig.price_today > ml.ma200 END as above_ma200,
@@ -2136,7 +2186,7 @@ _REALIZED_PNL_COLUMNS = [
 _RLZD_PNL_CATEGORY = {'id': 724, 'name': '_RlzdPnL'}
 
 
-def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.DataFrame":
+def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str, account_ids: "list[int] | None" = None) -> "pd.DataFrame":
     """Realized investment P&L via FIFO lot matching — including short positions.
 
     The previous implementation (pure SQL) only matched sells against *earlier*
@@ -2166,7 +2216,11 @@ def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.Data
     account's, which this fixes as a side effect. Because Total_Amount_AccCur
     is already commission-inclusive, commission is not subtracted separately
     (the old code's separate subtraction double-counted it).
+
+    account_ids limits it to those accounts. The lots are matched per (account, security), so leaving the other accounts out changes nothing
+    for the ones kept.
     """
+    acct_sql = " AND i.Accounts_Id = ANY(%(acct)s)" if account_ids else ""
     # Explicit lowercase aliases throughout: unquoted Postgres identifiers fold
     # to lowercase regardless of how they're written in the SQL, so alias
     # everything explicitly rather than relying on that implicitly.
@@ -2185,9 +2239,9 @@ def _compute_realized_pnl_fifo(conn, start_date: str, end_date: str) -> "pd.Data
         JOIN Accounts a    ON i.Accounts_Id   = a.Accounts_Id
         JOIN Currencies curr_acc ON a.Currencies_Id = curr_acc.Currencies_Id
         WHERE i.Action IN ('Buy', 'Reinvest', 'ShrIn', 'Sell', 'ShrOut')
-          AND i.Date <= %(end_date)s
+          AND i.Date <= %(end_date)s""" + acct_sql + """
         ORDER BY i.Accounts_Id, i.Securities_Id, i.Date, i.Investments_Id
-    """, conn, params={"end_date": end_date})
+    """, conn, params={"end_date": end_date, "acct": list(account_ids) if account_ids else None})
 
     if tx.empty:
         return pd.DataFrame(columns=_REALIZED_PNL_COLUMNS)
@@ -2777,12 +2831,16 @@ def confirm_draft_transaction(tx_id: int) -> bool:
         conn.close()
 
 
-def confirm_all_draft_transactions() -> int:
-    """Confirm every pending draft, creating transfer mirror legs as needed."""
+def confirm_all_draft_transactions(account_ids: list[int] | None = None) -> int:
+    """Confirm every pending draft (those of `account_ids` only, when given), creating transfer mirror legs as needed."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE ORDER BY Transactions_Id")
+        if account_ids is None:
+            cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE ORDER BY Transactions_Id")
+        else:
+            cur.execute("SELECT Transactions_Id FROM Transactions WHERE Is_Draft = TRUE AND Accounts_Id = ANY(%s) AND (Accounts_Id_Target IS NULL OR Accounts_Id_Target = ANY(%s)) "
+                        "ORDER BY Transactions_Id", (account_ids, account_ids))
         tx_ids = [r[0] for r in cur.fetchall()]
         for tx_id in tx_ids:
             _confirm_draft_row(cur, tx_id)
@@ -3637,6 +3695,10 @@ def ensure_budgets_table():
             UNIQUE(Year, Categories_Id)
         )
     """)
+    # A budget is the household's (an admin's: no owner) or a restricted user's own — one per category and year for each of them.
+    cur.execute("ALTER TABLE Annual_Budgets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+    cur.execute("ALTER TABLE Annual_Budgets DROP CONSTRAINT IF EXISTS annual_budgets_year_categories_id_key")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_annual_budgets_owner ON Annual_Budgets (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)))")
     conn.commit()
     cur.close()
     conn.close()
@@ -3647,12 +3709,13 @@ def upsert_budget(year: int, categories_id: int, amount: float):
     ensure_budgets_table()
     conn = get_connection()
     cur = conn.cursor()
+    from api.access import owner_now
     cur.execute("""
-        INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (Year, Categories_Id)
+        INSERT INTO Annual_Budgets (Year, Categories_Id, Budget_Amount, Owner_Users_Id)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (Year, Categories_Id, (COALESCE(Owner_Users_Id, 0)))
         DO UPDATE SET Budget_Amount = EXCLUDED.Budget_Amount
-    """, (year, categories_id, amount))
+    """, (year, categories_id, amount, owner_now()))
     conn.commit()
     cur.close()
     conn.close()
@@ -4868,7 +4931,14 @@ def get_all_securities_for_filter() -> pd.DataFrame:
     return df
 
 
+_PREFS_READY = False
+_CUSTOM_REPORTS_READY = False
+
+
 def _ensure_user_preferences_table(conn):
+    global _PREFS_READY
+    if _PREFS_READY:
+        return
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS User_Preferences (
@@ -4877,16 +4947,33 @@ def _ensure_user_preferences_table(conn):
                 Updated_At TIMESTAMP DEFAULT NOW()
             )
         """)
+        # One set per user: Users_Id is the person the preference belongs to. NULL is the household's — 'app-settings' (the settings the scheduler and the alerts
+        # read) and what existed before preferences were kept per user, which an admin who has not set their own yet still starts from.
+        cur.execute("ALTER TABLE User_Preferences ADD COLUMN IF NOT EXISTS Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE User_Preferences DROP CONSTRAINT IF EXISTS user_preferences_pkey")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_preferences_owner ON User_Preferences (Pref_Key, (COALESCE(Users_Id, 0)))")
     conn.commit()
+    _PREFS_READY = True
+
+
+HOUSEHOLD_PREFS = ("app-settings",)       # shared by everyone and kept under no user
 
 
 def get_user_preferences() -> dict:
-    """Fetch all persisted UI preferences as a single {key: value} dict."""
+    """The current user's preferences as a single {key: value} dict: their own, over the household's (an admin also starts from the older, shared ones)."""
+    from api.access import user_id_now, restricted_now
+    uid = user_id_now()
     conn = get_connection()
     try:
         _ensure_user_preferences_table(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT Pref_Key, Pref_Value FROM User_Preferences")
+            if uid is None:
+                cur.execute("SELECT Pref_Key, Pref_Value FROM User_Preferences WHERE Users_Id IS NULL")
+            else:
+                # NULL rows first, the user's own after them, so the user's own value wins; a restricted user inherits only the household's settings, not its UI state
+                legacy = "Users_Id IS NULL" if not restricted_now() else "Users_Id IS NULL AND Pref_Key = ANY(%s)"
+                params = (list(HOUSEHOLD_PREFS), uid) if restricted_now() else (uid,)
+                cur.execute(f"SELECT Pref_Key, Pref_Value FROM User_Preferences WHERE {legacy} OR Users_Id = %s ORDER BY (Users_Id IS NOT NULL)", params)
             rows = cur.fetchall()
         return {r[0]: r[1] for r in rows}
     finally:
@@ -4894,24 +4981,40 @@ def get_user_preferences() -> dict:
 
 
 def set_user_preference(key: str, value) -> None:
-    """Insert or update a single UI preference (upsert on key)."""
+    """Insert or update a single UI preference of the current user (the household's, for 'app-settings')."""
     import json
+    from api.access import user_id_now
+    owner = None if key in HOUSEHOLD_PREFS else user_id_now()
     conn = get_connection()
     try:
         _ensure_user_preferences_table(conn)
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO User_Preferences (Pref_Key, Pref_Value, Updated_At)
-                VALUES (%s, %s::jsonb, NOW())
-                ON CONFLICT (Pref_Key) DO UPDATE
+                INSERT INTO User_Preferences (Pref_Key, Pref_Value, Users_Id, Updated_At)
+                VALUES (%s, %s::jsonb, %s, NOW())
+                ON CONFLICT (Pref_Key, (COALESCE(Users_Id, 0))) DO UPDATE
                     SET Pref_Value = EXCLUDED.Pref_Value, Updated_At = NOW()
-            """, (key, json.dumps(value)))
+            """, (key, json.dumps(value), owner))
         conn.commit()
     finally:
         conn.close()
 
 
 def _ensure_custom_reports_table(conn):
+    global _CUSTOM_REPORTS_READY
+    if _CUSTOM_REPORTS_READY:
+        return
+    _ensure_custom_reports_table_base(conn)
+    with conn.cursor() as cur:
+        # a preset is the household's (an admin's: no owner) or a restricted user's own
+        cur.execute("ALTER TABLE Custom_Report_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE")
+        cur.execute("ALTER TABLE Custom_Report_Presets DROP CONSTRAINT IF EXISTS custom_report_presets_preset_name_key")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_report_presets_owner ON Custom_Report_Presets (Preset_Name, (COALESCE(Owner_Users_Id, 0)))")
+    conn.commit()
+    _CUSTOM_REPORTS_READY = True
+
+
+def _ensure_custom_reports_table_base(conn):
     with conn.cursor() as cur:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
@@ -6337,9 +6440,41 @@ def _ensure_alerts_table():
                     Created_At    TIMESTAMP DEFAULT NOW()
                 )
             """)
+            # Currency alerts (fx_above / fx_below): the currency, and the currency its rate is quoted in (empty = the storage base, EUR)
+            cur.execute("ALTER TABLE Alerts ADD COLUMN IF NOT EXISTS Currencies_Id INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE")
+            cur.execute("ALTER TABLE Alerts ADD COLUMN IF NOT EXISTS Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE")
         conn.commit()
     finally:
         conn.close()
+
+
+def _fx_alert_info(fx: pd.DataFrame) -> dict:
+    """For the currency alerts in `fx` (Alerts rows with Currencies_Id): {alert_id: {code, quote, rate, quote_id}} — the pair's codes and its latest rate, in units of the
+    quote currency per 1 unit of the currency (from the latest stored rate of each against the storage base, as Currency Detail shows it; the storage base is 1)."""
+    out: dict = {}
+    if fx is None or fx.empty:
+        return out
+    conn = get_connection()
+    try:
+        base_id = int(pd.read_sql("""
+            SELECT COALESCE((SELECT Currencies_Id_2 FROM Historical_FX GROUP BY Currencies_Id_2 ORDER BY COUNT(*) DESC LIMIT 1),
+                            (SELECT Currencies_Id FROM Currencies WHERE Currencies_ShortName = 'EUR')) AS id""", conn)["id"].iloc[0])
+        quote_of = {int(r["alert_id"]): (int(r["currencies_id_quote"]) if pd.notna(r.get("currencies_id_quote")) else base_id) for _, r in fx.iterrows()}
+        ids = sorted({int(c) for c in fx["currencies_id"]} | set(quote_of.values()))
+        codes = pd.read_sql("SELECT Currencies_Id AS id, TRIM(Currencies_ShortName) AS code FROM Currencies WHERE Currencies_Id = ANY(%s)", conn, params=(ids,))
+        latest = pd.read_sql("""SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1 AS id, FX_Rate::float AS rate FROM Historical_FX
+                                  WHERE Currencies_Id_1 = ANY(%s) ORDER BY Currencies_Id_1, Date DESC""", conn, params=(ids,))
+    finally:
+        conn.close()
+    code = {int(k): v for k, v in zip(codes["id"], codes["code"])}
+    rate = {int(k): float(v) for k, v in zip(latest["id"], latest["rate"])}
+    rate[base_id] = 1.0
+    for _, r in fx.iterrows():
+        aid, c = int(r["alert_id"]), int(r["currencies_id"])
+        q = quote_of[aid]
+        x, y = rate.get(c), rate.get(q)
+        out[aid] = {"code": code.get(c, str(c)), "quote": code.get(q, str(q)), "quote_id": q, "rate": (x / y) if x is not None and y else None}
+    return out
 
 
 def get_alerts() -> pd.DataFrame:
@@ -6362,6 +6497,8 @@ def get_alerts() -> pd.DataFrame:
                a.Is_Active       AS is_active,
                a.Note            AS note,
                a.Created_At      AS created_at,
+               a.Currencies_Id   AS currencies_id,
+               a.Currencies_Id_Quote AS currencies_id_quote,
                lp.current_price  AS current_price,
                lp.price_date     AS price_date
         FROM   Alerts a
@@ -6370,12 +6507,21 @@ def get_alerts() -> pd.DataFrame:
         ORDER  BY a.Created_At DESC
     """, conn)
     conn.close()
+    # A currency alert shows its pair where a security's name would be, and the pair's current rate as the current price.
+    fx = df[df["alert_type"].isin(["fx_above", "fx_below"]) & df["currencies_id"].notna()]
+    df["quote_code"] = None
+    for aid, info in _fx_alert_info(fx).items():
+        i = df.index[df["alert_id"] == aid][0]
+        df.at[i, "quote_code"] = info["quote"]
+        df.at[i, "securities_name"] = f"{info['code']}/{info['quote']}"
+        df.at[i, "current_price"] = info["rate"]
+        df.at[i, "currencies_id_quote"] = info["quote_id"]
     return df
 
 
 def save_alert(alert_type: str, securities_id=None, asset_type: str = None,
                threshold=None, direction: str = None, note: str = None,
-               alert_id: int = None):
+               alert_id: int = None, currencies_id=None, currencies_id_quote=None):
     _ensure_alerts_table()
     conn = get_connection()
     try:
@@ -6384,17 +6530,18 @@ def save_alert(alert_type: str, securities_id=None, asset_type: str = None,
                 cur.execute("""
                     UPDATE Alerts
                     SET Alert_Type=%s, Securities_Id=%s, Asset_Type=%s,
-                        Threshold=%s, Direction=%s, Note=%s
+                        Threshold=%s, Direction=%s, Note=%s,
+                        Currencies_Id=%s, Currencies_Id_Quote=%s
                     WHERE Alert_Id=%s
                 """, (alert_type, securities_id, asset_type,
-                      threshold, direction, note, alert_id))
+                      threshold, direction, note, currencies_id, currencies_id_quote, alert_id))
             else:
                 cur.execute("""
                     INSERT INTO Alerts
-                        (Alert_Type, Securities_Id, Asset_Type, Threshold, Direction, Note)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                        (Alert_Type, Securities_Id, Asset_Type, Threshold, Direction, Note, Currencies_Id, Currencies_Id_Quote)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (alert_type, securities_id, asset_type,
-                      threshold, direction, note))
+                      threshold, direction, note, currencies_id, currencies_id_quote))
         conn.commit()
     finally:
         conn.close()
@@ -6710,7 +6857,9 @@ def _ensure_account_interest_rate_schema():
     is effective on each forecast date in place of the derived-from-history APY% used
     for accounts without a manually-defined schedule.
     """
-    conn = get_connection()
+    from api.access import unscoped
+    with unscoped():                      # a restricted user's connection shadows these tables with views, and an index cannot be made on a view
+        conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -6895,7 +7044,8 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
 
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql       # a restricted user's alerts cover their own accounts' holdings only
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -6909,7 +7059,7 @@ def _get_bond_event_alerts(lead_days: int = None) -> list:
             JOIN Securities s ON s.Securities_Id = h.Securities_Id
             JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
-            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL
+            WHERE h.Quantity > 0 AND s.Securities_Type = 'Bond' AND s.Maturity_Date IS NOT NULL {scope_sql('h.Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -6966,7 +7116,8 @@ def _get_split_mismatch_alerts() -> list:
     """
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             SELECT t.Transactions_Id AS transactions_id,
                    COALESCE(p.Payees_Name, t.Description, '') AS label,
                    t.Total_Amount AS total_amount,
@@ -6978,7 +7129,7 @@ def _get_split_mismatch_alerts() -> list:
             WHERE t.Is_Draft = FALSE
               AND t.Transfers_Id IS NULL
               AND t.Accounts_Id_Target IS NULL
-              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability')
+              AND a.Accounts_Type NOT IN ('Brokerage','Pension','Other Investment','Margin','Real Estate','Vehicle','Asset','Liability') {scope_sql('t.Accounts_Id')}
             GROUP BY t.Transactions_Id, p.Payees_Name, t.Description, t.Total_Amount
             HAVING COUNT(s.Splits_Id) > 0
                AND ROUND((t.Total_Amount - COALESCE(SUM(s.Amount), 0))::numeric, 2) != 0
@@ -7031,7 +7182,8 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
 
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             WITH fx AS (
                 SELECT DISTINCT ON (Currencies_Id_1) Currencies_Id_1, FX_Rate
                 FROM Historical_FX ORDER BY Currencies_Id_1, Date DESC
@@ -7047,7 +7199,7 @@ def _get_dividend_alerts(lead_days: int = None) -> list:
             JOIN Currencies c ON c.Currencies_Id = s.Currencies_Id
             LEFT JOIN fx ON fx.Currencies_Id_1 = s.Currencies_Id
             WHERE h.Quantity > 0 AND s.Ex_Dividend_Date IS NOT NULL
-              AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL
+              AND s.Dividend_Frequency IS NOT NULL AND s.Dividend_Rate IS NOT NULL {scope_sql('h.Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -7165,14 +7317,15 @@ def _get_loan_payment_alerts() -> list:
     lead_days = _get_app_setting_lead_days('loanAlertLeadDays', 7)
     conn = get_connection()
     try:
-        df = pd.read_sql("""
+        from api.access import scope_sql
+        df = pd.read_sql(f"""
             SELECT Accounts_Id AS id, Accounts_Name AS name, Accounts_Balance AS balance,
                    Loan_Next_Due_Date AS next_due_date, Loan_Rate_Type AS rate_type,
                    Loan_Interest_Rate_Pct AS rate_pct, Loan_Compounding_Period AS compounding,
                    Loan_Payment_Frequency AS payment_freq, Loan_Opening_Date AS opening_date,
                    Loan_Original_Length_Value AS length_value, Loan_Original_Length_Unit AS length_unit
             FROM Accounts
-            WHERE Accounts_Type = 'Loan' AND Is_Active = TRUE AND Loan_Next_Due_Date IS NOT NULL
+            WHERE Accounts_Type = 'Loan' AND Is_Active = TRUE AND Loan_Next_Due_Date IS NOT NULL {scope_sql('Accounts_Id')}
         """, conn)
     finally:
         conn.close()
@@ -7404,6 +7557,28 @@ def check_triggered_alerts() -> list:
                         'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
                     })
 
+        # ── currency alerts: a currency's rate above / below your threshold (e.g. sell GBP when GBP/EUR reaches 1.21) ───────
+        fx_rows = alerts_df[alerts_df['alert_type'].isin(['fx_above', 'fx_below']) & alerts_df['currencies_id'].notna()]
+        if not fx_rows.empty:
+            info = _fx_alert_info(fx_rows)
+            for _, row in fx_rows.iterrows():
+                i = info.get(int(row['alert_id']))
+                if not i or i['rate'] is None or row['threshold'] is None:
+                    continue
+                rate, thr = float(i['rate']), float(row['threshold'])
+                pair = f"{i['code']}/{i['quote']}"
+                suffix = f" _{row['note']}_" if row.get('note') else ''
+                if row['alert_type'] == 'fx_above' and rate > thr:
+                    msg = f"💱 **Currency Alert** — {pair} is at **{rate:,.4f}**, above your threshold of {thr:,.4f}.{suffix}"
+                    level = 'warning'
+                elif row['alert_type'] == 'fx_below' and rate < thr:
+                    msg = f"💱 **Currency Alert** — {pair} is at **{rate:,.4f}**, below your threshold of {thr:,.4f}.{suffix}"
+                    level = 'error'
+                else:
+                    continue
+                results.append({'level': level, 'message': msg, 'currencies_id': int(row['currencies_id']),
+                                'type': 'fx_alert', 'key': f"fx_alert:{int(row['alert_id'])}"})
+
         # ── allocation drift alerts ───────────────────────────────────────────
         drift_rows = alerts_df[alerts_df['alert_type'] == 'allocation_drift']
         if not drift_rows.empty:
@@ -7460,6 +7635,23 @@ def check_triggered_alerts() -> list:
                                 f"{row['previous_signal'] or '—'} → **{row['current_signal']}**{suffix}"),
                     'securities_id': int(row['securities_id']),
                     'type': 'signal_change',
+                })
+        except Exception:
+            pass
+
+        # ── Action changes of held securities (pre-computed by scheduler; database/action_signal.py) ──
+        try:
+            from database.action_signal import pending_changes
+            for _, row in pending_changes().iterrows():
+                ts = pd.Timestamp(row['changed_at'])
+                sc = row['score']
+                score_txt = f" (score {sc:+.1f})" if sc is not None and not pd.isna(sc) else ''
+                results.append({
+                    'level': 'warning' if row['bucket'] == 'Reduce / Sell' else 'info',
+                    'message': (f"🧭 **Action Change** — {row['securities_name']}: "
+                                f"{row['previous_bucket'] or '—'} → **{row['bucket']}**{score_txt}, as of {ts.day} {ts.strftime('%b %Y')}"),
+                    'securities_id': int(row['securities_id']),
+                    'type': 'action_change', 'key': f"action_change:{int(row['securities_id'])}:{row['bucket']}",
                 })
         except Exception:
             pass
@@ -7595,11 +7787,15 @@ def check_triggered_alerts() -> list:
         _source('split_mismatch', _get_split_mismatch_alerts)
         _source('trend', _get_trend_alerts)
         _source('loan', _get_loan_payment_alerts)
+        from database.private_funds import get_fund_call_alerts
+        _source('fund', get_fund_call_alerts)
 
         # ── support / resistance: holdings, Watchlist, exposed currencies ─────
         from database.sr_alerts import get_sr_alerts
         _source('sr', get_sr_alerts)
 
+        from api.access import restrict_alerts
+        results = restrict_alerts(results)       # a restricted user keeps the alerts on what their accounts hold
         from database.alert_groups import finalize
         return finalize(results, sources_ok)
         return results

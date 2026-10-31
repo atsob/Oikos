@@ -1327,26 +1327,10 @@ def apply_split_corporate_action(sec_id: int, ca_id: int):
 
 @router.get("/{sec_id}/price-anomalies")
 def get_security_price_anomalies(sec_id: int, threshold_pct: float = Query(100.0)):
+    from api.routers.market_data import price_anomaly_sql
     ratio = 1.0 + threshold_pct / 100.0
     with get_db() as conn:
-        df = pd.read_sql("""
-            WITH pn AS (
-                SELECT hp.Date::text AS date, hp.Close,
-                       LAG(hp.Close)  OVER (ORDER BY hp.Date) AS prev_close,
-                       LEAD(hp.Close) OVER (ORDER BY hp.Date) AS next_close
-                FROM Historical_Prices hp
-                WHERE hp.Securities_Id = %(sid)s AND hp.Close > 0
-            )
-            SELECT date, Close AS close, prev_close, next_close,
-                   ROUND((Close / NULLIF(prev_close, 0))::numeric, 3) AS ratio_prev,
-                   ROUND((Close / NULLIF(next_close, 0))::numeric, 3) AS ratio_next
-            FROM pn
-            WHERE (Close / NULLIF(prev_close, 0) >= %(r)s
-                OR prev_close / NULLIF(Close, 0) >= %(r)s
-                OR Close / NULLIF(next_close, 0) >= %(r)s
-                OR next_close / NULLIF(Close, 0) >= %(r)s)
-            ORDER BY date ASC
-        """, conn, params={"sid": sec_id, "r": ratio})
+        df = pd.read_sql(price_anomaly_sql("AND hp.Securities_Id = %(sid)s"), conn, params={"sid": sec_id, "r": ratio})
     return _df(df)
 
 

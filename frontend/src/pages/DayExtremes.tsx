@@ -91,7 +91,8 @@ function DayTable({ title, tip, rows, period }: { title: string; tip: string; ro
   )
 }
 
-export default function DayExtremesTab() {
+// `accountIds` is the Account Preset chosen above the report: only its accounts are offered, and "All" means all of them.
+export default function DayExtremesTab({ accountIds }: { accountIds?: number[] }) {
   const [accountId, setAccountId] = usePersist<number | 0>('dx_account', 0)      // 0 = all investment accounts
   const [yearSel, setYearSel] = usePersist<number | 0>('dx_year', 0)             // 0 = latest year with activity
   const [n, setN] = usePersist('dx_n', 10)
@@ -100,21 +101,21 @@ export default function DayExtremesTab() {
 
   const { data: accountsRaw = [] } = useQuery({ queryKey: ['allAccountsForPreset'], queryFn: () => getAccounts() })
   const accounts = (accountsRaw as Record<string, unknown>[])
-    .filter(a => INV_TYPES.includes(String(a.type)))
+    .filter(a => INV_TYPES.includes(String(a.type)) && (!accountIds || accountIds.includes(Number(a.id))))
     .map(a => ({ id: Number(a.id), name: String(a.name ?? ''), closed: a.is_active === false || a.is_active === 0 || a.is_active === 'false' }))
     // Inactive accounts are hidden unless asked for — except the one currently selected, so the
     // list never drops the account whose report is on screen.
     .filter(a => showInactive || !a.closed || a.id === accountId)
     .sort((a, b) => a.name.localeCompare(b.name))
-  const { data: years = [] } = useQuery({ queryKey: ['dx-years', accountId], queryFn: () => getDayExtremeYears(accountId || undefined) })
+  const { data: years = [] } = useQuery({ queryKey: ['dx-years', accountId, accountIds ?? null], queryFn: () => getDayExtremeYears(accountId || undefined, accountId ? undefined : accountIds) })
   const yearList = years as number[]
   const year = yearList.includes(yearSel) ? yearSel : (yearList[0] ?? new Date().getFullYear())
   useEffect(() => { if (yearList.length && !yearList.includes(yearSel)) setYearSel(yearList[0]) }, [yearList.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const count = Math.min(100, Math.max(1, Math.round(Number(n) || 10)))
   const { data, isLoading, error } = useQuery({
-    queryKey: ['dx', accountId, year, count, period],
-    queryFn: () => getDayExtremes({ accountId: accountId || undefined, year, n: count, period }),
+    queryKey: ['dx', accountId, accountIds ?? null, year, count, period],
+    queryFn: () => getDayExtremes({ accountId: accountId || undefined, accountIds: accountId ? undefined : accountIds, year, n: count, period }),
     enabled: yearList.length > 0,
   })
   const res = data as Result | undefined
@@ -129,7 +130,7 @@ export default function DayExtremesTab() {
       <div className="flex flex-wrap items-end gap-4">
         <label className="text-xs text-slate-500">Account
           <select className={`${sel} block min-w-64`} value={accountId} onChange={e => setAccountId(Number(e.target.value))}>
-            <option value={0}>All investment accounts</option>
+            <option value={0}>{accountIds ? 'All accounts in the preset' : 'All investment accounts'}</option>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.closed ? ' (inactive)' : ''}</option>)}
           </select>
         </label>

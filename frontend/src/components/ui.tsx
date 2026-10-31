@@ -1,9 +1,10 @@
 import { cn } from '@/lib/utils'
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check, Calculator as CalculatorIcon, Delete } from 'lucide-react'
 import { usePersist } from '@/lib/hooks'
+import { PhoneTitleContext } from '@/lib/phoneTitle'
 import { CASH_ACCOUNT_TYPES, INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import type { GridApi } from 'ag-grid-community'
 
@@ -61,8 +62,8 @@ export function Button({ variant = 'primary', size = 'md', className, children, 
           'bg-slate-100 text-slate-700 hover:bg-slate-200': variant === 'secondary',
           'bg-red-600 text-white hover:bg-red-700': variant === 'destructive',
           'text-slate-600 hover:bg-slate-100': variant === 'ghost',
-          'text-xs px-2.5 py-1.5': size === 'sm',
-          'text-sm px-3.5 py-2': size === 'md',
+          'text-xs px-2.5 py-1.5 pointer-coarse:py-2.5': size === 'sm',
+          'text-sm px-3.5 py-2 pointer-coarse:py-2.5': size === 'md',
           'text-sm px-5 py-2.5': size === 'lg',
         },
         className,
@@ -509,11 +510,15 @@ export function Spinner({ size = 20 }: { size?: number }) {
 }
 
 // ── PageHeader ────────────────────────────────────────────────────────────────
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
+export function PageHeader({ title, subtitle, actions, phoneTitle }: { title: string; subtitle?: string; actions?: React.ReactNode; phoneTitle?: string }) {
+  // On a phone the title is shown in the app bar at the top (see Layout), so it is not repeated here.
+  const setPhoneTitle = useContext(PhoneTitleContext)
+  const barTitle = phoneTitle || title        // a page whose own title is empty (Security Detail) can still name itself in the bar
+  useEffect(() => { setPhoneTitle(barTitle) }, [barTitle, setPhoneTitle])
   return (
-    <div className="flex items-center justify-between gap-3 flex-wrap px-4 sm:px-6 py-4 border-b border-slate-200 bg-white">
+    <div className={cn('items-center justify-between gap-3 flex-wrap px-3 sm:px-6 py-3 sm:py-4 border-b border-slate-200 bg-white', subtitle || actions ? 'flex' : 'hidden sm:flex')}>
       <div>
-        <h1 className="text-lg font-semibold text-slate-900">{title}</h1>
+        <h1 className="hidden sm:block text-lg font-semibold text-slate-900">{title}</h1>
         {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
@@ -549,8 +554,8 @@ export function PricesUpdated({ at, detail, className }: { at?: string | null; d
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
-export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
-  label: string; value: string; sub?: string; color?: string
+export function StatCard({ label, value, sub, color, subs, compact, onClick, className: extra }: {
+  label: string; value: string; sub?: string; color?: string; className?: string
   subs?: { text: string; color?: string; parts?: { text: string; color?: string }[] }[]   // `parts`: several figures, each in its own colour, on one line
   compact?: boolean; onClick?: () => void
 }) {
@@ -558,7 +563,7 @@ export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
     <>
       <p className={cn('font-medium text-slate-500 uppercase tracking-wide', compact ? 'text-xs' : 'text-xs')}>{label}</p>
       <p className={cn('font-bold mt-1', compact ? 'text-lg' : 'text-2xl', color ?? 'text-slate-900')}>{value}</p>
-      {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs truncate' : 'text-xs', s.color ?? 'text-slate-400')}>
+      {subs?.map((s, i) => <p key={i} className={cn('mt-0.5', compact ? 'text-xs sm:truncate' : 'text-xs', s.color ?? 'text-slate-400')}>
         {s.parts ? s.parts.map((p, j) => <span key={j} className={cn(j > 0 && 'ml-2', p.color)}>{p.text}</span>) : s.text}
       </p>)}
       {!subs && sub && <p className={cn('mt-0.5 text-slate-400 text-xs')}>{sub}</p>}
@@ -567,7 +572,8 @@ export function StatCard({ label, value, sub, color, subs, compact, onClick }: {
   const className = cn(
     'bg-white rounded-xl border border-slate-200 shadow-sm',
     compact ? 'p-2.5' : 'p-4',
-    onClick && 'text-left w-full hover:border-blue-300 hover:shadow-md transition-shadow cursor-pointer'
+    onClick && 'text-left w-full hover:border-blue-300 hover:shadow-md transition-shadow cursor-pointer',
+    extra,
   )
   if (onClick) return <button onClick={onClick} className={className}>{content}</button>
   return <div className={className}>{content}</div>
@@ -687,12 +693,14 @@ export function CopyToExcelButton({ gridApi, getRows }: {
   }
 
   return (
+    <span className={!getRows && !gridApi ? 'max-sm:hidden' : undefined}>   {/* on a phone a grid is a list of cards: nothing for this button to copy */}
     <button onClick={handleCopy} disabled={!getRows && !gridApi}
       className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed">
       {status === 'copied' ? <><Check size={13} /> Copied</>
         : status === 'failed' ? <><X size={13} /> Copy failed</>
         : <><ClipboardCopy size={13} /> Copy to Excel</>}
     </button>
+    </span>
   )
 }
 

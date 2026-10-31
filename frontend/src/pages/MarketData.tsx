@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react'
-import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
+import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
+import AppGrid from '@/components/AppGrid'
 import type { ColDef, RowClickedEvent } from 'ag-grid-community'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
+import { useRole } from '@/lib/auth'
 import { getCurrencies, getSecurities, getPriceAnomalies, refreshFx, upsertSecurity, upsertCurrency, api, downloadCountryExposure, downloadYahooInfo, downloadYahooDividends, downloadStockSplits, downloadFundComposition, downloadMorningstar, downloadFundamentals, downloadYahooPrices, downloadTvInfo, downloadTvPrices, downloadSolidusBonds, downloadIsin, getWatchlist, upsertWatchlistItem, deleteWatchlistItem, getAlertsDefinitions, saveAlert, toggleAlert, deleteAlert, searchTicker, lookupTicker, getTaxCategoryRules, getIssuers, getShillerCape, getShillerCapeSummary, downloadShillerCape, getCountryCapeRatios, upsertCountryCapeRatio, deleteCountryCapeRatio, downloadCountryCapeRatios, getInterestRates, getInterestRatesSummary, downloadInterestRates, getRateSeriesDefs, saveRateSeries, deleteRateSeries, addRateValue, getRateTracking, saveRateTracking, deleteRateTracking, getRateFundDurations } from '@/lib/api'
 import { PageHeader, Input, Button, Spinner, Card, CardBody, ColHeader, useSortTable, useEscapeKey, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
@@ -36,7 +36,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
+      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92dvh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -58,6 +58,7 @@ const ANOMALY_COLS: ColDef[] = [
   { field: 'next_close', headerName: 'Next', width: 110, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
   { field: 'ratio_prev', headerName: 'Ratio Prev', width: 110, type: 'numericColumn' },
   { field: 'ratio_next', headerName: 'Ratio Next', width: 110, type: 'numericColumn' },
+  { field: 'explained_by_split', headerName: 'Split', width: 90, cellDataType: false, headerTooltip: 'A recorded split or reverse split explains this move', valueFormatter: p => p.value ? 'Explained' : '' },
 ]
 
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
@@ -271,8 +272,8 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
           <CopyToExcelButton gridApi={gridApi} />
         </div>
       </div>
-      <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-        <AgGridReact theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+      <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 220px)', width: '100%' }}>
+        <AppGrid theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
@@ -458,7 +459,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
-        <AgGridReact theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+        <AppGrid theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
@@ -750,7 +751,7 @@ function WatchlistTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-slate-500">{rows.length} securities on watchlist</p>
         <Button size="sm" onClick={openAdd}><Plus size={14} /> Add to Watchlist</Button>
@@ -1426,7 +1427,7 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
           {sForm.provider === 'NYFED' && (
             <Field label="NY Fed field (blank = percentRate)"><Input value={sForm.provider_field} onChange={e => setSForm({ ...sForm, provider_field: e.target.value })} placeholder="percentRate, targetRateTo, targetRateFrom" /></Field>
           )}
-          <div className="grid grid-cols-3 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
             <Field label="Sort order"><Input value={sForm.sort_order} onChange={e => setSForm({ ...sForm, sort_order: e.target.value })} /></Field>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.is_active} onChange={e => setSForm({ ...sForm, is_active: e.target.checked })} /> Active</label>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={sForm.alerts_enabled} onChange={e => setSForm({ ...sForm, alerts_enabled: e.target.checked })} /> Alerts</label>
@@ -1476,7 +1477,7 @@ function RatesConfig({ defs }: { defs: RateSeriesDef[] }) {
               {overnight.map(d => <option key={d.id} value={String(d.id)}>{d.name}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-3 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
             <Field label="Window (days, min 7)"><Input value={tForm.window_days} onChange={e => setTForm({ ...tForm, window_days: e.target.value })} /></Field>
             <Field label="Alert at (pp behind)"><Input value={tForm.threshold_pp} onChange={e => setTForm({ ...tForm, threshold_pp: e.target.value })} /></Field>
             <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={tForm.is_active} onChange={e => setTForm({ ...tForm, is_active: e.target.checked })} /> Active</label>
@@ -1498,7 +1499,8 @@ function CapeRatiosTab() {
 }
 
 // ── Alerts Tab ────────────────────────────────────────────────────────────────
-const ALERT_TYPES = ['price_above', 'price_below', 'allocation_drift']
+const ALERT_TYPES = ['price_above', 'price_below', 'fx_above', 'fx_below', 'allocation_drift']
+const ALERT_TYPE_LABEL: Record<string, string> = { price_above: '▲ Price Above Threshold', price_below: '▼ Price Below Threshold', fx_above: '▲ Currency Rate Above Threshold', fx_below: '▼ Currency Rate Below Threshold', allocation_drift: '⚖ Allocation Drift' }
 const ASSET_TYPES_FOR_DRIFT = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Other']
 
 function AlertsTab() {
@@ -1508,9 +1510,13 @@ function AlertsTab() {
   const { data: securities = [] } = useQuery({ queryKey: ['securities'], queryFn: () => getSecurities() })
   const rows = data as Record<string, unknown>[]
   const secs = securities as Record<string, unknown>[]
+  const [{ reportingCurrency }] = useSettings()
+  const { data: currenciesData = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
+  const curs = currenciesData as Record<string, unknown>[]
+  const defaultQuote = String(curs.find(c => String(c.code) === reportingCurrency)?.id ?? '')
 
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' })
+  const [form, setForm] = useState<Record<string, string>>({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '', currencies_id: '', currencies_id_quote: '' })
   const [editId, setEditId] = useState<number | null>(null)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
@@ -1542,11 +1548,13 @@ function AlertsTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-definitions'] }),
   })
 
-  const openAdd = () => { setForm({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '' }); setEditId(null); setShowForm(true) }
+  const openAdd = () => { setForm({ alert_type: 'price_above', securities_id: '', asset_type: '', threshold: '', note: '', currencies_id: '', currencies_id_quote: defaultQuote }); setEditId(null); setShowForm(true) }
   const openEdit = (row: Record<string, unknown>) => {
     setForm({
       alert_type: String(row.alert_type ?? 'price_above'),
       securities_id: String(row.securities_id ?? ''),
+      currencies_id: String(row.currencies_id ?? ''),
+      currencies_id_quote: String(row.currencies_id_quote ?? defaultQuote),
       asset_type: String(row.asset_type ?? ''),
       threshold: String(row.threshold ?? ''),
       note: String(row.note ?? ''),
@@ -1559,15 +1567,20 @@ function AlertsTab() {
     if (!form.alert_type) return setErr('Alert type is required')
     if (!form.threshold) return setErr('Threshold is required')
     const isPriceAlert = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+    const isFx = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
+    if (isFx && (!form.currencies_id || !form.currencies_id_quote)) return setErr('Choose the currency and the currency its rate is quoted in')
+    if (isFx && form.currencies_id === form.currencies_id_quote) return setErr('A currency cannot be quoted in itself')
     if (isPriceAlert && !form.securities_id) return setErr('Security is required for price alerts')
     if (form.alert_type === 'allocation_drift' && !form.asset_type) return setErr('Asset type is required for allocation drift alerts')
     saveMut.mutate({
       alert_id: editId ?? undefined,
       alert_type: form.alert_type,
-      securities_id: form.securities_id ? Number(form.securities_id) : null,
+      securities_id: form.securities_id && !isFx ? Number(form.securities_id) : null,
+      currencies_id: isFx ? Number(form.currencies_id) : null,
+      currencies_id_quote: isFx ? Number(form.currencies_id_quote) : null,
       asset_type: form.asset_type || null,
       threshold: Number(form.threshold),
-      direction: form.alert_type === 'price_above' ? 'above' : form.alert_type === 'price_below' ? 'below' : 'drift',
+      direction: form.alert_type === 'price_above' || form.alert_type === 'fx_above' ? 'above' : form.alert_type === 'price_below' || form.alert_type === 'fx_below' ? 'below' : 'drift',
       note: form.note || null,
     })
   }
@@ -1582,17 +1595,18 @@ function AlertsTab() {
 
   const alertTypeBadge = (t: unknown) => {
     const s = String(t ?? '')
-    const color = s === 'price_above' ? 'bg-green-100 text-green-700' : s === 'price_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : '⚖ Alloc Drift'
+    const color = s === 'price_above' || s === 'fx_above' ? 'bg-green-100 text-green-700' : s === 'price_below' || s === 'fx_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : s === 'fx_above' ? '💱 Rate Above' : s === 'fx_below' ? '💱 Rate Below' : '⚖ Alloc Drift'
     return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{label}</span>
   }
 
   const isPriceType = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+  const isFxType = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex justify-between items-center gap-3">
         <div className="flex items-center gap-3 flex-1">
           <div className="relative">
@@ -1617,7 +1631,7 @@ function AlertsTab() {
           <Field label="Alert Type *">
             <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
               value={form.alert_type} onChange={e => setForm(f => ({ ...f, alert_type: e.target.value, securities_id: '', asset_type: '' }))}>
-              {ALERT_TYPES.map(t => <option key={t} value={t}>{t === 'price_above' ? '▲ Price Above Threshold' : t === 'price_below' ? '▼ Price Below Threshold' : '⚖ Allocation Drift'}</option>)}
+              {ALERT_TYPES.map(t => <option key={t} value={t}>{ALERT_TYPE_LABEL[t]}</option>)}
             </select>
           </Field>
           {isPriceType && (
@@ -1629,6 +1643,25 @@ function AlertsTab() {
               </select>
             </Field>
           )}
+          {isFxType && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Currency *">
+                <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  value={form.currencies_id} onChange={e => setForm(f => ({ ...f, currencies_id: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {curs.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)} · {String(c.name)}</option>)}
+                </select>
+              </Field>
+              <Field label="Quoted in *">
+                <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  value={form.currencies_id_quote} onChange={e => setForm(f => ({ ...f, currencies_id_quote: e.target.value }))}>
+                  <option value="">— select —</option>
+                  {curs.map(c => <option key={String(c.id)} value={String(c.id)}>{String(c.code)}</option>)}
+                </select>
+              </Field>
+              <p className="col-span-2 text-xs text-slate-400">The rate is how many units of the second currency 1 unit of the first buys — GBP quoted in EUR at 1.21 means 1 GBP = 1.21 EUR (the rate on the currency's own page).</p>
+            </div>
+          )}
           {form.alert_type === 'allocation_drift' && (
             <Field label="Asset Type *">
               <select className="block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
@@ -1638,7 +1671,7 @@ function AlertsTab() {
               </select>
             </Field>
           )}
-          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : 'Price Threshold *'}>
+          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : isFxType ? 'Rate Threshold *' : 'Price Threshold *'}>
             <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
           </Field>
           <Field label="Note"><Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" /></Field>
@@ -1662,8 +1695,8 @@ function AlertsTab() {
             {filtered.map(row => {
               const isActive = Boolean(row.is_active)
               const triggered = row.current_price != null && row.threshold != null && (
-                (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
-                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
+                ((row.alert_type === 'price_above' || row.alert_type === 'fx_above') && Number(row.current_price) > Number(row.threshold)) ||
+                ((row.alert_type === 'price_below' || row.alert_type === 'fx_below') && Number(row.current_price) < Number(row.threshold))
               )
               return (
                 <tr key={String(row.alert_id)} className={`hover:bg-slate-50 cursor-pointer ${!isActive ? 'opacity-50' : ''}`} onDoubleClick={() => openEdit(row)}>
@@ -1701,11 +1734,14 @@ function AlertsTab() {
 }
 
 export default function MarketData() {
+  const { isAdmin } = useRole()
+  // The Downloads and the household's own Watchlist are the admin's; the rest is read-only for a limited user (components/Layout.tsx hides the controls that change anything).
+  const tabs = isAdmin ? TABS : TABS.filter(t => t !== 'Downloads' && t !== 'Watchlist')
   const [searchParams, setSearchParams] = useSearchParams()
   const [savedTab, setTab] = usePersist('market_data_tab', searchParams.get('tab') ?? 'Currencies')
   // A tab saved before it was removed (e.g. the old Securities Prices / FX Prices tabs,
   // now on each Security Detail / Currency Detail → Prices) would otherwise open a blank page.
-  const tab = TABS.includes(savedTab) ? savedTab : 'Currencies'
+  const tab = tabs.includes(savedTab) ? savedTab : 'Currencies'
   // Deep-link support: "?tab=CAPE Ratios" (used by Dashboard's Market Valuation
   // tile) switches to that tab even when a different one was last persisted —
   // usePersist's initial value above only wins on a completely fresh visit with
@@ -1714,7 +1750,7 @@ export default function MarketData() {
   // or a manual tab switch back.
   const deepLinkTab = searchParams.get('tab')
   useEffect(() => {
-    if (deepLinkTab && TABS.includes(deepLinkTab)) {
+    if (deepLinkTab && tabs.includes(deepLinkTab)) {
       setTab(deepLinkTab)
       setSearchParams({}, { replace: true })
     }
@@ -1724,26 +1760,39 @@ export default function MarketData() {
   // silently dropping a filter you'd just typed. Still cleared explicitly on tab switches
   // below, same as before; this only fixes it surviving a navigate-away-and-back.
   const [search, setSearch] = usePersist('market_data_search', '')
-  const anomalyGridCols = useGridColumnState('market-data-anomalies', ANOMALY_COLS)
+  const navigate = useNavigate()
+  // the security's name opens its Security Detail
+  const anomalyCols = useMemo<ColDef[]>(() => ANOMALY_COLS.map(c => c.field === 'security_name' ? {
+    ...c,
+    cellRenderer: (p: { value: string; data?: Record<string, unknown> }) => p.data?.security_id == null ? p.value : (
+      <button onClick={() => navigate(`/securities/${p.data!.security_id}`)} className="text-blue-600 hover:underline text-left truncate w-full">{p.value}</button>
+    ),
+  } : c), [navigate])
+  const anomalyGridCols = useGridColumnState('market-data-anomalies', anomalyCols)
   const anomalyGridScroll = useGridScrollState('market-data-anomalies')
   const anomalyGridFilter = useGridFilterState('market-data-anomalies')
   const { gridApi: anomalyGridApi, onGridReady: onAnomalyGridReady } = useGridApi(api => {
     if (anomalyGridFilter.filterModel) api.setFilterModel(anomalyGridFilter.filterModel)
   })
 
-  const { data: anomalies = [], isLoading: anomLoading } = useQuery({
+  const { data: anomalyData = [], isLoading: anomLoading } = useQuery({
     queryKey: ['price-anomalies'],
     queryFn: () => getPriceAnomalies(100),
     enabled: tab === 'Anomalies',
   })
+  // A jump that a recorded split or reverse split explains is not a bad price: hidden unless asked for.
+  const [showExplained, setShowExplained] = usePersist('market_data_anomalies_explained', false)
+  const explainedCount = useMemo(() => (anomalyData as Record<string, unknown>[]).filter(r => r.explained_by_split).length, [anomalyData])
+  // memoised: a new array on every render makes the grid reload its rows, which sends it back to the top
+  const anomalies = useMemo(() => showExplained ? anomalyData : (anomalyData as Record<string, unknown>[]).filter(r => !r.explained_by_split), [anomalyData, showExplained])
 
   return (
     <div>
       <PageHeader title="Market Data" actions={<PricesUpdatedAuto />} />
 
-      <div className="px-6 py-4 space-y-4">
+      <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
-          {TABS.map(t => (
+          {tabs.map(t => (
             <button key={t} onClick={() => { setTab(t); setSearch(''); setSearchParams({ tab: t }) }}
               className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors whitespace-nowrap ${tab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
               {t}
@@ -1760,6 +1809,12 @@ export default function MarketData() {
               anomLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
                 <div>
                   <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+                    {explainedCount > 0 && (
+                      <label className="mr-auto flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
+                        <input type="checkbox" className="rounded" checked={showExplained} onChange={e => setShowExplained(e.target.checked)} />
+                        Show {explainedCount} move{explainedCount === 1 ? '' : 's'} explained by a recorded split or reverse split {showExplained ? '' : '(hidden)'}
+                      </label>
+                    )}
                     {anomalyGridFilter.hasFilters && (
                       <button onClick={() => anomalyGridFilter.clearFilters(anomalyGridApi)}
                         className="px-3 py-1.5 text-xs rounded border font-medium border-slate-300 text-slate-600 hover:bg-slate-50">
@@ -1769,8 +1824,8 @@ export default function MarketData() {
                     <ColumnsMenu columns={anomalyGridCols.columns} onToggle={anomalyGridCols.toggleColumn} />
                     <CopyToExcelButton gridApi={anomalyGridApi} />
                   </div>
-                  <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 220px)', width: '100%' }}>
-                    <AgGridReact theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
+                  <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 220px)', width: '100%' }}>
+                    <AppGrid theme="legacy" rowData={anomalies} columnDefs={anomalyGridCols.colDefs} onGridReady={onAnomalyGridReady}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
                       initialState={anomalyGridScroll.initialState}
                       onStateUpdated={anomalyGridScroll.onStateUpdated}

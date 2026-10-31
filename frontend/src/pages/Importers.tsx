@@ -38,6 +38,38 @@ function useImporterSettings(key: string, apply: (s: Record<string, unknown>) =>
   return save
 }
 
+/** What the last run of an importer used (the date range) and when it ran — remembered with the user's other preferences, so it follows them across
+ *  browsers and devices. The dates are put back in the fields the first time the tab is opened; `remember` records a preview or an import. */
+type LastRun = { from?: string; to?: string; preview_at?: string; import_at?: string }
+function useLastRun(key: string, setFrom: (v: string) => void, setTo: (v: string) => void) {
+  const [last, setLast] = usePersist<LastRun | null>(`importer_last_run_${key}`, null)
+  const restored = useRef(false)
+  useEffect(() => {
+    if (!last || restored.current) return
+    restored.current = true
+    if (last.from) setFrom(last.from)
+    if (last.to) setTo(last.to)
+  }, [last]) // eslint-disable-line react-hooks/exhaustive-deps
+  const remember = (from: string, to: string, kind: 'preview' | 'import') =>
+    setLast({ ...(last ?? {}), from, to, [`${kind}_at`]: new Date().toISOString() })
+  return { last, remember }
+}
+
+function LastRunNote({ last, to }: { last: LastRun | null; to: string }) {
+  if (!last || (!last.preview_at && !last.import_at)) return null
+  const when = (iso?: string) => iso ? new Date(iso).toLocaleString() : null
+  const today = new Date().toISOString().slice(0, 10)
+  return (
+    <div className="text-xs text-slate-500 space-y-0.5">
+      <p>
+        {last.import_at ? <>Last import: <b>{when(last.import_at)}</b></> : <>Last preview: <b>{when(last.preview_at)}</b></>}
+        {' '}— range used: {last.from || 'start'} → {last.to || 'today (open-ended)'}. The dates above are filled in from it.
+      </p>
+      {to && to < today && <p className="text-amber-700">⚠ "To" is in the past ({to}) — anything newer than that is left out. Clear it to import up to today.</p>}
+    </div>
+  )
+}
+
 function FileDropZone({ accept, onChange, label }: { accept: string; onChange: (f: File) => void; label?: string }) {
   const ref = useRef<HTMLInputElement>(null)
   return (
@@ -1020,7 +1052,7 @@ function RevolutSavingsTab() {
       {parseResult && (
         <div className="space-y-4">
           {summary.rows != null && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Rows in file</p><p className="text-2xl font-bold">{summary.rows as number}</p></div>
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range from</p><p className="text-sm font-medium">{summary.date_from as string}</p></div>
               <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs text-slate-500">Date range to</p><p className="text-sm font-medium">{summary.date_to as string}</p></div>
@@ -1032,7 +1064,7 @@ function RevolutSavingsTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -1221,6 +1253,7 @@ function IBFlexTab() {
   })
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
+  const lastRun = useLastRun('ib', setFilterFrom, setFilterTo)
   const [replaceMode, setReplaceMode] = useState(false)
   const [parseResult, setParseResult] = useState<Record<string, unknown> | null>(null)
   const [secMappingOverrides, setSecMappingOverrides] = useState<Record<string, number>>({})
@@ -1245,6 +1278,7 @@ function IBFlexTab() {
       setXml(data.xml)
       setWasCached(Boolean(data.cached))
       _persistSettings()
+      lastRun.remember(filterFrom, filterTo, 'preview')
       if (accountId) {
         const parsed = await ibFlexParse(data.xml, accountId, cashAccountId ?? undefined)
         setParseResult(parsed)
@@ -1258,7 +1292,7 @@ function IBFlexTab() {
   const parseMut = useMutation({
     mutationFn: () => ibFlexParse(rawXml, accountId!, cashAccountId ?? undefined),
     onSuccess: (d) => {
-      setParseResult(d); setSecMappingOverrides({}); _persistSettings()
+      setParseResult(d); setSecMappingOverrides({}); _persistSettings(); lastRun.remember(filterFrom, filterTo, 'preview')
       setSelectedInv(defaultSelection(d.inv_records ?? []))
       setSelectedTx(defaultSelection(d.tx_records ?? []))
     },
@@ -1290,6 +1324,7 @@ function IBFlexTab() {
     onSuccess: (d) => {
       setImportResult(d)
       _persistSettings()
+      lastRun.remember(filterFrom, filterTo, 'import')
     },
   })
 
@@ -1423,6 +1458,7 @@ function IBFlexTab() {
                 className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
             </div>
           </div>
+          <div className="mt-3"><LastRunNote last={lastRun.last} to={filterTo} /></div>
         </CardBody>
       </Card>
 
@@ -1471,7 +1507,7 @@ function IBFlexTab() {
       {parseResult && (
         <div className="space-y-4">
           {Object.keys(meta).length > 0 && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {['account_id', 'from_date', 'to_date'].map(k => meta[k] != null && (
                 <div key={k} className="bg-slate-50 rounded-lg p-3">
                   <p className="text-xs text-slate-500">{k.replace('_', ' ')}</p>
@@ -1481,7 +1517,7 @@ function IBFlexTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: visibleInv.length - newInv },
@@ -1742,7 +1778,7 @@ function RevolutTradingTab() {
       {parseResult && (
         <div className="space-y-4">
           {summary.rows != null && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="bg-slate-50 rounded-lg p-3">
                 <p className="text-xs text-slate-500">Rows in file</p>
                 <p className="text-2xl font-bold">{summary.rows as number}</p>
@@ -1758,7 +1794,7 @@ function RevolutTradingTab() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -1981,6 +2017,7 @@ function SaxoTab() {
   // Import options
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const lastRun = useLastRun('saxo', setDateFrom, setDateTo)
   const [replaceMode, setReplaceMode] = useState(false)
   const [importInv, setImportInv] = useState(true)
   const [importCharges, setImportCharges] = useState(true)
@@ -2053,6 +2090,7 @@ function SaxoTab() {
         ...defaultSelection((d.charge_records ?? []) as Array<Record<string, unknown>>),
       ]))
       setSecMappingOverrides({})
+      lastRun.remember(dateFrom, dateTo, 'preview')
     },
   })
   const importMut = useMutation({
@@ -2069,7 +2107,7 @@ function SaxoTab() {
         : null
       return saxoImport({ access_token: accessToken, client_key: clientKey, saxo_accounts: saxoAccounts, date_from: dateFrom, date_to: dateTo, use_sim: useSim, replace_mode: replaceMode, import_inv: importInv, import_charges: importCharges, selected_descs: selectedDescs })
     },
-    onSuccess: (d) => { setImportResult(d); setPreview(null) },
+    onSuccess: (d) => { setImportResult(d); setPreview(null); lastRun.remember(dateFrom, dateTo, 'import') },
   })
 
   const statusColor = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] || 'text-slate-600 bg-slate-100')
@@ -2098,6 +2136,10 @@ function SaxoTab() {
           <div className="text-xs text-slate-500">
             Redirect URL for this address: <code className="bg-slate-100 px-1 rounded select-all">{redirectUri}</code> — add it (and the one for every other
             address you open Oikos from) to your Saxo app's redirect URLs.
+          </div>
+          <div className="text-xs text-slate-500">
+            If Saxo's login page answers <i>Invalid or unknown client_id</i>, the key is right but Saxo has deactivated the app (it can still be listed as
+            <i> Live App – Approved</i>): open the Saxo developer portal → Apps → Live Apps and re-activate it, then connect again.
           </div>
           <div className="flex gap-4 text-sm">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -2209,6 +2251,7 @@ function SaxoTab() {
                 <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </div>
             </div>
+            <LastRunNote last={lastRun.last} to={dateTo} />
             <div className="flex gap-4 text-sm">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} className="rounded" />
@@ -2499,6 +2542,7 @@ function CoinbaseTab() {
   const [cashAccountId, setCashAccountId] = useState<number | ''>('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const lastRun = useLastRun('coinbase', setDateFrom, setDateTo)
   const [replaceMode, setReplaceMode] = useState(false)
 
   const [testResult, setTestResult] = useState<Array<Record<string, unknown>> | null>(null)
@@ -2528,6 +2572,7 @@ function CoinbaseTab() {
       setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
       setSelectedTx(defaultSelection(d.tx_records as Array<Record<string, unknown>>))
       setSecMappingOverrides({})
+      lastRun.remember(dateFrom, dateTo, 'preview')
     },
   })
   const importMut = useMutation({
@@ -2546,7 +2591,7 @@ function CoinbaseTab() {
         selected_tx:  txRecs.filter(r  => selectedTx.has(r.desc as string)).map(r => r.desc),
       })
     },
-    onSuccess: (d) => { setImportResult(d); setPreview(null) },
+    onSuccess: (d) => { setImportResult(d); setPreview(null); lastRun.remember(dateFrom, dateTo, 'import') },
   })
 
   const sc = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] ?? 'text-slate-600 bg-slate-100')
@@ -2668,6 +2713,7 @@ function CoinbaseTab() {
               <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
           </div>
+          <LastRunNote last={lastRun.last} to={dateTo} />
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} className="rounded" />
             Replace mode — delete all existing Coinbase records before importing
@@ -2740,6 +2786,7 @@ function CryptoComTab() {
   const [cashAccountId, setCashAccountId] = useState<number | ''>('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const lastRun = useLastRun('cryptocom', setDateFrom, setDateTo)
   const [replaceMode, setReplaceMode] = useState(false)
 
   const [testResult, setTestResult] = useState<Array<Record<string, unknown>> | null>(null)
@@ -2769,6 +2816,7 @@ function CryptoComTab() {
       setSelectedInv(defaultSelection(d.inv_records as Array<Record<string, unknown>>))
       setSelectedTx(defaultSelection(d.tx_records as Array<Record<string, unknown>>))
       setSecMappingOverrides({})
+      lastRun.remember(dateFrom, dateTo, 'preview')
     },
   })
   const importMut = useMutation({
@@ -2787,7 +2835,7 @@ function CryptoComTab() {
         selected_tx:  txRecs.filter(r  => selectedTx.has(r.desc as string)).map(r => r.desc),
       })
     },
-    onSuccess: (d) => { setImportResult(d); setPreview(null) },
+    onSuccess: (d) => { setImportResult(d); setPreview(null); lastRun.remember(dateFrom, dateTo, 'import') },
   })
 
   const sc = (s: string) => ({ new: 'text-green-600 bg-green-50', exists: 'text-slate-400 bg-slate-50', likely_dup: 'text-orange-500 bg-orange-50' }[s] ?? 'text-slate-600 bg-slate-100')
@@ -2906,6 +2954,7 @@ function CryptoComTab() {
               <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
           </div>
+          <LastRunNote last={lastRun.last} to={dateTo} />
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={replaceMode} onChange={e => setReplaceMode(e.target.checked)} className="rounded" />
             Replace mode — delete all existing Crypto.com records before importing
@@ -3076,7 +3125,7 @@ function CapitalComTab() {
 
       {parseResult && (
         <div className="space-y-4">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -3266,7 +3315,7 @@ function FxProTab() {
         <div className="space-y-4">
           {parseErrors.length > 0 && <ErrorBox msg={parseErrors.join('; ')} />}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: '🆕 New investments', value: newInv },
               { label: '🔄 Skip investments', value: inv.length - newInv },
@@ -3952,7 +4001,7 @@ export default function Importers() {
     <div>
       <PageHeader title="Importers" subtitle="Import transactions from banks and brokers" />
 
-      <div className="px-6 py-4">
+      <div className="px-3 sm:px-6 py-4">
         {/* Section selector */}
         <div className="flex gap-2 mb-6">
           {([

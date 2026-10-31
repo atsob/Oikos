@@ -89,6 +89,24 @@ INSTITUTIONS = [('ABN AMRO BANK', 'Bank', 'ABNANL2A', 'www.abnamro.nl', None, 'A
   'A-',
   None)]
 
+# The tax-return lines (Greece, E1 2025) of each category: (gains, gains on a foreign issuer, dividends, dividends of a foreign company). A foreign category has one dividend line (the foreign one); a category that can hold both has two. A category whose gains are exempt has
+# Table 6's line; a taxable one has the line of a Greek issuer's gain and of a foreign one's (Table 4Ε); crypto has its gain line. Empty: the Tax Return's built-in code.
+_EX, _TX_G, _TX_F, _DV_G, _DV_F = '659 – 660', '829 – 830', '865 – 866', '291 – 292', '295 – 296'
+TAX_CATEGORY_CODES = {
+    'Belgium Regulated Shares':             (_EX,   None,  _DV_F, None),
+    'Foreign Listed':                       (_EX,   None,  _DV_F, None),
+    'Foreign Listed Shares (30% Dividend)': (_EX,   None,  _DV_F, None),
+    'Local Listed':                         (_EX,   None,  _DV_G, _DV_F),
+    'Spain Regulated Shares':               (_EX,   None,  _DV_F, None),
+    'UCITS':                                (_EX,   None,  _DV_G, _DV_F),
+    'Non-UCITS':                            (_TX_G, _TX_F, _DV_G, _DV_F),
+    'Other':                                (_TX_G, _TX_F, _DV_G, _DV_F),
+    'FX Spot':                              (_TX_G, _TX_F, None,  None),
+    'Crypto':                               (_TX_F, None,  None,  None),
+    'Bond':                                 (None,  None,  None,  None),
+    'CD':                                   (None,  None,  None,  None),
+}
+
 # (tax_category, display_name, gains_taxable, gains_rate, gains_tax_code,
 #  dividend_local_tax_rate, dividend_wht_creditable, reinvest_taxable, income_tax_rate,
 #  notes, show_in_capital_gains)
@@ -112,7 +130,7 @@ TAX_CATEGORY_RULES = [('Belgium Regulated Shares',
   False,
   False,
   '15.00',
-  'Coupon interest taxed at 15%. Capital gains treatment depends on instrument.',
+  'Coupon interest taxed at 15%. Greece: interest on listed corporate bonds is 5% from 12 Apr 2025, which the Tax Return applies by payment date. Capital gains treatment depends on instrument.',
   False),
  ('CD',
   'Time Deposit / CD',
@@ -145,8 +163,7 @@ TAX_CATEGORY_RULES = [('Belgium Regulated Shares',
   True,
   False,
   None,
-  'Foreign shares under a tax treaty. Capital gains generally exempt. Dividends 5% with WHT '
-  'credit.',
+  'Foreign shares under a tax treaty. Capital gains generally exempt. The dividend rate is the usual withholding at the source, the default when a dividend is entered; the Tax Return charges the home rate (Greece 5%) and credits the foreign tax against it.',
   True),
  ('Foreign Listed Shares (30% Dividend)',
   'Foreign Listed (30%)',
@@ -164,7 +181,7 @@ TAX_CATEGORY_RULES = [('Belgium Regulated Shares',
   'Local Listed Shares',
   False,
   None,
-  '659-660',
+  '659 – 660',
   '5.00',
   True,
   False,

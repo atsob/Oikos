@@ -385,13 +385,15 @@ def generate_drafts():
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("""
+        from api.access import scope_sql, in_scope_sql      # a restricted user generates the drafts of their own templates only
+        cur.execute(f"""
             SELECT templates_id, accounts_id, payees_id, description, name,
                    total_amount, periodicity, next_due_date, auto_confirm, accounts_id_target, is_card_payment
             FROM Recurring_Templates
             WHERE active = TRUE
               AND (next_due_date IS NULL OR next_due_date <= CURRENT_DATE)
               AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+              {scope_sql('accounts_id')} AND (accounts_id_target IS NULL OR {in_scope_sql('accounts_id_target')})
         """)
         templates = cur.fetchall()
         cols = [d[0] for d in cur.description]

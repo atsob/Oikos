@@ -177,7 +177,11 @@ def _fred(series_id: str, key: str) -> pd.Series:
                              "observation_start": (datetime.now() - pd.Timedelta(days=800)).strftime("%Y-%m-%d")},
                      timeout=(8, 25))
     r.raise_for_status()
-    obs = [(o["date"], float(o["value"])) for o in r.json().get("observations", []) if o.get("value") not in (None, "", ".")]
+    try:
+        data = r.json()
+    except ValueError:         # FRED answers 200 with an HTML page during maintenance
+        raise RuntimeError("FRED returned a web page instead of data (likely site maintenance) — try again later") from None
+    obs = [(o["date"], float(o["value"])) for o in data.get("observations", []) if o.get("value") not in (None, "", ".")]
     return pd.Series([v for _, v in obs], index=pd.to_datetime([d for d, _ in obs]))
 
 

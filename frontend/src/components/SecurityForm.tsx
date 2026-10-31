@@ -27,7 +27,7 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 }
 
 function FormSection({ children }: { children: ReactNode }) {
-  return <p className="col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
+  return <p className="col-span-2 sm:col-span-3 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t border-slate-100">{children}</p>
 }
 
 export function SecurityFormFields({ form, set, currencies, taxRules, issuers = [] }: {
@@ -47,7 +47,7 @@ export function SecurityFormFields({ form, set, currencies, taxRules, issuers = 
   )
 
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
       <FormSection>Identity</FormSection>
       <FormField label="Ticker *"><Input value={form.ticker} onChange={e => set('ticker', e.target.value)} placeholder="AAPL" className="font-mono" /></FormField>
       <div className="col-span-2">

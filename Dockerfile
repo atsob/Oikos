@@ -1,13 +1,15 @@
 # ── Stage 1: Build React ──────────────────────────────────────────────────────
-FROM node:22-alpine AS frontend-build
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-build
 WORKDIR /build
 # .git is excluded from the build context (see .dockerignore), so the commit hash
 # shown in the sidebar footer is passed in from the host instead of using `git`
 # inside the image. See docker-compose.yml's build.args for how these are set.
 ARG GIT_HASH=unknown
 ARG GIT_DATE=
+ARG APP_VERSION=
 ENV GIT_HASH=$GIT_HASH
 ENV GIT_DATE=$GIT_DATE
+ENV APP_VERSION=$APP_VERSION
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
@@ -16,11 +18,14 @@ RUN npm run build:docker
 # ── Stage 2: Python app ───────────────────────────────────────────────────────
 FROM python:3.13-slim
 
-# System dependencies + PostgreSQL client
+# System dependencies + PostgreSQL client. No compiler and no -dev packages: every Python dependency installs from a ready-built wheel
+# (psycopg2-binary carries its own libpq), and what is not in the image cannot have a vulnerability. `apt-get upgrade` brings in the
+# security fixes Debian has published since the base image was built.
 RUN set -eux \
  && apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
-        build-essential curl ca-certificates gnupg libpq-dev \
+        curl ca-certificates \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
@@ -49,6 +54,10 @@ COPY . .
 
 # Inject pre-built React (replaces any stale local dist)
 COPY --from=frontend-build /build/dist ./frontend/dist
+
+# The release version (vYYYY-MM-DD.HF) — also reported by /api/health
+ARG APP_VERSION=
+ENV APP_VERSION=$APP_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

@@ -1,14 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import PlotlyReact from 'react-plotly.js'
+import Plot from '@/components/Plot'
 import { Button, Spinner, Tooltip } from '@/components/ui'
 import { fmtEur, plotLayout } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { getStressAssumptions, runRateShock, runStressReplay } from '@/lib/api'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Plot: React.ComponentType<any> = (PlotlyReact as any).default ?? PlotlyReact
 
 // ── Types (mirror api/routers/stress.py) ─────────────────────────────────────
 type Scenario = { id: string; name: string; start: string; end: string; yield_change_pp: number; desc: string }

@@ -255,6 +255,9 @@ def compute(prev: dict | None = None) -> dict:
             return k, jobs[k]()
         except Exception as e:
             log.warning("Local Watch (%s): %s failed: %s", cc, k, e)
+            last = prev.get(k)
+            if isinstance(last, dict) and last.get("status") not in (None, "na"):      # a source that is down for a while keeps its last good reading (its as-of date shows)
+                return k, {**last, "stale": f"Refresh failed ({e})"[:200]}
             return k, {"status": "na", "note": f"Could not be fetched: {e}"[:200]}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -379,6 +382,13 @@ def _default_playbook() -> str:
 def get_local_watch(refresh: bool = False):
     if (empty := _no_country()) is not None:
         return empty
+    from api.access import restricted_now
+    if restricted_now():
+        # the cache is shared and its exposure tile is the household's: a restricted user reads it without that tile and cannot rebuild it
+        d = _cached()
+        if not d:
+            return {"status": "na", "note": "The Local Market Watch has not been built yet."}
+        return {k: v for k, v in d.items() if k != "exposure"}
     if not refresh:
         d = _cached()
         if d:

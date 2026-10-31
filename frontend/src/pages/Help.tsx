@@ -156,6 +156,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Dashboard</H2>
         <P>The landing page — a snapshot of where things stand right now. Top right, <b>Prices updated … ago</b> shows when the scheduler last finished its market-data refresh (grey, amber after 30 minutes, red after 3 hours; hover for the time and whether the run reported problems) — a quick check that prices are current. The same indicator appears wherever market prices are used: the header of <b>Investments</b>, <b>Market Data</b>, every <b>Security</b> and <b>Currency</b> page (on a security it is that security's own last download), and the top bar of the valued Reports (Net Worth, Inv. Positions, Inv. Performance, Securities Analysis, Planning, Custom).</P>
+        <H3>Customize the Dashboard</H3>
+        <P>
+          The <b>Customize</b> button (top right) opens a panel listing every block of the Dashboard — key figures, Insights, Market valuation,
+          Market Watch, Local Market Watch, Alerts, Uncategorized transactions, Pending drafts, Net Worth breakdown and trend, Options, Accounts,
+          Plan, Upcoming bills, Unusual transactions and the two AI summaries. <b>Tick</b> the ones to show, <b>drag</b> a row (or use its ▲ ▼ arrows,
+          which also work on a touch screen) to put it where you want, and choose <b>Full</b> or <b>Half</b> width for each; the Dashboard changes as you go
+          and the choice is saved with your preferences, so it follows you across devices. <b>Reset</b> brings back the default. Two <i>Half</i> blocks that
+          follow one another share a row (by default Upcoming bills and Unusual transactions, and the two AI summaries); a Half block with no Half neighbour
+          takes the whole row, and below 1024 px wide every block stacks at full width. A block that has nothing to show (no alerts, no uncategorized
+          transactions) takes no room, and its neighbour then widens to fill the row. Hiding a block only hides it — for example, hiding Options keeps
+          the account selection you made.
+        </P>
         <H3>KPI cards</H3>
         <P>
           Net Worth, Cash, Investments, Pension &amp; Savings, and Assets, each with a "vs prev month" and
@@ -168,7 +180,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Assets</b> each open a page with the same card for every account that makes the number up — its value, the
           change vs the previous month and today on one line, and YTD below, so the accounts add up to the card. It counts
           the accounts the Dashboard counts (see Options below, including a closed account that held something earlier in
-          the year); the accounts are grouped by account type, each type with its own subtotal; accounts that are empty and did not move are hidden behind a tick-box, and the Investments page has a
+          the year); the accounts are grouped by account type, each type with its own subtotal; an account in a foreign currency also shows its balance in that currency under the EUR value; accounts that are empty and did not move are hidden behind a tick-box, and the Investments page has a
           <b>Performance (P&amp;L)</b> button to the report the card used to open. Click an account to open its transactions —
           Cash Register for cash, savings and asset accounts, Investments → Transactions for brokerage, margin and pension
           accounts — with a <b>Back</b> button to return, same as any other account link (see below).
@@ -246,7 +258,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Triggered alerts are shown in <b>groups</b>, each with its own header, count, collapse state and{' '}
           <b>Dismiss</b> / <b>Dismiss all N</b> button that leaves the other groups alone: <b>Support / Resistance</b>,{' '}
           <b>Price Alerts</b>, <b>Signals</b> (Signal Change, Golden/Death Cross, Trailing Stop, Financial Health
-          Change), <b>Upcoming Events</b> (bond maturities/coupons, dividend and loan payments), <b>Corporate Actions
+          Change), <b>Action</b> (a held security's Action verdict moving between Reduce / Sell, Hold and Add), <b>Upcoming Events</b> (bond maturities/coupons, dividend and loan payments), <b>Corporate Actions
           &amp; Data</b> (stock splits, split mismatches) and <b>Portfolio</b> (allocation drift). Within a group the most
           serious alerts come first. Every alert has a <b>Dismiss</b> button, and what it does depends on the kind:
           Signal Change, Stock Split and Financial Health Change are acknowledged until the next real change; a Cross or
@@ -254,7 +266,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           silenced for that event only (that threshold, that level, that payment date) and comes back if the event
           happens afresh, e.g. a price that recovers and then falls below your threshold again. An alert tied to a
           security opens its Security Detail when clicked, a currency alert its Currency Detail. Dismissing clears the
-          row(s) immediately; the panel re-syncs in the background on its normal 5-minute refresh.
+          row(s) instantly, without waiting for the server (they reappear only if it refuses); the panel re-syncs in the
+          background on its normal 5-minute refresh.
         </Note>
         <Note>
           <b>Support / Resistance alerts</b> cover your <b>holdings</b>, your <b>Watchlist</b> (Market Data → Watchlist —
@@ -262,14 +275,29 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           (non-EUR cash or securities), each tagged Holding / Watchlist / Currency. They use the same levels the price
           charts draw, over a fixed 1-year window of daily closes, and only meaningful ones (two or more touches, or the
           1-year high/low). Four events: <b>support broken</b> / <b>resistance broken</b> — two consecutive closes beyond a
-          level within the last 10 trading days, still beyond it — and <b>near support</b> / <b>near resistance</b> — the
+          level within the last 10 trading days, still beyond it (the levels are those from before the break, so the alert then says what the level has become — a broken support is resistance now — and names the next level that has held, which can be further away than the nearest, weaker line on the price chart). The two closes are not necessarily the latest two: the alert gives the date the break was confirmed, and if the price is already walking back — falling for days, or more than 1% off its high since the break, after a resistance break; the reverse after a support break — it adds a ⚠️ "already fading / recovering" note — and <b>near support</b> / <b>near resistance</b> — the
           last close within about a quarter of the reversal size (at least 0.75%) of the nearest level. For a holding the
-          alert carries your unrealized P&amp;L: a broken support while at a loss is red, near resistance while 30% or more
+          alert carries your unrealized P&amp;L (when the security is held in several accounts, up or down vs cost for each account — an account whose shares have no cost basis says so instead of showing a percentage): a broken support while at a loss is red, near resistance while 30% or more
           up suggests taking profit or rebalancing. A Watchlist security gets entry wording (near support — a possible
           entry; a breakout above resistance), a currency the euro value of your exposure. Holdings and currency
           exposures below Tools → App Settings → Support / Resistance Alerts → minimum (€500 by default) are left out.
-          New alerts of any group can also go to <b>Telegram</b>: tick the groups under App Settings → Telegram Alerts
-          (all off by default) — each alert is sent once, on the Signal Notifications job's 30-minute cadence.
+          Under Tools → App Settings → <b>Dashboard Alerts</b> you choose which groups the Dashboard shows (all by default); a group you untick is only hidden there — it is still raised, so Telegram is unaffected, and the <b>Alerts</b> page (sidebar, or <i>All alerts →</i> on the panel) still lists every group, a tab each, marking the ones hidden on the Dashboard. Dismissing works the same there.
+          New alerts of any group can also go to <b>Telegram</b> — see <i>Telegram alerts</i> below.
+        </Note>
+        <Note>
+          <b>Telegram alerts — setup and what is sent.</b> Oikos can message your phone through a Telegram bot of your own.
+          <b>Set-up (once):</b> (1) in Telegram talk to <b>@BotFather</b>, send <code>/newbot</code> and copy the token it gives you;
+          (2) send any message to your new bot, then open <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> in a browser and copy the
+          number in <code>"chat":{'{'}"id": …{'}'}</code>; (3) put them in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code> and
+          <code> TELEGRAM_CHAT_ID</code> (the token is a secret, so it lives only there — never in the database or on screen);
+          (4) restart the app and scheduler containers; (5) press <b>Send test message</b> in Tools → App Settings → Telegram Alerts, which
+          also tells you whether the bot is configured. Leave both values empty to switch Telegram off. <b>What is sent:</b> (a) when{' '}
+          <b>Market Watch</b> or <b>Local Market Watch</b> turns red, with the indicators in Warning and your playbook, and when it leaves red — never
+          the daily readings; the checkbox at the top of Telegram Alerts switches this on or off; (b) new <b>Dashboard alerts</b> of the groups you
+          tick under <i>Also send new Dashboard alerts from these groups</i> (all off by default, and they need the checkbox above on) — one message
+          per run listing the new alerts (the first 15), each alert sent once, on the Signal Notifications job's 30-minute cadence; an alert that
+          clears or is dismissed and later fires again is sent again. Which groups the Dashboard <i>shows</i> (Tools → App Settings → Dashboard Alerts)
+          is separate: hiding a group there does not stop it going to Telegram. (c) The <b>Plan</b> page's morning reminder — see Plan.
         </Note>
         <Note>
           The <b>uncategorized transactions</b> panel lists non-transfer cash transactions with no category —
@@ -414,6 +442,16 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Transactions</b> — the full Buy/Sell/Dividend/Reinvest/etc. history, editable.</li>
           <li><b>Cash</b> — the cash-side movements linked to investment accounts (deposits, withdrawals, fees).</li>
         </Ul>
+        <Note>
+          <b>Margin positions (FX Spot, CFDs).</b> A margin product — XAGEUR on Saxo, a CFD on an ETF — does not move its notional through your cash: opening it costs only the spread or commission, closing it
+          moves only the profit or loss, and holding it costs the financing charges. Oikos books the cash side that way, so the broker's cash account matches the broker's own cash figure. For every Buy or Sell in a <b>Margin</b> account whose
+          Instrument is FX Spot or a CFD type (both conditions: the same trade in an ordinary brokerage account keeps the full amount in cash), the linked cash transaction is the <b>commission</b> (Buy) or the <b>realised profit or loss</b> against the lots closed, first in, first out (Sell); the notional goes to
+          a liability account named <i>… (Margin financing)</i>, made automatically, which holds minus the open cost. The position itself is unchanged — quantity, price, cost and market value — so net worth is the same as
+          before: cash + positions + Margin financing = the broker's equity. It is kept up to date whenever you add, change or delete such a trade or an import runs; the cash legs read "— margin: commission" or "— margin: realised P&amp;L". An <b>Account Preset</b> that holds a Margin account together with its linked cash account gets the Margin financing account added automatically (without it the cash would be counted without its offset), so existing presets need no editing; a Limited user mapped to a Margin account gets it with the account. The Margin financing account can be opened in the <b>Cash Register</b> to read how each amount came about, but it is <b>read-only</b>: its entries, and the cash entries of margin trades (marked 🔒), are kept by Oikos from the trades — their amount, date and description cannot be edited, deleted or moved, and nothing is entered in the financing account by hand; change the trade in Investments instead. Flags (cleared, reconciled) and a cash entry's payee and category can still be set.
+          <b>Financing on FX Spot (XAGEUR).</b> Saxo rolls a spot FX position over each day and adds the swap points to its opening price, so the position's cost slowly rises and Saxo's unrealised P&amp;L is a little lower than the one Oikos shows from the trade prices (about €0.17 a day for 30 oz of XAGEUR). The trade prices in Oikos are the facts; the financing reaches your cash when you close, because the closing trade's booked amount already includes it.
+          <b>Saxo margin.</b> Choose a Margin account that is mapped to a Saxo account (Importers → Saxo Bank) and a <i>Saxo margin</i> panel appears above the Investments list with Saxo's own figures, read live from Saxo with the login the importer keeps: margin utilization (with a bar — green below 50%, amber to 80%, red above), margin used, margin available, cash available and account value, with the time they were read and a refresh button. Oikos cannot work these out itself, because the margin Saxo requires depends on each instrument's leverage and Saxo's risk rules. The panel is for admins, stores nothing, and says why when Saxo cannot be reached or the login has expired. The cash it quotes is the cash Saxo has booked; Saxo's platform, and Oikos, also count trades that have not settled yet.
+          <b>Booked amount.</b> When the broker states the cash it actually booked for a trade, Oikos uses that amount as the trade's cash entry instead of deriving it: the Saxo import does this for every trade (its "Booked amount"), so commissions, currency conversion and the profit or loss of a CFD close come out as the broker has them and the cash matches the broker's own figure to the cent. Editing a trade by hand (quantity, price, amounts, date or action) drops its booked amount, and its cash entry follows the trade again.
+        </Note>
         <P>
           <b>Sync Balances</b> (top-right) refreshes Investments, Pension, and Holdings — the account types this
           page manages (not Bank &amp; Cash).
@@ -540,6 +578,41 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <Note>
           The Templates tab has a search box, filtering by template name, account, payee, or frequency.
         </Note>
+      </>
+    ),
+  },
+  {
+    id: 'plan',
+    label: 'Plan',
+    body: (
+      <>
+        <H2>Plan</H2>
+        <P>
+          A to-do list for money moves that have dates — a rebalancing plan (sell this on Monday, reinvest the maturing T-bill on the 30th), a tax-year
+          checklist, a savings schedule — with a <b>Telegram reminder every morning</b>. Each <b>step</b> has a plan name (steps of one plan are shown
+          together), a due date, what to do, and optional details (amounts, accounts, limit prices, the reason). The page groups the open steps into
+          <i> Overdue</i>, <i>Today</i> and one section per later day; a closed step moves to <i>Done and skipped</i>.
+        </P>
+        <H3>Adding steps</H3>
+        <P>
+          <b>New step</b> adds one. <b>Import</b> adds a whole plan from text — one step per line as <code>date | what to do | details</code>, with dates such as
+          <code> 2026-10-26</code>, <code>26/10/2026</code>, <code>26 Oct</code> or <code>Mon 26 Oct 2026</code>; a line starting with <code>#</code> names the plan for the
+          lines after it. Lines it cannot read are listed and the rest are added.
+        </P>
+        <H3>Ticking them off</H3>
+        <P>
+          Tick the box when a step is done, or use <b>⏭ Skip</b> for one you decided against — either removes it from the reminders. To <b>reopen</b> one, open <i>Done and skipped</i> at the bottom and untick it (or press ↩ on a skipped one); the Dashboard block offers an <b>Undo</b> right after you tick a step. The
+          Dashboard has a <b>Plan</b> block (Customize → Plan) with the overdue steps, today's and the next seven days', each with a tick box (only the box ticks — clicking the text opens the Plan page); it disappears
+          when there is nothing to do.
+        </P>
+        <H3>The reminder</H3>
+        <P>
+          Every day from 08:00 (change it under Tools → Scheduler → <b>Plan Reminders</b>) one Telegram message lists the steps <b>due today</b> with their details, the
+          open steps that are <b>overdue</b> (repeated every day until you tick or skip them), and a heads-up of tomorrow's titles. Nothing is sent on a day with nothing
+          to say, and a restart of the scheduler does not send it twice. It uses the Telegram bot set up under <i>Telegram alerts</i> (Dashboard) and its on/off switch;
+          <b> Remind me now</b> sends it immediately, which is also a way to test it. Claude, through the connector, can read the steps (<code>plan_items</code>, <code>plan_due</code>)
+          to check how far along you are.
+        </P>
       </>
     ),
   },
@@ -688,7 +761,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           date and Net Worth's history already use. Sector weights, asset mix %, credit ratings, category, and
           expense ratio always reflect today's fund data regardless of the comparison date — Oikos only ever
           stores a fund's current internal composition, not a historical version of it — so the Δ you see reflects
-          what you bought/sold and price/FX moves since then, not the fund's own rebalancing.
+          what you bought/sold and price/FX moves since then, not the fund's own rebalancing. Each table ends in a <b>Total</b> row that also
+          totals the as-of column and its change in value.
         </Note>
         <Note>
           <b>⚙️ Account Preset</b> at the top scopes every sub-tab (Graph, Summary, Detail Analysis, Current
@@ -696,6 +770,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           control under Net Worth for how presets work. Here the picker also offers <b>Cash/Bank accounts</b>{' '}
           alongside investment accounts: include one in a preset and Portfolio Analysis → Asset Allocation shows
           its balance as a <b>Cash</b> slice instead of only ever breaking down investment holdings.
+        </Note>
+        <Note>
+          <b>Compare two presets.</b> On the Portfolio Analysis sub-tab, the highlighted <b>⚖️ Compare two presets</b> bar picks a second preset (say a family member's accounts, or a pension
+          wrapper against your main brokerage) and shows its Portfolio Analysis next to the first, side by side, with the same view, date and grouping controls
+          applied to both — so allocation, sectors and currency can be read across without switching back and forth. The choice is remembered; <b>Stop comparing</b> returns to one.
         </Note>
         <Note>
           <b>Portfolio Analysis</b> looks through held ETFs/Mutual Funds into their underlying composition (sector weights,
@@ -729,7 +808,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "Uncovered Fund Bond Exposure" bucket only holds funds that actually hold bonds but lack a ratings
           breakdown — a fund already known to hold no bonds at all (an Asset Class Override, or a 0% bond
           allocation from Yahoo, e.g. a physical commodity ETC) is excluded rather than having its whole value
-          counted as unrated bond exposure. Credit-quality labels from a fund's look-through ratings (e.g. "bbb")
+          counted as unrated bond exposure; likewise a fund whose Asset Class Override is anything but Bonds (a swap-based money-market
+          or inflation fund, say) is left out of Bond Quality altogether. <b>Avg. Duration</b> of each row is weighted by value, so a few
+          long-dated fund slices don't make a row of short T-bills look long. Credit-quality labels from a fund's look-through ratings (e.g. "bbb")
           are normalized onto the same "BBB"/"AA"/"Below B" labels direct bond holdings use, so the same rating
           doesn't show up as two separate rows with different casing. Rows are ordered highest credit quality
           first (AAA → Below B), not by value. Yahoo's fund data also reports a "US Government" figure alongside
@@ -802,9 +883,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Style Box</b> has two views. <b>Style Box</b> shows Morningstar's two 3×3 grids — equity funds by size (large, mid, small) and
           style (value, blend, growth), bond funds by credit quality (high, medium, low) and duration (limited, moderate, extensive) —
           each square with its value, its weight and, with a compare date, the change in points; a table below holds what has no grid
-          (direct stocks and bonds, cash, commodity and money-market funds, funds Morningstar does not cover). <b>Category</b> shows
+          (direct stocks and bonds, cash, commodities — direct holdings such as Silver/Euro as well as commodity funds — money-market
+          funds, funds Morningstar does not cover; crypto and anything else direct is listed as <i>Direct Other</i>). <b>Category</b> shows
           Morningstar's Category of each fund (<i>Global Large-Cap Blend Equity</i>, <i>EUR Corporate Bond</i> …), or its coarser broad
-          group with the <b>Broad groups</b> box. Click a square, a row or a bar to list the securities in it, with their Style Box and
+          group with the <b>Broad groups</b> box; direct holdings are listed as <i>Direct Stocks</i>, <i>Direct Bonds</i>,
+          <i>Direct Commodities</i> and <i>Direct Other</i>. Click a square, a row or a bar to list the securities in it, with their Style Box and
           Category (a ✎ marks one set by hand). Morningstar's Style Box and Category are fetched by ISIN (Market Data → Downloads →
           <b>Morningstar</b>, a fund's own Downloads tab, or the monthly <b>Morningstar Category &amp; Style Box</b> scheduler job), together with a bond fund's
           <b>Duration</b> and <b>Maturity</b> (effective, in years — Yahoo's figures for these are not used). To set one yourself — for a
@@ -871,6 +954,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, <b>Stress Test</b>, and <b>TWR/MWR</b> (time- and
           money-weighted return).
         </P>
+        <Note>
+          <b>One Account Preset for the whole report.</b> The <b>⚙️ Account Preset</b> bar above the sub-tabs — the same saved sets of accounts everywhere in Inv. Performance — scopes every
+          sub-tab except Savings: <b>P&amp;L</b> and <b>Performance</b> (only the preset's accounts, and the totals follow), <b>Best / Worst Days</b> (the account list is limited to the preset and
+          “All” means all of them), <b>Dividend Tracker</b> (income, the cost basis behind the yield and the forecast — the Recommendations view is not account-based) and <b>Bond Schedule</b>, as
+          well as Benchmark, Risk Metrics, Correlation, Monte Carlo, Stress Test and TWR/MWR. Pick it once and it stays as you move between tabs; Full Portfolio means every account.
+        </Note>
         <Note>
           <b>Best / Worst Days</b> (next to Performance) picks one investment account (or all of them — inactive accounts are hidden unless <b>Show inactive</b> is ticked) and a calendar year and lists the best
           and worst <b>days, weeks or months</b> (the <b>Period</b> switch) — four tables: worst by loss in €, worst by loss in %,
@@ -946,6 +1035,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           the same start date as your portfolio. Lookback runs YTD/3M/6M/1Y/2Y/3Y/5Y/10Y/All, clamped to whenever the
           account scope actually started investing — <b>All</b> means "since inception," not further back. If a comparison has fewer prices than the
           lookback, every line starts on the latest first price among them (a note says which line set it), so all lines and returns cover the same period.
+        </Note>
+        <Note>
+          <b>Total return</b> (tick box on the Benchmark tab, here and on a security's own Benchmark tab) adds the <b>distributions back</b>, from the Dividends data: each amount per share is added to the price on its ex-date and reinvested there, for every line — securities and accounts alike (for an account, the distributions of what it held the day before). Without it, a distributing fund (IUHE, AETF, EXVM…) is compared on price only and trails an accumulating one by roughly its yield every year; with it the two are on the same footing. Each card says how many distributions were added to its line. A market index has none in the data and stays a price index, so compare a fund with a <i>total-return</i> index if you have one. It is only as good as the Dividends data — a missing distribution is missing here, and a price series that already includes its distributions would be counted twice.
         </Note>
         <Note>
           The <b>portfolio</b> line reflects what you actually held on each day in the window — reconstructed from
@@ -1044,8 +1136,27 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           (collapsed by default) Tax-Exempt Sales section on the way there.
         </Note>
         <Note>
-          <b>Export PDF (All Expanded)</b>, top-right, produces one document covering all three sub-tabs (Capital
-          Gains, Interest &amp; Dividend Income, Tax-Loss Harvesting) with every row and section forced open —
+          <b>Tax-Loss Harvesting</b> lists the positions you hold at an unrealized loss, grouped by tax category, because a loss only helps against gains of its own taxable category (crypto against crypto, FX Spot against FX Spot…).
+          Positions in categories whose gains are exempt (Local Listed, UCITS, foreign listed shares…) are set apart under <i>No tax value</i> — selling them at a loss offsets nothing — and left out of the totals. For each taxable
+          category the table shows the loss on offer, the gains realised so far in the tax year (using the cost-basis method chosen above), what is left to offset, and the most tax it could save: the loss, up to those gains, times the
+          rate. For Crypto the gain left is the Crypto tab's, after the losses already carried forward — so more crypto losses only add to that pile unless this year has crypto gains. Click a category to list just its positions.
+        </Note>
+        <Note>
+          <b>Crypto</b> does what the <a className="text-blue-600 hover:underline" href="https://taxapps.gr/el/calculators/crypto-tax" target="_blank" rel="noreferrer">TaxApps.gr crypto tax calculator</a> asks you to do by hand,
+          from your ledger. For the tax year it pools every wallet and account into one FIFO (or LIFO) queue per coin — Greek tax counts what you disposed of, not where it sat — and leaves out moves between your own
+          wallets (the same coin out and in within a few days, allowing for the network fee), so its figures can differ from the Capital Gains tab, which works account by account. Sales, swaps for another coin and
+          spending crypto are disposals; fees are inside the cost and the proceeds. It shows the proceeds, the cost and the result; the <b>loss carry-forward</b> — a loss offsets gains for the next five years, oldest first, with
+          a year-by-year table of what is used, taxed and still to come; the <b>tax</b> at the rate of the <i>Crypto</i> tax category (Static Data → Tax Categories) or one you type, after an optional yearly exemption; the
+          <b>Form E1</b> figures for codes 743 (spent buying crypto), 865–866 (gain) and 781–782 (invested capital returned); and the <b>rewards</b> received (staking, earn), taxed as income when received, with the tax at your
+          category's income rate and an estimate on the Greek progressive scale (the calculator's view of mining, staking and lending) — <i>Rewards are income when received</i> switches that off if staking is not
+          income until you sell (the rewards then cost nothing, so the whole value is gain when sold). Each disposal row shows its account, and clicking it opens the sale and the lots it used (when and where they were
+          acquired, bought or rewarded, how much of each, the cost); a tiny sale is usually dust left in a wallet after a transfer. Cryptocurrency appears only here, not on the Capital Gains tab. Tick the accounts to include — a CFD account such as Capital.com can be left out — and
+          set <i>Losses count from</i> if gains were not taxed in the earlier years. Whether, from when and how crypto gains are taxed (and whether there is a yearly exemption, and swaps) is still moving in Greece:
+          treat it as an estimate and check it with your accountant.
+        </Note>
+        <Note>
+          <b>Export PDF (All Expanded)</b>, top-right, produces one document covering all four sub-tabs (Capital
+          Gains, Interest &amp; Dividend Income, Crypto, Tax-Loss Harvesting) with every row and section forced open —
           regardless of what's currently expanded or collapsed on screen. It opens your browser's own print
           dialog; choose <b>Save as PDF</b> there to get the file. A security or payee with an unusually large
           number of small transactions (e.g. many tiny dividend-reinvestment buys) stays collapsed in the
@@ -1065,6 +1176,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Ex-Div Date, Change/% Change) — most hidden by default to keep the table readable, but a click away via
           Columns. A closed-out security (0 shares held) shows dimmed rather than removed from the list. Shares
           Held/Cost Basis/Realized P&amp;L reflect any transaction you just saved immediately, not after a delay.
+        </Note>
+        <Note>
+          <b>Action</b> turns the whole grid into one verdict — <i>Add / Hold / Reduce / Sell</i> for positions you hold, <i>Buy / Watch / Avoid</i> for those you don't — from points for the trend (regime, MA200, MA50/MA200 direction, crosses, trailing stop), momentum and Sharpe, fair value, analyst target and view, F-Score and Z-Zone; <b>Action Score</b> is the total and <b>Why</b> (hidden by default, also a tooltip) lists every factor. A triggered trailing stop or a Death Cross never reads as a buy. To keep it from flapping, the scheduler works it out from the 5-day average of the score, and a level changes only after the average passes a cut by a full point and stays there three days (so <b>Action Score</b> is that average); a held security that moves between <i>Reduce / Sell</i>, <i>Hold</i> and <i>Add</i> raises an <b>Action Change</b> alert on the Dashboard (its own <b>Action</b> group, so it can be shown, hidden or sent to Telegram separately from Signals). Securities with no trend or valuation data, such as Treasury bills, show no verdict. A fair value more than ±100% from the price is ignored (the reasons say so), and every refresh logs the scores so the verdict can be back-tested as history builds up (<code>python -m data.action_backtest</code>) — a first test of the price-driven points found no edge over VWCE, so treat Action as a screen to look at, not a buy signal. The <b>Shortlist</b> button lists Buy candidates you do not hold, of the instrument types you tick (everything but indexes, CDs and employee options by default), with a score of at least a minimum (6 by default) and at most N per <b>Sector</b>, best first. <b>Reports → Securities Analysis → Action Backtest</b> tests the score against what prices did next — all securities, what you hold, chosen accounts or one security, against a benchmark (default set under Tools → App Settings → Benchmark, VWCE until you choose; any ETF, index or stock, or the average of what is tested, can be picked per run). Reading the result: each row is a group of cases with a similar score, and the numbers are the <i>excess</i> return over the benchmark that followed (+5 = beat it by 5 percentage points) — average / median, and the share of cases that beat it; a score that works shows better numbers in the higher rows. A <b>What this says</b> box answers it in words — comparing scores of 5 or more with scores of 1 or less, plus the ranking correlation between score and outcome (0 = no link, +0.05 or more = a usable signal, negative = high scores did worse) — and, except for a single security, <b>Best / Worst</b> lists the securities that beat or trailed the benchmark most over the horizon, with the score they typically had and have now (how many is set with <b>Show N each</b>, 10 by default). The <b>Score</b> column marks each one <b>✓ called it</b> or <b>⚠ missed</b> (highlighted): the securities are split by their typical score into a lower, a middle and an upper third, and a best performer rated in the lower third, or a worst one rated in the upper third, is a miss — the score would have steered you wrong. Trust the median over the average: a few huge winners (crypto, small caps) lift the average. It is a rules-based screen to review, not advice, and runs alongside the Final Signal and its Signal Change alerts.
+        </Note>
+        <Note>
+          <b>MA50 Direction</b>, <b>MA200 Direction</b> and <b>MA Rising</b> show where the averages are heading — each one's change over the last week (5 trading days),
+          ▲ rising, ▼ falling or ▬ flat (within ±0.05%); filter <b>MA Rising</b> (Both rising / MA50 rising / MA200 rising / Neither) to list the securities whose MA50 and/or MA200 points up.
         </Note>
         <Note>
           <b>MA Trend</b>, <b>Cross Event</b>, <b>MA50</b>/<b>MA200</b>, <b>Above MA200</b>, and <b>Trailing Stop</b>
@@ -1105,8 +1223,60 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           financials, utilities, and other asset-light or heavily-regulated sectors it wasn't designed around.
         </Note>
 
+        <H3>🧾 Tax Report and entity-level tax</H3>
+        <Note>
+          <b>Account Preset for the whole Investment Tax report.</b> The preset bar above its sub-tabs limits Capital Gains, Interest &amp; Dividend Income, Crypto, Tax-Loss Harvesting
+          and the printable export to a saved set of accounts — one person's accounts, a company, a trust — instead of everything. It uses the <b>same presets as Net Worth</b> (interest and dividends come from
+          bank and brokerage accounts alike); it remembers its own selection, separate from the other reports, and a banner reminds you when the figures cover only part of your accounts.
+        </Note>
+        <Note>
+          <b>Tax Report</b> (the first Investment Tax sub-tab) gathers the year's figures in the order a tax return asks for them — it prepares the return, it is not the return itself: securities capital gains by tax category (crypto excluded), cryptocurrency,
+          dividends, interest including bank interest, and an estimate of the tax. Each line carries the <b>form code</b> where it goes. The codes follow your <b>Country of Usage</b>
+          (Tools → App Settings): Greece has a built-in starting set (form E1: 743–744, 865–866, 781–782, 871–872 for losses…); for any other country the codes start empty. <b>Every code can be changed, Greece's included</b> — click
+          the code (✎) and type yours; an edited code turns blue and <b>↺</b> brings back the built-in one. Changes are saved for that country and shown whenever it is the Country of Usage; nothing is borrowed from another country. <b>Interest in Greece (E1, Table 4Δ1).</b> With Greece as the Country of Usage, interest on bonds and deposits is reported gross by where it comes from — <b>667–668</b> from a Greek source (Greek corporate bonds, Greek bank deposits), <b>669–670</b> from abroad (foreign corporate or government bonds) — and tax-exempt interest (Greek government bonds and T-bills, the securities marked tax-exempt in Static Data) goes to Table 6, <b>659–660</b>. A security's source is where its issuer is registered — the ISIN prefix — else the Country set on the security in Static Data, else its issuer's country, else the country of the institution holding it; a category with both sources becomes two lines. The tax withheld is reported by who withheld it: <b>675–676</b> by the Greek issuer or bank on Greek-source interest, <b>677–678</b> by a Greek bank or custodian on interest from abroad (the account's institution is Greek by its BIC, or its IBAN), <b>683–684</b> withheld abroad (credited against the Greek 15%; keep the broker's certificate). Where nothing was withheld there is no tax line, so the codes stay empty and the 15% is settled when the return is assessed. These are starting values — every code stays editable. <b>Dividends</b> follow the same split — gross by source (291–292 Greek companies, 295–296 foreign, tax-exempt ones 659–660) and the tax withheld by who withheld it (293–294 the Greek company, 297–298 a Greek bank or custodian on foreign dividends, 683–684 abroad) — with the 2024 and 2025 instructions as the starting values: check them against the E1 instructions of the year you file, and change any code; the ones you already typed are kept. The tax a Greek bank or custodian withholds on a foreign company's dividend goes on 297–298 only when it is about the Greek 5%; the source country's tax (Belgium 30%, Canada 25%) goes on 683–684 and is credited against 5%, never against the category's own rate. <b>Bond interest</b> follows the payment date: interest on listed corporate bonds is at 5% from 12 Apr 2025 and at 15% before it, shown as two lines. <b>Capital gains (Table 4Ε)</b> are split by where the issuer is: <b>829–830</b> for a Greek issuer (enter its tax number), <b>865–866</b> for a foreign one, <b>659–660</b> for categories whose gains are exempt, and the loss of the year on <b>871–872</b>. Losses of the last five years that are not yet offset show on <b>873–874</b> for information; set <i>Securities losses count from</i> (the first year whose losses you declared) and they come off the year's gains in the tax estimate. These codes are kept per category in Static Data → Tax Categories (Gains Code, Gains Code Foreign, Div. Code, Div. Code Foreign) and win over the built-in ones; double-click a cell there to edit it. <b>Bank and savings interest</b> follows the same rules by the country of the bank (from the institution's BIC, else the account's IBAN): a Greek bank's interest is of Greek source (667–668, with the tax it withheld at 675–676), another bank's is from abroad (669–670, withheld abroad 683–684); with banks of both kinds it is two lines. A code you typed earlier on one of these lines (for instance 595–596) is kept — click ↺ to take the built-in one. A category that has both taxable and tax-exempt dividends or interest in the year (bond interest, where some bonds are exempt and others not) is shown as <b>two lines</b> — <i>(taxable)</i> and <i>(tax-exempt)</i> — each with its own code and its own withheld-tax line. <b>Summary by code</b> at the top adds the figures up per code (gains and losses sharing a code net off; codes that differ only in the dash — 659-660, 659 ‑ 660, 659 – 660 — are one code) and opens into the figures it adds up and the accounts each total comes from. A tax-exempt line says so (<i>Bond — interest (tax-exempt)</i>). The <b>Withheld</b> column shows the tax already withheld at source on dividends and interest, and a <i>Tax withheld at source</i> section lists it as figures of their own, each with a code you can set (they start empty), to credit against the tax due. The crypto figures use what is set on the Crypto tab — including <i>Rewards are income when received</i>, the exemption, the rate, the loss start year and the accounts left out — so the two tabs agree; with rewards not taxed on receipt the rewards line is information only and stays out of the tax and the summary. Lines shown <b>for information only</b> (these, and the crypto losses still to carry forward) are shaded amber with an <i>Information only</i> badge; the estimated-tax lines carry an <i>Estimate</i> badge. <b>Export CSV</b> writes everything on the screen in one file: a row per part — the summary by code, each code by account, every figure, and every transaction behind it — with code, account, security, date, proceeds, cost, tax withheld, amount and a status column marking information-only and estimate lines. <b>Click a line</b> to see what it is made of: the accounts, then (click an account) its securities, then (click a security) the transactions — sales with their proceeds, cost and result, dividends and interest with the tax withheld — the same detail as the Capital Gains and Interest &amp; Dividend Income tabs. The estimated-tax lines and the "spent buying crypto" and "losses to carry forward" lines have no transactions of their own. Export PDF prints every line opened.
+        </Note>
+
+        <H3>🏛️ Private Funds</H3>
+        <P>Private equity, venture, real-estate and other funds that call capital in stages — tracked on their own, outside Net Worth.</P>
+        <Note>
+          The <b>Private Funds</b> tab of Reports lists each fund with what you committed, what has been <b>paid in</b>, what is still <b>unfunded</b>, its latest <b>NAV</b>, what has been <b>distributed</b>,
+          and the usual measures: <b>DPI</b> (distributions ÷ paid-in), <b>RVPI</b> (NAV ÷ paid-in), <b>TVPI</b> (their sum) and the <b>IRR</b> of the dated cash flows. Open a fund to add its events:
+          capital calls, distributions and NAV statements, each with a date and amount; a call dated in the future is an <b>expected call</b>, counted as unfunded until it happens.
+          An <b>alert</b> (type <i>Fund capital call</i>, in the Events group, 14 days ahead) warns before an expected call falls due. Funds are not part of Net Worth or the investment reports — they are
+          valued on the NAV you enter, not on a market price.
+        </Note>
+
         <H3>🏖️ Financial Planning</H3>
-        <P>Goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
+        <P>A Retirement Planner, goals tracking, a FIRE (Financial Independence) calculator, and loan amortization schedules.</P>
+        <Note>
+          <b>Retirement Planner</b> projects your money to the age you plan to (90 by default) and asks whether it lasts. It opens pre-filled from your data — what you hold in
+          cash and savings, investments (with their cost basis) and pension accounts, what you saved and spent over the last 12 months, and your portfolio's own volatility —
+          and every number can be changed; under <b>What you have today</b> an <b>Account Preset</b> — the same presets as the Net Worth report — takes the amounts from just those accounts. You set the <b>year of birth</b>, <b>retirement age</b> (the statutory age of your Country of Usage by default — 67 in Greece), what you <b>save</b> until then (into
+          investments, cash and pension pots, with a yearly increase), your <b>spending</b> in retirement, the <b>income</b> that arrives (state and occupational pensions, a pension
+          from another EU country, rent — each with the age it starts, how it is indexed and how it is taxed — plus one-off sums such as an inheritance), the <b>returns</b> before and after
+          retiring, their volatility, and <b>inflation</b>. Everything is in today's euros, with the year-by-year table switchable to nominal.
+        </Note>
+        <Note>
+          <b>Reading it.</b> The banner answers the question: the share of 1,000 simulated market paths (random yearly returns around your expected return) in which the money lasts to the planning
+          age, against your <b>target</b> (80% by default) — <i>on track</i>, <i>close</i> or <i>not on track</i>. Below it: what you will have at retirement, what the plan <i>needs</i> if every
+          year returned exactly the expected return (so it can say "surplus" while the chance is under target — a poor run of returns early in retirement is what does the damage), and how long the money
+          lasts. The fan chart shows the middle 80% of outcomes by age against the straight-line projection; the next chart the chance the money is still there at each age; the third where each year
+          of retirement is paid from (pensions after tax, cash, investments, pension pots) against spending. <b>How could it be fixed?</b> works out, each on its own, the extra monthly saving, the later
+          retirement age or the spending cut that reaches the target, and the capital you would want at retirement for it. <b>What if…</b> compares the plan with variants — retiring two years
+          earlier or later, saving or spending more or less, lower returns, higher inflation, living longer, no pensions — side by side.
+        </Note>
+        <Note>
+          <b>Saved plans.</b> <b>Save as new…</b> keeps the plan on screen under a name; the first one saved is the <b>base</b> and opens by default (<b>Make base</b> changes it). Open another to compare:
+          once there are two, a <b>Saved scenarios</b> table lines them all up. <b>Reset to my data</b> rebuilds the starting point from your accounts.
+        </Note>
+        <Note>
+          <b>Country rules.</b> The planner follows the <b>Country of Usage</b> setting (Tools → App Settings), the same one Local Market Watch uses. Greece has a built-in profile; for any other country the retirement age starts at its statutory age and taxes start at zero, with a warning until you enter the rates — nothing is borrowed from another country. A plan keeps the rules it was saved with, and says so (with a button to switch) if your country is now different. The Greek profile fills the <b>Tax rules</b> section, and every figure is editable: the income-tax scale and the employee / pensioner credit (applied to pensions, with the
+          6% health contribution taken first), tax on dividends, interest and gains from securities (0% on gains from listed shares and ETFs by default — some sources say 15% since 2022, so check),
+          pension-pot withdrawals (a flat rate or the scale; drawn gradually or paid out as a lump sum at retirement), and the order the pots are drawn in. By default the scale and the credit are
+          kept constant in real terms, as Greece adjusts them from time to time. Income tax is national, not EU-wide: for another country change the scale, credit and rates; a pension earned abroad is
+          entered as its own income source, <i>withheld at source</i> if it is taxed where it is paid. Pension rights earned in several EU countries add up but each country pays and taxes its own.
+          The defaults are a starting point, not tax advice. Not modelled: inflation that varies, wealth and property taxes, partner and survivor benefits, and care costs.
+        </Note>
         <Note>
           <b>Loan Amortization</b>'s <b>Loan Account</b> dropdown can pre-fill Loan Amount, Annual Rate, Compounding
           Period, and Payment Schedule from one of your real Loan-type accounts instead of typing them by hand —
@@ -1166,7 +1336,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Institutions</b> — banks, brokers, pension funds.</li>
           <li><b>Issuers</b> — name + Moody's/S&amp;P/Fitch credit ratings for a security's issuer (bond issuers, fund providers, etc.); link one from a security's Setup tab — for bonds, this resolves Portfolio Analysis's Bond Quality view instead of "Direct / Unrated".</li>
           <li><b>Accounts</b> — the full account list with type, currency, institution, active status, and a free-form <b>Notes</b> field (account type, holders, etc.), hidden by default in the grid. A credit card also has a <b>Statement day</b> (the day of the month its balance to be paid is issued — used by credit-card payment templates), and any cash or credit-card account can be set to <b>Exclude from balance alerts</b>.</li>
-          <li><b>Tax Rules</b> — capital-gains/dividend/income tax treatment per tax category.</li>
+          <li><b>Tax Rules</b> — tax treatment per tax category: gains (rate and tax-return codes), dividends (rate, which is also the default when a dividend is entered, and codes) and interest (Interest Tax Rate, also used for crypto rewards). Double-click a cell to edit it.</li>
           <li><b>Instrument Tax</b> — overrides mapping a security's instrument type to a tax category.</li>
         </Ul>
         <Note>
@@ -1242,7 +1412,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Market Data</H2>
-        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts.</P>
+        <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts. The <b>Anomalies</b> tab (and a security's own Price Anomalies tab) lists prices that moved by more than the threshold against the previous or next day. A move that a <b>recorded split or reverse split</b> explains — one dated within 20 days of the jump whose ratio fits it to within 15% — is hidden by default; tick <i>Show N moves explained by a recorded split</i> to see it (marked <i>Explained</i>). A missing corporate action still shows its jump, and the security's name opens its Security Detail.</P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
           holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
@@ -1358,7 +1528,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           200-day), <b>breadth</b> (share of about 20 large caps above their 200- and 50-day averages; same rule as Market
           Watch), the <b>banks</b> (equal-weight basket of the systemic banks; red: 30% or more below its high and under
           its 200-day, or 10 points behind the index over 3 months) and the <b>sovereign spread</b> (the country's 10-year yield minus Germany's, FRED monthly with a
-          ~6-week lag, so a slow leg; only the euro era counts; red at 1.8 pp and still rising, or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; not
+          ~6-week lag, so a slow leg; only the euro era counts; red at 1.8 pp and still rising, or +0.5 pp in 3 months; needs the free <code>FRED_API_KEY</code>; if FRED is down for maintenance the leg keeps its last reading until the next refresh; not
           shown for Germany, the UK or the US) — plus context that doesn't: <b>liquidity</b> (the index's volume, 20 days
           against 120) and <b>your exposure to the country</b> from the Country Exposure report. The index trend and the banks count as <b>one equity indicator</b>; the banner turns red only when
           equity is in Warning <i>and</i> breadth or the sovereign spread confirms it. Same persistence as Market Watch: 3 days in a row to turn red, a margin to clear, ▼ = moving toward red, an
@@ -1374,14 +1544,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>Telegram alerts.</b> Market Watch and Local Market Watch can message you when the banner turns red and when it
-          leaves red, with the indicators in Warning and your playbook — never the daily readings. Create a bot with
-          @BotFather (<code>/newbot</code>), put its token in <code>TELEGRAM_BOT_TOKEN</code> and your chat id in
-          <code>TELEGRAM_CHAT_ID</code> in <code>.env</code> (see <code>.env.example</code> for how to find the chat id), restart
-          the app and scheduler containers, then press <b>Send test message</b> in Tools → App Settings → Telegram Alerts. The
-          same section has the on/off checkbox, and a switch per Dashboard alert group (Support / Resistance, Price
-          Alerts, Signals, Upcoming Events, Corporate Actions &amp; Data, Portfolio — all off by default) to also be sent
-          new alerts from those groups, each once, every 30 minutes (see the Dashboard section). The token is a secret,
-          so it lives only in <code>.env</code>.
+          leaves red, with the indicators in Warning and your playbook — never the daily readings. Set-up (a bot of your own, two
+          lines in <code>.env</code>) and the full list of what is sent are under <b>Dashboard → Insights &amp; Alerts → Telegram alerts</b>.
         </Note>
         <P>
           Clicking a security's name (here or anywhere else it's shown as a link) opens its <b>Security Detail</b>{' '}
@@ -1429,6 +1593,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           "warm up" first.
         </Note>
         <Note>
+          <b>Show / hide lines</b> — above a security's price chart (<b>Overview</b> and <b>Prices</b> tabs) three checkboxes
+          switch whole groups of lines on and off: <b>Moving averages</b> (MA50, MA200 and, on the Prices tab, the adjustable
+          MA), <b>Reference lines</b> (average cost, trailing stop and your price alerts) and <b>Support / Resistance</b>.
+          A hidden group also leaves the legend, and the choice is remembered and shared by both charts.
+        </Note>
+        <Note>
           <b>Support / Resistance</b> — the price charts on a security's <b>Overview</b> and <b>Prices</b> tabs, and a
           currency's rate charts on Currency Detail (<b>Overview</b>, in your reporting currency, and <b>Prices</b>, the
           stored rates), draw support (green) and resistance (red) levels for the period shown, with the nearest level on
@@ -1438,7 +1608,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Turning points at about the same price (within half that reversal) form one level, and the more of them
           ("touches"), the thicker its line; the period's own high and low always count. Below the last price is support,
           above it resistance, and the three nearest on each side are drawn — each is a legend entry ("S1 … · 2 touches",
-          "R1 … · period high") that can be hidden. Securities use their daily high/low where stored, currencies their
+          "R1 … · period high") that can be hidden. The legend is laid out in groups under the chart — Price (the close, its moving
+          averages, volume, buys and sells) and Reference lines (average cost, trailing stop, your price alerts) on top,
+          Support and Resistance side by side below — and the lines are drawn thicker, in distinct colours (the nearest level of each kind the darkest). Securities use their daily high/low where stored, currencies their
           rates. Levels follow the period selected; the <b>Support / Resistance</b> checkbox turns them off on every
           chart. They are computed on the server, the same calculation the Dashboard's Support / Resistance alerts use. They show where the price has turned before — a guide, not a forecast.
         </Note>
@@ -1488,6 +1660,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A security's <b>Alerts</b> tab shows the same price-above/price-below alerts as Market Data → Alerts,
           pre-scoped to that security — adding one here skips picking it from a dropdown. Allocation-drift
           alerts (tied to an asset type, not one security) only show up on the Market Data page.
+        </Note>
+        <Note>
+          <b>Currency rate alerts.</b> A currency can have above / below alerts too — <i>sell GBP when GBP/EUR reaches 1.21</i>. Add one on a currency's own <b>Alerts</b> tab (Currency Detail), or under
+          Market Data → Alerts with the type <i>Currency Rate Above / Below Threshold</i>, choosing the currency and the currency its rate is quoted in (your reporting currency is offered first). The threshold
+          is how many units of the second currency 1 unit of the first buys — the rate shown on the currency's Overview — and it is compared with the latest stored rate. A triggered rate alert appears with
+          the <b>Price Alerts</b> on the Dashboard and Alerts page (clicking it opens the currency), is sent to Telegram like the others, and is silenced by Dismiss until the rate crosses back and triggers again. The currency's rate charts (Overview and Prices) draw its active rate alerts as dashed threshold lines — green for above, pink for below, with the note — in the <b>Reference lines</b> group of the legend, switched on and off by the same <i>Reference lines</i> checkbox as on a security chart; a chart shows the alerts quoted in its own currency (Overview: your reporting currency, Prices: the storage base).
         </Note>
         <Note>
           The price charts on <b>Overview</b> and <b>Prices</b> both draw a security's active price alerts as
@@ -1579,6 +1757,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Importers</H2>
         <P>Bring in transactions from banks and brokers instead of entering them by hand, grouped into three families:</P>
+        <Note>
+          <b>Last run is remembered.</b> The importers that take a date range — Interactive Brokers, Saxo, Coinbase and Crypto.com — keep the range you used the last time you fetched a preview or imported, with the time it ran, and put it back in the date fields when you open the tab (on any device; with the account and credentials they already remembered). A line under the dates says when the last run was; if its "To" date is in the past it warns that newer records would be left out. Replace mode is never remembered.
+        </Note>
         <Ul>
           <li>
             <b>Bank</b> — Import &amp; Reconcile (generic file import with matching against existing
@@ -1619,6 +1800,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           positions. Interest income
           (including Stock Yield Enhancement Program payments) is booked against one placeholder security per
           settlement currency rather than one per month, so it doesn't spawn a new "security" every time it recurs.
+          A fee that names a security — for example an ETC's daily <i>XETRA-GOLD MAINTENANCE FEE</i> — is imported as a <b>MiscExp</b> investment
+          transaction on that security (a rebate as MiscInc) instead of a plain Cash Transaction, so it counts in the security's own P&amp;L; the cash
+          side follows through the investment account's linked cash account. IB leaves symbol and ISIN empty on these lines, so the security is found
+          from the name before the fee wording; a fee that matches no security (market-data charges, say) stays a Cash Transaction, and a fee already
+          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first. An order for a fractional quantity (4.2436 shares) arrives as two fills, the whole shares and the fraction; the statement puts the order's one commission in the fractional fill, but the importer books it on the whole-share fill, as IB's own statement shows it — the order's total cost is the same either way.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
           "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual
@@ -1657,7 +1843,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           URLs. After that the <b>Saxo Login Keep-alive</b> scheduler job refreshes the token every 10 minutes, so
           you normally never connect again and go straight to fetching and importing; if the login does lapse
           (the scheduler was down for a while) the page says so and one click reconnects. Saxo accounts are mapped
-          to your accounts automatically when your account's name contains the Saxo account id.
+          to your accounts automatically when your account's name contains the Saxo account id. If Saxo's login page answers <i>Invalid or
+          unknown client_id</i>, the App Key is fine but Saxo has deactivated the app after a period without use — it can still be listed as <i>Live App –
+          Approved</i>; open the Saxo developer portal → Apps → Live Apps, re-activate it, and connect again.
         </Note>
         <Note>
           A green <b>Authenticated</b> badge only means the OAuth token exchange succeeded — it does not mean
@@ -1750,7 +1938,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           keys/secrets/tokens, emails, and phone numbers out of every response before Claude sees it, and blocks
           the broker-integration settings endpoints (<code>/api/bank/*</code>) outright. Fully standalone (just
           the <code>mcp</code>/<code>requests</code> Python packages — the machine running Claude Desktop doesn't
-          need a full Oikos checkout). See <b>INSTALL.md</b>'s "Optional: Connecting Claude to Oikos" section for
+          need a full Oikos checkout). Its built-in list of ready-to-use endpoints (<code>list_endpoints</code>) covers the main figures, and
+          <code>oikos_get</code> reaches any other GET path — for the Action verdicts, for example, <code>/api/reports/action-signals</code> (add
+          <code>held_only=true</code> or <code>action=Reduce,Sell</code> to narrow it). See <b>INSTALL.md</b>'s "Optional: Connecting Claude to Oikos" section for
           setup.
         </P>
       </>
@@ -1762,12 +1952,54 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
     body: (
       <>
         <H2>Tips &amp; Interface</H2>
+        <H3>Users and access</H3>
+        <P>
+          Every person who logs in has a <b>role</b>, set by an admin in <b>Account</b> (bottom of the sidebar → Users and access):
+        </P>
+        <Note>
+          <b>Admin</b> — everything, on every account (the users that existed before roles were added are admins). <b>Limited</b> — reads and changes only the accounts an admin has mapped to the user.
+          <b>Read-only</b> — reads those accounts and changes nothing. The accounts of a Limited or Read-only user are picked from a list, or added from a saved Account Preset; an account linked to a
+          mapped one (a brokerage's cash account) comes with it, unless other accounts share it too — one cash account behind several people's brokerages goes to none of them, so tick it by hand if it should be shared. To add a user choose the role and the accounts, or edit a user later to change either (or set a new password). Changing a role logs the user out,
+          the last admin cannot be demoted or removed, and nobody can remove their own account.
+        </Note>
+        <Note>
+          A Limited or Read-only user uses the whole app <i>over their own accounts</i>: the <b>Dashboard</b> (net worth, accounts, bills, insights, alerts), the <b>Cash Register</b>, <b>Investments</b>,
+          <b>Recurring</b>, <b>Reports</b>, <b>Alerts</b>, <b>News</b>, <b>Market Data</b> and <b>Static Data</b>, with <b>Help</b> and the <b>Release Notes</b>. Everything they see is narrowed to the
+          accounts mapped to them — balances, net worth, holdings, transactions, reports, forecasts, alerts and the counts in Static Data — and what is not theirs does not show at all. The AI Assistant, Importers and
+          Tools are admin-only, and so are the household's AI summaries on the Dashboard, the private funds, the watchlist and dismissing an alert. <b>Static Data</b> and <b>Market Data</b> are read-only for them:
+          the buttons that add, edit, delete, merge, save or download are hidden. For a Read-only user the New / Transfer / Clear / Reconcile / Move / Delete controls and the editing of transactions and holdings are
+          hidden too. A transfer to or from an account that is not theirs shows as <b>External account</b> (🔒) and cannot be edited or deleted from their side, since the other half of it is somebody else's.
+          The limits are enforced by the server, not just hidden — a request for another account, or a change by a Read-only user, is refused with a short notice.
+        </Note>
+        <Note>
+          Each user's <b>Account Presets</b>, saved <b>Custom Reports</b> and the place they left off (the last report and tab, the preset chosen in each report, filters, layout) are their own too: a Limited user does not
+          see the admin's presets and can create their own from their accounts.
+        </Note>
+        <Note>
+          A Limited user keeps their <b>own Plan</b> (the dated steps), <b>Retirement plans</b>, <b>Budgets</b> and <b>Goals</b>, apart from the household's and from every other user's: each starts empty,
+          the Retirement planner and Budget vs Actual work from their accounts, and the Telegram reminder and the AI summaries stay with the admin. A Read-only user can read but not change them.
+          Everyone can change their own password under Account.
+        </Note>
         <H3>Sidebar</H3>
         <P>
           Click the panel icon at the top of the sidebar (next to "Oikos") to collapse it to icon-only and
           reclaim horizontal space — the collapsed state is remembered across visits. On a phone or narrow
           window, the sidebar hides behind a hamburger button (top-left) and slides in as an overlay when tapped,
           instead of a permanent icon-only rail.
+        </P>
+        <H3>On a phone</H3>
+        <P>
+          Oikos works as a home-screen app (Safari → Share → Add to Home Screen). On a phone it fits the visible screen rather than the full-height
+          page, keeps clear of the notch and the home bar, uses tighter margins, and makes buttons, tabs and menu items bigger to hit. Fields use
+          16-pixel text so iOS no longer zooms the page in when you tap one. Charts shed their wide side margins and no longer zoom when you drag a
+          finger across them, so the page scrolls instead; tap a point for its figure. The wide report tables scroll sideways with their first column pinned.
+        </P>
+        <P>
+          The top of the screen is an app bar with the menu button and the page's title. <b>Cash Register</b> and <b>Investments</b> show their
+          transactions, holdings and cash movements as <b>cards</b> (tap one to open or edit it, <i>Load more</i> for older ones), with a floating
+          <b> +</b> button for a new transaction and a <b>⋯</b> menu for the less common actions (Clear, Reconcile, Transfer, Sync). The
+          <b> Dashboard</b> puts Net Worth across the full width; <b>Security Detail</b> scrolls its tabs sideways and lays its forms out in two
+          columns; in Security Detail the holdings by account, transactions, dividends and corporate actions are cards too; and the transaction forms stack their longer fields one under the other. Every grid (Market Data, Static Data, Security Detail, Currency Detail, the Reports grids) becomes a list of cards on a phone — the first column as the title, the next fields in two columns with <i>Show more fields</i>, a Sort choice, and Edit / Delete on the card — and nothing is wider than the screen: button rows and selectors wrap, long names break, and tables scroll with their first column pinned. The tables of the P&amp;L, Income &amp; Expense and Cash Flow Forecast reports are cards too — the first column as the title, each figure under its own small label — and tapping an account, expanding a category or editing a price works as it does in the table. The same goes for the rest of the app: any other list-like table (Tools, Importers, Recurring, the report breakdowns, the dialogs) is turned into cards automatically, while true grids of numbers — such as a month-by-month matrix or a correlation table — stay a table that scrolls sideways with its first column pinned. Checkbox and radio rows keep their text beside the box, and the transfer dialogs stack their fields. On a computer none of this changes.
         </P>
         <H3>Theme</H3>
         <P>Light / System / Dark, switchable at the bottom of the sidebar.</P>
@@ -1809,8 +2041,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <H3>Version info</H3>
         <P>
-          The sidebar footer shows the build version and, below it, the exact git commit hash and date it was
-          built from — useful when reporting an issue, since it pins down precisely which code is running. The{' '}
+          The sidebar footer shows the release version — for example <code>v2026-10-26.0</code>. A version is{' '}
+          <code>vYYYY-MM-DD.HF</code>: the date of the release and
+          its hot-fix number, <code>0</code> for the first release of a day, then <code>1</code>, <code>2</code> … Hover over it for the
+          exact git commit — useful when reporting an issue, since it pins down precisely which code is running (a build
+          that is not a release, such as a local build of an untagged commit, shows the commit hash instead). The same
+          version is the Docker image tag (<code>atsob/oikos:v2026-10-26.0</code>), so rolling back is pointing the
+          compose file at an older tag. The{' '}
           <b>Release Notes</b> page (below Help in the sidebar) lists what's actually changed release to
           release.
         </P>
@@ -1987,7 +2224,7 @@ export default function Help() {
 
       <div className="flex-1 min-w-0 overflow-auto">
         <PageHeader title="Help & User Guide" subtitle="How Oikos is organized and how to use it" />
-        <div className="px-6 pt-4">
+        <div className="px-3 sm:px-6 pt-4">
           <div className="relative max-w-md">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -1998,7 +2235,7 @@ export default function Help() {
             />
           </div>
         </div>
-        <div className="px-6 py-6 max-w-3xl">
+        <div className="px-3 sm:px-6 py-6 max-w-3xl">
           {searching ? (
             <div>
               <p className="text-xs text-slate-400 mb-3">

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useGridApi, useSettings } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { AgGridReact } from 'ag-grid-react'
+import AppGrid from '@/components/AppGrid'
 import type { RowClickedEvent } from 'ag-grid-community'
 import {
   api,
@@ -44,7 +44,7 @@ function Modal({ title, onClose, children, footer, wide }: { title: string; onCl
   useEscapeKey(onClose)
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92vh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
+      <div className={`bg-white rounded-xl shadow-2xl w-full max-h-[92dvh] overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <h2 className="text-base font-semibold">{title}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
@@ -246,7 +246,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -498,7 +498,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -776,6 +776,8 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
       } },
     { field: 'loan_linked_asset_account_name', headerName: 'Linked Asset', flex: 1, minWidth: 140, hide: true },
     { field: 'notes', headerName: 'Notes', flex: 1, minWidth: 160, hide: true },
+    { field: 'exclude_balance_alerts', headerName: 'No Balance Alerts', width: 140, hide: true, headerTooltip: 'Excluded from the negative-balance and projected-shortfall alerts (Dashboard and Cash Flow Forecast).',
+      cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     { field: 'is_active', headerName: 'Active', width: 80, cellRenderer: (p: { value: boolean }) => p.value ? '✓' : '' },
     {
       colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
@@ -831,7 +833,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1450,7 +1452,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1647,7 +1649,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '560px', width: '100%' }}>
-        <AgGridReact
+        <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
           rowData={filtered}
@@ -1733,9 +1735,44 @@ function TaxRuleField({ label, children }: { label: string; children: React.Reac
   )
 }
 
+/** A cell of the Tax Categories table: double-click to edit in place, Enter or leaving the cell saves, Esc cancels. */
+function TaxRuleCell({ value, kind, display, onSave, nullable = true, align = 'left', title }: {
+  value: unknown; kind: 'text' | 'pct' | 'bool'; display: React.ReactNode; onSave: (v: unknown) => void
+  nullable?: boolean; align?: 'left' | 'center' | 'right'; title?: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const boolText = (v: unknown) => v === true ? 'true' : v === false ? 'false' : ''
+  const start = () => { setDraft(kind === 'bool' ? boolText(value) : value != null ? String(value) : ''); setEditing(true) }
+  const commit = (text: string) => {
+    setEditing(false)
+    const next = kind === 'bool' ? (text === '' ? null : text === 'true') : text.trim() === '' ? null : text.trim()
+    const same = kind === 'bool' ? next === (value ?? null) : kind === 'pct' ? (next == null ? value == null : value != null && Number(next) === Number(value)) : (next ?? '') === String(value ?? '')
+    if (!same) onSave(next)
+  }
+  const cls = `px-3 py-2 whitespace-nowrap ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'}`
+  if (!editing) return <td className={`${cls} cursor-cell`} onDoubleClick={start} title={title ?? 'Double-click to edit'}>{display}</td>
+  const box = 'w-full min-w-[4.5rem] rounded border border-blue-400 px-1.5 py-0.5 text-xs bg-white'
+  return (
+    <td className={cls}>
+      {kind === 'bool' ? (
+        <select autoFocus className={box} value={draft} onChange={e => commit(e.target.value)} onBlur={() => setEditing(false)} onKeyDown={e => e.key === 'Escape' && setEditing(false)}>
+          {nullable && <option value="">— n/a —</option>}
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      ) : (
+        <input autoFocus className={box} type={kind === 'pct' ? 'number' : 'text'} step={kind === 'pct' ? '0.01' : undefined} value={draft}
+          onChange={e => setDraft(e.target.value)} onBlur={() => commit(draft)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(draft); else if (e.key === 'Escape') setEditing(false) }} />
+      )}
+    </td>
+  )
+}
+
 const EMPTY_TAX_RULE: TaxRule = {
   tax_category: '', display_name: '',
-  gains_taxable: null, gains_rate: null, gains_tax_code: null,
+  gains_taxable: null, gains_rate: null, gains_tax_code: null, gains_tax_code_foreign: null, dividend_tax_code: null, dividend_tax_code_foreign: null,
   dividend_local_tax_rate: null, dividend_wht_creditable: null,
   reinvest_taxable: null, income_tax_rate: null, show_in_capital_gains: true, notes: null,
 }
@@ -1778,6 +1815,14 @@ function TaxRulesTab() {
     onError: (e: Error) => setSaveMsg({ ok: false, text: e.message }),
   })
 
+  const cellMut = useMutation({
+    mutationFn: ({ r, field, value }: { r: TaxRule; field: string; value: unknown }) => updateTaxCategoryRule(String(r.tax_category), { ...r, [field]: value }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tax-category-rules'] }); setSaveMsg(null) },
+    onError: (e: Error) => setSaveMsg({ ok: false, text: e.message }),
+  })
+  const save = (r: TaxRule, field: string) => (value: unknown) => cellMut.mutate({ r, field, value })
+  const codeText = (v: unknown) => v ? <span className="text-slate-600">{String(v)}</span> : <span className="text-slate-300">—</span>
+
   const BoolCell = ({ val }: { val: unknown }) =>
     val === true ? <span className="text-green-600 font-medium">Yes</span>
     : val === false ? <span className="text-slate-400">No</span>
@@ -1789,27 +1834,31 @@ function TaxRulesTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">
           Investment tax rates applied per security category in reports and corporate actions.
-          Changes take effect immediately across all Investment Tax reports.
+          Changes take effect immediately across all Investment Tax reports. Double-click a cell to edit it.
         </p>
         <Button size="sm" onClick={openNew}><Plus size={13} /> Add Category</Button>
       </div>
 
-      <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+      {saveMsg && !saveMsg.ok && !editKey && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{saveMsg.text}</p>}
+      <div className="border border-slate-200 rounded-lg overflow-x-auto text-xs">
         <table className="w-full border-collapse">
           <thead>
             <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide">
               <th className="text-left px-3 py-2 border-b border-slate-200">Category</th>
               <th className="text-center px-3 py-2 border-b border-slate-200">Gains Taxable</th>
               <th className="text-right px-3 py-2 border-b border-slate-200">Gains Rate</th>
-              <th className="text-left px-3 py-2 border-b border-slate-200">Tax Code</th>
-              <th className="text-right px-3 py-2 border-b border-slate-200">Div. Local Tax</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200" title="The line of the tax return the category's gains go on: the home country's issuers, or every issuer where the next column is empty. Empty: the Tax Return uses the country's built-in line.">Gains Code</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200" title="The line for the gains on a foreign issuer's securities. Empty: the same as Gains Code.">Gains Code Foreign</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200" title="The line of the tax return the category's dividends go on (a home-country company's, or every company where the next column is empty). Empty: the Tax Return uses the country's built-in line.">Div. Code</th>
+              <th className="text-left px-3 py-2 border-b border-slate-200" title="Only for a category that can hold both home and foreign companies: the line for the dividends of foreign companies. Empty: the same as Div. Code.">Div. Code Foreign</th>
+              <th className="text-right px-3 py-2 border-b border-slate-200" title="The tax rate on a dividend. It is the default rate when a dividend is entered, so a foreign category holds the usual withholding at the source (Canada 25%, Belgium 30%); the Tax Return charges the home country's own rate (Greece 5%) and credits the foreign tax against it.">Dividend Tax Rate</th>
               <th className="text-center px-3 py-2 border-b border-slate-200">WHT Credit</th>
               <th className="text-center px-3 py-2 border-b border-slate-200">Reinvest Taxable</th>
-              <th className="text-right px-3 py-2 border-b border-slate-200">Income Tax</th>
+              <th className="text-right px-3 py-2 border-b border-slate-200" title="The tax rate on interest (bond coupons, deposits) and on crypto staking rewards when received. It does not apply to dividends (Dividend Tax Rate) or to capital gains (Gains Rate).">Interest Tax Rate</th>
               <th className="text-center px-3 py-2 border-b border-slate-200">Show Cap. Gains</th>
               <th className="px-3 py-2 border-b border-slate-200 w-16"></th>
             </tr>
@@ -1821,14 +1870,17 @@ function TaxRulesTab() {
                   <div>{String(r.display_name)}</div>
                   <div className="text-slate-400 font-normal">{String(r.tax_category)}</div>
                 </td>
-                <td className="px-3 py-2 text-center"><BoolCell val={r.gains_taxable} /></td>
-                <td className="px-3 py-2 text-right"><PctCell val={r.gains_rate} /></td>
-                <td className="px-3 py-2 text-slate-500">{r.gains_tax_code ? String(r.gains_tax_code) : '—'}</td>
-                <td className="px-3 py-2 text-right"><PctCell val={r.dividend_local_tax_rate} /></td>
-                <td className="px-3 py-2 text-center"><BoolCell val={r.dividend_wht_creditable} /></td>
-                <td className="px-3 py-2 text-center"><BoolCell val={r.reinvest_taxable} /></td>
-                <td className="px-3 py-2 text-right"><PctCell val={r.income_tax_rate} /></td>
-                <td className="px-3 py-2 text-center"><BoolCell val={r.show_in_capital_gains ?? true} /></td>
+                <TaxRuleCell kind="bool" align="center" value={r.gains_taxable} display={<BoolCell val={r.gains_taxable} />} onSave={save(r, 'gains_taxable')} />
+                <TaxRuleCell kind="pct" align="right" value={r.gains_rate} display={<PctCell val={r.gains_rate} />} onSave={save(r, 'gains_rate')} />
+                <TaxRuleCell kind="text" value={r.gains_tax_code} display={codeText(r.gains_tax_code)} onSave={save(r, 'gains_tax_code')} />
+                <TaxRuleCell kind="text" value={r.gains_tax_code_foreign} display={codeText(r.gains_tax_code_foreign)} onSave={save(r, 'gains_tax_code_foreign')} />
+                <TaxRuleCell kind="text" value={r.dividend_tax_code} display={codeText(r.dividend_tax_code)} onSave={save(r, 'dividend_tax_code')} />
+                <TaxRuleCell kind="text" value={r.dividend_tax_code_foreign} display={codeText(r.dividend_tax_code_foreign)} onSave={save(r, 'dividend_tax_code_foreign')} />
+                <TaxRuleCell kind="pct" align="right" value={r.dividend_local_tax_rate} display={<PctCell val={r.dividend_local_tax_rate} />} onSave={save(r, 'dividend_local_tax_rate')} />
+                <TaxRuleCell kind="bool" align="center" value={r.dividend_wht_creditable} display={<BoolCell val={r.dividend_wht_creditable} />} onSave={save(r, 'dividend_wht_creditable')} />
+                <TaxRuleCell kind="bool" align="center" value={r.reinvest_taxable} display={<BoolCell val={r.reinvest_taxable} />} onSave={save(r, 'reinvest_taxable')} />
+                <TaxRuleCell kind="pct" align="right" value={r.income_tax_rate} display={<PctCell val={r.income_tax_rate} />} onSave={save(r, 'income_tax_rate')} />
+                <TaxRuleCell kind="bool" align="center" nullable={false} value={r.show_in_capital_gains ?? true} display={<BoolCell val={r.show_in_capital_gains ?? true} />} onSave={save(r, 'show_in_capital_gains')} />
                 <td className="px-3 py-2">
                   <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline flex items-center gap-1">
                     <Pencil size={11} /> Edit
@@ -1876,12 +1928,27 @@ function TaxRulesTab() {
                 onChange={e => set('gains_rate', e.target.value === '' ? null : e.target.value)}
                 placeholder="—" />
             </TaxRuleField>
-            <TaxRuleField label="Gains Tax Code">
+            <TaxRuleField label="Gains Code (tax return line)">
               <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
                 value={String(form.gains_tax_code ?? '')} onChange={e => set('gains_tax_code', e.target.value)}
-                placeholder="e.g. 659-660" />
+                placeholder="e.g. 829 – 830" />
             </TaxRuleField>
-            <TaxRuleField label="Dividend Local Tax (%)">
+            <TaxRuleField label="Gains Code, foreign issuer">
+              <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={String(form.gains_tax_code_foreign ?? '')} onChange={e => set('gains_tax_code_foreign', e.target.value)}
+                placeholder="empty: same as Gains Code" />
+            </TaxRuleField>
+            <TaxRuleField label="Dividend Code (tax return line)">
+              <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={String(form.dividend_tax_code ?? '')} onChange={e => set('dividend_tax_code', e.target.value)}
+                placeholder="e.g. 291 – 292" />
+            </TaxRuleField>
+            <TaxRuleField label="Dividend Code, foreign company (empty: same as Dividend Code)">
+              <input className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                value={String(form.dividend_tax_code_foreign ?? '')} onChange={e => set('dividend_tax_code_foreign', e.target.value)}
+                placeholder="e.g. 295 – 296" />
+            </TaxRuleField>
+            <TaxRuleField label="Dividend Tax Rate (%) — default when a dividend is entered">
               <input type="number" step="0.01" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
                 value={form.dividend_local_tax_rate != null ? String(form.dividend_local_tax_rate) : ''}
                 onChange={e => set('dividend_local_tax_rate', e.target.value === '' ? null : e.target.value)}
@@ -1905,7 +1972,7 @@ function TaxRulesTab() {
                 <option value="false">No</option>
               </select>
             </TaxRuleField>
-            <TaxRuleField label="Income Tax Rate (%)">
+            <TaxRuleField label="Interest Tax Rate (%) — interest and crypto rewards, not dividends or gains">
               <input type="number" step="0.01" className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
                 value={form.income_tax_rate != null ? String(form.income_tax_rate) : ''}
                 onChange={e => set('income_tax_rate', e.target.value === '' ? null : e.target.value)}
@@ -1989,7 +2056,7 @@ function InstrumentTaxTab() {
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">
           When an investment's Instrument Type has an override set here, it takes precedence over the
@@ -2102,7 +2169,7 @@ export default function StaticData() {
   return (
     <div>
       <PageHeader title="Static Data" subtitle="Master reference data" />
-      <div className="px-6 py-4 space-y-4">
+      <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)}

@@ -1,10 +1,11 @@
 """Investments and Holdings API endpoints."""
-from fastapi import APIRouter, Query, Body
+from fastapi import APIRouter, Query, Body, Request
 from typing import Optional, List, Dict, Any
 import math
 import pandas as pd
 from database.connection import get_db
 from api.routers.register import _refresh_balance
+from api.access import scope_clause, in_scope_sql, EXTERNAL_ACCOUNT
 
 router = APIRouter()
 
@@ -56,6 +57,10 @@ def _upsert_cash_transaction(cur, inv_id: int, cash_account_id: int, inv_account
     tax   = float(tax_amount or 0.0)
     net   = gross + tax          # tax is negative, so this reduces the receipt
     signed = -abs(net) if cash_out else abs(net)
+    cur.execute("SELECT Booked_Cash_AccCur FROM Investments WHERE Investments_Id = %s", (inv_id,))
+    booked = (cur.fetchone() or [None])[0]
+    if booked is not None:       # what the broker booked is the cash leg, whatever the trade's own total says (database/margin.py)
+        signed, net = float(booked), abs(float(booked))
 
     if existing_tx_id:
         # payee_id is only resolved here when the investment row has a security
@@ -123,6 +128,7 @@ def get_investments(
     sort_dir: str = Query("desc"),
     limit: int = Query(500),
     offset: int = Query(0),
+    request: Request = None,
 ):
     # `id` deep-links a single row (e.g. Costs by Broker's transaction drill-down)
     # regardless of date range — widen from_date/to_date so it can't be filtered
@@ -130,7 +136,7 @@ def get_investments(
     if id is not None:
         from_date, to_date = "1900-01-01", "2099-12-31"
     id_clause = "AND i.Investments_Id = %(id)s" if id is not None else ""
-    acc_clause = "AND i.Accounts_Id = %(acc)s" if account_id else ""
+    acc_clause = ("AND i.Accounts_Id = %(acc)s" if account_id else "") + (scope_clause(request, "i.Accounts_Id") if request is not None else "")
     action_clause = "AND i.Action = %(action)s" if action else ""
     ticker_clause = "AND LOWER(s.Ticker) LIKE %(ticker)s" if ticker else ""
     search_clause = "AND (s.securities_name ILIKE %(search)s OR s.ticker ILIKE %(search)s OR i.description ILIKE %(search)s)" if search else ""
@@ -186,7 +192,10 @@ def get_investments(
             i.description AS notes,
             i.transactions_id AS transactions_id,
             tx.accounts_id AS cash_account_id,
-            a_cash.accounts_name AS cash_account,
+            -- A cash leg or a paired share transfer in an account that is not the user's is hidden from them by the scoped views; it shows as an external account and
+            -- the row cannot be changed from their side (the server refuses it too).
+            CASE WHEN ext.is_external THEN '{EXTERNAL_ACCOUNT}' ELSE a_cash.accounts_name END AS cash_account,
+            COALESCE(ext.is_external, FALSE) AS external,
             fr.qty_held AS qty_held,
             ROUND(fr.running_balance::numeric, 2) AS running_balance
         FROM Investments i
@@ -197,6 +206,11 @@ def get_investments(
         LEFT JOIN Transactions tx ON i.transactions_id = tx.transactions_id
         LEFT JOIN Accounts a_cash ON tx.accounts_id = a_cash.accounts_id
         LEFT JOIN full_running fr ON fr.investments_id = i.investments_id
+        LEFT JOIN LATERAL (
+            SELECT (EXISTS (SELECT 1 FROM public.Transactions pt WHERE pt.Transactions_Id = i.transactions_id AND NOT ({in_scope_sql('pt.Accounts_Id')}))
+                 OR EXISTS (SELECT 1 FROM public.Investments p2 WHERE i.transfers_id IS NOT NULL AND p2.Transfers_Id = i.transfers_id AND p2.Investments_Id <> i.investments_id
+                              AND NOT ({in_scope_sql('p2.Accounts_Id')}))) AS is_external
+        ) ext ON TRUE
         WHERE i.date BETWEEN %(from_date)s AND %(to_date)s
           {id_clause} {acc_clause} {action_clause} {ticker_clause} {search_clause}
         ORDER BY {order_clause}
@@ -291,6 +305,8 @@ def create_investment(data: dict):
         conn.commit()
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
         return {"id": inv_id}
     except Exception as e:
         conn.rollback()
@@ -306,6 +322,13 @@ def update_investment(inv_id: int, data: dict):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # A trade edited by hand no longer matches what the broker booked: its booked amount is dropped and the cash leg follows the trade again.
+        cur.execute("SELECT Action::text, Quantity, Price_Per_Share, Commission, Total_Amount_AccCur, Date FROM Investments WHERE Investments_Id = %s", (inv_id,))
+        old = cur.fetchone()
+        def _same(a, b):
+            return (a is None and b is None) or (a is not None and b is not None and abs(float(a) - float(b)) < 1e-6)
+        trade_changed = bool(old) and not (str(old[0]) == str(data.get("action")) and _same(old[1], data.get("quantity")) and _same(old[2], data.get("price_per_share"))
+                                           and _same(old[3] or 0, data.get("commission") or 0) and _same(old[4], data.get("total_amount_acccur")) and str(old[5]) == str(data.get("date"))[:10])
         cur.execute("""
             UPDATE Investments SET
                 Accounts_Id          = %s,
@@ -320,7 +343,8 @@ def update_investment(inv_id: int, data: dict):
                 Total_Amount_SecCur  = %s,
                 Instrument_Type      = %s,
                 Description          = %s,
-                Tax_Amount           = %s
+                Tax_Amount           = %s,
+                Booked_Cash_AccCur   = CASE WHEN %s THEN NULL ELSE Booked_Cash_AccCur END
             WHERE Investments_Id = %s
             RETURNING Transactions_Id
         """, (
@@ -329,7 +353,7 @@ def update_investment(inv_id: int, data: dict):
             data.get("commission", 0), data.get("fx_rate", 1),
             data.get("total_amount_acccur"), data.get("total_amount_seccur"),
             data.get("instrument_type") or None, data.get("description"),
-            data.get("tax_amount") or None, inv_id,
+            data.get("tax_amount") or None, trade_changed, inv_id,
         ))
         if cur.rowcount == 0:
             raise HTTPException(404, "Not found")
@@ -370,6 +394,8 @@ def update_investment(inv_id: int, data: dict):
         conn.commit()
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
         return {"id": inv_id}
     except HTTPException:
         raise
@@ -463,6 +489,8 @@ def batch_update_investments(data: dict):
 
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         # Non-blocking heads-up: a Sell/ShrOut/etc. row moved into an account with
         # no matching prior holding can leave that (account, security) negative —
@@ -539,6 +567,8 @@ def batch_delete_investments(data: dict):
 
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         return {"deleted": deleted}
     except HTTPException:
@@ -590,6 +620,8 @@ def delete_investment(inv_id: int):
         # Recalculate holdings after the commit so the deleted row is gone
         from database.crud import update_holdings
         update_holdings()
+        from database.margin import resync_quietly      # a margin position's cash leg is its commission / realised P&L, not its notional (database/margin.py)
+        resync_quietly()
 
         return {"deleted": inv_id}
     except HTTPException:
@@ -641,9 +673,24 @@ def staking_reinvest(entries: List[Dict[str, Any]] = Body(...)):
         raise HTTPException(500, str(e))
 
 
+@router.get("/saxo-margin")
+def get_saxo_margin(account_id: int = Query(...)):
+    """Saxo's own margin figures (utilization, margin available, cash available, account value) for a Saxo account, read live — admin only, see data/saxo_margin.py.
+    `available: false` with a reason when the account is not a connected Saxo account or Saxo cannot be reached."""
+    from data.saxo_margin import fetch_margin, SaxoMarginUnavailable
+    try:
+        data = fetch_margin(account_id)
+        data.pop("raw", None)                                # Saxo's full answer is for diagnosis, not for the page
+        return {"available": True, **data}
+    except SaxoMarginUnavailable as e:
+        return {"available": False, "reason": str(e)}
+    except Exception as e:                                   # Saxo unreachable, an entitlement missing…: say so, do not fail the page
+        return {"available": False, "reason": f"Could not read the margin from Saxo: {e}"[:400], "transient": True}
+
+
 @router.get("/holdings")
-def get_holdings(account_id: Optional[int] = Query(None), include_closed: bool = Query(False)):
-    acc_clause = "AND h.Accounts_Id = %(acc)s" if account_id else ""
+def get_holdings(account_id: Optional[int] = Query(None), include_closed: bool = Query(False), request: Request = None):
+    acc_clause = ("AND h.Accounts_Id = %(acc)s" if account_id else "") + (scope_clause(request, "h.Accounts_Id") if request is not None else "")
     params: dict = {"include_closed": include_closed}
     if account_id:
         params["acc"] = account_id

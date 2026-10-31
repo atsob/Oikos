@@ -5,6 +5,7 @@ import math
 import threading
 import pandas as pd
 from database.connection import get_db, get_connection
+from api.access import held_securities
 
 router = APIRouter()
 
@@ -39,6 +40,13 @@ def get_news(
         params["source_id"] = source_id
     if unread_only:
         clauses.append("n.Is_Read = FALSE")
+    held = held_securities()
+    if held is not None:
+        # A restricted user reads the news on what their accounts hold and on their own institutions — not on the household's payees or watchlist.
+        # (Accounts is, on this read, already only theirs.)
+        clauses.append("((n.Source_Type = 'Security' AND n.Source_Id = ANY(%(held)s)) "
+                       "OR (n.Source_Type = 'Institution' AND n.Source_Id IN (SELECT Institutions_Id FROM Accounts WHERE Institutions_Id IS NOT NULL)))")
+        params["held"] = sorted(held) or [-1]
     where = ("AND " + " AND ".join(clauses)) if clauses else ""
 
     with get_db() as conn:

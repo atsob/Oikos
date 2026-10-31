@@ -27,6 +27,7 @@ import {
   getNotifyStatus,
   sendNotifyTest,
   getPayees,
+  getSecurities,
 } from '@/lib/api'
 import { PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Spinner, ColHeader, useSortTable } from '@/components/ui'
 import { cn, todayLocal } from '@/lib/utils'
@@ -910,7 +911,7 @@ function NormalizeInvestments() {
           <Alert type="success">No investments with dummy prices found.</Alert>
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
               {[
                 { label: 'Total flagged', value: (allRows as Row[]).length },
                 { label: 'Accounts', value: accNames.length },
@@ -1126,7 +1127,7 @@ function InvestmentDataQuality() {
         </Button>
 
         {runResult && (
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
             {[
               { label: 'Total records', value: totalRecords },
               { label: '⚠️ Anomalies', value: anomalyCount },
@@ -2178,7 +2179,7 @@ function LogViewer() {
                 · {(data as any)?.lines ?? 0} line(s) shown
               </p>
             )}
-            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-[calc(100vh-380px)] whitespace-pre-wrap">
+            <pre className="bg-slate-900 text-green-400 text-xs rounded-lg p-4 overflow-auto max-h-[calc(100dvh-380px)] whitespace-pre-wrap">
               {data?.text || '(no lines match the current filters)'}
             </pre>
             {data?.text && (
@@ -2200,6 +2201,7 @@ function AppSettingsPanel() {
   const [tgMsg, setTgMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const { data: countryRows = [] } = useQuery<{ code: string; name: string }[]>({ queryKey: ['country-list'], queryFn: getCountryList, staleTime: Infinity })
   const { data: payeeRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['payees'], queryFn: () => getPayees() })
+  const { data: securityRows = [] } = useQuery<Record<string, unknown>[]>({ queryKey: ['securities'], queryFn: () => getSecurities(), staleTime: 300_000 })
   const [dirty, setDirty] = useState(false)
   const [saved_, setSaved_] = useState(false)
 
@@ -2294,6 +2296,47 @@ function AppSettingsPanel() {
             </div>
           </div>
 
+          {/* Benchmark */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Benchmark</h3>
+            <label className="text-xs font-medium text-slate-500 block mb-1">Compare against</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-md"
+              value={form.defaultBenchmarkId ?? 0} onChange={e => set('defaultBenchmarkId', Number(e.target.value))}>
+              <option value={0}>Vanguard FTSE All-World (VWCE) — the default</option>
+              {(['ETF', 'Market Index'] as const).map(t => (
+                <optgroup key={t} label={t === 'ETF' ? 'ETFs' : 'Indexes'}>
+                  {securityRows.filter(s => String(s.type) === t && s.is_active !== false).sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                    .map(s => <option key={String(s.id)} value={Number(s.id)}>{String(s.name)}{s.ticker ? ` (${String(s.ticker)})` : ''}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              What "did it beat the market?" means: the Action backtest measures each security's return in EUR against this one, over the same
+              window. Any report can pick another for itself, and "the average of what is tested" is offered there too.
+            </p>
+          </div>
+
+          {/* Dashboard alerts */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Dashboard Alerts</h3>
+            <p className="text-xs font-medium text-slate-500">Show these alert groups on the Dashboard:</p>
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 max-w-md">
+              {([['sr', 'Support / Resistance'], ['price', 'Price Alerts'], ['signals', 'Signals'], ['action', 'Action'], ['events', 'Upcoming Events'],
+                ['corporate', 'Corporate Actions & Data'], ['portfolio', 'Portfolio']] as const).map(([g, label]) => (
+                <label key={g} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="rounded"
+                    checked={form.dashboardAlertGroups?.[g] !== false}
+                    onChange={e => set('dashboardAlertGroups', { ...(form.dashboardAlertGroups ?? {}), [g]: e.target.checked })} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              All groups are shown by default. A group you untick is hidden from the Dashboard's alert panel only — the alerts are
+              still raised, so Telegram (below) is unaffected, the Alerts page (sidebar) still lists every group, and ticking it again brings them back.
+            </p>
+          </div>
+
           {/* Telegram alerts */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Telegram Alerts</h3>
@@ -2303,7 +2346,7 @@ function AppSettingsPanel() {
             </label>
             <p className="mt-3 text-xs font-medium text-slate-500">Also send new Dashboard alerts from these groups (each alert once):</p>
             <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 max-w-md">
-              {([['sr', 'Support / Resistance'], ['price', 'Price Alerts'], ['signals', 'Signals'], ['events', 'Upcoming Events'],
+              {([['sr', 'Support / Resistance'], ['price', 'Price Alerts'], ['signals', 'Signals'], ['action', 'Action'], ['events', 'Upcoming Events'],
                 ['corporate', 'Corporate Actions & Data'], ['portfolio', 'Portfolio']] as const).map(([g, label]) => (
                 <label key={g} className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" className="rounded" disabled={!form.telegramAlerts}
@@ -2846,7 +2889,7 @@ export default function Tools() {
     <div>
       <PageHeader title="Tools" subtitle="Database maintenance and admin utilities" />
 
-      <div className="px-6 py-6 space-y-6">
+      <div className="px-3 sm:px-6 py-6 space-y-6">
         {/* Category selector */}
         <div className="flex gap-2 flex-wrap">
           {Object.keys(CATEGORIES).map(cat => (
