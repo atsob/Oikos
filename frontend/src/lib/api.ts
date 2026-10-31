@@ -1385,10 +1385,10 @@ export interface TaxReturnResult {
   sections: { title: string; rows: { key: string; label: string; amount: number; detail: string; code: string; default: string; custom: boolean; lines: TaxReturnLine[]; withheld: number | null; info: boolean; kind: string | null }[] }[]
   codes_set: Record<string, string>; notes: string[]
 }
-export interface TaxReturnCrypto { rewardsIncome?: boolean; exemption?: number; rate?: number; lossesFrom?: number; exclude?: number[] }
+export interface TaxReturnCrypto { rewardsIncome?: boolean; exemption?: number; rate?: number; lossesFrom?: number; exclude?: number[]; securitiesLossesFrom?: number }
 export const getTaxReturn = (year: number, method: string, accountIds?: number[], crypto?: TaxReturnCrypto): Promise<TaxReturnResult> =>
   api.get('/reports/tax-return', { params: { year, method, account_ids: accountIds?.join(',') || undefined, rewards_income: crypto?.rewardsIncome, crypto_exemption: crypto?.exemption || undefined,
-    crypto_rate: crypto?.rate, crypto_losses_from: crypto?.lossesFrom || undefined, crypto_exclude: crypto?.exclude?.length ? crypto.exclude.join(',') : undefined } }).then(r => r.data)
+    crypto_rate: crypto?.rate, crypto_losses_from: crypto?.lossesFrom || undefined, crypto_exclude: crypto?.exclude?.length ? crypto.exclude.join(',') : undefined, securities_losses_from: crypto?.securitiesLossesFrom || undefined } }).then(r => r.data)
 export const putTaxReturnCodes = (codes: Record<string, string>) => api.put('/reports/tax-return/codes', { codes }).then(r => r.data)
 
 // Private funds (Reports -> Private Funds)

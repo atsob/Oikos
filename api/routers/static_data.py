@@ -1116,7 +1116,8 @@ def get_tax_category_rules():
     with get_db() as conn:
         df = pd.read_sql("""
             SELECT tax_category, display_name,
-                   gains_taxable, gains_rate, gains_tax_code,
+                   gains_taxable, gains_rate, gains_tax_code, gains_tax_code_foreign,
+                   dividend_tax_code, dividend_tax_code_foreign,
                    dividend_local_tax_rate, dividend_wht_creditable, reinvest_taxable,
                    income_tax_rate, show_in_capital_gains, notes
             FROM Tax_Category_Rules
@@ -1140,13 +1141,15 @@ def create_tax_category_rule(data: dict):
         def _b(k): v = data.get(k); return bool(v) if v is not None else None
         cur.execute("""
             INSERT INTO Tax_Category_Rules
-                (tax_category, display_name, gains_taxable, gains_rate, gains_tax_code,
+                (tax_category, display_name, gains_taxable, gains_rate, gains_tax_code, gains_tax_code_foreign,
+                 dividend_tax_code, dividend_tax_code_foreign,
                  dividend_local_tax_rate, dividend_wht_creditable, reinvest_taxable,
                  income_tax_rate, show_in_capital_gains, notes)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             data.get('tax_category'), data.get('display_name'),
-            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None,
+            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None, data.get('gains_tax_code_foreign') or None,
+            data.get('dividend_tax_code') or None, data.get('dividend_tax_code_foreign') or None,
             _n('dividend_local_tax_rate'), _b('dividend_wht_creditable'), _b('reinvest_taxable'),
             _n('income_tax_rate'), data.get('show_in_capital_gains', True), data.get('notes') or None,
         ))
@@ -1173,6 +1176,9 @@ def update_tax_category_rule(tax_category: str, data: dict):
                 gains_taxable           = %s,
                 gains_rate              = %s,
                 gains_tax_code          = %s,
+                gains_tax_code_foreign  = %s,
+                dividend_tax_code         = %s,
+                dividend_tax_code_foreign = %s,
                 dividend_local_tax_rate = %s,
                 dividend_wht_creditable = %s,
                 reinvest_taxable        = %s,
@@ -1182,7 +1188,8 @@ def update_tax_category_rule(tax_category: str, data: dict):
             WHERE tax_category = %s
         """, (
             data.get('display_name'),
-            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None,
+            _b('gains_taxable'), _n('gains_rate'), data.get('gains_tax_code') or None, data.get('gains_tax_code_foreign') or None,
+            data.get('dividend_tax_code') or None, data.get('dividend_tax_code_foreign') or None,
             _n('dividend_local_tax_rate'), _b('dividend_wht_creditable'), _b('reinvest_taxable'),
             _n('income_tax_rate'), data.get('show_in_capital_gains', True), data.get('notes') or None,
             tax_category,

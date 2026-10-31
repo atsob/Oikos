@@ -2723,7 +2723,7 @@ def get_crypto_tax(year: int = Query(None), method: str = Query("FIFO"), exempti
     proceeds = round(sum(d["proceeds_eur"] for d in disposals), 2)
     cost = round(sum(d["cost_eur"] for d in disposals), 2)
     e1 = [
-        {"codes": "743", "label": "Amount spent purchasing crypto in the year", "amount": round(purchases, 2)},
+        {"codes": "743 – 744", "label": "Amount spent purchasing crypto in the year", "amount": round(purchases, 2)},
         {"codes": "865 – 866", "label": "Capital gain from sales (after losses brought forward)", "amount": cur["taxable"]},
         {"codes": "781 – 782", "label": "Return of invested capital — the cost of what was sold, not taxed again", "amount": cost},
     ]
@@ -2778,14 +2778,81 @@ def _source_maps() -> tuple[dict, dict]:
     return ({int(r["sid"]): sec_cc(r) for _, r in sec.iterrows()}, {int(r["aid"]): acc_cc(r) for _, r in acc.iterrows()})
 
 
+SECURITIES_LOSS_YEARS = 5          # a loss on securities (ΚΦΕ art. 42) can be offset against the gains of the next five years (Greece)
+
+
+def _category_codes() -> dict:
+    """The tax-return lines set on each Tax Category (Static Data -> Tax Categories): its gains (home issuer / foreign issuer) and its dividends (home / foreign company)."""
+    with get_db() as conn:
+        df = pd.read_sql("SELECT tax_category, gains_tax_code, gains_tax_code_foreign, dividend_tax_code, dividend_tax_code_foreign FROM Tax_Category_Rules", conn)
+    return {r["tax_category"]: {k: (str(r[k]).strip() or None) if pd.notna(r[k]) else None for k in df.columns if k != "tax_category"} for _, r in df.iterrows()}
+
+
+def _taxable_results(g: pd.DataFrame, sec_cc: dict, home: str, by_origin: bool) -> list[dict]:
+    """One result per tax category (and, where the form asks for it, per origin of the issuer — "domestic" when its country is `home`, else "foreign") from a year's
+    capital gains rows, crypto left out: net result, whether the category is taxable (the Capital Gains tab's rule), its rate and the rows."""
+    if g is None or g.empty:
+        return []
+    g = g[(g["tax_category"].astype(str) != "Crypto") & (g["securities_type"].astype(str) != "Crypto")]
+    if g.empty:
+        return []
+    out = []
+    for cat, xc in g.groupby(g["tax_category"].fillna("Other")):
+        taxable = bool(((xc["gains_taxable"] == True) & (xc["is_tax_exempt"] != True)).any())     # noqa: E712 — same rule as the Capital Gains tab
+        rate = float(xc["gains_rate"].dropna().iloc[0]) if xc["gains_rate"].notna().any() else 0.0
+        code_cat = xc["gains_tax_code"].dropna().iloc[0] if xc["gains_tax_code"].notna().any() else None
+        orgs = pd.Series([("domestic" if sec_cc.get(int(s_), "") == home else "foreign") if (by_origin and taxable and pd.notna(s_)) else "" for s_ in xc["securities_id"]], index=xc.index)      # only taxable gains are declared by origin; exempt ones all go to one line
+        for org in sorted(set(orgs)):
+            x = xc[orgs == org]
+            out.append({"cat": cat, "org": org, "x": x, "net": float(x["gain_loss_eur"].astype(float).sum()), "taxable": taxable, "rate": rate, "code_cat": code_cat,
+                        "mixed": len(set(orgs)) > 1})
+    return out
+
+
+def _gains_by_year(years, method: str, account_ids) -> dict:
+    """The capital gains rows of each year, computed from one read of the ledger (the Tax Return's loss carry-forward needs the earlier years)."""
+    with get_db() as conn:
+        df_all = _get_all_inv_txns_for_gains(conn)
+    ids = _parse_account_ids(account_ids)
+    if ids and not df_all.empty:
+        df_all = df_all[df_all["accounts_id"].isin(ids)]
+    if df_all.empty:
+        return {}
+    return {y: (_compute_lot_gains(df_all, y, method=method) if method in ("FIFO", "LIFO") else _compute_wac_gains(df_all, y)) for y in years}
+
+
+def _carry_pools(results: dict, year: int, years_kept: int = SECURITIES_LOSS_YEARS) -> list[list[float]]:
+    """Losses still to offset at the start of `year`: [year of the loss, domestic part, foreign part]. `results` maps each earlier year to its (domestic, foreign)
+    net result of the taxable categories. A year's loss is offset against the gains of the following years, the oldest first, for `years_kept` years; the part of
+    a loss that is Greek or foreign follows the origin of the losing results."""
+    pools: list[list[float]] = []
+    for y in range(year - years_kept, year):
+        pools = [p for p in pools if y - p[0] <= years_kept and p[1] + p[2] > 0.005]
+        rd, rf = results.get(y, (0.0, 0.0))
+        net = rd + rf
+        if net > 0:
+            left = net
+            for p in pools:                                    # the oldest loss first
+                tot = p[1] + p[2]
+                take = min(tot, left)
+                p[1], p[2] = p[1] - take * p[1] / tot, p[2] - take * p[2] / tot
+                left -= take
+        elif net < 0:
+            ld, lf = max(-rd, 0.0), max(-rf, 0.0)
+            pools.append([y, -net * ld / (ld + lf), -net * lf / (ld + lf)])
+    return [p for p in pools if year - p[0] <= years_kept and p[1] + p[2] > 0.005]
+
+
 @router.get("/tax-return")
 def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account_ids: Optional[str] = Query(None),
                    rewards_income: Optional[bool] = Query(None), crypto_exemption: float = Query(0.0), crypto_rate: Optional[float] = Query(None),
-                   crypto_losses_from: int = Query(0), crypto_exclude: Optional[str] = Query(None)):
+                   crypto_losses_from: int = Query(0), crypto_exclude: Optional[str] = Query(None), securities_losses_from: int = Query(0)):
     """Every figure a tax return needs for a year, gathered from the other tax reports and labelled with the code of the line it goes on (database/tax_return.py:
     the codes follow the Country of Usage). Capital gains by tax category, crypto, dividends, interest and bank interest, and an estimate of the tax. account_ids
     (an Account Preset) limits it to those accounts. The crypto figures follow the Crypto tab's own settings (rewards_income, crypto_exemption, crypto_rate,
-    crypto_losses_from, crypto_exclude), which the screen passes along. Each figure carries the transactions it is made of (`lines`) and the tax withheld at source
+    crypto_losses_from, crypto_exclude), which the screen passes along. securities_losses_from is the first year whose losses on securities count towards the
+    carry-forward (Greece, 873-874): 0 (not set) shows the losses of the last five years for information only and does not net them in the estimate, because they
+    only count if they were declared in those years' returns and a computed old loss (a futures contract closed at 0, say) may not be one. Each figure carries the transactions it is made of (`lines`) and the tax withheld at source
     on them; the withheld tax also has rows of its own, with codes. Estimates only."""
     from datetime import date as _date
     from database.tax_return import country_codes, resolve
@@ -2802,23 +2869,64 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
         return {"key": key, "label": label, "amount": eur(amount), "detail": detail, "code": resolve(setup, key, category_code), "default": default, "custom": key in setup["overrides"],
                 "lines": lines or [], "withheld": round(sum(held), 2) if held else None, "info": info, "kind": kind}
 
-    # 1. capital gains, one row per tax category (crypto has its own section)
+    # 1. capital gains, one row per tax category (crypto has its own section). Where the country's form asks for it (Greece, Table 4Ε) a category with issuers of both origins has one row for
+    # each: a Greek issuer's gain goes on 829-830 (with its tax number), a foreign one's on 865-866, losses on 871-872 with the origin chosen. Losses of the last five years that are not
+    # yet offset are a figure of their own (873-874), and the tax estimate nets the year's losses and those carried forward.
+    rules = setup.get("income") or {}                       # the country's codes for interest by source and by who withheld the tax (Greece: Table 4Δ1); none for other countries
+    home, home_name = setup["code"], (setup.get("name") or setup["code"])
+    sec_cc, acct_cc = _source_maps() if rules else ({}, {})
+    by_origin = bool(rules.get("gain_domestic") and rules.get("gain_foreign"))
+    cat_codes = _category_codes()                           # the lines set on each Tax Category come first, the country's built-in ones after
     g = pd.DataFrame(get_capital_gains(year=year, method=method, account_ids=account_ids))
     rows = []
-    if not g.empty:
-        g = g[(g["tax_category"].astype(str) != "Crypto") & (g["securities_type"].astype(str) != "Crypto")]
-        for cat, x in g.groupby(g["tax_category"].fillna("Other")):
-            gain = x["gain_loss_eur"].astype(float)
-            taxable = bool(((x["gains_taxable"] == True) & (x["is_tax_exempt"] != True)).any())     # noqa: E712 — same rule as the Capital Gains tab
-            rate = float(x["gains_rate"].dropna().iloc[0]) if x["gains_rate"].notna().any() else 0.0
-            net = float(gain.sum())
-            tax = max(net, 0.0) * rate / 100.0 if taxable else 0.0
-            est_tax["gains"] += tax
-            code_cat = x["gains_tax_code"].dropna().iloc[0] if x["gains_tax_code"].notna().any() else None
-            key = f"gains:{cat}" if net >= 0 or not taxable else f"losses:{cat}"
-            rows.append(row(key, f"{cat} — net {'gain' if net >= 0 else 'loss'}", net,
-                            f"sold for {eur(x['proceeds_eur'].astype(float).sum()):,.2f}, cost {eur(x['cost_eur'].astype(float).sum()):,.2f}, gains {eur(gain[gain > 0].sum()):,.2f}, losses {eur(gain[gain < 0].sum()):,.2f}"
-                            + (f"; taxable at {rate:g}% → est. tax {tax:,.2f}" if taxable else "; gains exempt in this category"), code_cat, _gain_lines(x)))
+    pos = pos_w = neg = 0.0                                 # taxable categories: positive results, their rate-weighted sum, and the losses
+    for gr in _taxable_results(g, sec_cc, home, by_origin):
+        cat, org, x, net, taxable, rate = gr["cat"], gr["org"], gr["x"], gr["net"], gr["taxable"], gr["rate"]
+        gain = x["gain_loss_eur"].astype(float)
+        if taxable:
+            if net > 0:
+                pos, pos_w = pos + net, pos_w + net * rate
+            else:
+                neg -= net
+        split = gr["mixed"]
+        suffix = ":domestic" if split and org == "domestic" else ""
+        tag = ((f" (issuer: {home_name})" if org == "domestic" else " (issuer: abroad)") if split else "")
+        key = f"gains:{cat}{suffix}" if net >= 0 or not taxable else f"losses:{cat}{suffix}"
+        cc_ = cat_codes.get(cat) or {}
+        code = None if (taxable and net < 0) else ((cc_.get("gains_tax_code_foreign") or cc_.get("gains_tax_code")) if org == "foreign" else cc_.get("gains_tax_code"))
+        if not code and by_origin:
+            code = (rules.get(f"gain_{org}") if net >= 0 else None) if taxable else rules.get("gain_exempt")
+        code = code or None
+        rows.append(row(key, f"{cat}{tag} — net {'gain' if net >= 0 else 'loss'}", net,
+                        f"sold for {eur(x['proceeds_eur'].astype(float).sum()):,.2f}, cost {eur(x['cost_eur'].astype(float).sum()):,.2f}, gains {eur(gain[gain > 0].sum()):,.2f}, losses {eur(gain[gain < 0].sum()):,.2f}"
+                        + (f"; taxable at {rate:g}%" if taxable else "; gains exempt in this category")
+                        + ("; enter the issuer's tax number (ΑΦΜ)" if taxable and by_origin and org == "domestic" and net > 0 else ""), code, _gain_lines(x)))
+    carried = []
+    if by_origin:
+        past = _gains_by_year(range(year - SECURITIES_LOSS_YEARS, year), method.upper(), account_ids)
+        results = {}
+        for y_, gy in past.items():
+            rd = rf = 0.0
+            for gr in _taxable_results(gy, sec_cc, home, True):
+                if gr["taxable"]:
+                    if gr["org"] == "domestic":
+                        rd += gr["net"]
+                    else:
+                        rf += gr["net"]
+            results[y_] = (rd, rf)
+        counted = securities_losses_from > 0
+        carried = _carry_pools({y_: v for y_, v in results.items() if not counted or y_ >= securities_losses_from}, year)
+        for org, i_, word in (("domestic", 1, home_name), ("foreign", 2, "abroad")):
+            amt = sum(p[i_] for p in carried)
+            if amt > 0.004:
+                rows.append(row("losses:carried" + (":domestic" if org == "domestic" else ""), f"Losses of earlier years still to offset (issuer: {word})", amt,
+                                (f"losses of the last {SECURITIES_LOSS_YEARS} years not yet offset, the oldest first; they are taken off this year's gains when the return is settled"
+                                 if counted else f"computed from the last {SECURITIES_LOSS_YEARS} years, for information: not counted until you set the first year whose losses were declared (Losses count from)"),
+                                rules.get("loss_carried") or None,
+                                [_tl("All accounts", f"Loss of {p[0]}", "", f"still to offset; usable up to {p[0] + SECURITIES_LOSS_YEARS}", p[i_]) for p in carried if p[i_] > 0.004],
+                                info=not counted))
+    carried_total = sum(p[1] + p[2] for p in carried) if securities_losses_from > 0 else 0.0
+    est_tax["gains"] += max(pos - neg - carried_total, 0.0) * ((pos_w / pos) if pos else 0.0) / 100.0
     sections.append({"title": "Capital gains and losses (securities, by tax category)", "rows": rows})
 
     # 2. crypto
@@ -2831,6 +2939,7 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
         row("crypto:purchases", "Amount spent buying crypto in the year", cs.get("purchases_eur", 0.0)),
         row("crypto:gain", "Capital gain after losses brought forward", cs.get("taxable_eur", 0.0),
             f"result {cs.get('result_eur', 0):,.2f}, losses used {cs.get('losses_used_eur', 0):,.2f}; tax at {c['rate']:g}% = {cs.get('tax_eur', 0):,.2f}",
+            category_code=(cat_codes.get("Crypto") or {}).get("gains_tax_code"),
             lines=[_tl(d_["account"], d_["security"], d_["date"], f"{d_['kind']} {d_['quantity']:g}", d_["gain_loss_eur"], d_["proceeds_eur"], d_["cost_eur"]) for d_ in disp]),
         row("crypto:capital", "Invested capital returned (cost of what was sold)", cs.get("cost_eur", 0.0), f"sold for {cs.get('proceeds_eur', 0):,.2f}",
             lines=[_tl(d_["account"], d_["security"], d_["date"], f"{d_['kind']} {d_['quantity']:g}", d_["cost_eur"], d_["proceeds_eur"], d_["cost_eur"]) for d_ in disp]),
@@ -2848,36 +2957,56 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
     # 3. dividends and interest from securities, by category (crypto rewards are above)
     d = pd.DataFrame(get_dividend_income_tax(year=year, account_ids=account_ids))
     drows, irows, wrows = [], [], []
-    rules = setup.get("income") or {}                       # the country's codes for interest by source and by who withheld the tax (Greece: Table 4Δ1); none for other countries
-    home, home_name = setup["code"], (setup.get("name") or setup["code"])
-    sec_cc, acct_cc = _source_maps() if rules else ({}, {})
     if not d.empty:
         d = d[(d["tax_category"].astype(str) != "Crypto") & (d["action"] != "RtrnCap")]
         # A category with both taxable and tax-exempt income (bond interest: some bonds are exempt, some are not) is reported as two figures, each with its own code.
-        d = d.assign(_cat=d["tax_category"].fillna("Other"), _ex=d["is_tax_exempt"].fillna(False).astype(bool), _src="", _wcls="")
+        d = d.assign(_cat=d["tax_category"].fillna("Other"), _ex=d["is_tax_exempt"].fillna(False).astype(bool), _src="", _wcls="", _rt="")
+        # interest whose rate changed on a date (Greek listed corporate bonds from 12 Apr 2025) is its own figure: the Tax Return asks for the cause and the rate separately
+        d["_rt"] = [f"{float(r_):g}" if (pd.notna(ch_) and bool(ch_)) else "" for r_, ch_ in zip(d["income_tax_rate"], d["rate_changed"])]
         if rules and not d.empty:
             def _source(r):
                 cc = sec_cc.get(int(r["securities_id"])) if pd.notna(r["securities_id"]) else ""
                 cc = cc or acct_cc.get(int(r["accounts_id"]), "")          # a deposit or a bond without a country: where it is held
                 return "domestic" if cc == home else "foreign"
             def _who(r):                                                   # who withheld: the issuer or bank (home-country interest), a home-country custodian, or a foreign one
-                return "domestic" if r["_src"] == "domestic" else ("custodian" if acct_cc.get(int(r["accounts_id"]), "") == home else "abroad")
+                if r["_src"] == "domestic":
+                    return "domestic"
+                if acct_cc.get(int(r["accounts_id"]), "") != home:
+                    return "abroad"
+                if r["section"] == "dividend":
+                    # A home-country broker does not withhold on a foreign company's dividend (the form calls it a mistake when one does): the tax in the account is the foreign
+                    # country's — Belgium 30%, Canada 25% — unless it is about the home rate (Greece 5%), which only the home country would charge. The home rate is the
+                    # country's own, not the Tax Category's (a category's rate may stand for what the source country usually withholds).
+                    gross, wht, local = r.get("amount_eur"), r.get("tax_amount_eur"), setup.get("dividend_rate")
+                    try:
+                        pct = abs(float(wht)) / float(gross) * 100
+                        return "custodian" if local is not None and abs(pct - float(local)) <= 0.6 else "abroad"
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        return "abroad"
+                return "custodian"
             d["_src"] = d.apply(_source, axis=1)
             d["_wcls"] = d.apply(_who, axis=1)
         mixed_ex = {k for k, v in d.groupby(["section", "_cat"])["_ex"].nunique().items() if v > 1}
         mixed_src = {k for k, v in d.groupby(["section", "_cat", "_ex"])["_src"].nunique().items() if v > 1}
-        for (sec, cat, ex, src), x in d.groupby(["section", "_cat", "_ex", "_src"]):
+        mixed_rt = {k for k, v in d.groupby(["section", "_cat", "_ex", "_src"])["_rt"].nunique().items() if v > 1}
+        for (sec, cat, ex, src, rt), x in d.groupby(["section", "_cat", "_ex", "_src", "_rt"]):
             word = "dividends" if sec == "dividend" else "interest"
             split_ex, split_src = (sec, cat) in mixed_ex, (sec, cat, ex) in mixed_src
             # the taxable domestic part (or a category that is all one kind) keeps the key it always had; exempt interest always has its own key (its code is another table's)
-            suffix = (":exempt" if ex and (split_ex or sec == "interest") else "") + (":foreign" if split_src and src == "foreign" else "")
+            suffix = (":exempt" if ex and (split_ex or sec == "interest") else "") + (":foreign" if split_src and src == "foreign" else "") + (f":rate{rt}" if rt else "")
             tag = ((" (tax-exempt)" if ex else " (taxable)") if split_ex else (" (tax-exempt)" if ex else "")) + ((f" (source: {home_name})" if src == "domestic" else " (source: abroad)") if split_src else "")
+            rfrom = x["rate_from"].dropna().iloc[0] if "rate_from" in x and x["rate_from"].notna().any() else None
+            if rfrom:                                                       # a rate that changed on a date: say which side of it this figure is
+                when = pd.Timestamp(rfrom).strftime("%d %b %Y").lstrip("0")
+                tag += f" (from {when}: {rt}%)" if rt else (f" (before {when})" if (sec, cat, ex, src) in mixed_rt else "")
             gross = float(x["amount_eur"].astype(float).sum())
             wht = float(x["tax_amount_eur"].astype(float).abs().sum()) if x["tax_amount_eur"].notna().any() else 0.0
             due = float(x["local_tax_liability"].astype(float).sum() if x["local_tax_liability"].notna().any() else 0.0) + float(x["income_tax_liability"].astype(float).sum() if x["income_tax_liability"].notna().any() else 0.0)
             est_tax["income"] += due
             exempt = bool(ex)
             code_cat = (rules.get(f"{sec}_exempt" if exempt else f"{sec}_{src}") or None) if rules else None
+            if sec == "dividend" and not exempt:                            # the line set on the Tax Category, by where the company is, comes first
+                code_cat = ((cat_codes.get(cat) or {}).get("dividend_tax_code_foreign") if src == "foreign" else None) or (cat_codes.get(cat) or {}).get("dividend_tax_code") or code_cat
             target = drows if sec == "dividend" else irows
             target.append(row(f"{'dividends' if sec == 'dividend' else 'interest'}:{cat}{suffix}", f"{cat} — {word}{tag}", gross,
                               f"withheld abroad {wht:,.2f}; tax still due {due:,.2f}" + ("; exempt category" if exempt else ""), code_cat, _income_lines(x)))
@@ -2919,7 +3048,7 @@ def get_tax_return(year: int = Query(None), method: str = Query("FIFO"), account
 
     total = sum(est_tax.values())
     sections.append({"title": "Estimated tax (indicative)", "rows": [
-        row("est:gains", "On capital gains of taxable categories", est_tax["gains"], "net of the same category's losses; losses carried forward are not modelled"),
+        row("est:gains", "On capital gains of taxable categories", est_tax["gains"], "net of the year's losses and, for Greece, the losses carried forward from the last five years"),
         row("est:crypto", "On crypto gains", est_tax["crypto"]), row("est:rewards", "On crypto rewards", est_tax["rewards"]),
         row("est:income", "Still due on dividends and interest", est_tax["income"], "after tax withheld abroad"), row("est:total", "Total", total)]})
     return {"year": year, "method": method, "country": {k: setup[k] for k in ("code", "name", "form", "has_profile")}, "sections": sections,
@@ -5708,6 +5837,9 @@ def get_dividend_income_tax(year: int = Query(None), account_ids: Optional[str] 
         -- Tax rates from the effective tax category rules
         tcr.Dividend_Local_Tax_Rate         AS dividend_local_tax_rate,
         tcr.Income_Tax_Rate                 AS income_tax_rate,
+        s.Sector                            AS sector,
+        iss.Issuers_Name                    AS issuer,
+        iss.Is_Government                   AS issuer_gov,
         -- amount_eur: convert Total_Amount_AccCur using the *account* currency
         CASE
             WHEN ca.Currencies_ShortName = 'EUR'
@@ -5741,6 +5873,7 @@ def get_dividend_income_tax(year: int = Query(None), account_ids: Optional[str] 
     JOIN Accounts     a   ON a.Accounts_Id    = i.Accounts_Id
     JOIN Currencies   ca  ON ca.Currencies_Id = a.Currencies_Id
     JOIN eff              ON eff.Investments_Id = i.Investments_Id
+    LEFT JOIN Issuers iss ON iss.Issuers_Id = s.Issuer_Id
     LEFT JOIN Tax_Category_Rules tcr ON tcr.Tax_Category = eff.eff_tax_cat
     WHERE i.Action IN ('Dividend','IntInc','Reinvest','RtrnCap')
       AND EXTRACT(YEAR FROM i.Date) = %(year)s
@@ -5826,6 +5959,28 @@ def get_dividend_income_tax(year: int = Query(None), account_ids: Optional[str] 
         return max(0.0, round(gross * float(rate) / 100 - wht, 4))
 
     records = _df_to_list(df)
+    # A rate that changes on a date (Greece: listed corporate bond interest, 15% up to 11 Apr 2025, 5% after): the row's own date picks the rate, so the tax still due is right
+    # on both sides of the date. rate_changed marks the rows whose rate is not the Tax Category's; rate_from is the date of the rule that covers the row.
+    from database.tax_return import rate_change, PROFILES
+    from database.local_markets import home_country
+    from api.routers.country_exposure import _is_government
+    cc = home_country()
+    # A Tax Category's dividend rate also pre-fills the tax withheld when a dividend is entered (Security Detail -> Corporate Actions), so a foreign category carries the
+    # source country's rate (Canada 25%, Belgium 30%). What the home country charges is its own flat rate (Greece 5%): the tax still due is worked out at the lower of the two,
+    # so a category set to 0 (exempt) stays exempt and the source country's withholding is credited against 5%, not against 25% or 30%.
+    home_rate = (PROFILES.get(cc) or {}).get('dividend_rate')
+    for r in records:
+        r['dividend_category_rate'] = r.get('dividend_local_tax_rate')
+        if home_rate is not None and r.get('dividend_local_tax_rate') is not None and not pd.isna(r['dividend_local_tax_rate']):
+            r['dividend_local_tax_rate'] = min(float(r['dividend_local_tax_rate']), float(home_rate))
+        r['rate_changed'], r['rate_from'] = False, None
+        if r.get('section') == 'interest' and not r.get('is_tax_exempt') and r.get('tax_category'):
+            gov = _is_government(r.get('sector'), r.get('issuer'), r.get('securities_name'), r.get('issuer_gov'))
+            rule = rate_change(cc, 'interest', str(r['tax_category']), gov, r.get('date') or '')
+            if rule:
+                r['rate_from'] = rule['from']
+                if rule['applies']:
+                    r['income_tax_rate'], r['rate_changed'] = rule['rate'], True
     for r in records:
         r['local_tax_liability'] = _local_liability(r)
         r['income_tax_liability'] = _income_tax_liability(r)

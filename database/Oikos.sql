@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS Tax_Category_Rules (
     Gains_Taxable           BOOLEAN      DEFAULT FALSE,
     Gains_Rate              NUMERIC(5,2),
     Gains_Tax_Code          VARCHAR(20),
+    Gains_Tax_Code_Foreign  VARCHAR(20),
+    Dividend_Tax_Code         VARCHAR(20),
+    Dividend_Tax_Code_Foreign VARCHAR(20),
     Dividend_Local_Tax_Rate NUMERIC(5,2),
     Dividend_WHT_Creditable BOOLEAN      DEFAULT TRUE,
     Reinvest_Taxable        BOOLEAN      DEFAULT FALSE,
@@ -78,12 +81,12 @@ INSERT INTO Tax_Category_Rules
      Dividend_Local_Tax_Rate, Dividend_WHT_Creditable, Reinvest_Taxable,
      Income_Tax_Rate, Notes)
 VALUES
-    ('Local Listed',   'Local Listed Shares',   FALSE, NULL, '659-660', 5.00, TRUE,  FALSE, NULL, 'Listed shares on local exchange. Capital gains exempt for retail (<0.5% holding). Dividends taxed at 5% with foreign WHT credit.'),
-    ('Foreign Listed', 'Foreign Listed Shares',  FALSE, NULL, NULL,      5.00, TRUE,  FALSE, NULL, 'Foreign shares under a tax treaty. Capital gains generally exempt. Dividends 5% with WHT credit.'),
+    ('Local Listed',   'Local Listed Shares',   FALSE, NULL, '659 – 660', 5.00, TRUE,  FALSE, NULL, 'Listed shares on local exchange. Capital gains exempt for retail (<0.5% holding). Dividends taxed at 5% with foreign WHT credit.'),
+    ('Foreign Listed', 'Foreign Listed Shares',  FALSE, NULL, NULL,      5.00, TRUE,  FALSE, NULL, 'Foreign shares under a tax treaty. Capital gains generally exempt. The dividend rate is the usual withholding at the source, the default when a dividend is entered; the Tax Return charges the home rate (Greece 5%) and credits the foreign tax against it.'),
     ('UCITS',          'UCITS EU Fund / ETF',    FALSE, NULL, NULL,      0.00, FALSE, FALSE, NULL, 'EU-domiciled UCITS funds. Both capital gains and reinvested dividends are exempt.'),
     ('Non-UCITS',      'Non-UCITS Fund / ETF',   TRUE,  15.00, NULL,     5.00, TRUE,  TRUE,  NULL, 'Non-UCITS funds and leveraged/inverse ETFs. Capital gains taxed at 15%, dividends at 5%.'),
     ('CD',             'Time Deposit / CD',      FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Interest income from time deposits and CDs taxed at 15% (withheld at source).'),
-    ('Bond',           'Bond / Fixed Income',    FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Coupon interest taxed at 15%. Capital gains treatment depends on instrument.'),
+    ('Bond',           'Bond / Fixed Income',    FALSE, NULL, NULL,      NULL, FALSE, FALSE, 15.00,'Coupon interest taxed at 15%. Greece: interest on listed corporate bonds is 5% from 12 Apr 2025, which the Tax Return applies by payment date. Capital gains treatment depends on instrument.'),
     ('Crypto',         'Cryptocurrency',         TRUE,  15.00, NULL,     NULL, FALSE, TRUE,  15.00,'Capital gains taxed at 15%. Staking and other income taxed at 15% as income at receipt.'),
     ('Other',          'Other / Unclassified',   NULL,  NULL, NULL,      NULL, NULL,  NULL,  NULL, 'Review manually — tax treatment not determined.')
 ON CONFLICT (Tax_Category) DO NOTHING;

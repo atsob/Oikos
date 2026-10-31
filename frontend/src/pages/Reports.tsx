@@ -9557,9 +9557,11 @@ function TaxReturnSummary({ year, method, accountIds, scope, expandAll }: { year
   const [cLossesFrom] = usePersist('crypto_tax_losses_from', 0)
   const [cExcluded] = usePersist<number[]>('crypto_tax_excluded_accounts', [])
   const [cRewards] = usePersist<boolean | null>('crypto_tax_rewards_income', null)
+  // Losses on securities carried forward (Greece, 873-874) count only from the year the user says they were declared; 0 shows them for information.
+  const [sLossesFrom, setSLossesFrom] = usePersist('tax_securities_losses_from', 0)
   const { data, isLoading } = useQuery({
-    queryKey: ['tax-return', year, method, accountIds ?? null, cExemption, cRate, cLossesFrom, cExcluded, cRewards],
-    queryFn: () => getTaxReturn(year, method, accountIds, { rewardsIncome: cRewards ?? undefined, exemption: cExemption, rate: cRate ?? undefined, lossesFrom: cLossesFrom, exclude: cExcluded }),
+    queryKey: ['tax-return', year, method, accountIds ?? null, cExemption, cRate, cLossesFrom, cExcluded, cRewards, sLossesFrom],
+    queryFn: () => getTaxReturn(year, method, accountIds, { rewardsIncome: cRewards ?? undefined, exemption: cExemption, rate: cRate ?? undefined, lossesFrom: cLossesFrom, exclude: cExcluded, securitiesLossesFrom: sLossesFrom }),
   })
   const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
   const resetCode = useMutation({
@@ -9601,6 +9603,11 @@ function TaxReturnSummary({ year, method, accountIds, scope, expandAll }: { year
             ? <> Codes start from <b>{data.country.name}</b>'s {data.country.form} (the Country of Usage). Every code can be changed — click it (✎) and type yours; a changed code is marked <span className="text-blue-600">edited</span> and <b>↺</b> brings back the built-in one. They are kept for this country.</>
             : <> There are no built-in codes for <b>{data.country.name || 'the country of usage (not set)'}</b> yet: click ✎ on a line to enter yours — they are kept for this country.</>}
         </p>
+        {data.country.has_profile && data.country.code === 'GR' && (
+          <label className="text-xs text-slate-500"><Tooltip text="A loss on securities can be offset against the gains of the next five years (Greece: declared on 871-872, carried on 873-874). Oikos computes the losses of the last five years from your trades, but they only count if you declared them: enter the first year whose loss was declared. Empty = shown for information and not netted in the estimate.">Securities losses count from</Tooltip>
+            <Input type="number" className="w-24 mt-0.5" value={sLossesFrom || ''} placeholder="not set" onChange={e => setSLossesFrom(Number(e.target.value) || 0)} />
+          </label>
+        )}
         <Button size="sm" variant="secondary" className="ml-auto" onClick={exportCsv} title="Every transaction behind every figure, with its code, account and tax withheld — one row each, for a spreadsheet or your accountant">Export CSV (all transactions)</Button>
       </div>
       <TaxByCode data={data} expandAll={expandAll} />

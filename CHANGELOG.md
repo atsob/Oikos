@@ -2,6 +2,24 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-10-31
+
+### Added
+- **Tax Return: capital gains by where the issuer is.** For Greece (E1 Table 4Ε) a taxable category's gain is now one line per origin — **829–830** for a Greek issuer (with its tax number) and **865–866** for a foreign one; exempt categories go to **659–660**; the loss of the year is **871–872**. The origin is the security's ISIN prefix / country, not the exchange or the broker.
+- **Tax Return: losses carried forward (873–874).** Losses on securities of the last five years that are not yet offset are a line of their own, oldest first. They are information only until you set **Securities losses count from** (the first year whose losses you declared); then they come off the year's gains in the tax estimate. A loss computed from old data (a futures contract closed at 0, say) may not be one you declared, which is why it is opt-in.
+- **Tax Return: bond interest follows the date.** Interest on listed corporate bonds is 15% up to 11 Apr 2025 and 5% from 12 Apr 2025, so a year with both is two lines and the "tax still due" is right on each side of the date.
+- **Static Data → Tax Categories: the tax-return codes are stored.** Each category has a *Gains Code*, a *Gains Code Foreign*, a *Div. Code* and a *Div. Code Foreign* (the foreign ones are only for a category that can hold both home and foreign issuers; empty means the same as the first). They win over the country's built-in codes, and Crypto's gain line is read from its category. Existing categories were filled with the Greek E1 codes; nothing you had set was overwritten.
+- **Static Data → Tax Categories: double-click a cell to edit it.** Enter or leaving the cell saves, Esc cancels; the Edit form stays for new categories and notes.
+
+### Changed
+- **Dividend tax is capped at the home rate.** A foreign category carries the source country's usual withholding (Canada 25%, Belgium 30%) because that is the default when a dividend is entered, but Greece charges 5%. The tax still due is worked out at the lower of the two, and the source country's tax is credited against 5%.
+- **Tax Categories wording.** *Dividend Local Tax* is now **Dividend Tax Rate** and *Income Tax* is **Interest Tax Rate** (interest and crypto rewards, not dividends or gains), with tooltips saying what each one does. Only the labels changed.
+- **Exempt gains default to 659–660**, and the built-in codes now follow the 2024 and 2025 E1 instructions (743–744 crypto purchases, 871–872 losses, 291–292 / 295–296 dividends).
+
+### Fixed
+- **Who withheld the tax on a foreign dividend.** A Greek broker's account was reported as having withheld on foreign dividends (297–298) even when the tax was the source country's. The tax is now 297–298 only when it is about the Greek 5%, and 683–684 (withheld abroad) otherwise.
+- **Codes that were only a different dash.** Saved codes such as `659 - 660` and the non-existent `869 – 870` were reset to the built-in ones.
+
 ## 2026-10-30
 
 ### Added

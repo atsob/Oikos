@@ -298,6 +298,12 @@ def _seed_reference_data(conn) -> None:
                Show_In_Capital_Gains = EXCLUDED.Show_In_Capital_Gains""",
         sd.TAX_CATEGORY_RULES,
     )
+    cur.executemany(
+        """UPDATE Tax_Category_Rules
+           SET Gains_Tax_Code = %s, Gains_Tax_Code_Foreign = %s, Dividend_Tax_Code = %s, Dividend_Tax_Code_Foreign = %s
+           WHERE Tax_Category = %s""",
+        [(g, gf, d, df, cat) for cat, (g, gf, d, df) in sd.TAX_CATEGORY_CODES.items()],
+    )
 
     cur.executemany(
         """INSERT INTO Instrument_Type_Tax_Override (Instrument_Type, Tax_Category_Override, Notes)
@@ -372,6 +378,10 @@ def _seed_reference_data(conn) -> None:
 def _run_startup_migrations():
     """Run idempotent DDL migrations on startup (once per process)."""
     _STMTS = [
+        # Tax_Category_Rules: the tax-return line of a category's gains on a foreign issuer's securities (Gains_Tax_Code is the home issuer's) and of its dividends, by issuer
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Gains_Tax_Code_Foreign    VARCHAR(20)",
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code         VARCHAR(20)",
+        "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code_Foreign VARCHAR(20)",
         # Investments: the cash the broker actually booked for a trade (signed, account currency); NULL = derive it from Total_Amount_AccCur. See database/margin.py.
         "ALTER TABLE Investments ADD COLUMN IF NOT EXISTS Booked_Cash_AccCur NUMERIC(28, 18)",
         # Historical_Prices: provenance columns
