@@ -1890,8 +1890,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           </li>
           <li>
             <b>⚙️ System</b> — App Settings (decimal/thousands separators, date format, week-start day, reporting
-            currency, default transfer payee name, trailing stop %, Support / Resistance alert minimum, Telegram alerts
-            and which Dashboard alert groups go to Telegram) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
+            currency, default transfer payee name, trailing stop %) and Scheduled Tasks (cron-style jobs: e.g. the monthly/weekly
             AI summaries). App Settings — and every other saved preference across the app (report filters,
             last-used tabs, account selections, etc.) — are stored server-side, so they follow you across
             browsers, devices, and however you access Oikos (LAN IP, hostname, or remotely), instead of being
