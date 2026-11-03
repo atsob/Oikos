@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions,
-} from '@/components/ui'
+  PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions, DateInput } from '@/components/ui'
 import { Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { fmtNum } from '@/lib/utils'
 import {
@@ -1449,12 +1448,12 @@ function IBFlexTab() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Import from</label>
-              <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
+              <DateInput type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)}
                 className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Import to</label>
-              <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
+              <DateInput type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)}
                 className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
             </div>
           </div>
@@ -2244,11 +2243,11 @@ function SaxoTab() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Date From</label>
-                <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Date To</label>
-                <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
               </div>
             </div>
             <LastRunNote last={lastRun.last} to={dateTo} />
@@ -2706,11 +2705,11 @@ function CoinbaseTab() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+              <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
           </div>
           <LastRunNote last={lastRun.last} to={dateTo} />
@@ -2947,11 +2946,11 @@ function CryptoComTab() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-              <input type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+              <DateInput type="date" className="w-full border rounded px-3 py-1.5 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
           </div>
           <LastRunNote last={lastRun.last} to={dateTo} />
@@ -3789,11 +3788,11 @@ function QIFTab() {
               <div className="flex gap-4 items-end">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-                  <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
+                  <DateInput type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-                  <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
+                  <DateInput type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="border border-slate-300 rounded px-2 py-1.5 text-sm" />
                 </div>
               </div>
             </CardBody>

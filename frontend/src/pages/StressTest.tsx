@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Plot from '@/components/Plot'
-import { Button, Spinner, Tooltip } from '@/components/ui'
+import { Button, Spinner, Tooltip, DateInput } from '@/components/ui'
 import { fmtEur, plotLayout } from '@/lib/utils'
 import { useTheme } from '@/lib/theme'
 import { getStressAssumptions, runRateShock, runStressReplay } from '@/lib/api'
@@ -391,8 +391,8 @@ function ReplaySection({ accountIds, defaults }: { accountIds?: number[]; defaul
         {useCustom && (
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs text-slate-500">Name<input className="block w-40 rounded border border-slate-300 px-2 py-1 text-sm" value={custom.name} onChange={e => setCustom({ ...custom, name: e.target.value })} /></label>
-            <label className="text-xs text-slate-500">From<input type="date" className="block rounded border border-slate-300 px-2 py-1 text-sm" value={custom.start} onChange={e => setCustom({ ...custom, start: e.target.value })} /></label>
-            <label className="text-xs text-slate-500">To<input type="date" className="block rounded border border-slate-300 px-2 py-1 text-sm" value={custom.end} onChange={e => setCustom({ ...custom, end: e.target.value })} /></label>
+            <label className="text-xs text-slate-500">From<DateInput type="date" className="block rounded border border-slate-300 px-2 py-1 text-sm" value={custom.start} onChange={e => setCustom({ ...custom, start: e.target.value })} /></label>
+            <label className="text-xs text-slate-500">To<DateInput type="date" className="block rounded border border-slate-300 px-2 py-1 text-sm" value={custom.end} onChange={e => setCustom({ ...custom, end: e.target.value })} /></label>
             <label className="text-xs text-slate-500">Rates moved (pp)<span className="block"><NumField value={custom.yield} onChange={n => setCustom({ ...custom, yield: n })} /></span></label>
           </div>
         )}

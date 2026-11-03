@@ -1900,7 +1900,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
             AI summaries). App Settings — and every other saved preference across the app (report filters,
             last-used tabs, account selections, etc.) — are stored server-side, so they follow you across
             browsers, devices, and however you access Oikos (LAN IP, hostname, or remotely), instead of being
-            tied to one browser's local storage.
+            tied to one browser's local storage. The date format applies to every date field too: type the
+            date in that format (with <code>/</code>, <code>-</code> or <code>.</code> between the parts;
+            a year-first <code>2026-11-03</code> always works), or open the calendar with the icon at the
+            right of the field or Alt+↓. A date that does not exist is outlined in red and not used.
           </li>
           <li><b>📊 Market Data &amp; Prices</b> — fill missing prices from transactions, price quality checks, normalize investment prices, investment data quality.</li>
           <li><b>📋 Logs</b> — log viewer for the app (<code>app.log</code>) and the scheduler (<code>scheduler.log</code>), filtered by level and keyword. Both files are written to the <code>logs</code> folder (<code>LOG_DIR</code> in Docker, mounted in both containers), up to 5 MB each with three older files kept. The web requests themselves are not logged there. A few <i>HTTP Error 401 … Invalid Crumb</i> lines at the start of the securities info refresh are expected: Yahoo turns away the first parallel requests until it has issued its access token, and those securities are retried on their own a few seconds later (<i>retrying N security(ies) after an Invalid Crumb error</i>); one that still fails is left as it was for that run.</li>

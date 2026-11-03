@@ -32,7 +32,7 @@ import {
   createTransfer, createTransaction,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink, DateInput } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
@@ -633,11 +633,11 @@ function NetWorthSection() {
         <ChkBox label="YTD" checked={ytdMode} onChange={setYtdMode} />
         <div className={`flex items-center gap-1.5 ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           <label className="text-xs text-slate-500 whitespace-nowrap">Start Date</label>
-          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effStart} onChange={e => setStartDate(e.target.value)} />
+          <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effStart} onChange={e => setStartDate(e.target.value)} />
         </div>
         <div className={`flex items-center gap-1.5 ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           <label className="text-xs text-slate-500 whitespace-nowrap">End Date</label>
-          <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effEnd} onChange={e => setEndDate(e.target.value)} />
+          <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={effEnd} onChange={e => setEndDate(e.target.value)} />
         </div>
         <div className={`flex rounded border border-slate-300 overflow-hidden text-xs ${ytdMode ? 'opacity-40 pointer-events-none' : ''}`}>
           {(['year','quarter','month'] as const).map(g => (
@@ -2060,7 +2060,7 @@ function XRayTab({ accountIds, hideControls = false }: { accountIds?: number[]; 
         <Tooltip text="Show current values alongside a past date's, reconstructed from your transaction history and historical prices/FX. Sector weights, asset mix, credit ratings, category, and expense ratio always reflect today's fund data — Oikos has no historical version of a fund's own internal makeup.">
           <span className="text-slate-500 cursor-help underline decoration-dotted">Compare vs</span>
         </Tooltip>
-        <input type="date" max={today} value={compareDate}
+        <DateInput type="date" max={today} value={compareDate}
           onChange={e => setCompareDate(e.target.value)}
           className="rounded border border-slate-300 px-2 py-1 text-xs" />
         <button onClick={() => setCompareDate(lastMonthEnd())} className="text-xs text-blue-600 hover:underline">End of last month</button>
@@ -2371,7 +2371,7 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
       {(tab === 'Graph' || tab === 'Summary' || tab === 'Detail Analysis') && (
         <div className="flex items-center gap-3 pb-1 border-b border-slate-100">
           <label className="text-sm text-slate-500 font-medium whitespace-nowrap">As of date:</label>
-          <input
+          <DateInput
             type="date"
             value={asOf}
             onChange={e => setAsOf(e.target.value)}
@@ -3613,9 +3613,9 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
         </div>
         {period === 'Custom' && (
           <div className="flex items-center gap-2 mt-2">
-            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+            <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
             <span className="text-slate-400 text-xs">to</span>
-            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+            <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
           </div>
         )}
       </div>
@@ -4339,9 +4339,9 @@ function SavingsAccountsTab() {
         </div>
         {period === 'Custom' && (
           <div className="flex items-center gap-2 mt-2">
-            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
+            <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customFrom} onChange={e => setCustomFrom(e.target.value)} />
             <span className="text-slate-400 text-xs">to</span>
-            <input type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
+            <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={customTo} onChange={e => setCustomTo(e.target.value)} />
           </div>
         )}
       </div>
@@ -6683,12 +6683,12 @@ function IncomeExpenseSection({ startDate: _outerStart, endDate: _outerEnd }: { 
         </div>
         <div className={(ytdMode || lastYearMode) ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">Start Date</label>
-          <input type="date" value={effStart} onChange={e => setStartDate(e.target.value)}
+          <DateInput type="date" value={effStart} onChange={e => setStartDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
         <div className={(ytdMode || lastYearMode) ? 'opacity-40 pointer-events-none' : ''}>
           <label className="block text-xs text-slate-500 mb-0.5">End Date</label>
-          <input type="date" value={effEnd} onChange={e => setEndDate(e.target.value)}
+          <DateInput type="date" value={effEnd} onChange={e => setEndDate(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </div>
         <div>

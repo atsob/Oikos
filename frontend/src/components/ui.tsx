@@ -1,9 +1,9 @@
-import { cn } from '@/lib/utils'
+import { cn, fmtDate } from '@/lib/utils'
 import React, { useState, useRef, useEffect, useCallback, useMemo, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check, Calculator as CalculatorIcon, Delete } from 'lucide-react'
-import { usePersist } from '@/lib/hooks'
+import { RefreshCcw, ChevronDown, Columns3, X, ClipboardCopy, Check, Calculator as CalculatorIcon, Delete, CalendarDays } from 'lucide-react'
+import { usePersist, useSettings } from '@/lib/hooks'
 import { PhoneTitleContext } from '@/lib/phoneTitle'
 import { CASH_ACCOUNT_TYPES, INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import type { GridApi } from 'ag-grid-community'
@@ -158,19 +158,122 @@ export function Badge({ label, variant = 'gray' }: BadgeProps) {
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────
+// type="date" goes through DateInput, so every date field shows the Date Format setting.
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-  ({ className, ...props }, ref) => (
-    <input
-      ref={ref}
-      className={cn(
-        'block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-500',
-        className,
-      )}
-      {...props}
-    />
-  )
+  ({ className, ...props }, ref) => {
+    const cls = cn(
+      'block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-500',
+      className,
+    )
+    if (props.type === 'date') return <DateInput ref={ref} className={cls} {...props} />
+    return <input ref={ref} className={cls} {...props} />
+  }
 )
 Input.displayName = 'Input'
+
+// ── Date input ────────────────────────────────────────────────────────────────
+// A browser's own <input type="date"> shows its date in the browser's locale (often MM/DD/YYYY),
+// whatever Tools -> System -> App Settings -> Date Format says. This is a text field in that
+// format instead, with a calendar button that opens the browser's picker. The value in and out
+// stays YYYY-MM-DD, and onChange gets an event whose target.value is that, like the native one.
+// Two-digit years ("3/11/26") are only taken once the field is left, so typing "2026" doesn't
+// pass through 2020 on the way.
+function parseDateText(text: string, format: string, shortYear = false): string | null {
+  const t = text.trim()
+  if (!t) return ''
+  const parts = t.split(/[/.\-\s]+/)
+  if (parts.length !== 3 || parts.some(p => !/^\d+$/.test(p))) return null
+  // A 4-digit first part is always year-first, whatever the setting.
+  const [y, m, d] = parts[0].length === 4 ? parts
+    : format === 'MM/DD/YYYY' ? [parts[2], parts[0], parts[1]]
+    : [parts[2], parts[1], parts[0]]
+  const year = y.length === 2 ? 2000 + Number(y) : Number(y)
+  const dt = new Date(year, Number(m) - 1, Number(d))
+  if (y.length !== 4 && !(shortYear && y.length === 2)) return null
+  if (dt.getFullYear() !== year || dt.getMonth() !== Number(m) - 1 || dt.getDate() !== Number(d)) return null
+  return `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+export const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, value, onChange, min, max, disabled, placeholder, title, id, name, required, autoFocus, onBlur, onKeyDown }, ref) => {
+    const [{ dateFormat }] = useSettings()
+    const iso = value == null ? '' : String(value).slice(0, 10)
+    const shown = iso ? fmtDate(iso) : ''
+    const [text, setText] = useState(shown)
+    const [editing, setEditing] = useState(false)
+    const pickerRef = useRef<HTMLInputElement>(null)
+    useEffect(() => { if (!editing) setText(shown) }, [shown, editing])
+
+    const emit = (v: string) => {
+      if (v === iso) return
+      onChange?.({ target: { value: v }, currentTarget: { value: v } } as React.ChangeEvent<HTMLInputElement>)
+    }
+    const openPicker = () => {
+      const el = pickerRef.current
+      if (!el || disabled) return
+      try { el.showPicker() } catch { el.focus(); el.click() }
+    }
+    const invalid = editing && parseDateText(text, dateFormat) === null
+    // Width classes (w-36, w-full...) size the wrapper; the field fills it.
+    const sized = /(^|\s)(w-|min-w-|flex-1)/.test(className ?? '')
+
+    return (
+      <div className={cn('relative', sized ? 'inline-block align-middle' : 'block w-full', sized && className?.match(/(^|\s)(w-\S+|min-w-\S+|flex-1)/g)?.join(' '))}>
+        <input
+          ref={ref}
+          type="text"
+          inputMode="numeric"
+          id={id}
+          name={name}
+          required={required}
+          autoFocus={autoFocus}
+          title={title}
+          disabled={disabled}
+          placeholder={placeholder ?? dateFormat}
+          className={cn(className, 'w-full !pr-8', invalid && '!border-red-400')}
+          value={text}
+          onFocus={() => setEditing(true)}
+          onChange={e => {
+            setText(e.target.value)
+            const v = parseDateText(e.target.value, dateFormat)
+            if (v !== null) emit(v)
+          }}
+          onBlur={e => {
+            const v = parseDateText(text, dateFormat, true)
+            if (v !== null) emit(v)
+            setEditing(false); setText(v ? fmtDate(v) : v === '' ? '' : shown); onBlur?.(e)
+          }}
+          onKeyDown={e => {
+            if (e.key === 'ArrowDown' && e.altKey) { e.preventDefault(); openPicker() }
+            onKeyDown?.(e)
+          }}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={disabled}
+          onClick={openPicker}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-40"
+          title="Pick a date"
+        >
+          <CalendarDays size={14} />
+        </button>
+        <input
+          ref={pickerRef}
+          type="date"
+          tabIndex={-1}
+          aria-hidden
+          min={min}
+          max={max}
+          value={iso}
+          onChange={e => emit(e.target.value)}
+          className="absolute inset-0 opacity-0 pointer-events-none w-full h-full"
+        />
+      </div>
+    )
+  }
+)
+DateInput.displayName = 'DateInput'
 
 // ── Amount calculator ────────────────────────────────────────────────────────
 // A button + popover pocket calculator for Amount fields — e.g. dividing a purchase into

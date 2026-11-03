@@ -7,8 +7,7 @@ import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { ArrowLeft, Plus, Trash2, Pencil, Save, X, Search, ArrowLeftRight } from 'lucide-react'
 import {
-  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip,
-} from '@/components/ui'
+  Card, CardBody, PageHeader, Button, Input, Spinner, StatCard, ColumnsMenu, CopyToExcelButton, AG_GRID_COLUMN_TYPES, Tooltip, DateInput } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { plotLayout, plotAxis, fmtNum, fmtPct, fmtEur, fmtDate, todayLocal, toLocalISODate } from '@/lib/utils'
 import { usePhone } from '@/lib/useMedia'
@@ -3310,7 +3309,7 @@ function CountryExposureEditor({ secId }: { secId: number }) {
       </table>
       <div className="flex flex-wrap items-center gap-3">
         <input className={`${sel} w-64`} placeholder="Source (e.g. iShares factsheet)" value={source} onChange={e => setSource(e.target.value)} />
-        <label className="text-xs text-slate-500">As of <input type="date" className={sel} value={asOf} onChange={e => setAsOf(e.target.value)} /></label>
+        <label className="text-xs text-slate-500">As of <DateInput type="date" className={sel} value={asOf} onChange={e => setAsOf(e.target.value)} /></label>
       </div>
       {msg && <p className={`text-xs ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</p>}
       <div className="flex gap-2">

@@ -9,7 +9,7 @@ import {
   generateMonthlySummary, generateWeeklySummary,
   getUpcomingBills, getAnomalies, syncBalances, getShillerCapeSummary,
 } from '@/lib/api'
-import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip } from '@/components/ui'
+import { PageHeader, StatCard, Card, CardHeader, CardTitle, CardBody, Button, Badge, Spinner, SyncBalancesButton, AccountLink, Tooltip, DateInput } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { TxModal, useTxModal } from '@/components/TxModal'
 import { DraftReviewModal } from './Recurring'
@@ -825,9 +825,9 @@ function KWavePhasesEditor({ phases, onChange }: { phases: KWavePhase[]; onChang
             className="text-xs rounded border border-slate-300 px-1.5 py-1">
             {SEASONS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <input type="date" value={p.start} onChange={e => update(i, { start: e.target.value })}
+          <DateInput type="date" value={p.start} onChange={e => update(i, { start: e.target.value })}
             className="text-xs rounded border border-slate-300 px-1.5 py-1 w-32" />
-          <input type="date" value={p.end ?? ''} onChange={e => update(i, { end: e.target.value || null })}
+          <DateInput type="date" value={p.end ?? ''} onChange={e => update(i, { end: e.target.value || null })}
             className="text-xs rounded border border-slate-300 px-1.5 py-1 w-32" placeholder="Ongoing" title="Leave blank if still ongoing" />
           <button onClick={() => remove(i)} className="text-slate-400 hover:text-red-500 p-1" title="Remove phase"><X size={13} /></button>
         </div>
