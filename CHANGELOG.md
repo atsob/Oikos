@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-03
+
+### Fixed
+- **Dark theme: a light line under the first row of a table.** In the Dark theme the first row of a divided table or list — the first account in Reports → Inv. Performance, the first security in its drill-down, and the same in every other such table — had a bright, almost white line under it, while the other rows had the dark one. The dark divider colour now applies to every row. Light theme is unchanged.
+
 ## 2026-10-31
 
 ### Added
