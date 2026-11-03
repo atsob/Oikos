@@ -362,7 +362,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
 
   const openNew = () => {
     setEditRow({})
-    setForm({ code: '', name: '' })
+    setForm({ code: '', name: '', download_fx: 'true' })
     setError(null)
   }
 
@@ -375,11 +375,20 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
   const handleSave = async () => {
     setSaving(true); setError(null)
     try {
-      await upsertCurrency({ id: editRow?.id ?? undefined, code: form.code, name: form.name })
+      await upsertCurrency({ id: editRow?.id ?? undefined, code: form.code, name: form.name, download_fx: form.download_fx !== 'false' })
       qc.invalidateQueries({ queryKey: ['currencies'] })
       setEditRow(null)
     } catch (e) { setError(extractError(e)) }
     finally { setSaving(false) }
+  }
+
+  // The grid's Download FX checkbox saves straight away, without opening the Edit form.
+  const toggleDownloadFx = async (row: Record<string, unknown>, on: boolean) => {
+    setDeleteError(null)
+    try {
+      await upsertCurrency({ id: row.id, code: row.code, name: row.name, download_fx: on })
+      qc.invalidateQueries({ queryKey: ['currencies'] })
+    } catch (e) { setDeleteError(extractError(e)) }
   }
 
   const handleDelete = async (id: number) => {
@@ -414,6 +423,14 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
       { field: 'latest_rate', headerName: 'Rate vs EUR', width: 130, type: 'numericColumn', filter: 'agNumberColumnFilter', valueFormatter: p => p.value != null ? fmtNum(Number(p.value), 4) : '—' },
       { field: 'rate_date', headerName: 'Rate Date', width: 110, valueFormatter: p => p.value?.slice(0, 10) ?? '—' },
       { field: 'price_records', headerName: '# Records', width: 100, type: 'numericColumn' },
+      {
+        field: 'download_fx', headerName: 'Download FX', width: 115,
+        headerTooltip: 'Whether the scheduled FX download fetches this currency\'s rates. Off for a currency that no longer trades (CYP). Click to switch.',
+        cellRenderer: (p: { data: Record<string, unknown>; value: unknown }) => (
+          <input type="checkbox" checked={!!p.value} className="mt-2.5 cursor-pointer" title="Download FX rates for this currency"
+            onChange={e => toggleDownloadFx(p.data, e.target.checked)} />
+        ),
+      },
       {
         colId: 'actions', headerName: '', width: 80, sortable: false, filter: false,
         cellRenderer: (p: { data: Record<string, unknown> }) => (
@@ -482,6 +499,11 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
           </>}>
           <Field label="Code *"><Input value={form.code ?? ''} onChange={e => set('code', e.target.value)} placeholder="USD" className="font-mono" /></Field>
           <Field label="Name *"><Input value={form.name ?? ''} onChange={e => set('name', e.target.value)} placeholder="US Dollar" /></Field>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.download_fx !== 'false'} onChange={e => set('download_fx', String(e.target.checked))} />
+            Download FX rates
+          </label>
+          <p className="text-xs text-slate-500">Off: the scheduled FX download skips this currency — for one that no longer trades, such as CYP. Its stored rates stay, and Downloads can still fetch it on its own.</p>
           {error && <p className="text-xs text-red-600 bg-red-50 rounded px-3 py-2">{error}</p>}
         </Modal>
       )}

@@ -1059,16 +1059,17 @@ def upsert_currency(data: dict):
     try:
         cur = conn.cursor()
         cid = data.get('id')
+        download_fx = data.get('download_fx') is not False  # missing = on, as for a new currency
         if cid:
             cur.execute("""
-                UPDATE Currencies SET Currencies_ShortName=%s, Currencies_Name=%s
+                UPDATE Currencies SET Currencies_ShortName=%s, Currencies_Name=%s, Download_FX=%s
                 WHERE Currencies_Id=%s
-            """, (data.get('code'), data.get('name'), cid))
+            """, (data.get('code'), data.get('name'), download_fx, cid))
         else:
             cur.execute("""
-                INSERT INTO Currencies (Currencies_ShortName, Currencies_Name)
-                VALUES (%s, %s) RETURNING Currencies_Id
-            """, (data.get('code'), data.get('name')))
+                INSERT INTO Currencies (Currencies_ShortName, Currencies_Name, Download_FX)
+                VALUES (%s, %s, %s) RETURNING Currencies_Id
+            """, (data.get('code'), data.get('name'), download_fx))
             cid = cur.fetchone()[0]
         conn.commit()
         return {"id": cid}

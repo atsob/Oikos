@@ -1413,6 +1413,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
       <>
         <H2>Market Data</H2>
         <P>Reference and price data, in ten tabs: Currencies, Securities, Rates, Downloads (refresh from external sources), Anomalies (price data quality checks), Watchlist, CAPE Ratios, Market Watch, Local Market Watch, and Alerts. The <b>Anomalies</b> tab (and a security's own Price Anomalies tab) lists prices that moved by more than the threshold against the previous or next day. A move that a <b>recorded split or reverse split</b> explains — one dated within 20 days of the jump whose ratio fits it to within 15% — is hidden by default; tick <i>Show N moves explained by a recorded split</i> to see it (marked <i>Explained</i>). A missing corporate action still shows its jump, and the security's name opens its Security Detail.</P>
+        <P>
+          Each currency has a <b>Download FX</b> switch: click its checkbox in the Currencies grid (it saves at once) or use the Edit form. When it is off the scheduled FX
+          download skips the currency — for one that no longer trades, such as the Cyprus pound (CYP), which Yahoo has no rate
+          for. Its stored rates stay, and Downloads → FX can still fetch that one currency on its own. New currencies start
+          with it on; CYP starts off.
+        </P>
         <Note>
           A currency code is a link wherever it is shown — the <b>Currencies</b> tab, the Securities grid, Investments
           holdings, the account lists in Static Data, Security Detail, and the Reports tables (Currency Exposure, Savings,
@@ -1897,7 +1903,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
             tied to one browser's local storage.
           </li>
           <li><b>📊 Market Data &amp; Prices</b> — fill missing prices from transactions, price quality checks, normalize investment prices, investment data quality.</li>
-          <li><b>📋 Logs</b> — application log viewer.</li>
+          <li><b>📋 Logs</b> — log viewer for the app (<code>app.log</code>) and the scheduler (<code>scheduler.log</code>), filtered by level and keyword. Both files are written to the <code>logs</code> folder (<code>LOG_DIR</code> in Docker, mounted in both containers), up to 5 MB each with three older files kept. The web requests themselves are not logged there. A few <i>HTTP Error 401 … Invalid Crumb</i> lines at the start of the securities info refresh are expected: Yahoo turns away the first parallel requests until it has issued its access token, and those securities are retried on their own a few seconds later (<i>retrying N security(ies) after an Invalid Crumb error</i>); one that still fails is left as it was for that run.</li>
         </Ul>
         <Note>
           <b>Backup &amp; Restore</b> is here — take a backup before running any of the bulk "Fix …" tools,

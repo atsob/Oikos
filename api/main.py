@@ -31,7 +31,17 @@ from api.routers import investments, recurring, ai_router, tools_router, importe
 from api.routers import stress, day_extremes, country_exposure, currency_exposure, market_watch, local_watch
 from api.routers import securities, bank_router, preferences, news, notify, plan, retirement, private_funds
 from config.settings import ENV_CONFIG
+from config.logfile import file_handler
 from database.queries import bootstrap_admin_user
+
+# APP_DATA_DIR/logs/app.log for the Log Viewer (Tools -> Logs): the app's own logging plus
+# uvicorn's startup and errors ("uvicorn" does not propagate to root). Not the access log.
+import logging
+_app_log = file_handler("app.log", "app")
+logging.getLogger().addHandler(_app_log)
+if logging.getLogger().level > logging.INFO:
+    logging.getLogger().setLevel(logging.INFO)
+logging.getLogger("uvicorn").addHandler(_app_log)
 
 
 @asynccontextmanager

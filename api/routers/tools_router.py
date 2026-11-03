@@ -1543,11 +1543,13 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
     import os
     level_filters = [l.strip() for l in level.split(",") if l.strip()] if level else []
 
+    from config.logfile import log_dir
     app_data_dir = os.getenv("APP_DATA_DIR", ".")
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
     def _find(name: str) -> Optional[str]:
         for p in [
+            os.path.join(log_dir(), name),
             os.path.join(app_data_dir, name),
             os.path.join(repo_root, name),
             name,

@@ -61,6 +61,9 @@ CURRENCIES = [('AED', 'EMIRATI DIRHAM'),
  ('TWD', 'TAIWAN DOLLAR'),
  ('USD', 'UNITED STATES DOLLAR')]
 
+# Retired currencies, kept for old transactions: Download_FX starts off, since Yahoo has no rate for them.
+CURRENCIES_NO_FX = ('CYP',)
+
 # (name, type, bic_code, website, notes, moodys, s_p, fitch)
 INSTITUTIONS = [('ABN AMRO BANK', 'Bank', 'ABNANL2A', 'www.abnamro.nl', None, 'Aa3', 'A', 'A'),
  ('CAPITAL.COM', 'Broker', 'CPLMCY22', 'www.capital.com', None, None, None, None),

@@ -49,6 +49,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - ${BACKUP_DIR:-./database_backups}:/app/database_backups
+      - ${LOG_DIR:-./logs}:/app/logs
     command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 3
     restart: unless-stopped
     healthcheck:
@@ -104,6 +105,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - ${BACKUP_DIR:-./database_backups}:/app/database_backups
+      - ${LOG_DIR:-./logs}:/app/logs
     command: python scheduler.py
     restart: unless-stopped
 

@@ -28,6 +28,7 @@ def get_currencies():
             SELECT c.Currencies_Id AS id,
                    c.Currencies_ShortName AS code,
                    c.Currencies_Name AS name,
+                   c.Download_FX AS download_fx,
                    (SELECT FX_Rate FROM Historical_FX
                     WHERE Currencies_Id_1 = c.Currencies_Id
                     ORDER BY Date DESC LIMIT 1) AS latest_rate,

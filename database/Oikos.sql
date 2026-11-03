@@ -119,6 +119,7 @@ CREATE TABLE Currencies (
     Currencies_Id       SERIAL PRIMARY KEY,
     Currencies_ShortName CHAR(3) UNIQUE NOT NULL,   -- EUR, USD, GBP, BTC …
     Currencies_Name     VARCHAR(100) NOT NULL,
+    Download_FX         BOOLEAN NOT NULL DEFAULT TRUE,  -- FALSE: the FX download skips it (a currency that no longer trades, e.g. CYP)
     embedding           vector(768)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_currencies_id         ON Currencies(Currencies_Id);

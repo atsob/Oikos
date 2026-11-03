@@ -30,3 +30,4 @@ __pycache__/
 !.github/**
 ssl/
 data/database_backups/
+logs/

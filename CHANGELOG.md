@@ -4,7 +4,12 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-03
 
+### Added
+- **Currencies: a Download FX switch.** Market Data → Currencies has a *Download FX* column whose checkbox switches it at once, and the same checkbox in the Edit form. When it is off, the scheduled FX download skips the currency — for one that no longer trades, such as the Cyprus pound (CYP), which Yahoo has no rate for and which logged *No data found for EURCYP=X* on every run. Its stored rates stay, and Downloads → FX can still fetch that one currency on its own. CYP was switched off once, when the column was added (`Currencies.Download_FX`, added automatically on start); every other currency stays on, and switching CYP back on sticks.
+
 ### Fixed
+- **Securities info refresh: "Invalid Crumb" failures are retried.** The first few of the parallel Yahoo requests can fail with *HTTP Error 401 … Invalid Crumb* before Yahoo has issued its access token for the run. yfinance does not report it as an error — the security just came back empty — so it was logged as having no sector and its quote (previous close and the rest on Security Detail → Overview) was overwritten with blanks until the next run; on 3 Nov that hit ABBV, ABN.AS, ABT, ADAM and ADMIE.AT. Such a security is now retried on its own, after 3 s and again after 10 s, and one that still fails is left exactly as it was.
+- **Tools → Logs showed no logs.** The scheduler's log file stayed empty: modules it loads had already set up logging, so its own setup (which adds the file) was skipped. The app wrote no log file at all, and the scheduler's file was inside its own container, where the app could not read it. Now the app writes `app.log` (its messages, uvicorn's start-up and errors, not every web request) and the scheduler `scheduler.log`, both in a `logs` folder that docker-compose mounts in both containers (`LOG_DIR`, default `./logs`). Each file is capped at 5 MB with three older ones kept. **Self-hosters:** add the `${LOG_DIR:-./logs}:/app/logs` volume to the `oikos` and `oikos_scheduler` services if your compose file is your own copy.
 - **Dark theme: a light line under the first row of a table.** In the Dark theme the first row of a divided table or list — the first account in Reports → Inv. Performance, the first security in its drill-down, and the same in every other such table — had a bright, almost white line under it, while the other rows had the dark one. The dark divider colour now applies to every row. Light theme is unchanged.
 
 ## 2026-10-31

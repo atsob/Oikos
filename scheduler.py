@@ -67,17 +67,18 @@ from database.crud import generate_draft_transactions
 from database.queries import refresh_signal_notifications, refresh_fundamentals_notifications
 
 import os as _os
-_log_dir  = _os.getenv("APP_DATA_DIR", ".")
-_log_path = _os.path.join(_log_dir, "scheduler.log")
+from config.logfile import file_handler
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [scheduler] %(message)s",
     handlers=[
-        # Write to APP_DATA_DIR/scheduler.log (shared volume) so the Log Viewer
+        # Write to APP_DATA_DIR/logs/scheduler.log (shared volume) so the Log Viewer
         # can read it; also keep stdout so `docker logs` continues to work.
-        logging.FileHandler(_log_path, encoding="utf-8"),
+        file_handler("scheduler.log", "scheduler"),
         logging.StreamHandler(),
     ],
+    # The ai.* modules imported above already called basicConfig, which would make this one a no-op.
+    force=True,
 )
 
 # ── Fallback defaults (used when DB row is missing or unparseable) ────────────

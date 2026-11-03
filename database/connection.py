@@ -267,6 +267,7 @@ def _seed_reference_data(conn) -> None:
         "ON CONFLICT (Currencies_Shortname) DO NOTHING",
         sd.CURRENCIES,
     )
+    cur.execute("UPDATE Currencies SET Download_FX = FALSE WHERE Currencies_ShortName IN %s", (sd.CURRENCIES_NO_FX,))
 
     cur.executemany(
         """INSERT INTO Institutions
@@ -382,6 +383,15 @@ def _run_startup_migrations():
         "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Gains_Tax_Code_Foreign    VARCHAR(20)",
         "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code         VARCHAR(20)",
         "ALTER TABLE Tax_Category_Rules ADD COLUMN IF NOT EXISTS Dividend_Tax_Code_Foreign VARCHAR(20)",
+        # Currencies: whether the FX download fetches the currency's rates. Retired currencies are switched off
+        # once, when the column is added, so switching one back on in Market Data -> Currencies sticks.
+        """DO $$ BEGIN
+               IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                              WHERE table_name = 'currencies' AND column_name = 'download_fx') THEN
+                   ALTER TABLE Currencies ADD COLUMN Download_FX BOOLEAN NOT NULL DEFAULT TRUE;
+                   UPDATE Currencies SET Download_FX = FALSE WHERE Currencies_ShortName IN ('CYP');
+               END IF;
+           END $$""",
         # Investments: the cash the broker actually booked for a trade (signed, account currency); NULL = derive it from Total_Amount_AccCur. See database/margin.py.
         "ALTER TABLE Investments ADD COLUMN IF NOT EXISTS Booked_Cash_AccCur NUMERIC(28, 18)",
         # Historical_Prices: provenance columns

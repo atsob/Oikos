@@ -353,6 +353,7 @@ marked; everything else has a working default or is an optional integration.
 | `GOCARDLESS_SECRET_ID` / `GOCARDLESS_SECRET_KEY` | | Pre-fills Importers → GoCardless (PSD2 open banking); optional, can be entered manually per session instead |
 | `SALTEDGE_APP_ID` / `SALTEDGE_SECRET` | | Pre-fills Importers → Salt Edge; same deal as GoCardless above |
 | `BACKUP_DIR` | | Host path for scheduled DB backups, bind-mounted into the container (default `./database_backups`, auto-created) |
+| `LOG_DIR` | | Host path for the log files (`app.log`, `scheduler.log`) shown in Tools → Logs, bind-mounted at `/app/logs` in both the app and scheduler containers (default `./logs`, auto-created) |
 | `IMAGE_NAME` | | Image tag `docker compose pull`/`up` uses (default `atsob/oikos:latest`); override if you're pulling your own pre-built image instead of building locally |
 
 ## Updating

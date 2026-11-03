@@ -28,6 +28,7 @@ ui/
 
 # Large data / backup dirs
 database_backups/
+logs/
 
 # Backups anywhere in the tree (patterns are anchored to the build root)
 **/database_backups/

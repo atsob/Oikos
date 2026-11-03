@@ -6,6 +6,7 @@ import requests
 import csv
 import io
 import re
+import threading
 import time
 import pandas as pd
 from tvDatafeed import TvDatafeed, Interval
@@ -185,7 +186,8 @@ def download_historical_fx(tsperiod=None, currencies_id=None):
         Yahoo Finance period string (e.g. "1mo", "1y"). Defaults to "1m".
     currencies_id : int, optional
         When provided, only download rates for this single Currencies_Id.
-        When omitted (None), download rates for every non-EUR currency.
+        When omitted (None), download rates for every non-EUR currency whose
+        Download_FX is on. A single currency asked for by id is downloaded either way.
     """
     conn = get_connection()
     cur = conn.cursor()
@@ -207,7 +209,7 @@ def download_historical_fx(tsperiod=None, currencies_id=None):
         else:
             cur.execute(
                 "SELECT Currencies_Id, Currencies_ShortName FROM Currencies "
-                "WHERE Currencies_ShortName != 'EUR'"
+                "WHERE Currencies_ShortName != 'EUR' AND Download_FX"
             )
         currencies = cur.fetchall()
         
@@ -352,6 +354,27 @@ def _compute_fair_values(cur, eps_updates):
     return len(fair_value_updates)
 
 
+class _YahooCrumbWatch(logging.Handler):
+    """Notes, per thread, that yfinance logged a 401 "Invalid Crumb". yfinance doesn't raise on
+    it: ticker.info just comes back partly empty, which would look like a security with no sector
+    and overwrite its quote with blanks. Happens to the first few parallel requests of a run,
+    before yfinance has fetched its crumb."""
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self._local = threading.local()
+
+    def emit(self, record):
+        if "Invalid Crumb" in record.getMessage():
+            self._local.hit = True
+
+    def reset(self):
+        self._local.hit = False
+
+    def hit(self) -> bool:
+        return getattr(self._local, "hit", False)
+
+
 def download_securities_info_from_yahoo(target_sec_id=None):
     """Download securities information from Yahoo Finance.
 
@@ -376,18 +399,23 @@ def download_securities_info_from_yahoo(target_sec_id=None):
     from database.queries import _ensure_fair_value_schema
 
     MAX_WORKERS = 5   # conservative — avoids Yahoo rate-limiting
+    CRUMB_RETRY_DELAYS = (3, 10)   # seconds before each one-at-a-time retry of a crumb failure
 
     _ensure_fair_value_schema()
 
     conn = get_connection()
     cur  = conn.cursor()
     custom_session = get_custom_session()
+    crumb_watch = _YahooCrumbWatch()
 
     def _fetch(sec_id, sec_name, symbol):
         """Fetch Yahoo info for one ticker; returns a result tuple."""
         try:
             ticker = yf.Ticker(symbol, session=custom_session)
+            crumb_watch.reset()
             info   = ticker.info
+            if crumb_watch.hit():
+                raise RuntimeError("Invalid Crumb (Yahoo 401)")
 
             # ── Existing fields ────────────────────────────────────────────
             sector   = info.get('sector')   or None
@@ -547,13 +575,33 @@ def download_securities_info_from_yahoo(target_sec_id=None):
         # ── Parallel fetch ────────────────────────────────────────────────────
         results = []
         futures = {}
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            for sec_id, sec_name, symbol in securities:
-                f = pool.submit(_fetch, sec_id, sec_name, symbol)
-                futures[f] = sec_name
+        yf_logger = logging.getLogger("yfinance")
+        yf_logger.addHandler(crumb_watch)
+        try:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                for sec_id, sec_name, symbol in securities:
+                    f = pool.submit(_fetch, sec_id, sec_name, symbol)
+                    futures[f] = sec_name
 
-            for f in as_completed(futures):
-                results.append(f.result())
+                for f in as_completed(futures):
+                    results.append(f.result())
+
+            # ── Retry crumb failures, one at a time, once yfinance has its crumb ──
+            # A row still failing keeps its error, so the batch update below skips it
+            # and leaves its stored sector, dividends and quote as they were.
+            for delay in CRUMB_RETRY_DELAYS:
+                failed = [r for r in results if r[-1] and "Invalid Crumb" in r[-1]]
+                if not failed:
+                    break
+                logging.info(f"Yahoo info: retrying {len(failed)} security(ies) after an Invalid Crumb error, in {delay}s…")
+                time.sleep(delay)
+                for r in failed:
+                    results[results.index(r)] = _fetch(r[0], r[1], r[2])
+            still_failed = [r[2] for r in results if r[-1] and "Invalid Crumb" in r[-1]]
+            if still_failed:
+                logging.warning(f"Yahoo info: still an Invalid Crumb for {', '.join(still_failed)} — left unchanged this run.")
+        finally:
+            yf_logger.removeHandler(crumb_watch)
 
         # ── Batch DB update ───────────────────────────────────────────────────
         sec_industry_updates = []    # rows that have sector/industry
