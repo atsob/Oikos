@@ -7,6 +7,7 @@ router = APIRouter()
 
 class AskRequest(BaseModel):
     question: str
+    history: list[dict] = []    # earlier turns [{role: 'user'|'assistant', text}] so follow-ups keep their topic
 
 
 @router.get("/embedding-status")
@@ -42,16 +43,24 @@ async def ask_ai(req: AskRequest):
     from fastapi import HTTPException
 
     def _run():
+        from ai.routing import route
+
+        hit = route(req.question, req.history)
+        if hit:                       # a question a ready-made tool answers: no model, the tool's result is the answer
+            name, fn, tool_input = hit
+            answer = fn(tool_input)
+            return {"answer": answer, "steps": [{"thought": f"This is a question the {name} tool answers, so it was used directly.",
+                                                 "tool": name, "tool_input": tool_input, "observation": answer[:500]}]}
+
         from ai.llm import init_llm
-        from ai.agent import create_ai_agent
+        from ai.agent import create_ai_agent, with_history
         from ai.rag import PgVectorRagEngine
         from database.connection import get_sql_database
-
         llm = init_llm()
         db = get_sql_database()
         rag = PgVectorRagEngine()
         agent = create_ai_agent(llm, db, rag)
-        result = agent.invoke({"input": req.question})
+        result = agent.invoke({"input": with_history(req.question, req.history)})
 
         steps = []
         for action, observation in result.get("intermediate_steps", []):

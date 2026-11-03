@@ -91,7 +91,8 @@ export default function AIAssistant() {
   })
 
   const askMut = useMutation({
-    mutationFn: (q: string) => api.post('/ai/ask', { question: q }).then(r => r.data as { answer: string; steps?: Step[] }),
+    // The earlier turns go along so a follow-up ("can you give more details?") keeps its topic.
+    mutationFn: (q: string) => api.post('/ai/ask', { question: q, history: messages.map(m => ({ role: m.role, text: m.text })) }).then(r => r.data as { answer: string; steps?: Step[] }),
     onSuccess: data => {
       setMessages(m => [...m, { role: 'assistant', text: data.answer ?? JSON.stringify(data), steps: data.steps }])
     },

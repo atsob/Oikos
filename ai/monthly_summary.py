@@ -32,7 +32,6 @@ import pandas as pd
 
 from config.settings import ENV_CONFIG
 from database.connection import get_connection
-from ai.llm import init_llm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -618,6 +617,7 @@ def run(target_month=None):
         context = _gather_context(conn, month_start, month_end)
         logging.info("Context gathered:\n%s", context)
 
+        from ai.llm import init_llm     # here, not at the top: the AI Assistant's net-worth tool imports this module and needs no LLM
         llm = init_llm()
         summary = generate_summary(llm, context)
         lists = format_lists(_spending_by_category(conn, month_start, month_end),

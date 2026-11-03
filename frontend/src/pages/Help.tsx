@@ -1929,6 +1929,28 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           knowledge base — current stock/crypto prices, recent news, general facts.
         </P>
         <P>
+          Seven kinds of question have ready-made tools, so the answer comes from the same query as the Reports rather than
+          from SQL the model writes itself: <b>spending vs budget</b> ("Which categories did I overspend in Q1 2026?" —
+          each category's annual budget from Reports → Budget pro-rated to the period's days, the ones over it by
+          how much, and the totals), <b>spending by category</b> ("Where did my money go last month?", by full path) and
+          the <b>transactions behind a category</b> ("Show me the Dental spending in Q1 2026") and <b>how your holdings
+          performed</b> ("Which were my 10 worst performing investments today?" — today is the latest close against the
+          one before; a period such as this month or YTD, the latest close against the last one before it; "since
+          purchase", the value against its FIFO cost; in EUR, all accounts together) and <b>portfolio value and net
+          worth</b> ("What is my current portfolio value?" — the Dashboard's own figures, by account, with the change
+          since yesterday, last month and last year) and <b>how net worth changed</b> ("How has my net worth changed over
+          the last 3 months?" — month-end values to today, and the change in cash, investments, pension &amp; savings and
+          assets; changes include money moved in or out) and <b>investment P&amp;L</b> ("What's my YTD P&amp;L in total and
+          per investment account?" — the figures of Reports → Inv. Performance, realized and unrealized, for today, this
+          week, month, quarter, year to date or all time). A question that plainly asks one of these — with words such as
+          overspend or budget, total spending, net worth or portfolio value, best or worst performing — goes straight to
+          its tool without the AI model, so it is answered in a second or two, and so does a short follow-up such as
+          "and my net worth?". Their result is the
+          answer, word for word. A period can be a quarter (Q1 2026), a month (March 2026), a year, "last month",
+          "this year" or two dates. The chat remembers the last few exchanges, so a follow-up such as "Can you give more
+          details?" after a budget answer lists the transactions of the categories most over budget.
+        </P>
+        <P>
           The same underlying engine also generates the scheduled <b>Monthly</b> and <b>Weekly AI Summary</b>{' '}
           jobs (configurable under Tools → Scheduled Tasks), which write a short plain-English recap of cash
           flow, investment P&amp;L, and net worth — shown on the Dashboard. The weekly one adds its spending
