@@ -19,6 +19,11 @@ Events, on daily closes:
     broken support as Resistance), so the alert says so, and names the next level.
   * near support / near resistance — the latest close within max(0.75%, a quarter of
     the reversal threshold) of the nearest level on that side, and not through it.
+  * support tested / resistance tested — the same closeness, but the price came from the
+    other side: the last close outside that band was beyond the level (a fall through a
+    support, a rise through a resistance) and it is not yet a confirmed break. A level
+    the price has just dropped under is still the support it was, not a resistance to
+    sell into, so it is not called "near resistance".
 
 Wording follows the scope: a holding gets risk / profit context from its unrealized
 P&L (a broken support while at a loss is an error; near resistance while 30% or more
@@ -118,10 +123,27 @@ def events(points: list[dict]) -> list[dict]:
         lv = _meaningful(full["levels"])
         sup = sorted((l for l in lv if l["price"] < c0), key=lambda l: -l["price"])
         res = sorted((l for l in lv if l["price"] > c0), key=lambda l: l["price"])
-        if sup and "support" not in broke and (c0 - sup[0]["price"]) / c0 <= near:
-            out.append({"event": "support_near", **sup[0]})
-        if res and "resistance" not in broke and (res[0]["price"] - c0) / c0 <= near:
-            out.append({"event": "resistance_near", **res[0]})
+
+        def came_from_beyond(p: float, above: bool) -> bool:
+            """Whether the last close outside the "near" band around level p was on its other side (above it when `above`)."""
+            prev = next((c for c in reversed(closes[:-1]) if abs(c - p) / p > near), None)
+            return prev is not None and (prev > p if above else prev < p)
+
+        def tested(l: dict, above: bool) -> dict:
+            return {"event": "support_test" if above else "resistance_test", **l,
+                    "prev_close": closes[-2], "day_pct": (c0 / closes[-2] - 1) * 100 if closes[-2] else None}
+
+        # A level just crossed is a test of what it was (a support just fallen through is still the support), unless that break is confirmed.
+        if sup and (c0 - sup[0]["price"]) / c0 <= near:
+            if not came_from_beyond(sup[0]["price"], False):
+                if "support" not in broke: out.append({"event": "support_near", **sup[0]})
+            elif "resistance" not in broke:
+                out.append(tested(sup[0], False))
+        if res and (res[0]["price"] - c0) / c0 <= near:
+            if not came_from_beyond(res[0]["price"], True):
+                if "resistance" not in broke: out.append({"event": "resistance_near", **res[0]})
+            elif "support" not in broke:
+                out.append(tested(res[0], True))
         for e in out:      # after a break, the next level the chart shows beyond the price (S1 / R1 there)
             if e["event"] == "support_break" and sup:
                 e["next_level"] = sup[0]
@@ -174,6 +196,17 @@ def _fading(e: dict) -> str:
             f"; a close back {'under' if up else 'over'} the level would undo the break.")
 
 
+def _test_text(name: str, e: dict) -> str:
+    """A level the price has just crossed but not yet broken (see the module docstring): which way it came, how far past it is now."""
+    day = e.get("day_pct")
+    move = f" ({'+' if day >= 0 else '−'}{abs(day):.1f}% on the day)" if day is not None and abs(day) >= 0.05 else ""
+    if e["event"] == "support_test":
+        return (f"{name} fell through support {_level_text(e)} and is now {_fmt(e['close'])}{move}, {abs(e['distance_pct']):.1f}% below it. "
+                f"Two closes in a row clearly below it would confirm the break; a close back above it and the support held.")
+    return (f"{name} rose through resistance {_level_text(e)} and is now {_fmt(e['close'])}{move}, {abs(e['distance_pct']):.1f}% above it. "
+            f"Two closes in a row clearly above it would confirm the breakout; a close back below it and the resistance held.")
+
+
 def _pnl_clause(pnl: float | None, cost: float | None) -> str:
     if pnl is None or not cost or cost <= 0:
         return ""
@@ -205,6 +238,11 @@ def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None, ac
     if ev == "support_near":
         level = "warning" if pnl is not None and pnl < 0 else "info"
         return level, (f"🟢 **Near support** — {name} at {close}, {abs(e['distance_pct']):.1f}% above support {lvl}.{clause}")
+    if ev == "support_test":
+        level = "warning" if pnl is not None and pnl < 0 else "info"
+        return level, f"🟠 **Testing support** — {_test_text(name, e)}{clause}"
+    if ev == "resistance_test":
+        return "info", f"🟢 **Testing resistance** — {_test_text(name, e)}{clause}"
     if ev == "resistance_near":
         if pct is not None and pct >= PROFIT_TAKE_PCT:
             return "warning", (f"🔴 **Near resistance** — {name} at {close}, {abs(e['distance_pct']):.1f}% below resistance {lvl}."
@@ -216,6 +254,8 @@ def _holding_alert(name: str, e: dict, pnl: float | None, cost: float | None, ac
 
 def _watch_alert(name: str, e: dict) -> tuple[str, str]:
     ev, lvl, close = e["event"], _level_text(e), _fmt(e["close"])
+    if ev in ("support_test", "resistance_test"):
+        return "info", f"👀 **Testing {'support' if ev == 'support_test' else 'resistance'}** (Watchlist) — {_test_text(name, e)}"
     if ev == "support_near":
         return "info", f"👀 **Near support** (Watchlist) — {name} at {close}, {abs(e['distance_pct']):.1f}% above support {lvl}: a possible entry."
     if ev == "resistance_break":
@@ -228,6 +268,8 @@ def _watch_alert(name: str, e: dict) -> tuple[str, str]:
 def _currency_alert(code: str, e: dict, exposure_eur: float) -> tuple[str, str]:
     ev, lvl, close = e["event"], _level_text(e), _fmt(e["close"])
     exp = f" Affects €{exposure_eur:,.0f} of your exposure."
+    if ev in ("support_test", "resistance_test"):
+        return "info", f"{'🟠' if ev == 'support_test' else '🟢'} **{code} testing {'support' if ev == 'support_test' else 'resistance'}** vs EUR — {_test_text(code, e)}{exp}"
     if ev == "support_break":
         return "warning", f"🔻 **{code} broke support** vs EUR — closed below {lvl} on two days running{_when(e)}; now {close}.{_after_break(e)}{_fading(e)}{exp}"
     if ev == "resistance_break":
