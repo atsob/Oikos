@@ -1928,7 +1928,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           The same underlying engine also generates the scheduled <b>Monthly</b> and <b>Weekly AI Summary</b>{' '}
           jobs (configurable under Tools → Scheduled Tasks), which write a short plain-English recap of cash
-          flow, top payees, investment P&amp;L, and net worth — shown on the Dashboard.
+          flow, investment P&amp;L, and net worth — shown on the Dashboard. The weekly one adds its spending
+          categories and top 5 transactions; the monthly one ends with two numbered lists that Oikos writes itself
+          rather than the AI model, so they are always complete: the 10 largest spending categories by full path
+          (<i>Household : Super Market</i>, net of refunds) and the top 10 payees. <b>Regenerate</b> rewrites a past
+          week or month in the current layout. A larger local model (<code>OLLAMA_MODEL</code>, e.g. <code>llama3.1:8b</code>)
+          follows the layout more closely than the default <code>llama3.2:3b</code>.
         </P>
         <H3>Claude Desktop / Claude Code (MCP)</H3>
         <P>

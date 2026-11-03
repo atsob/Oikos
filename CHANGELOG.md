@@ -5,6 +5,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ## 2026-11-03
 
 ### Added
+- **Monthly AI Summary: spending by category, and lists that stay lists.** The summary now ends with your 10 largest spending categories by full path (*Household : Super Market*, net of refunds to the same category, largest first) and then the top 10 payees, each a numbered list one per line. Both are written by Oikos rather than by the AI model: the local model ran October's payees together into one paragraph and, asked for a category breakdown, named only two of eight categories. The model writes the three paragraphs above them (cash flows, investments, net worth). Regenerate a month to get the new layout; October 2026 was regenerated.
 - **Currencies: a Download FX switch.** Market Data → Currencies has a *Download FX* column whose checkbox switches it at once, and the same checkbox in the Edit form. When it is off, the scheduled FX download skips the currency — for one that no longer trades, such as the Cyprus pound (CYP), which Yahoo has no rate for and which logged *No data found for EURCYP=X* on every run. Its stored rates stay, and Downloads → FX can still fetch that one currency on its own. CYP was switched off once, when the column was added (`Currencies.Download_FX`, added automatically on start); every other currency stays on, and switching CYP back on sticks.
 
 ### Fixed

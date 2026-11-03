@@ -390,10 +390,50 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
         logging.exception("INVESTMENT P&L query failed")
         blocks.append(f"INVESTMENT P&L: unavailable ({e})")
 
-    # 4. Top 10 payees this month (largest absolute amounts, real expenses only)
+    return "\n\n".join(blocks)
+
+
+# The spending breakdown and top payees are not given to the LLM: format_lists writes them
+# itself, after the model's prose. The local model was seen running the payees together into
+# one paragraph, and naming only two of eight categories however it was asked.
+
+def _spending_by_category(conn, month_start: str, month_end: str) -> list[tuple[str, float]]:
+    """The 10 largest expense categories this month by full path ("Household : Super Market"),
+    largest first. Net of refunds booked to the same category."""
     try:
         df = _query(conn, """
-            SELECT p.Payees_Name, ABS(SUM(t.Total_Amount)) AS abs_amount, SUM(t.Total_Amount) AS total_amount
+            WITH RECURSIVE CategoryHierarchy AS (
+                SELECT Categories_Id, Categories_Name::TEXT AS Full_Path
+                FROM Categories WHERE Categories_Id_Parent IS NULL
+                UNION ALL
+                SELECT c.Categories_Id, ch.Full_Path || ' : ' || c.Categories_Name
+                FROM Categories c JOIN CategoryHierarchy ch ON c.Categories_Id_Parent = ch.Categories_Id
+            )
+            SELECT ch.Full_Path AS category, -SUM(s.Amount) AS total
+            FROM Splits s
+            JOIN Categories c ON c.Categories_Id = s.Categories_Id
+            JOIN CategoryHierarchy ch ON ch.Categories_Id = c.Categories_Id
+            JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+            WHERE t.Date BETWEEN %s AND %s
+              AND c.Categories_Type = 'Expense'
+              AND t.Transfers_Id IS NULL
+            GROUP BY ch.Full_Path
+            HAVING -SUM(s.Amount) > 0
+            ORDER BY total DESC
+            LIMIT 10
+        """, (month_start, month_end))
+    except Exception:
+        conn.rollback()
+        logging.exception("SPENDING BY CATEGORY query failed")
+        return []
+    return [(r.category, float(r.total)) for _, r in df.iterrows()]
+
+
+def _top_payees(conn, month_start: str, month_end: str) -> list[tuple[str, float]]:
+    """Top 10 payees this month (largest outflows, real expenses only)."""
+    try:
+        df = _query(conn, """
+            SELECT p.Payees_Name, SUM(t.Total_Amount) AS total_amount
             FROM Transactions t
             LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
             WHERE t.Date >= %s AND t.Date <= %s
@@ -407,18 +447,22 @@ def _gather_context(conn, month_start: str, month_end: str) -> str:
             ORDER BY ABS(SUM(t.Total_Amount)) DESC
             LIMIT 10
         """, (month_start, month_end))
-        if not df.empty:
-            rows = "\n".join(
-                f"  {r.payees_name:30s}  €{abs(float(r.total_amount)):,.2f}"
-                for _, r in df.iterrows()
-            )
-            blocks.append(f"TOP 10 PAYEES THIS MONTH (expenses only, amounts are positive outflows):\n{rows}")
-    except Exception as e:
+    except Exception:
         conn.rollback()
         logging.exception("TOP PAYEES query failed")
-        blocks.append(f"TOP PAYEES: unavailable ({e})")
+        return []
+    return [(r.payees_name, abs(float(r.total_amount))) for _, r in df.iterrows()]
 
-    return "\n\n".join(blocks)
+
+def format_lists(categories: list[tuple[str, float]], payees: list[tuple[str, float]]) -> str:
+    def numbered(rows):
+        return "\n".join(f"{n}. {name} — €{amount:,.2f}" for n, (name, amount) in enumerate(rows, 1))
+    parts = []
+    if categories:
+        parts.append("Here is your spending by category this month:\n" + numbered(categories))
+    if payees:
+        parts.append("Here are the top 10 payees this month:\n" + numbered(payees))
+    return "\n\n".join(parts)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -430,19 +474,17 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     Use "you" / "your". No greeting, no sign-off, no markdown (no headers, no bold, no asterisks) —
     this is displayed as raw plain text, so any markdown syntax would show up literally to the user.
 
-    Follow this structure exactly, in 4 short paragraphs:
+    Follow this structure exactly, in 3 short paragraphs (the spending by category and the top
+    payees are listed after your text separately — do not list categories or payees yourself):
     Paragraph 1 – Cash flows: quote the NET line's explanation from the context verbatim — it
         already states income, expenses, any tax/interest needed to reconcile to the net figure,
         and, as a separate trailing sentence when present, any "other" cash movement (transfers,
         investment contributions, a pension cash-out, etc.) explicitly called out as not part of
         that net. Do not state your own net figure or your own "income minus expenses" framing;
         use only the quoted explanation, and never fold "other" into a net/savings figure yourself.
-    Paragraph 2 – Top payees: present the TOP 10 PAYEES as a simple numbered list ("1. Name: €X"),
-        one per line, largest first. A numbered list is fine here — it is not markdown. Skip this
-        paragraph if there is no payee data.
-    Paragraph 3 – Investments: state the investment P&L for the month plainly (gain or loss, and
+    Paragraph 2 – Investments: state the investment P&L for the month plainly (gain or loss, and
         the amount).
-    Paragraph 4 – Net worth: state the CHANGE FROM PRIOR MONTH from the context (if present) as
+    Paragraph 3 – Net worth: state the CHANGE FROM PRIOR MONTH from the context (if present) as
         the opening sentence, then the current TOTAL broken down into its Cash / Investments /
         Pension & Savings / Assets components, all as one flowing sentence, not a list.
 
@@ -454,7 +496,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     - Keep the total length under 250 words.
     - Never copy a DATA block line verbatim (e.g. "NET WORTH SNAPSHOT (as of ...): ...",
       "PRIOR NET WORTH ...", "CHANGE FROM PRIOR MONTH: ..."). Pull the numbers out of it and write
-      your own sentence instead — the output should be 4 paragraphs of prose only, nothing that
+      your own sentence instead — the output should be 3 paragraphs of prose only, nothing that
       looks like a label/colon data line.
 """)
 
@@ -463,7 +505,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 # doesn't always follow that instruction as reliably as a hosted one does.
 _DATA_LINE_PREFIXES = (
     "NET WORTH SNAPSHOT", "PRIOR NET WORTH", "CHANGE FROM PRIOR MONTH",
-    "MONTHLY CASH FLOWS", "INVESTMENT P&L", "TOP 10 PAYEES", "NET WORTH:",
+    "MONTHLY CASH FLOWS", "INVESTMENT P&L", "TOP 10 PAYEES", "NET WORTH:", "SPENDING BY CATEGORY",
 )
 
 
@@ -501,7 +543,7 @@ def generate_summary(llm, context: str) -> str:
         f"=== FINANCIAL DATA FOR THIS MONTH ===\n"
         f"{context}\n"
         f"=== END OF DATA ===\n\n"
-        f"Write the 4–5 paragraph summary now:"
+        f"Write the 3 paragraph summary now:"
     )
     try:
         response = llm.invoke(prompt)
@@ -578,6 +620,10 @@ def run(target_month=None):
 
         llm = init_llm()
         summary = generate_summary(llm, context)
+        lists = format_lists(_spending_by_category(conn, month_start, month_end),
+                             _top_payees(conn, month_start, month_end))
+        if lists and not summary.startswith("[LLM error"):
+            summary = f"{summary}\n\n{lists}"
         logging.info("Summary generated.")
 
         save_summary(conn, month_start, summary)

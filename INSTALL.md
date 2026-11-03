@@ -147,6 +147,25 @@ Two things the containerized path still needs done manually:
                 capabilities: [gpu]
   ```
 
+- **Integrated AMD/Intel GPU** (optional, e.g. a Radeon 680M/780M mini PC) —
+  Ollama can use it through Vulkan. Give the `ollama` service the host's
+  `/dev/dri` and the groups that own it (`getent group render video` shows
+  their ids), and allow integrated GPUs, which Ollama skips by default:
+  ```yaml
+      devices:
+        - /dev/dri:/dev/dri
+      group_add:
+        - "992"   # render — use your host's ids
+        - "44"    # video
+      environment:
+        - OLLAMA_IGPU_ENABLE=1
+  ```
+  `docker logs oikos_ollama` should then list the GPU under
+  `inference compute … library=Vulkan`, and `ollama ps` show `100% GPU`. The
+  GPU shares system RAM, so an 8B model (`OLLAMA_MODEL=llama3.1:8b`, ~5 GB)
+  fits easily on a 16 GB+ machine and writes noticeably better summaries than
+  the 3B default.
+
 Every `docker compose` command from here on (`up`, `down`, `logs`, etc.) needs
 `--profile full` too, or Compose won't know to include these two services.
 
