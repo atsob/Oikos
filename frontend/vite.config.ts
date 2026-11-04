@@ -59,6 +59,9 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // The manifest link gets crossorigin="use-credentials": browsers fetch a manifest without cookies otherwise, and behind
+      // Cloudflare Access a cookie-less request is redirected to the Access login, so the app could not be installed.
+      useCredentials: true,
       includeAssets: ['favicon.png', 'logo.png', 'icons.svg', 'icon-192.png', 'icon-512.png'],
       devOptions: {
         enabled: true,
