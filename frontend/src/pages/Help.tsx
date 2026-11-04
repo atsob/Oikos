@@ -746,6 +746,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>actual</b> spend — including the same year, so you can turn this year's real spending into next
           year's starting budget. It overwrites any existing budget for the categories being copied.
         </Note>
+        <Note>
+          <b>Compare with</b> sets what each category is measured against. <b>Annual budget</b> is the whole year's budget.
+          <b>Prorated to date</b> is each annual budget × the share of the year gone by, today included (84.4% on 4 Nov). With it, the table adds
+          <b>Budget to Date</b> and <b>Est. Annual</b> (the spending so far at the same pace to 31 Dec, in red when it would end above the annual budget), and
+          Variance and % Used are worked out against the budget to date. That way, a category at 80% of its annual budget in November reads as on track, not as low.
+          For a past year the two are the same, and a future year has only Annual.
+        </Note>
+        <Note>
+          <b>Show</b> narrows the table. <b>Over by &gt; 10%</b> keeps the categories whose % Used is above 110% (and those with spending but no budget).
+          <b>Used &lt; 80%</b> keeps the budgeted ones below 80%, where the budget may be too generous. Both thresholds can be changed, and
+          they follow the Compare with choice. The heading says how many categories match. The choice, the mode and the thresholds are remembered.
+        </Note>
 
         <H3>📈 Inv. Portfolio</H3>
         <P>Point-in-time holdings snapshot and historical positions detail, with allocation charts.</P>

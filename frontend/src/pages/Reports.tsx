@@ -7965,6 +7965,11 @@ function BudgetReport() {
   const [drillCat, setDrillCat] = useState<string | null>(null)
   const [copyFromYear, setCopyFromYear] = useState(now.getFullYear() - 1)
   const [copySource, setCopySource] = useState<'budget' | 'actual'>('budget')
+  // Prorated: each annual budget is cut to the part of the year gone by, so a category is judged against where it should be by today.
+  const [budgetMode, setBudgetMode] = usePersist<'annual' | 'prorated'>('budget_mode', 'annual')
+  const [budgetFilter, setBudgetFilter] = usePersist<'all' | 'over' | 'low'>('budget_filter', 'all')
+  const [overPct, setOverPct] = usePersist('budget_over_pct', 10)    // "over budget by more than" this %
+  const [lowPct, setLowPct] = usePersist('budget_low_pct', 80)       // "low utilization": less than this % used
 
   const isCurrentYear = year === now.getFullYear()
   const ytdLabel = isCurrentYear ? 'YTD Actual' : 'Actual'
@@ -7998,7 +8003,30 @@ function BudgetReport() {
 
   // Budget rows with editable amounts
   const budgetedRows = rows.filter(r => Number(r.budget_amount) > 0)
-  const pctOfYear = isCurrentYear ? now.getTime() / new Date(year + 1, 0, 1).getTime() : 1
+  // Share of the year gone by, today included: 1 for a past year, 0 for a future one.
+  const yearStart = new Date(year, 0, 1).getTime()
+  const yearDays = (new Date(year + 1, 0, 1).getTime() - yearStart) / 86_400_000
+  const pctOfYear = year < now.getFullYear() ? 1 : year > now.getFullYear() ? 0
+    : Math.min(1, (Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - yearStart) / 86_400_000) + 1) / yearDays)
+  const prorated = budgetMode === 'prorated' && pctOfYear > 0
+  // The saved budget: figures, colours and filters change only once an edit is saved, so a row neither
+  // recalculates nor drops out of a filter while its new amount is still being typed.
+  const budgetOf = (r: Row) => Number(r.budget_amount ?? 0)
+  // The budget a category is measured against: the annual one, or its prorated share to date.
+  const measureOf = (r: Row) => budgetOf(r) * (prorated ? pctOfYear : 1)
+  // % used against that budget; an unbudgeted category with spending counts as over by any margin.
+  const usedPct = (r: Row) => {
+    const m = measureOf(r), act = Number(r.actual_amount ?? 0)
+    return m > 0 ? act / m * 100 : act > 0 ? Infinity : null
+  }
+  const shownRows = rows.filter(r => {
+    if (budgetFilter === 'all') return true
+    const pct = usedPct(r)
+    if (budgetFilter === 'over') return pct != null && pct > 100 + overPct
+    return budgetOf(r) > 0 && pct != null && pct < lowPct
+  })
+  const totalMeasure = rows.reduce((s, r) => s + measureOf(r), 0)
+  const estAnnual = pctOfYear > 0 ? totalActual / pctOfYear : 0
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -8007,10 +8035,11 @@ function BudgetReport() {
       )
       await Promise.all(promises)
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      // The saved figures are fetched first, so the inputs never flash back to the old amounts in between.
+      await qc.invalidateQueries({ queryKey: ['budget-vs-actual'] })
       setSaveMsg('✅ Budgets saved!')
       setBudgetEdits({})
-      qc.invalidateQueries({ queryKey: ['budget-vs-actual'] })
       setTimeout(() => setSaveMsg(null), 3000)
     },
     onError: () => setSaveMsg('❌ Save failed'),
@@ -8086,14 +8115,45 @@ function BudgetReport() {
         </div>
       </div>
 
+      {/* Mode and filters */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-slate-600">Compare with</span>
+          {([['annual', 'Annual budget'], ['prorated', 'Prorated to date']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setBudgetMode(k)} disabled={k === 'prorated' && pctOfYear === 0}
+              title={k === 'prorated' ? `Each budget × ${(pctOfYear * 100).toFixed(1)}% of the year gone by` : 'The whole year\'s budget'}
+              className={`px-2.5 py-1 rounded text-xs font-medium disabled:opacity-40 ${budgetMode === k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{label}</button>
+          ))}
+          {prorated && pctOfYear < 1 && <span className="text-xs text-slate-400 ml-1">{(pctOfYear * 100).toFixed(1)}% of {year}</span>}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-slate-600">Show</span>
+          <button onClick={() => setBudgetFilter('all')}
+            className={`px-2.5 py-1 rounded text-xs font-medium ${budgetFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>All</button>
+          <button onClick={() => setBudgetFilter('over')}
+            className={`px-2.5 py-1 rounded text-xs font-medium ${budgetFilter === 'over' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600'}`}>Over by &gt;</button>
+          <input type="number" min={0} step={5} value={overPct} onChange={e => setOverPct(Math.max(0, Number(e.target.value) || 0))}
+            className="w-14 text-right text-xs border border-slate-300 rounded px-1.5 py-1" />
+          <span className="text-xs text-slate-500 mr-2">%</span>
+          <button onClick={() => setBudgetFilter('low')}
+            className={`px-2.5 py-1 rounded text-xs font-medium ${budgetFilter === 'low' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Used &lt;</button>
+          <input type="number" min={0} step={5} value={lowPct} onChange={e => setLowPct(Math.max(0, Number(e.target.value) || 0))}
+            className="w-14 text-right text-xs border border-slate-300 rounded px-1.5 py-1" />
+          <span className="text-xs text-slate-500">%</span>
+        </div>
+      </div>
+
       {/* Summary KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className={`grid grid-cols-2 sm:grid-cols-3 ${prorated ? 'lg:grid-cols-8' : 'lg:grid-cols-6'} gap-3`}>
         {[
           { label: avgCol,         value: fmtEur(totalAvg),    color: 'text-slate-700' },
           { label: priorLabel,     value: fmtEur(totalPrior),  color: 'text-slate-700' },
           { label: 'Annual Budget',value: fmtEur(totalBudget), color: 'text-blue-700'  },
+          ...(prorated ? [{ label: 'Budget to Date', value: fmtEur(totalMeasure), color: 'text-blue-700' }] : []),
           { label: ytdLabel,       value: fmtEur(totalActual), color: 'text-slate-700' },
-          { label: 'Variance',     value: fmtEur(variance),    color: variance >= 0 ? 'text-green-700' : 'text-red-600' },
+          ...(prorated ? [{ label: 'Est. Annual', value: fmtEur(estAnnual), color: estAnnual > totalBudget ? 'text-red-600' : 'text-slate-700' }] : []),
+          { label: prorated ? 'Variance to Date' : 'Variance', value: fmtEur(prorated ? totalMeasure - totalActual : variance),
+            color: (prorated ? totalMeasure - totalActual : variance) >= 0 ? 'text-green-700' : 'text-red-600' },
           { label: isCurrentYear ? 'YTD Income' : 'Annual Income', value: fmtEur(totalIncome), color: 'text-green-700' },
         ].map(m => (
           <div key={m.label} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
@@ -8106,7 +8166,12 @@ function BudgetReport() {
       {/* Editable budget table */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-slate-700">Set Annual Budgets</h3>
+          <h3 className="text-sm font-semibold text-slate-700">
+            Set Annual Budgets
+            {budgetFilter !== 'all' && <span className="ml-2 text-xs font-normal text-slate-500">
+              {shownRows.length} of {rows.length} categories — {budgetFilter === 'over' ? `over ${prorated ? 'the budget to date' : 'budget'} by more than ${overPct}%` : `under ${lowPct}% of ${prorated ? 'the budget to date' : 'budget'} used`}
+            </span>}
+          </h3>
           {Object.keys(budgetEdits).length > 0 && (
             <Button size="sm" onClick={() => { setSaveMsg(null); saveMut.mutate() }} disabled={saveMut.isPending}>
               {saveMut.isPending ? <Spinner size={12} /> : null} 💾 Save All Budgets
@@ -8121,19 +8186,26 @@ function BudgetReport() {
               <th className="px-3 py-2 text-right">{avgCol}</th>
               <th className="px-3 py-2 text-right">{priorLabel}</th>
               <th className="px-3 py-2 text-right">Budget (€) ✏️</th>
+              {prorated && <th className="px-3 py-2 text-right" title="The annual budget × the share of the year gone by">Budget to Date</th>}
               <th className="px-3 py-2 text-right">{ytdLabel}</th>
-              <th className="px-3 py-2 text-right">Variance</th>
+              {prorated && <th className="px-3 py-2 text-right" title="The spending so far, carried on at the same pace to the end of the year">Est. Annual</th>}
+              <th className="px-3 py-2 text-right">{prorated ? 'Variance to Date' : 'Variance'}</th>
               <th className="px-3 py-2 text-right">% Used</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((r, i) => {
+              {shownRows.length === 0 && (
+                <tr><td colSpan={prorated ? 9 : 7} className="px-3 py-6 text-center text-xs text-slate-400">No category matches this filter.</td></tr>
+              )}
+              {shownRows.map(r => {
                 const catId = Number(r.categories_id)
-                const budg = catId in budgetEdits ? parseFloat(budgetEdits[catId]) || 0 : Number(r.budget_amount ?? 0)
+                const budg = budgetOf(r)
+                const meas = measureOf(r)
                 const act  = Number(r.actual_amount ?? 0)
-                const varE = budg - act
-                const pct  = budg > 0 ? act / budg * 100 : null
+                const varE = meas - act
+                const pct  = meas > 0 ? act / meas * 100 : null
+                const est  = pctOfYear > 0 ? act / pctOfYear : 0
                 return (
-                  <tr key={i} className={`hover:bg-slate-50 ${r.over_budget ? 'bg-red-50/30' : ''}`}>
+                  <tr key={catId} className={`hover:bg-slate-50 ${act > meas ? 'bg-red-50/30' : ''}`}>
                     <td className="px-3 py-1.5 text-slate-700 text-xs">{String(r.categories_name)}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-slate-400 text-xs">{fmtEur(Number(r.avg_annual_hist ?? 0))}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-slate-400 text-xs">{fmtEur(Number(r.prior_year_amount ?? 0))}</td>
@@ -8145,7 +8217,9 @@ function BudgetReport() {
                         className="w-28 text-right text-xs border border-slate-300 rounded px-2 py-1 focus:border-blue-400 focus:outline-none font-medium"
                       />
                     </td>
+                    {prorated && <td className="px-3 py-1.5 text-right tabular-nums text-xs text-blue-700">{fmtEur(meas)}</td>}
                     <td className="px-3 py-1.5 text-right tabular-nums text-xs">{fmtEur(act)}</td>
+                    {prorated && <td className={`px-3 py-1.5 text-right tabular-nums text-xs ${est > budg ? 'text-red-600' : 'text-slate-500'}`}>{fmtEur(est)}</td>}
                     <td className={`px-3 py-1.5 text-right tabular-nums text-xs font-medium ${varE >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmtEur(varE)}</td>
                     <td className="px-3 py-1.5 text-right">
                       {pct != null ? (
@@ -8190,8 +8264,7 @@ function BudgetReport() {
           <h3 className="text-sm font-semibold text-slate-700 mb-3">Progress per Category</h3>
           <div className="space-y-3">
             {budgetedRows.map((r, i) => {
-              const catId = Number(r.categories_id)
-              const budget = catId in budgetEdits ? (parseFloat(budgetEdits[catId]) || 0) : Number(r.budget_amount ?? 0)
+              const budget = budgetOf(r)
               const actual = Number(r.actual_amount ?? 0)
               const pct    = budget > 0 ? Math.min(actual / budget, 1) : 0
               const over   = Boolean(r.over_budget)
