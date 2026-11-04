@@ -637,6 +637,14 @@ def _run_startup_migrations():
         # Roles: admin (everything), limited (read and write on the accounts mapped to the user) and readonly (read only on those accounts) — see api/access.py.
         # Every user that existed before is an admin.
         "ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin'",
+        # Failed sign-ins, for the login lockout (api/routers/auth.py): a username or an address with too many recent failures is refused for a while.
+        """CREATE TABLE IF NOT EXISTS Login_Failures (
+               Login_Failures_Id SERIAL PRIMARY KEY,
+               Username          VARCHAR(100) NOT NULL,
+               Ip                VARCHAR(64)  NOT NULL,
+               Failed_At         TIMESTAMPTZ  NOT NULL DEFAULT now()
+           )""",
+        "CREATE INDEX IF NOT EXISTS idx_login_failures_at ON Login_Failures(Failed_At)",
         # Currency alerts (fx_above / fx_below on Alerts): the currency and the one its rate is quoted in
         "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",
         "ALTER TABLE IF EXISTS Alerts ADD COLUMN IF NOT EXISTS Currencies_Id_Quote INTEGER REFERENCES Currencies(Currencies_Id) ON DELETE CASCADE",

@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-04
+
+### Security
+- **Sign-in lockout.** With Oikos reachable from the internet, nothing slowed down password guessing: any number of wrong passwords was simply answered *Invalid username or password*. Now, after **5 failed sign-ins for a username within 15 minutes**, that username is refused for 15 minutes from anywhere, with *Too many failed sign-ins. Try again in 15 minutes.* The same applies to an address that fails 20 times, whatever usernames it tries. The lockout is checked before the password, so the right password does not get in either while it lasts. A successful sign-in clears that username's failures. Failures are kept in the database (`Login_Failures`, created automatically on start; rows older than a day are removed), so the limit holds across the server's workers and restarts. Behind Cloudflare the address is the visitor's real one (`CF-Connecting-IP`).
+- **API documentation needs a sign-in.** `/api/docs`, `/api/redoc` and the OpenAPI schema were open to anyone, which published a map of every endpoint. They now answer 401 without a session.
+- **Security headers.** Every response now says it may not be shown inside another site's frame (`X-Frame-Options: DENY`, `frame-ancestors 'none'`, against clickjacking), sets `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`, and, at the public address through Cloudflare, `Strict-Transport-Security`. HSTS is left off on the LAN, where it would break the plain-HTTP download of the home CA certificate.
+- **No cross-site API access.** The API allowed requests from any origin (`CORS *`). The app and its API share one address, so the CORS rule is removed and other sites can no longer call it from a browser.
+
 ## 2026-11-03
 
 ### Added

@@ -865,6 +865,35 @@ def delete_session(token_hash: str) -> None:
         cur.execute("DELETE FROM Sessions WHERE Token_Hash = %s", (token_hash,))
 
 
+def login_failure_counts(username: str, ip: str, minutes: int) -> tuple[int, int]:
+    """Failed sign-ins in the last `minutes` minutes: (for this username, from this address)."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FILTER (WHERE lower(Username) = lower(%s)),
+                   COUNT(*) FILTER (WHERE Ip = %s)
+            FROM Login_Failures
+            WHERE Failed_At > now() - make_interval(mins => %s)
+        """, (username, ip, minutes))
+        row = cur.fetchone()
+        return int(row[0]), int(row[1])
+
+
+def record_login_failure(username: str, ip: str) -> None:
+    """Note a failed sign-in, and drop the ones too old to matter any more."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO Login_Failures (Username, Ip) VALUES (%s, %s)", (username[:100], ip[:64]))
+        cur.execute("DELETE FROM Login_Failures WHERE Failed_At < now() - interval '1 day'")
+
+
+def clear_login_failures(username: str) -> None:
+    """A successful sign-in wipes that username's failures, so a typo or two never builds up to a lockout."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM Login_Failures WHERE lower(Username) = lower(%s)", (username,))
+
+
 def bootstrap_admin_user(username: str, password_hash: str) -> None:
     """Create the first login account if the Users table is empty. Idempotent and
     safe to call from multiple concurrent worker processes on startup — the WHERE

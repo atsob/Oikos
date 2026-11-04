@@ -10,23 +10,49 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.deps import SESSION_COOKIE_NAME, SESSION_TTL_DAYS, hash_token, mint_token, require_auth, session_expiry
 from database.queries import (
-    ROLES, create_session, create_user, delete_session, delete_user,
-    get_user_by_username, list_users, set_user_access, update_password,
+    ROLES, clear_login_failures, create_session, create_user, delete_session, delete_user,
+    get_user_by_username, list_users, login_failure_counts, record_login_failure,
+    set_user_access, update_password,
 )
 
 router = APIRouter()
 
+# Login lockout: with Oikos reachable from the internet, password guessing has to be slowed to a crawl. Failures are kept in the database
+# (Login_Failures), not in memory, so the limit holds across the uvicorn workers and restarts.
+LOCKOUT_MINUTES = 15
+MAX_FAILURES_PER_USER = 5      # a username with this many failures in the window is refused, from anywhere
+MAX_FAILURES_PER_IP = 20       # and so is an address that has failed this often, whatever usernames it tried
+
+
+def client_ip(request: Request) -> str:
+    """The real visitor's address. Behind the Cloudflare tunnel every request arrives from cloudflared, so the address Cloudflare saw
+    (CF-Connecting-IP) comes first, then nginx's X-Real-IP, then the socket itself."""
+    for header in ("cf-connecting-ip", "x-real-ip"):
+        value = (request.headers.get(header) or "").strip()
+        if value:
+            return value
+    return request.client.host if request.client else "unknown"
+
 
 @router.post("/login")
-def login(body: dict, response: Response):
+def login(body: dict, request: Request, response: Response):
     username = str(body.get("username") or "")
     password = str(body.get("password") or "")
+    ip = client_ip(request)
+
+    # Checked before the password, so a locked-out guesser learns nothing — not even a right password gets in until the lockout ends.
+    by_user, by_ip = login_failure_counts(username, ip, LOCKOUT_MINUTES)
+    if by_user >= MAX_FAILURES_PER_USER or by_ip >= MAX_FAILURES_PER_IP:
+        raise HTTPException(429, f"Too many failed sign-ins. Try again in {LOCKOUT_MINUTES} minutes.",
+                            headers={"Retry-After": str(LOCKOUT_MINUTES * 60)})
 
     user = get_user_by_username(username)
     # Generic message either way — don't reveal whether the username itself was valid.
     if not user or not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+        record_login_failure(username, ip)
         raise HTTPException(401, "Invalid username or password")
 
+    clear_login_failures(username)
     token = mint_token()
     create_session(user["users_id"], hash_token(token), session_expiry())
     response.set_cookie(

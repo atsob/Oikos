@@ -2015,6 +2015,14 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           the Retirement planner and Budget vs Actual work from their accounts, and the Telegram reminder and the AI summaries stay with the admin. A Read-only user can read but not change them.
           Everyone can change their own password under Account.
         </Note>
+        <H3>Signing in from the internet</H3>
+        <Note>
+          After <b>5 failed sign-ins</b> for a username in 15 minutes, that username is refused for 15 minutes from anywhere, with <i>Too many failed sign-ins</i>.
+          The lockout also applies to an address that fails 20 times in 15 minutes, whatever usernames it tries. While it lasts, even the right password does not get in.
+          A successful sign-in clears that username's failures, so the odd typo never adds up. The API documentation (<code>/api/docs</code>) needs a sign-in too.
+          Oikos also tells browsers never to show it inside another site's page, and, at the public address, to use HTTPS only.
+          For the strongest protection, put Cloudflare Access (or another login gate) in front of the public address, so only people you list ever reach the sign-in page.
+        </Note>
         <H3>Sidebar</H3>
         <P>
           Click the panel icon at the top of the sidebar (next to "Oikos") to collapse it to icon-only and

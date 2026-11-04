@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 
 import bcrypt
 from fastapi import Depends, FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.middleware.gzip import GZipMiddleware
 
 from api.deps import require_auth
@@ -55,15 +55,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Oikos API", version="2.0.0", docs_url="/api/docs", redoc_url="/api/redoc", lifespan=lifespan)
+# The built-in docs routes are off: they'd be open to anyone, and with Oikos on the internet they'd hand out a map of the whole API.
+# The same pages are served below, behind the login.
+app = FastAPI(title="Oikos API", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: the app and its API share one origin (in dev, Vite proxies /api), so no other site has any business calling it from a browser.
 
 # Not gated — you can't require a session to create one.
 app.include_router(auth_router.router,         prefix="/api/auth",         tags=["auth"])
@@ -101,6 +98,21 @@ async def no_cache_api(request, call_next):
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.get("/api/openapi.json", include_in_schema=False, dependencies=_auth)
+def openapi_schema():
+    return app.openapi()
+
+
+@app.get("/api/docs", include_in_schema=False, dependencies=_auth)
+def swagger_docs():
+    return get_swagger_ui_html(openapi_url="/api/openapi.json", title="Oikos API")
+
+
+@app.get("/api/redoc", include_in_schema=False, dependencies=_auth)
+def redoc_docs():
+    return get_redoc_html(openapi_url="/api/openapi.json", title="Oikos API")
 
 
 @app.get("/api/health")
@@ -182,3 +194,19 @@ if os.path.isdir(_dist):
             return response
 
     app.add_middleware(SPAMiddleware)
+
+
+# Security headers on every response: no framing by another site (clickjacking), no MIME sniffing, no full URLs leaked to other sites.
+# Registered last so it wraps everything, the SPA fallback's index.html included.
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    # HSTS only for visits through Cloudflare (the public address). On the LAN it would also force the plain-HTTP CA download
+    # (nginx port 8444, same host name) onto HTTPS and break it.
+    if request.headers.get("cf-connecting-ip"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    return response
