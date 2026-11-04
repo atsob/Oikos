@@ -736,6 +736,18 @@ CREATE TRIGGER trg_update_holdings
 AFTER INSERT OR UPDATE ON Investments
 FOR EACH ROW EXECUTE FUNCTION update_holdings_from_investments();
 
+-- Margin positions (database/margin.py): each margin investment account carries the open notional of its
+-- positions in an offset liability account, and every trade's cash leg is linked to the trade it belongs to.
+CREATE TABLE IF NOT EXISTS Margin_Offset_Accounts (
+    Accounts_Id        INTEGER PRIMARY KEY REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+    Offset_Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id)
+);
+
+CREATE TABLE IF NOT EXISTS Margin_Legs (
+    Transactions_Id INTEGER PRIMARY KEY REFERENCES Transactions(Transactions_Id) ON DELETE CASCADE,
+    Investments_Id  INTEGER UNIQUE REFERENCES Investments(Investments_Id) ON DELETE SET NULL
+);
+
 
 -- =============================================================================
 -- HISTORICAL MARKET DATA
@@ -883,6 +895,16 @@ CREATE TABLE IF NOT EXISTS Sessions (
     Created_At  TIMESTAMPTZ DEFAULT now(),
     Expires_At  TIMESTAMPTZ NOT NULL
 );
+
+-- Failed sign-ins, for the login lockout (api/routers/auth.py): a username or an address with too many
+-- recent failures is refused for a while. Rows older than a day are removed as new failures come in.
+CREATE TABLE IF NOT EXISTS Login_Failures (
+    Login_Failures_Id SERIAL PRIMARY KEY,
+    Username          VARCHAR(100) NOT NULL,
+    Ip                VARCHAR(64)  NOT NULL,
+    Failed_At         TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_login_failures_at ON Login_Failures(Failed_At);
 
 
 -- =============================================================================
@@ -1058,6 +1080,9 @@ CREATE TABLE IF NOT EXISTS Portfolio_Presets (
     Updated_At   TIMESTAMP DEFAULT NOW(),
     UNIQUE (Report_Scope, Preset_Name)
 );
+-- A preset is the household's (an admin's: no owner) or a restricted user's own.
+ALTER TABLE Portfolio_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_presets_owner ON Portfolio_Presets (Report_Scope, Preset_Name, (COALESCE(Owner_Users_Id, 0)));
 
 CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
     Preset_Id   SERIAL PRIMARY KEY,
@@ -1066,6 +1091,10 @@ CREATE TABLE IF NOT EXISTS Custom_Report_Presets (
     Created_At  TIMESTAMP DEFAULT NOW(),
     Updated_At  TIMESTAMP DEFAULT NOW()
 );
+-- A preset is the household's (an admin's: no owner) or a restricted user's own, so its name is unique per owner.
+ALTER TABLE Custom_Report_Presets ADD COLUMN IF NOT EXISTS Owner_Users_Id INTEGER REFERENCES Users(Users_Id) ON DELETE CASCADE;
+ALTER TABLE Custom_Report_Presets DROP CONSTRAINT IF EXISTS custom_report_presets_preset_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_report_presets_owner ON Custom_Report_Presets (Preset_Name, (COALESCE(Owner_Users_Id, 0)));
 
 -- U.S. Shiller CAPE (cyclically adjusted P/E) monthly time series, auto-imported
 -- from Robert Shiller's own dataset (shillerdata.com / Yale) — see
@@ -1412,6 +1441,9 @@ CREATE TABLE IF NOT EXISTS Fundamentals_Notifications (
     Changed_At      TIMESTAMP DEFAULT NOW(),
     Acknowledged    BOOLEAN DEFAULT TRUE
 );
+-- The Z-Score itself next to the zone, so a zone change can show "2.85 -> 1.72".
+ALTER TABLE Fundamentals_Notifications ADD COLUMN IF NOT EXISTS Last_Known_Score NUMERIC;
+ALTER TABLE Fundamentals_Notifications ADD COLUMN IF NOT EXISTS Previous_Score   NUMERIC;
 
 -- Dismiss button backing for live-computed Dashboard alerts (golden/death cross,
 -- trailing stop) that have no acknowledgment table of their own — see
