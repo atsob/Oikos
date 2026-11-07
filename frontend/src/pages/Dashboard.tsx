@@ -958,11 +958,14 @@ export default function Dashboard() {
   const PEN_SAVINGS_TYPES = new Set(['Pension', 'Savings'])
   const ASSET_TYPES = new Set(['Real Estate', 'Vehicle', 'Asset', 'Liability'])
 
+  // A margin financing account (a Liability Oikos keeps beside a margin investment account: cash + positions + financing = the broker's equity)
+  // is part of that account, so it counts in Investments, not Assets — as in the backend's net-worth history and account breakdown.
+  const isMarginFin = (a: Record<string, unknown>) => Boolean(a.is_margin_financing)
   const sumByType = (types: Set<string>) =>
-    included.filter(a => types.has(String(a.type))).reduce((s, a) => s + Number(a.balance_eur ?? a.balance ?? 0), 0)
+    included.filter(a => types.has(String(a.type)) && !isMarginFin(a)).reduce((s, a) => s + Number(a.balance_eur ?? a.balance ?? 0), 0)
 
   const totalCash     = sumByType(CASH_TYPES)
-  const totalInv      = sumByType(INV_TYPES)
+  const totalInv      = sumByType(INV_TYPES) + included.filter(isMarginFin).reduce((s, a) => s + Number(a.balance_eur ?? a.balance ?? 0), 0)
   const totalPension  = sumByType(PEN_SAVINGS_TYPES)
   const totalAssets   = sumByType(ASSET_TYPES)
 

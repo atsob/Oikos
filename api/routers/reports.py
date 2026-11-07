@@ -699,7 +699,8 @@ def get_net_worth_report(
     cash_like AS (
         SELECT
             p.period_end,
-            a.Accounts_Type,
+            -- A margin financing account (database/margin.py) is part of its investment account: summed with Investments, not Liabilities.
+            CASE WHEN EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = a.Accounts_Id) THEN 'Margin' ELSE a.Accounts_Type END AS Accounts_Type,
             CASE
                 WHEN a.Accounts_Type IN ('Real Estate', 'Vehicle', 'Asset')
                 THEN GREATEST(0, a.Accounts_Balance - COALESCE((
@@ -4253,7 +4254,9 @@ def get_net_worth_by_account(
            (period_end = '{start_date}'::date) AS is_baseline,
            EXISTS(SELECT 1 FROM natural_periods np WHERE np.period_end = combined.period_end) AS is_display_period,
            accounts_id, accounts_name, accounts_type, is_active,
-           ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur
+           ROUND(COALESCE(balance_eur,0)::numeric,2) AS balance_eur,
+           -- a margin financing account (database/margin.py) is grouped with Investments, not Other Liabilities
+           EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = combined.accounts_id) AS is_margin_financing
     FROM (SELECT * FROM cash_bal UNION ALL SELECT * FROM inv_bal UNION ALL SELECT * FROM pension_bal) combined
     WHERE balance_eur IS NOT NULL
     ORDER BY period_end, accounts_type, accounts_name

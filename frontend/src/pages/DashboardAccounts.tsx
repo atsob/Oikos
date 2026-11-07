@@ -16,7 +16,7 @@ const TITLES: Record<string, string> = { cash: 'Cash', investments: 'Investments
 // The account types of each KPI, in the order they are listed. An account type not named here still shows, after these.
 const TYPE_ORDER: Record<string, string[]> = {
   cash: ['Checking', 'Cash', 'Credit Card', 'Loan', 'Other'],
-  investments: ['Brokerage', 'Margin', 'Other Investment'],
+  investments: ['Brokerage', 'Margin', 'Other Investment', 'Liability'],   // Liability: a margin financing account, which counts with its investment account
   pension: ['Pension', 'Savings'],
   assets: ['Real Estate', 'Vehicle', 'Asset', 'Liability'],
 }

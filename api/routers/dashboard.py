@@ -50,11 +50,14 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
         UNION SELECT (CURRENT_DATE - 1)::date
     ),
     historical_assets AS (
+        -- is_margin_fin: a margin financing account (database/margin.py) is part of its investment account, so it is
+        -- summed into total_invested below, not total_assets — the same split as the Dashboard's cards.
         SELECT dt.d AS date, a.Accounts_Id, a.Currencies_Id,
             a.Accounts_Balance - COALESCE((
                 SELECT SUM(Total_Amount) FROM Transactions
                 WHERE Accounts_Id = a.Accounts_Id AND Date > dt.d
-            ), 0) AS balance_at_date
+            ), 0) AS balance_at_date,
+            EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = a.Accounts_Id) AS is_margin_fin
         FROM dates dt CROSS JOIN Accounts a
         WHERE a.Accounts_Type IN ('Real Estate', 'Vehicle', 'Asset', 'Liability')
         {acct_filter}
@@ -137,7 +140,13 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
              FROM historical_assets ha
              JOIN Currencies cur ON ha.Currencies_Id = cur.Currencies_Id
              LEFT JOIN daily_fx dfx ON ha.date=dfx.date AND ha.Currencies_Id=dfx.Currencies_Id
-             WHERE ha.date=dt.d) AS total_assets,
+             WHERE ha.date=dt.d AND NOT ha.is_margin_fin) AS total_assets,
+            (SELECT SUM(CASE WHEN cur.Currencies_ShortName='EUR' THEN ha.balance_at_date
+                             ELSE ha.balance_at_date * COALESCE(dfx.fx_rate,1) END)
+             FROM historical_assets ha
+             JOIN Currencies cur ON ha.Currencies_Id = cur.Currencies_Id
+             LEFT JOIN daily_fx dfx ON ha.date=dfx.date AND ha.Currencies_Id=dfx.Currencies_Id
+             WHERE ha.date=dt.d AND ha.is_margin_fin) AS total_margin_fin,
             (SELECT SUM(CASE WHEN cur.Currencies_ShortName='EUR' THEN hc.balance_at_date
                              ELSE hc.balance_at_date * COALESCE(dfx.fx_rate,1) END)
              FROM historical_cash hc
@@ -164,8 +173,8 @@ def get_net_worth(start_date: str = Query("2020-01-01"), account_ids: Optional[s
            COALESCE(total_assets,0) AS total_assets,
            COALESCE(total_cash,0) AS total_cash,
            COALESCE(total_pension,0) AS total_pension,
-           COALESCE(total_invested,0) AS total_invested,
-           (COALESCE(total_assets,0)+COALESCE(total_cash,0)+COALESCE(total_pension,0)+COALESCE(total_invested,0)) AS total_net_worth
+           COALESCE(total_invested,0)+COALESCE(total_margin_fin,0) AS total_invested,
+           (COALESCE(total_assets,0)+COALESCE(total_cash,0)+COALESCE(total_pension,0)+COALESCE(total_invested,0)+COALESCE(total_margin_fin,0)) AS total_net_worth
     FROM final_calculation
     ORDER BY date ASC
     """
@@ -289,6 +298,14 @@ _KPI_GROUPS = {
 }
 
 
+def kpi_group(a: dict) -> str | None:
+    """The Dashboard KPI an account counts in. A margin financing account (Liability, kept by database/margin.py) is part of its
+    investment account — cash + positions + financing = the broker's equity — so it counts with Investments, not Assets."""
+    if a.get("is_margin_financing"):
+        return "investments"
+    return next((g for g, (_, types) in _KPI_GROUPS.items() if a.get("type") in types), None)
+
+
 @router.get("/account-breakdown")
 def get_account_breakdown(group: str = Query(...), account_ids: Optional[str] = Query(None), include_future: bool = Query(False)):
     """One Dashboard KPI (cash / investments / pension / assets) split by account: for each account its value in EUR now and the change since
@@ -307,7 +324,7 @@ def get_account_breakdown(group: str = Query(...), account_ids: Optional[str] = 
         if ids_filter is not None:
             return a["id"] in ids_filter
         return a.get("is_active") is not False or abs(float(a.get("balance_eur") or 0)) < 0.5
-    accounts = [a for a in get_accounts(include_future) if a["type"] in types and counts(a)]
+    accounts = [a for a in get_accounts(include_future) if kpi_group(a) == group and counts(a)]
     ids = [int(a["id"]) for a in accounts]
     from datetime import date, timedelta
     today = date.today()

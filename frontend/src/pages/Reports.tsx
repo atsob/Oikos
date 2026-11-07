@@ -225,7 +225,8 @@ const NW_GROUP_COLORS: Record<string, string> = {
   'Cash & Bank': '#eab308', 'Investments': '#1e40af', 'Pension & Savings': '#06b6d4',
   'Other Assets': '#8b5cf6', 'Credit Cards': '#ef4444', 'Loans': '#f97316', 'Other Liabilities': '#dc2626',
 }
-function nwGroup(type: string) { return NW_GROUP_MAP[type] ?? 'Other Assets' }
+// A margin financing account (a Liability Oikos keeps beside a margin investment account) is part of that account, so it counts with Investments.
+function nwGroup(r: Row) { return r.is_margin_financing ? 'Investments' : NW_GROUP_MAP[String(r.accounts_type)] ?? 'Other Assets' }
 function fmtPeriodLabel(p: string, grouping: string) {
   if (grouping === 'year') return p.slice(0, 4)
   if (grouping === 'quarter') {
@@ -244,7 +245,7 @@ function NwOverview({ rows, baselineRows, allPeriods, grouping }: { rows: Row[];
   const { isDark } = useTheme()
   const byPeriod: Record<string, Record<string, number>> = {}
   for (const r of rows) {
-    const p = String(r.period), g = nwGroup(String(r.accounts_type)), v = Number(r.balance_eur ?? 0)
+    const p = String(r.period), g = nwGroup(r), v = Number(r.balance_eur ?? 0)
     if (!byPeriod[p]) byPeriod[p] = {}
     byPeriod[p][g] = (byPeriod[p][g] ?? 0) + v
   }
@@ -261,7 +262,7 @@ function NwOverview({ rows, baselineRows, allPeriods, grouping }: { rows: Row[];
   // depending on the Year/Quarter/Month toggle.
   const baseByGroup: Record<string, number> = {}
   for (const r of baselineRows) {
-    const g = nwGroup(String(r.accounts_type))
+    const g = nwGroup(r)
     baseByGroup[g] = (baseByGroup[g] ?? 0) + Number(r.balance_eur ?? 0)
   }
   const basePeriod = baselineRows.length ? String(baselineRows[0].period) : (allPeriods.length ? allPeriods[0] : null)
@@ -415,7 +416,7 @@ function NwAccountBalances({ rows, allPeriods, accountMeta, grouping }: { rows: 
 function NwSummaryByType({ rows, allPeriods, grouping }: { rows: Row[]; allPeriods: string[]; grouping: string }) {
   const totals: Record<string, Record<string, number>> = {}
   for (const r of rows) {
-    const g = nwGroup(String(r.accounts_type)), p = String(r.period), v = Number(r.balance_eur ?? 0)
+    const g = nwGroup(r), p = String(r.period), v = Number(r.balance_eur ?? 0)
     if (!totals[g]) totals[g] = {}
     totals[g][p] = (totals[g][p] ?? 0) + v
   }
@@ -478,7 +479,7 @@ function NwDetailAnalysis({ rows, allPeriods, grouping }: { rows: Row[]; allPeri
   const periodRows = rows.filter(r => String(r.period) === period)
   const byGroup: Record<string, number> = {}
   for (const r of periodRows) {
-    const g = nwGroup(String(r.accounts_type))
+    const g = nwGroup(r)
     byGroup[g] = (byGroup[g] ?? 0) + Number(r.balance_eur ?? 0)
   }
   const assets = NW_ASSET_GROUPS.reduce((s,g) => s+(byGroup[g]??0),0)
@@ -2491,8 +2492,9 @@ function EditablePriceCell({ securitiesId, price, currency, onSaved }: {
   }
 
   return (
+    // On a phone the table is a list of cards whose values sit on the left, so the price does too (it stayed pushed to the right, apart from the rest).
     <td className="px-2 py-1 text-right">
-      <div className="flex items-center justify-end gap-1">
+      <div className="flex items-center justify-start md:justify-end gap-1">
         <span className="text-slate-400 text-xs">{getCurrencySymbol(currency)}</span>
         <input
           type="number"
@@ -2502,7 +2504,7 @@ function EditablePriceCell({ securitiesId, price, currency, onSaved }: {
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
           onBlur={save}
-          className="w-20 text-right tabular-nums text-slate-700 bg-transparent border border-transparent hover:border-slate-200 focus:border-blue-400 focus:bg-white rounded px-1 py-0.5 text-sm outline-none disabled:opacity-50"
+          className="w-20 text-left md:text-right tabular-nums text-slate-700 bg-transparent border border-transparent hover:border-slate-200 focus:border-blue-400 focus:bg-white rounded px-0 md:px-1 py-0 md:py-0.5 text-sm outline-none disabled:opacity-50"
         />
       </div>
     </td>

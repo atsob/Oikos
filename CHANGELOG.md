@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-07
+
+### Fixed
+- **Margin financing counts with Investments, not Assets.** The *… (Margin financing)* account that Oikos keeps beside a margin investment account (minus the open cost of its FX Spot / CFD positions, so cash + positions + financing = the broker's equity) has the account type Liability, and every Liability account was counted in the Dashboard's **Assets** card. So Investments was too high and Assets too low by the open cost (€1,086 on 7 Nov), and Assets showed *+€676.81 vs prev month* although no property, vehicle or other asset had moved: it was the financing. It is now part of **Investments** in the Dashboard cards and their account lists, the net-worth history behind the cards' changes, Reports → Net Worth (Investments instead of Other Liabilities) and the AI weekly and monthly summaries. Net worth is unchanged. A Liability account of your own still counts in Assets.
+- **P&L on a phone: the price sat apart from the other values.** In Reports → Inv. Performance → P&L on a phone, each security is a card with its values on the left, but the editable Price stayed pushed to the right. It now lines up with the rest.
+
 ## 2026-11-04
 
 ### Added

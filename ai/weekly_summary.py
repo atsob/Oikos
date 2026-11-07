@@ -131,7 +131,7 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                     END) AS pension_eur,
 
                     SUM(CASE
-                        WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset','Liability')
+                        WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset','Liability') AND NOT EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = a.Accounts_Id)
                         THEN (CASE
                                 WHEN a.Accounts_Type IN ('Real Estate','Vehicle','Asset')
                                 THEN GREATEST(0, a.Accounts_Balance - COALESCE((
@@ -144,7 +144,16 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                                      ), 0)
                               END) * COALESCE(fx.FX_Rate, 1)
                         ELSE 0
-                    END) AS assets_eur
+                    END) AS assets_eur,
+                    -- A margin financing account (database/margin.py) is part of its investment account, so it counts with Investments, not Assets.
+                    SUM(CASE
+                        WHEN EXISTS (SELECT 1 FROM Margin_Offset_Accounts mf WHERE mf.Offset_Accounts_Id = a.Accounts_Id)
+                        THEN (a.Accounts_Balance - COALESCE((
+                                SELECT SUM(t.Total_Amount) FROM Transactions t
+                                WHERE t.Accounts_Id = a.Accounts_Id AND t.Date > %s::date
+                             ), 0)) * COALESCE(fx.FX_Rate, 1)
+                        ELSE 0
+                    END) AS margin_fin_eur
                 FROM Accounts a
                 LEFT JOIN fx ON fx.Currencies_Id_1 = a.Currencies_Id
                 WHERE a.Is_Active = TRUE
@@ -179,10 +188,10 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                 at.cash_eur,
                 at.pension_eur,
                 at.assets_eur,
-                it.investments_eur
+                it.investments_eur + COALESCE(at.margin_fin_eur, 0) AS investments_eur
             FROM account_totals at
             CROSS JOIN investment_totals it
-        """, (period_end,) * 8)
+        """, (period_end,) * 9)
         if not df.empty:
             r = df.iloc[0]
             total = sum(float(v or 0) for v in r)

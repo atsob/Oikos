@@ -637,6 +637,15 @@ def _run_startup_migrations():
         # Roles: admin (everything), limited (read and write on the accounts mapped to the user) and readonly (read only on those accounts) — see api/access.py.
         # Every user that existed before is an admin.
         "ALTER TABLE Users ADD COLUMN IF NOT EXISTS Role TEXT NOT NULL DEFAULT 'admin'",
+        # Margin positions (database/margin.py creates these too, on first use): queries that count a margin financing account with Investments join them.
+        """CREATE TABLE IF NOT EXISTS Margin_Offset_Accounts (
+               Accounts_Id        INTEGER PRIMARY KEY REFERENCES Accounts(Accounts_Id) ON DELETE CASCADE,
+               Offset_Accounts_Id INTEGER NOT NULL REFERENCES Accounts(Accounts_Id)
+           )""",
+        """CREATE TABLE IF NOT EXISTS Margin_Legs (
+               Transactions_Id INTEGER PRIMARY KEY REFERENCES Transactions(Transactions_Id) ON DELETE CASCADE,
+               Investments_Id  INTEGER UNIQUE REFERENCES Investments(Investments_Id) ON DELETE SET NULL
+           )""",
         # Failed sign-ins, for the login lockout (api/routers/auth.py): a username or an address with too many recent failures is refused for a while.
         """CREATE TABLE IF NOT EXISTS Login_Failures (
                Login_Failures_Id SERIAL PRIMARY KEY,
