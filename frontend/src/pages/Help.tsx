@@ -239,7 +239,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           A <b>Golden Cross</b> (50-day MA crossing above the 200-day — bullish) shows for any actively-priced
           security, held or not, since it's a buy signal worth seeing either way; a <b>Death Cross</b> (bearish) or
           a <b>Trailing Stop</b> trip only shows for a position you actually hold. Both carry your own unrealized
-          P&amp;L on that position (e.g. "You're up 4.8% (€11.76) vs cost") — a Trailing Stop trip that's still
+          P&amp;L on that position (e.g. "You're up 4.8% (€120.00) vs cost") — a Trailing Stop trip that's still
           net profitable shows as a milder warning rather than the usual red error, since giving back some gains
           is a very different situation from a real loss. Tools → System → App Settings → Trailing Stop sets how
           far below the trailing 1-year high counts as a trip (default 20%).
@@ -448,7 +448,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           Instrument is FX Spot or a CFD type (both conditions: the same trade in an ordinary brokerage account keeps the full amount in cash), the linked cash transaction is the <b>commission</b> (Buy) or the <b>realised profit or loss</b> against the lots closed, first in, first out (Sell); the notional goes to
           a liability account named <i>… (Margin financing)</i>, made automatically, which holds minus the open cost. The position itself is unchanged — quantity, price, cost and market value — so net worth is the same as
           before: cash + positions + Margin financing = the broker's equity. Being part of the investment account, it counts in <b>Investments</b> everywhere the accounts are split into groups — the Dashboard's Investments card and its account list, the net-worth history, Reports → Net Worth and the AI summaries — not in Assets or Other Liabilities, even though its account type is Liability. It is kept up to date whenever you add, change or delete such a trade or an import runs; the cash legs read "— margin: commission" or "— margin: realised P&amp;L". An <b>Account Preset</b> that holds a Margin account together with its linked cash account gets the Margin financing account added automatically (without it the cash would be counted without its offset), so existing presets need no editing; a Limited user mapped to a Margin account gets it with the account. The Margin financing account can be opened in the <b>Cash Register</b> to read how each amount came about, but it is <b>read-only</b>: its entries, and the cash entries of margin trades (marked 🔒), are kept by Oikos from the trades — their amount, date and description cannot be edited, deleted or moved, and nothing is entered in the financing account by hand; change the trade in Investments instead. Flags (cleared, reconciled) and a cash entry's payee and category can still be set.
-          <b>Financing on FX Spot (XAGEUR).</b> Saxo rolls a spot FX position over each day and adds the swap points to its opening price, so the position's cost slowly rises and Saxo's unrealised P&amp;L is a little lower than the one Oikos shows from the trade prices (about €0.17 a day for 30 oz of XAGEUR). The trade prices in Oikos are the facts; the financing reaches your cash when you close, because the closing trade's booked amount already includes it.
+          <b>Financing on FX Spot (XAGEUR).</b> Saxo rolls a spot FX position over each day and adds the swap points to its opening price, so the position's cost slowly rises and Saxo's unrealised P&amp;L is a little lower than the one Oikos shows from the trade prices (a few cents a day on a small position). The trade prices in Oikos are the facts; the financing reaches your cash when you close, because the closing trade's booked amount already includes it.
           <b>Saxo margin.</b> Choose a Margin account that is mapped to a Saxo account (Importers → Saxo Bank) and a <i>Saxo margin</i> panel appears above the Investments list with Saxo's own figures, read live from Saxo with the login the importer keeps: margin utilization (with a bar — green below 50%, amber to 80%, red above), margin used, margin available, cash available and account value, with the time they were read and a refresh button. Oikos cannot work these out itself, because the margin Saxo requires depends on each instrument's leverage and Saxo's risk rules. The panel is for admins, stores nothing, and says why when Saxo cannot be reached or the login has expired. The cash it quotes is the cash Saxo has booked; Saxo's platform, and Oikos, also count trades that have not settled yet.
           <b>Booked amount.</b> When the broker states the cash it actually booked for a trade, Oikos uses that amount as the trade's cash entry instead of deriving it: the Saxo import does this for every trade (its "Booked amount"), so commissions, currency conversion and the profit or loss of a CFD close come out as the broker has them and the cash matches the broker's own figure to the cent. Editing a trade by hand (quantity, price, amounts, date or action) drops its booked amount, and its cash entry follows the trade again.
         </Note>
@@ -748,7 +748,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>Compare with</b> sets what each category is measured against. <b>Annual budget</b> is the whole year's budget.
-          <b>Prorated to date</b> is each annual budget × the share of the year gone by, today included (84.4% on 4 Nov). With it, the table adds
+          <b>Prorated to date</b> is each annual budget × the share of the year gone by, today included. With it, the table adds
           <b>Budget to Date</b> and <b>Est. Annual</b> (the spending so far at the same pace to 31 Dec, in red when it would end above the annual budget), and
           Variance and % Used are worked out against the budget to date. That way, a category at 80% of its annual budget in November reads as on track, not as low.
           For a past year the two are the same, and a future year has only Annual.
@@ -1022,8 +1022,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           value rows) or all time.
         </Note>
         <Note>
-          <b>P&amp;L</b>'s "P&amp;L (DTD/YTD/etc.)" KPI tile always shows its Market/FX breakdown (e.g. "Mkt: -€160.05
-          FX: €61.93") when one is available for the selected window — the <b>Show Market / FX Split</b> checkbox
+          <b>P&amp;L</b>'s "P&amp;L (DTD/YTD/etc.)" KPI tile always shows its Market/FX breakdown (e.g. "Mkt: -€150.00
+          FX: €60.00") when one is available for the selected window — the <b>Show Market / FX Split</b> checkbox
           only controls whether the Market/FX columns appear in the account and drill-down tables below it. The
           breakdown sits on its own line below the P&amp;L %. <b>Market</b> is the window's gain in each security's
           own currency (its value change minus the money put in or taken out, all in that currency), converted at
@@ -1037,7 +1037,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>P&amp;L</b>'s KPI row and, once you drill into one account, its "Totals:" row both carry a{' '}
           <b>VaR 95% (daily)</b> figure — the same Value at Risk calculation as <b>Risk Metrics</b> below (historical
           daily returns, 95% confidence, 3-year lookback), scoped to the whole portfolio in the KPI row and to just
-          that one account once drilled in. Shown as a % and a EUR amount, e.g. "-0.59% · €912" — on a typical day,
+          that one account once drilled in. Shown as a % and a EUR amount, e.g. "-0.80% · €900" — on a typical day,
           there's only a 5% chance of losing more than that.
         </Note>
         <Note>
@@ -1111,6 +1111,25 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           window from its own endpoint instead of adding a 7th+ variant to the main P&amp;L query, which already
           computes six windows at once and is kept live-refetched. D/W/M/Q/YTD/All-Time load exactly as before,
           unaffected either way.
+        </Note>
+        <Note>
+          <b>View: By Account / By Security.</b> P&amp;L opens by account: one row per account, click one for its securities. <b>By Security</b> lists each
+          security once, totalled over every account that holds it: quantity, value, P&amp;L, Market / FX, unrealized and realized all add up, P&amp;L % is against
+          the combined value, Unrealized % against the combined cost, and YOC is weighted by each account's cost. A security held in more than one account shows
+          how many and lists them under it, one row each with the same columns; the arrow folds them. A security held in one account names it. Click an account
+          name to open that account's positions, and <b>← All Securities</b> to come back. <b>Show Closed Positions</b> also lists securities no longer held
+          (with their realized P&amp;L). The choice is remembered.
+        </Note>
+        <Note>
+          <b>Realized %</b> (the column next to Realized, the account Totals and the Realized P&amp;L card) is the realized gain or loss <b>per euro of cost sold</b>:
+          the realized P&amp;L against everything ever paid in for the position (buys, fees, transfers in) less the cost of what is still held — the way brokers and
+          tax statements work out a realized gain %. Like Realized it is all-time, whatever the window. With repeated trades in the same position each purchase counts,
+          so it reads as the <b>average return per trade</b>, not the share of your money gained or lost. For example, ten trades of €30k each, bought and sold
+          one after the other, add up to €300k of cost sold, so a €30k loss is <b>−10%</b> — although the most at stake at once was €30k, and all of it was lost. For how much of the money you put in was gained or lost,
+          use <b>TWR/MWR</b>: its money-weighted return counts every euro in and out, with its date.
+          Realized also counts dividends and interest, so a position never sold — with only income realized — has no cost sold and shows <b>—</b>; so does the odd
+          position whose cost sold comes out negative (a transfer or corporate action without its cost). A total is weighted by each position's cost sold. On CFDs and
+          other leveraged positions the cost is the full exposure, not the margin put up, so their Realized % is small next to what was actually at stake.
         </Note>
         <Note>
           In the P&amp;L tab, <b>P&amp;L %</b> and <b>Unrealized %</b> are separate, sortable columns at both the
@@ -1822,7 +1841,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           transaction on that security (a rebate as MiscInc) instead of a plain Cash Transaction, so it counts in the security's own P&amp;L; the cash
           side follows through the investment account's linked cash account. IB leaves symbol and ISIN empty on these lines, so the security is found
           from the name before the fee wording; a fee that matches no security (market-data charges, say) stays a Cash Transaction, and a fee already
-          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first. An order for a fractional quantity (4.2436 shares) arrives as two fills, the whole shares and the fraction; the statement puts the order's one commission in the fractional fill, but the importer books it on the whole-share fill, as IB's own statement shows it — the order's total cost is the same either way.
+          imported earlier as a Cash Transaction shows as <i>Exists</i> rather than being booked twice. Several entries that agree on date, type, symbol and amount — the three daily fees of a weekend, say, all booked on the Monday for -0.02 — are each imported: the first keeps its usual key and the others get <code>#2</code>, <code>#3</code>, so they are not mistaken for repeats of the first. An order for a fractional quantity (4.25 shares, say) arrives as two fills, the whole shares and the fraction; the statement puts the order's one commission in the fractional fill, but the importer books it on the whole-share fill, as IB's own statement shows it — the order's total cost is the same either way.
           A dividend's withholding tax — which IB reports as its own separate line — is merged into that
           dividend's own row instead of importing as a second, disconnected record; the preview table's
           "Tax (€)" column shows it before you confirm. A dividend's Quantity is filled in from the actual
@@ -1965,10 +1984,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           The same underlying engine also generates the scheduled <b>Monthly</b> and <b>Weekly AI Summary</b>{' '}
           jobs (configurable under Tools → Scheduled Tasks), which write a short plain-English recap of cash
-          flow, investment P&amp;L, and net worth — shown on the Dashboard. The weekly one adds its spending
-          categories and top 5 transactions; the monthly one ends with two numbered lists that Oikos writes itself
-          rather than the AI model, so they are always complete: the 10 largest spending categories by full path
-          (<i>Household : Super Market</i>, net of refunds) and the top 10 payees. <b>Regenerate</b> rewrites a past
+          flow, investment P&amp;L, and net worth — shown on the Dashboard. Both end with numbered lists that Oikos
+          writes itself rather than the AI model, so they are always complete and one item per line: the 10 largest
+          spending categories by full path (<i>Household : Super Market</i>, net of refunds), then the monthly one's
+          top 10 payees and the weekly one's 5 largest transactions (payee, amount, income or expense, date). <b>Regenerate</b> rewrites a past
           week or month in the current layout. A larger local model (<code>OLLAMA_MODEL</code>, e.g. <code>llama3.1:8b</code>)
           follows the layout more closely than the default <code>llama3.2:3b</code>.
         </P>
@@ -2161,18 +2180,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           field is built for a different purpose — an internal cash sub-account funding a Buy/Sell — and produces
           backwards amounts for money leaving to an external account). The money actually arriving in your bank
           account has to be captured as two separate, unlinked entries instead. Worked example: a pension worth
-          €78,671.67 cashed out, €10,675.05 withheld as tax, €67,996.62 landing in Checking.
+          €80,000 cashed out, €12,000 withheld as tax, €68,000 landing in Checking.
         </P>
         <Ol>
           <li>
             <b>On the Pension account</b> (Investments → New Transaction): action <b>CashOut</b>, Total (acc.
-            currency) = €78,671.67 (the gross value), <b>Withholding Tax</b> = −€10,675.05 (negative) — and leave{' '}
+            currency) = €80,000 (the gross value), <b>Withholding Tax</b> = −€12,000 (negative) — and leave{' '}
             <b>Cash Account</b> set to "— none —". This zeroes the pension out correctly on its own; the tax
             amount doesn't need to be entered on the payment amount, it's on this transaction.
           </li>
           <li>
             <b>On the destination account</b> (Cash Register → New Transaction, <i>not</i> Transfer): a plain
-            deposit for the net amount, €67,996.62 — same date, a description that references the event, and a
+            deposit for the net amount, €68,000 — same date, a description that references the event, and a
             category that won't inflate Income & Expense reports as if it were a month of salary (an{' '}
             <b>Investment</b>-type category works well here, e.g. "Pension / Retirement Distribution").
           </li>

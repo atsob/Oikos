@@ -668,7 +668,15 @@ def get_net_worth_report(
     end_date: str = Query("2099-12-31"),
     grouping: str = Query("month"),
 ):
-    """Historical net worth — ported directly from database/queries.py get_net_worth_report_data."""
+    """Historical net worth by period (cash, investments, pension, assets, liabilities) from start_date to end_date (today at most).
+
+    The dates go in as query parameters, not into the SQL text; a value that is not a date is refused.
+    """
+    from datetime import date as _date
+    try:
+        sd, ed = _date.fromisoformat(start_date), _date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(400, "start_date and end_date must be dates (YYYY-MM-DD)")
     trunc_map = {"month": "month", "quarter": "quarter", "year": "year"}
     intv_map  = {"month": "1 month", "quarter": "3 months", "year": "1 year"}
     trunc_unit  = trunc_map.get(grouping, "month")
@@ -679,12 +687,12 @@ def get_net_worth_report(
     period_dates AS (
         SELECT (gs - INTERVAL '1 day')::date AS period_end
         FROM generate_series(
-            date_trunc('{trunc_unit}', '{start_date}'::date) + '{pg_interval}'::interval,
-            date_trunc('{trunc_unit}', CURRENT_DATE),
+            date_trunc('{trunc_unit}', %(sd)s::date) + '{pg_interval}'::interval,
+            date_trunc('{trunc_unit}', LEAST(CURRENT_DATE, %(ed)s::date)),
             '{pg_interval}'::interval
         ) gs
         UNION
-        SELECT CURRENT_DATE::date
+        SELECT LEAST(CURRENT_DATE, %(ed)s::date)
         ORDER BY 1
     ),
     daily_fx AS (
@@ -785,8 +793,6 @@ def get_net_worth_report(
         SELECT period_end, Accounts_Type, balance_eur FROM investment_holdings
         UNION ALL
         SELECT period_end, Accounts_Type, balance_eur FROM pension_like
-        UNION ALL
-        SELECT period_end, Accounts_Type, balance_eur FROM other_inv_like
     )
     SELECT
         period_end AS period,
@@ -810,7 +816,7 @@ def get_net_worth_report(
     """
 
     with get_db() as conn:
-        df = pd.read_sql(query, conn)
+        df = pd.read_sql(query, conn, params={"sd": sd.isoformat(), "ed": ed.isoformat()})
 
     if not df.empty:
         df["net_worth"] = (

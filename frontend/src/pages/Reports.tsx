@@ -2520,6 +2520,22 @@ function ChkBox({ label, checked, onChange }: { label: string; checked: boolean;
   )
 }
 
+// A closed position's value and quantity are rarely exactly 0: the buys and sells leave floating-point residue such as 1e-17, which shows as -€0.00 and,
+// as the divisor of a percentage, gave figures like -7,284,663,793,667,772,416%. Below a cent (or the given tolerance) the amount counts as zero, and a
+// percentage of zero is no percentage at all.
+const zeroIfDust = (v: number, tol = 0.005) => Math.abs(v) < tol ? 0 : v
+const pctOf = (num: number, den: number) => Math.abs(den) < 0.01 ? null : (num / den) * 100
+// Realized % is measured against the cost of what was sold: everything ever paid in (buys, fees, transfers in) less the cost of what is still held.
+// None is stored, so it is derived here; a position never sold has none (and so no Realized %), and the odd one that comes out negative — a transfer
+// or corporate action recorded without its cost — counts as none rather than giving a made-up figure.
+const soldCostOf = (r: Row) => {
+  const c = Number(r.gross_invested_all_time_eur ?? 0) - (Number(r.current_value_eur ?? 0) - Number(r.unrealized_pnl_eur ?? 0))
+  return c >= 0.01 ? c : 0
+}
+function RealPctCell({ pct }: { pct: number | null }) {
+  return <td className={`px-3 py-2 text-right tabular-nums ${pct == null ? 'text-slate-400' : pct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}</td>
+}
+
 function PnlReport({ accountIds }: { accountIds?: number[] }) {
   const qc = useQueryClient()
   const liveRefetchMs = useLiveRefetchInterval()
@@ -2528,6 +2544,10 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
   const [showFxSplit, setShowFxSplit] = usePersist('pnl_showFxSplit', false)
   const [showPct, setShowPct] = usePersist('pnl_showPct', true)
   const [showClosedPositions, setShowClosedPositions] = usePersist('pnl_showClosedPositions', false)
+  // By Account: one row per account, click one for its securities. By Security: one row per security, totalled across the accounts that hold it,
+  // with a row per account under it when it is held in more than one.
+  const [pnlView, setPnlView] = usePersist<'account' | 'security'>('pnl_view', 'account')
+  const [collapsedSecs, setCollapsedSecs] = useState<Set<string>>(new Set())
   const [showBenchmark, setShowBenchmark] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedAccount = searchParams.get('pnl_account')
@@ -2575,15 +2595,18 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
       const pnl = acRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
       const unrealized = acRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
       const cost = value - unrealized
+      const realizedSum = acRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
       return {
         name,
         closed: isClosedAccount(acRows),
+        realized_pct: pctOf(realizedSum, acRows.reduce((s, r) => s + soldCostOf(r), 0)),
         value,
         pnl,
-        pnl_pct: value !== 0 ? (pnl / value) * 100 : null,
+        pnl_pct: pctOf(pnl, value),
         unrealized,
-        unrealized_pct: cost !== 0 ? (unrealized / cost) * 100 : null,
+        unrealized_pct: pctOf(unrealized, cost),
         realized: acRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0),
+        sold_cost: acRows.reduce((s, r) => s + soldCostOf(r), 0),
         market: mktKey ? acRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null,
         fx: fxKey ? acRows.reduce((s, r) => s + Number(r[fxKey] ?? 0), 0) : null,
       }
@@ -2593,14 +2616,15 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
   const totalPnl   = accounts.reduce((s, a) => s + a.pnl, 0)
   const totalUnreal = accounts.reduce((s, a) => s + a.unrealized, 0)
   const totalReal  = accounts.reduce((s, a) => s + a.realized, 0)
+  const totalRealPct = pctOf(totalReal, accounts.reduce((s, a) => s + a.sold_cost, 0))
   const totalMkt   = mktKey ? accounts.reduce((s, a) => s + (a.market ?? 0), 0) : null
   const totalFx    = fxKey  ? accounts.reduce((s, a) => s + (a.fx    ?? 0), 0) : null
   // Same conventions already used per-row below: P&L% vs. current value, Unrealized% vs. cost basis.
   // Realized P&L has no cost-basis denominator available (positions are already closed), so it's
   // left without a percentage rather than showing a made-up figure.
-  const totalPnlPct    = totalValue !== 0 ? (totalPnl / totalValue) * 100 : null
+  const totalPnlPct    = pctOf(totalPnl, totalValue)
   const totalCostBasis = totalValue - totalUnreal
-  const totalUnrealPct = totalCostBasis !== 0 ? (totalUnreal / totalCostBasis) * 100 : null
+  const totalUnrealPct = pctOf(totalUnreal, totalCostBasis)
 
   const selectedAccountId: number | null = selectedAccount
     ? Number(accountMap.get(selectedAccount)?.[0]?.accounts_id ?? NaN) || null
@@ -2633,13 +2657,48 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           const pnl = Number(r[pk] ?? 0)
           return {
             ...r,
-            unrealized_pnl_pct: cost !== 0 ? (unreal / cost) * 100 : null,
-            pnl_pct: value !== 0 ? (pnl / value) * 100 : null,
+            unrealized_pnl_pct: pctOf(unreal, cost),
+            pnl_pct: pctOf(pnl, value),
+            realized_pnl_pct: pctOf(Number(r.realized_pnl_eur ?? 0), soldCostOf(r)),
           }
         })
     : null
 
+  // By Security: the per-account rows of each security added up. Qty adds up too (it is the same security); Unrealized % is against the combined
+  // cost, P&L % against the combined value, YOC weighted by each account's cost.
+  type SecAgg = Row & { key: string; children: Row[] }
+  const withPcts = (r: Row): Row => {
+    const unreal = Number(r.unrealized_pnl_eur ?? 0), value = Number(r.current_value_eur ?? 0), cost = value - unreal, pnl = Number(r[pk] ?? 0)
+    return { ...r, unrealized_pnl_pct: pctOf(unreal, cost), pnl_pct: pctOf(pnl, value),
+      realized_pnl_pct: pctOf(Number(r.realized_pnl_eur ?? 0), r.sold_cost_eur != null ? Number(r.sold_cost_eur) : soldCostOf(r)) }
+  }
+  const securityRows: SecAgg[] = (() => {
+    const bySec = new Map<string, Row[]>()
+    for (const r of rows) {
+      const key = String(r.securities_id ?? r.securities_name)
+      if (!bySec.has(key)) bySec.set(key, [])
+      bySec.get(key)!.push(r)
+    }
+    const sum = (rs: Row[], k: string | null) => k ? rs.reduce((s, r) => s + Number(r[k] ?? 0), 0) : 0
+    return Array.from(bySec.entries()).map(([key, all]) => {
+      const rs = all.filter(r => showClosedPositions || !isClosedPosition(r))
+      const first = all[0]
+      const value = sum(rs, 'current_value_eur'), unreal = sum(rs, 'unrealized_pnl_eur')
+      const yocCost = rs.reduce((s, r) => r.dividend_yoc_pct != null ? s + (Number(r.current_value_eur ?? 0) - Number(r.unrealized_pnl_eur ?? 0)) : s, 0)
+      const yoc = yocCost > 0 ? rs.reduce((s, r) => r.dividend_yoc_pct != null ? s + Number(r.dividend_yoc_pct) * (Number(r.current_value_eur ?? 0) - Number(r.unrealized_pnl_eur ?? 0)) : s, 0) / yocCost : null
+      const agg: Row = {
+        securities_id: first.securities_id, securities_name: first.securities_name, currency: first.currency, price_today: first.price_today,
+        qty_today: rs.some(r => r.qty_today != null) ? sum(rs, 'qty_today') : null,
+        current_value_eur: value, [pk]: sum(rs, pk), unrealized_pnl_eur: unreal, realized_pnl_eur: sum(rs, 'realized_pnl_eur'),
+        dividend_yoc_pct: yoc, accounts_count: rs.length, sold_cost_eur: rs.reduce((s, r) => s + soldCostOf(r), 0),
+        ...(mktKey ? { [mktKey]: sum(rs, mktKey) } : {}), ...(fxKey ? { [fxKey]: sum(rs, fxKey) } : {}),
+      }
+      return { ...withPcts(agg), key, children: rs.map(withPcts).sort((a, b) => Number(b.current_value_eur ?? 0) - Number(a.current_value_eur ?? 0)) }
+    }).filter(a => a.children.length > 0)
+  })()
+
   const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTablePersisted(accounts, 'pnl-accounts-sort', 'value', 'desc')
+  const { sorted: sortedSecs, sortKey: scSK, sortDir: scSD, toggleSort: scSort } = useSortTablePersisted(securityRows, 'pnl-securities-sort', 'current_value_eur', 'desc')
   const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTablePersisted(drillRows ?? [], 'pnl-drill-sort', 'current_value_eur', 'desc')
 
   if (isLoading || ltLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -2648,8 +2707,8 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
     <div className="flex flex-wrap gap-4 items-center py-2 px-1 border-b border-slate-100">
       <ChkBox label="Show P&L %" checked={showPct} onChange={setShowPct} />
       <ChkBox label="Show Market / FX Split" checked={showFxSplit} onChange={setShowFxSplit} />
-      <ChkBox label="Show Closed Accounts" checked={showClosedAccounts} onChange={setShowClosedAccounts} />
-      {drillRows && <ChkBox label="Show Closed Positions" checked={showClosedPositions} onChange={setShowClosedPositions} />}
+      {!drillRows && pnlView === 'account' && <ChkBox label="Show Closed Accounts" checked={showClosedAccounts} onChange={setShowClosedAccounts} />}
+      {(drillRows || pnlView === 'security') && <ChkBox label="Show Closed Positions" checked={showClosedPositions} onChange={setShowClosedPositions} />}
     </div>
   )
 
@@ -2675,30 +2734,45 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           subtitleNode={totalUnrealPct != null ? (
             <span className={`tabular-nums ${totalUnrealPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>({totalUnrealPct >= 0 ? '+' : ''}{totalUnrealPct.toFixed(2)}%)</span>
           ) : undefined} />
-        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from positions that have already been sold or closed. No cost-basis percentage is shown here — the original cost basis of already-closed positions isn't tracked separately from unrealized P&L." />
+        <KpiCard label="Realized P&L" value={fmtEur(totalReal)} color={totalReal >= 0 ? 'text-green-700' : 'text-red-600'} tooltip="Locked-in profit or loss from what has been sold or paid out (sales, dividends, interest), all time. The %: Realized gain or loss per euro of cost sold. With repeated trades in the same position, each purchase counts, so it reads as the average return per trade, not the share of your money gained or lost (see TWR/MWR for that)."
+          subtitleNode={totalRealPct != null ? (
+            <span className={`tabular-nums ${totalRealPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>({totalRealPct >= 0 ? '+' : ''}{totalRealPct.toFixed(2)}%)</span>
+          ) : undefined} />
         <KpiCard label="VaR 95% (daily)" value={portfolioVar?.var_95_pct != null ? `${portfolioVar.var_95_pct.toFixed(2)}%  ·  ${fmtEur(portfolioVar.var_95_eur)}` : '—'} color="text-amber-600" tooltip="Value at Risk (same calculation as Securities Analysis → Risk Metrics, 95% confidence, 3-year daily history): on a typical day, there is only a 5% chance of losing more than this amount across the whole portfolio." />
       </div>
-      <div className="flex gap-1">
-        {PNL_WINDOWS.map(w => (
-          <button key={w.k} onClick={() => setWin(w.k)}
-            className={`px-2.5 py-1 rounded text-xs font-medium ${win === w.k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{w.label}</button>
-        ))}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap gap-1">
+          {PNL_WINDOWS.map(w => (
+            <button key={w.k} onClick={() => setWin(w.k)}
+              className={`px-2.5 py-1 rounded text-xs font-medium ${win === w.k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{w.label}</button>
+          ))}
+        </div>
+        {!drillRows && (
+          <div className="flex items-center gap-1 sm:ml-auto">
+            <span className="text-xs text-slate-500 mr-1">View</span>
+            {([['account', 'By Account'], ['security', 'By Security']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setPnlView(k)}
+                className={`px-2.5 py-1 rounded text-xs font-medium ${pnlView === k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>
+            ))}
+          </div>
+        )}
       </div>
       {checkboxBar}
       {drillRows ? (() => {
         const drillValue    = drillRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
         const drillPnl      = drillRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
-        const drillPnlPct   = drillValue !== 0 ? (drillPnl / drillValue) * 100 : null
+        const drillPnlPct   = pctOf(drillPnl, drillValue)
         const drillUnreal   = drillRows.reduce((s, r) => s + Number(r.unrealized_pnl_eur ?? 0), 0)
         const drillCost     = drillValue - drillUnreal
-        const drillUnrealPct = drillCost !== 0 ? (drillUnreal / drillCost) * 100 : null
+        const drillUnrealPct = pctOf(drillUnreal, drillCost)
         const drillReal     = drillRows.reduce((s, r) => s + Number(r.realized_pnl_eur ?? 0), 0)
+        const drillRealPct  = pctOf(drillReal, drillRows.reduce((s, r) => s + soldCostOf(r), 0))
         const drillMkt      = mktKey ? drillRows.reduce((s, r) => s + Number(r[mktKey] ?? 0), 0) : null
         const drillFx       = fxKey  ? drillRows.reduce((s, r) => s + Number(r[fxKey]  ?? 0), 0) : null
         return (
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <button onClick={() => setSelectedAccount(null)} className="text-blue-600 hover:underline text-sm">← All Accounts</button>
+            <button onClick={() => setSelectedAccount(null)} className="text-blue-600 hover:underline text-sm">← {pnlView === 'security' ? 'All Securities' : 'All Accounts'}</button>
             <span className="text-slate-400 text-sm">/</span>
             <span className="text-sm font-semibold text-slate-700">{selectedAccount}</span>
             {selectedAccountId != null && (
@@ -2715,12 +2789,12 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           )}
           <div className="flex flex-wrap gap-x-6 gap-y-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
             <span className="text-slate-500 font-medium">Totals:</span>
-            <span className="tabular-nums">Value: <strong>{fmtEur(drillValue)}</strong></span>
+            <span className="tabular-nums">Value: <strong>{fmtEur(zeroIfDust(drillValue))}</strong></span>
             <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong>{drillPnlPct != null && <span className="ml-1 opacity-75">({drillPnlPct >= 0 ? '+' : ''}{drillPnlPct.toFixed(2)}%)</span>}</span>
             {drillMkt != null && <span className={`tabular-nums ${drillMkt >= 0 ? 'text-green-700' : 'text-red-600'}`}>Mkt: <strong>{fmtEur(drillMkt)}</strong></span>}
             {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
             <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
-            <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong></span>
+            <span className={`tabular-nums ${drillReal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Realized: <strong>{fmtEur(drillReal)}</strong>{drillRealPct != null && <span className="ml-1 opacity-75">({drillRealPct >= 0 ? '+' : ''}{drillRealPct.toFixed(2)}%)</span>}</span>
             <span className="tabular-nums text-amber-600" title="Value at Risk (95% confidence, 3-year daily history): on a typical day, there is only a 5% chance of this account losing more than this amount.">
               VaR 95%: <strong>{accountVar?.var_95_pct != null ? `${accountVar.var_95_pct.toFixed(2)}% · ${fmtEur(accountVar.var_95_eur)}` : '—'}</strong>
             </span>
@@ -2739,6 +2813,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                   <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for still-open positions." />
                   <ColHeader label="Unreal. %" sortKey="unrealized_pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss as a percentage of cost basis." />
                   <ColHeader label="Realized" sortKey="realized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Realized gain/loss from already-closed (sold) positions in this security." />
+                  <ColHeader label="Real. %" sortKey="realized_pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Realized gain or loss per euro of cost sold. With repeated trades in the same position, each purchase counts, so it reads as the average return per trade, not the share of your money gained or lost (see TWR/MWR for that). — when nothing was sold." />
                   <ColHeader label="YOC %" sortKey="dividend_yoc_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Dividend Yield on Cost: annual dividends received divided by your cost basis, as a percentage." />
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2746,14 +2821,14 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                     <tr key={i} className={`bg-white hover:bg-slate-50 ${isClosedPosition(r) ? 'opacity-60' : ''}`}>
                       {/* The Security column is pinned on the left while the numbers scroll. One line per security on a wide screen (a very long name is cut with an ellipsis, full name on hover); the phone's card layout keeps the whole name. */}
                       <td className="px-3 py-2 font-medium bg-inherit md:whitespace-nowrap md:sticky md:left-0 md:z-10 md:shadow-[1px_0_0_0_#e2e8f0] md:w-full md:max-w-0 md:min-w-[9rem]"><div className="md:truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink>{isClosedPosition(r) && <span className="ml-1.5 text-xs text-slate-400 font-normal">(closed)</span>}</div></td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(Number(r.qty_today), 4) : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(zeroIfDust(Number(r.qty_today), 1e-9), 4) : '—'}</td>
                       <EditablePriceCell
                         securitiesId={r.securities_id}
                         price={r.price_today != null ? Number(r.price_today) : null}
                         currency={String(r.currency ?? 'EUR')}
                         onSaved={() => qc.invalidateQueries({ queryKey: ['pnl'] })}
                       />
-                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(Number(r.current_value_eur ?? 0))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(zeroIfDust(Number(r.current_value_eur ?? 0)))}</td>
                       <PnlCell val={Number(r[pk] ?? 0)} />
                       {showPct && (() => {
                         const pct = r.pnl_pct != null ? Number(r.pnl_pct) : null
@@ -2779,6 +2854,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                         )
                       })()}
                       <PnlCell val={Number(r.realized_pnl_eur ?? 0)} />
+                      <RealPctCell pct={r.realized_pnl_pct != null ? Number(r.realized_pnl_pct) : null} />
                       <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.dividend_yoc_pct != null ? `${Number(r.dividend_yoc_pct).toFixed(2)}%` : '—'}</td>
                     </tr>
                   ))}
@@ -2788,7 +2864,86 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           </WithCopy>
         </div>
         )
-      })() : (
+      })() : pnlView === 'security' ? (
+        <WithCopy scrollKey="pnl-report-securities">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
+            <table data-cards className="w-full text-sm">
+              <thead className="sticky top-0 z-20"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                <ColHeader label="Security" sortKey="securities_name" currentKey={scSK} currentDir={scSD} onSort={scSort} tooltip="Each security once, totalled over every account that holds it. One held in several accounts lists them below it (click the arrow to fold them); click an account to open its positions." className="bg-slate-50 md:sticky md:left-0 md:z-20" />
+                <ColHeader label="Qty" sortKey="qty_today" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Quantity held, all accounts together." />
+                <ColHeader label="Price" sortKey="price_today" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Last available market price in the security's native currency." />
+                <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Current market value in EUR, all accounts together." />
+                <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey={pk} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains, all accounts together.`} />
+                {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window as a percentage of current value.`} />}
+                {showFxSplit && mktKey && <><ColHeader label="Market" sortKey={mktKey} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Part of the P&L from the security's price movement in its local currency." /><ColHeader label="FX" sortKey={fxKey ?? ''} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Part of the P&L from currency (FX) rate movements when converting to EUR." /></>}
+                <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Current value minus cost basis of the open position, all accounts together." />
+                <ColHeader label="Unreal. %" sortKey="unrealized_pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Unrealized gain/loss as a percentage of the combined cost basis." />
+                <ColHeader label="Realized" sortKey="realized_pnl_eur" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Realized gain/loss from sales of this security, all accounts together." />
+                <ColHeader label="Real. %" sortKey="realized_pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Realized gain or loss per euro of cost sold. With repeated trades in the same position, each purchase counts, so it reads as the average return per trade, not the share of your money gained or lost (see TWR/MWR for that). — when nothing was sold." />
+                <ColHeader label="YOC %" sortKey="dividend_yoc_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Dividend Yield on Cost; for several accounts, weighted by each one's cost basis." />
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {sortedSecs.map(sec => {
+                  const multi = sec.children.length > 1
+                  const open = multi && !collapsedSecs.has(sec.key)
+                  const toggle = () => setCollapsedSecs(prev => { const n = new Set(prev); n.has(sec.key) ? n.delete(sec.key) : n.add(sec.key); return n })
+                  const cells = (r: Row, sub: boolean) => {
+                    const pnlPct = r.pnl_pct != null ? Number(r.pnl_pct) : null
+                    const unreal = Number(r.unrealized_pnl_eur ?? 0)
+                    const uPct = r.unrealized_pnl_pct != null ? Number(r.unrealized_pnl_pct) : null
+                    return (<>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{r.qty_today != null ? fmtNum(zeroIfDust(Number(r.qty_today), 1e-9), 4) : '—'}</td>
+                      {sub
+                        ? <td className="px-3 py-2" data-empty />
+                        : <EditablePriceCell securitiesId={r.securities_id} price={r.price_today != null ? Number(r.price_today) : null}
+                            currency={String(r.currency ?? 'EUR')} onSaved={() => qc.invalidateQueries({ queryKey: ['pnl'] })} />}
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtEur(zeroIfDust(Number(r.current_value_eur ?? 0)))}</td>
+                      <PnlCell val={Number(r[pk] ?? 0)} />
+                      {showPct && <td className={`px-3 py-2 text-right tabular-nums ${pnlPct == null ? 'text-slate-400' : pnlPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{pnlPct != null ? fmtPct(pnlPct, 2) : '—'}</td>}
+                      {showFxSplit && mktKey && <><PnlCell val={Number(r[mktKey] ?? 0)} /><PnlCell val={fxKey ? Number(r[fxKey] ?? 0) : 0} /></>}
+                      <td className={`px-3 py-2 text-right tabular-nums ${unreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtEur(unreal)}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${uPct == null ? 'text-slate-400' : uPct >= 0 ? 'text-green-700' : 'text-red-600'}`}>{uPct != null ? `${uPct >= 0 ? '+' : ''}${uPct.toFixed(2)}%` : '—'}</td>
+                      <PnlCell val={Number(r.realized_pnl_eur ?? 0)} />
+                      <RealPctCell pct={r.realized_pnl_pct != null ? Number(r.realized_pnl_pct) : null} />
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.dividend_yoc_pct != null ? `${Number(r.dividend_yoc_pct).toFixed(2)}%` : '—'}</td>
+                    </>)
+                  }
+                  const single = !multi ? sec.children[0] : null
+                  return (
+                    <Fragment key={sec.key}>
+                      <tr className={`bg-white hover:bg-slate-50 ${sec.children.every(isClosedPosition) ? 'opacity-60' : ''} ${multi ? 'font-semibold' : ''}`}>
+                        <td className="px-3 py-2 bg-inherit md:whitespace-nowrap md:sticky md:left-0 md:z-10 md:shadow-[1px_0_0_0_#e2e8f0] md:w-full md:max-w-0 md:min-w-[12rem]">
+                          <div className="flex items-center gap-1 md:truncate" title={String(sec.securities_name)}>
+                            {multi
+                              ? <button onClick={toggle} className="text-slate-400 hover:text-slate-600 shrink-0" title={open ? 'Fold the accounts' : 'Show the accounts'}>{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
+                              : <span className="w-[14px] shrink-0" />}
+                            <span className="md:truncate"><SecLink id={sec.securities_id}>{String(sec.securities_name)}</SecLink></span>
+                            {multi
+                              ? <span className="ml-1.5 text-xs text-slate-400 font-normal shrink-0">{sec.children.length} accounts</span>
+                              : single && <button onClick={() => setSelectedAccount(String(single.accounts_name))}
+                                  className="ml-1.5 text-xs text-slate-400 font-normal hover:text-blue-600 hover:underline md:truncate">{String(single.accounts_name)}</button>}
+                          </div>
+                        </td>
+                        {cells(sec, false)}
+                      </tr>
+                      {open && sec.children.map(c => (
+                        <tr key={`${sec.key}-${String(c.accounts_id)}`} className={`bg-slate-50/60 hover:bg-slate-100 text-xs ${isClosedPosition(c) ? 'opacity-60' : ''}`}>
+                          <td className="px-3 py-1.5 pl-9 bg-inherit md:whitespace-nowrap md:sticky md:left-0 md:z-10 md:shadow-[1px_0_0_0_#e2e8f0] md:w-full md:max-w-0">
+                            <button onClick={() => setSelectedAccount(String(c.accounts_name))}
+                              className="text-blue-700 hover:underline md:truncate text-left" title={`Open ${String(c.accounts_name)}`}>↳ {String(c.accounts_name)}</button>
+                            {isClosedPosition(c) && <span className="ml-1.5 text-slate-400">(closed)</span>}
+                          </td>
+                          {cells(c, true)}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </WithCopy>
+      ) : (
         <div className="space-y-3">
           <WithCopy>
           <div className="overflow-x-auto overflow-y-auto max-h-[calc(100dvh-280px)]">
@@ -2802,6 +2957,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                 <ColHeader label="Unrealized" sortKey="unrealized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for open positions." />
                 <ColHeader label="Unrealized %" sortKey="unrealized_pct" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss as a percentage of cost basis." />
                 <ColHeader label="Realized" sortKey="realized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Realized gain/loss from closed positions in this account." />
+                <ColHeader label="Realized %" sortKey="realized_pct" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Realized gain or loss per euro of cost sold. With repeated trades in the same position, each purchase counts, so it reads as the average return per trade, not the share of your money gained or lost (see TWR/MWR for that). — when nothing was sold." />
               </tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {sortedAccounts.map(a => (
@@ -2818,6 +2974,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                       {a.unrealized_pct != null ? `${a.unrealized_pct >= 0 ? '+' : ''}${a.unrealized_pct.toFixed(2)}%` : '—'}
                     </td>
                     <PnlCell val={a.realized} />
+                    <RealPctCell pct={a.realized_pct} />
                   </tr>
                 ))}
               </tbody>

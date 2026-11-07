@@ -370,52 +370,39 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
         logging.exception("INVESTMENT P&L query failed")
         blocks.append(f"INVESTMENT P&L: unavailable ({e})")
 
-    # 4. Spending by category this week
-    try:
-        df = _query(conn, """
-            WITH RECURSIVE cat_root AS (
-                SELECT Categories_Id, Categories_Name, Categories_Id_Parent
-                FROM Categories
-                UNION ALL
-                SELECT p.Categories_Id, p.Categories_Name, p.Categories_Id_Parent
-                FROM Categories p
-                JOIN cat_root c ON c.Categories_Id_Parent = p.Categories_Id
-            ),
-            top_level AS (
-                SELECT Categories_Id, Categories_Name
-                FROM Categories
-                WHERE Categories_Id_Parent IS NULL
-            )
-            SELECT
-                COALESCE(tl.Categories_Name, c.Categories_Name) AS category,
-                SUM(ABS(s.Amount)) AS total
-            FROM Splits s
-            JOIN Categories c ON c.Categories_Id = s.Categories_Id
-            JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
-            LEFT JOIN top_level tl ON tl.Categories_Id = COALESCE(c.Categories_Id_Parent, c.Categories_Id)
-            WHERE t.Date BETWEEN %s AND %s
-              AND c.Categories_Type = 'Expense'
-              AND t.Transfers_Id IS NULL
-            GROUP BY COALESCE(tl.Categories_Name, c.Categories_Name)
-            ORDER BY total DESC
-            LIMIT 8
-        """, (week_start, period_end))
-        if not df.empty:
-            rows = "\n".join(
-                f"  {r.category}: €{float(r.total):,.2f}"
-                for _, r in df.iterrows()
-            )
-            blocks.append(f"SPENDING BY CATEGORY THIS WEEK (expenses only):\n{rows}")
-    except Exception as e:
-        conn.rollback()
-        logging.exception("SPENDING BY CATEGORY query failed")
-        blocks.append(f"SPENDING BY CATEGORY: unavailable ({e})")
+    # 4 + 5. The week's spending by category and its largest transactions. The model gets them as context (so it can name a standout
+    # expense); the lists themselves are appended by Oikos after the model's prose — see _spending_by_category / format_lists.
+    categories = _spending_by_category(conn, week_start, period_end)
+    if categories:
+        blocks.append("SPENDING BY CATEGORY THIS WEEK (expenses only):\n" + "\n".join(f"  {c}: €{t:,.2f}" for c, t in categories))
+    transactions = _top_transactions(conn, week_start, period_end)
+    if transactions:
+        blocks.append("TOP 5 INDIVIDUAL TRANSACTIONS THIS WEEK:\n" + "\n".join(
+            f"  {d}  [{'income' if amt > 0 else 'expense'}]  {payee}  €{abs(amt):,.2f}" for d, payee, amt in transactions))
 
-    # 5. Top 5 transactions this week (largest absolute amounts, real expenses only)
+    return "\n\n".join(blocks)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# THE LISTS — written by Oikos, not by the model
+# ──────────────────────────────────────────────────────────────────────────────
+# As in monthly_summary.py: the local model ran list items together into one paragraph and
+# dropped some of them, so the week's categories and top transactions are appended in code,
+# after the model's prose, always complete and one per line.
+
+def _spending_by_category(conn, start: str, end: str) -> list[tuple[str, float]]:
+    """The week's 10 largest expense categories by full path ("Household : Super Market"), largest first,
+    net of refunds booked to the same category — the monthly summary's own query, over the week."""
+    from ai.monthly_summary import _spending_by_category as by_category
+    return by_category(conn, start, end)
+
+
+def _top_transactions(conn, start: str, end: str) -> list[tuple[str, str, float]]:
+    """The week's 5 largest transactions by amount, income or expense (no transfers, no investment
+    funding, named payees only): (date, payee, signed amount)."""
     try:
         df = _query(conn, """
-            SELECT t.Date, p.Payees_Name, t.Total_Amount,
-                   CASE WHEN t.Total_Amount < 0 THEN 'expense' ELSE 'income' END AS direction
+            SELECT t.Date, p.Payees_Name, t.Total_Amount
             FROM Transactions t
             LEFT JOIN Payees p ON t.Payees_Id = p.Payees_Id
             WHERE t.Date BETWEEN %s AND %s
@@ -426,19 +413,24 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
             AND p.Payees_Name IS NOT NULL
             ORDER BY ABS(t.Total_Amount) DESC
             LIMIT 5
-        """, (week_start, period_end))
-        if not df.empty:
-            rows = "\n".join(
-                f"  {r.date}  [{r.direction}]  {r.payees_name}  €{abs(float(r.total_amount)):,.2f}"
-                for _, r in df.iterrows()
-            )
-            blocks.append(f"TOP 5 INDIVIDUAL TRANSACTIONS THIS WEEK:\n{rows}")
-    except Exception as e:
+        """, (start, end))
+    except Exception:
         conn.rollback()
         logging.exception("TOP TRANSACTIONS query failed")
-        blocks.append(f"TOP TRANSACTIONS: unavailable ({e})")
+        return []
+    return [(str(r.date), r.payees_name, float(r.total_amount)) for _, r in df.iterrows()]
 
-    return "\n\n".join(blocks)
+
+def format_lists(categories: list[tuple[str, float]], transactions: list[tuple[str, str, float]]) -> str:
+    parts = []
+    if categories:
+        parts.append("Here is your spending by category this week:\n" + "\n".join(
+            f"{n}. {name} — €{amount:,.2f}" for n, (name, amount) in enumerate(categories, 1)))
+    if transactions:
+        parts.append(f"Here are the top {len(transactions)} transactions for the week:\n" + "\n".join(
+            f"{n}. {payee} — €{abs(amt):,.2f} ({'income' if amt > 0 else 'expense'}, {d})"
+            for n, (d, payee, amt) in enumerate(transactions, 1)))
+    return "\n\n".join(parts)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -446,31 +438,26 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a personal finance assistant. Write a weekly summary with a short prose section
-    followed by a numbered list of the week's top transactions. Use "you" / "your".
+    You are a personal finance assistant. Write a short weekly summary in plain prose. Use "you" / "your".
+    No greeting, no sign-off, no markdown (no headers, no bold, no asterisks, no bullet or numbered lists).
 
     Start with a brief one-line lead-in, e.g. "Here is your weekly summary:".
 
-    Then 2–3 short paragraphs of plain prose (no bullet lists, no markdown) covering:
+    Then 2 short paragraphs (the spending by category and the top transactions are listed after
+    your text separately — do not list categories or transactions yourself):
     - Cash flows: the week's income, total expenses, and net. Quote the net explanation from
-      the context verbatim. If one expense clearly stands out, name the payee and date.
-    - Spending breakdown: the top spending categories and their amounts. If a notable income
-      transaction offset the week's expenses, mention it as a positive note.
+      the context verbatim. If one expense clearly stands out, name the payee and date; if a
+      notable income transaction offset the week's expenses, mention it as a positive note.
     - Investments: the investment P&L for the week. If positive, say it was a good week; if
       negative, mention the loss.
-
-    Then, on its own line, write "Here are the top 5 transactions for the week:" followed by a
-    numbered list (1 to 5) of the transactions from the TOP 5 INDIVIDUAL TRANSACTIONS block in
-    the context, one per line, in this exact format:
-    N. Payee — €Amount (EXPENSE) — or (INCOME) for a positive one.
 
     Rules:
     - Only use numbers that appear in the CONTEXT block. Never invent or calculate.
     - Never use placeholders like [X] or (insert value here).
-    - Keep the prose section under 200 words (the numbered list is separate from that limit).
+    - State what happened, never why: do not guess a reason or purpose for a transaction.
+    - Keep it under 200 words.
     - Never copy a CONTEXT block line verbatim (e.g. "NET WORTH SNAPSHOT (as of ...): ...",
-      "CASH FLOWS (... to ...): ..."). Pull the numbers out of it and write your own sentence
-      instead — only the final numbered transaction list should look like a plain data line.
+      "CASH FLOWS (... to ...): ..."). Pull the numbers out of it and write your own sentence instead.
 """)
 
 # CONTEXT block line-prefixes the LLM is told never to echo verbatim — kept as a plain
@@ -567,6 +554,10 @@ def run(week_start: date | None = None):
 
         llm = init_llm()
         summary = generate_summary(llm, context)
+        lists = format_lists(_spending_by_category(conn, week_start.isoformat(), period_end),
+                             _top_transactions(conn, week_start.isoformat(), period_end))
+        if lists and not summary.startswith("[LLM error"):
+            summary = f"{summary}\n\n{lists}"
         logging.info("Summary generated.")
 
         save_summary(conn, week_start, summary)
