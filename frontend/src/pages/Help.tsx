@@ -802,7 +802,10 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           composition data (including anything entered for it directly) untouched instead of overwriting it with
           nothing. Asset Allocation, Sector
           Weighting, and Style Box also include any <b>Cash &amp; Savings accounts</b> selected in the current
-          Account Preset as a "Cash" bucket. Every Portfolio Analysis view supports click-to-drill-down: click a bucket/row (in
+          Account Preset as a "Cash" bucket. In Asset Allocation, the small cash share an equity or bond fund keeps
+          for trading counts with that fund's main class (an MSCI World ETF's 0.4% cash with Stocks, a short-term
+          government bond ETF's cash with Bonds), so "Cash" shows real cash: cash accounts, CDs, and funds that are
+          mostly cash or have the Cash Asset Class Override. Every Portfolio Analysis view supports click-to-drill-down: click a bucket/row (in
           the chart or the table) to list what's behind it below — securities/accounts for Asset Allocation,
           Style Box, and Bond Quality; a symbol's individual direct-vs-per-fund sources for Stock Overlap. Asset
           Allocation's drill-down also shows each security's <b>Unrealized P&amp;L %</b> (cost basis pooled across

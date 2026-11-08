@@ -4599,7 +4599,12 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Asset_Class_Override IS NOT NULL
     ),
     fund_detail_split AS (
-        SELECT b.asset_class, hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
+        -- A fund's own cash sleeve (an equity or bond ETF keeps a little cash to
+        -- settle trades and flows) is folded into the fund's main class, so the
+        -- Cash bucket holds real cash: cash accounts, CDs and funds that are
+        -- mostly cash (cash their largest class, e.g. a money-market fund).
+        SELECT CASE WHEN b.asset_class = 'Cash' THEN dom.asset_class ELSE b.asset_class END AS asset_class,
+               hv.Securities_Id AS securities_id, s.Securities_Name AS name, s.Ticker AS ticker,
                hv.value_eur * b.pct AS value_eur,
                hv.cost_basis_eur AS sec_cost_basis_eur, hv.value_eur AS sec_total_value_eur
         FROM holdings_value hv
@@ -4613,6 +4618,17 @@ def get_xray_asset_allocation(account_ids: Optional[str] = Query(None), compare_
             ('Convertible', fc.Asset_Convertible_Pct),
             ('Other',       fc.Asset_Other_Pct)
         ) AS b(asset_class, pct)
+        CROSS JOIN LATERAL (
+            -- the fund's largest class (ties: the listed order, Cash last)
+            SELECT m.asset_class FROM (VALUES
+                ('Stocks', fc.Asset_Stock_Pct, 1), ('Bonds', fc.Asset_Bond_Pct, 2),
+                ('Preferred', fc.Asset_Preferred_Pct, 3), ('Convertible', fc.Asset_Convertible_Pct, 4),
+                ('Other', fc.Asset_Other_Pct, 5), ('Cash', fc.Asset_Cash_Pct, 6)
+            ) AS m(asset_class, pct, ord)
+            WHERE m.pct IS NOT NULL
+            ORDER BY m.pct DESC, m.ord
+            LIMIT 1
+        ) AS dom
         WHERE hv.sec_type IN ('ETF','Mutual Fund') AND fc.Asset_Class_Override IS NULL
           AND b.pct IS NOT NULL AND b.pct > 0
     ),

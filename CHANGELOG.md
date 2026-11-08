@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-09
+
+### Fixed
+- **Portfolio Analysis → Asset Allocation: funds' own cash no longer counts as Cash.** Equity and bond ETFs keep a small part of their assets in cash to handle trades and flows, and the look-through split put that part in the **Cash** bucket, so Cash listed a few euros of each ETF (an MSCI World ETF's 0.35%) and a larger amount of a short-term government bond ETF (11% of it). That share now counts with the fund's main class: Stocks for an equity fund, Bonds for a bond fund. Cash keeps cash and savings accounts, CDs, funds that are mostly cash (cash their largest share, such as a money-market fund) and funds with the Cash Asset Class Override. The total is unchanged; only the split between classes moves. The fund's own Composition tab still shows its cash share.
+
 ## 2026-11-07
 
 ### Added
