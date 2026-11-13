@@ -5,6 +5,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ## 2026-11-14
 
 ### Fixed
+- **Import & Reconcile → From the bank: the dates jumped after a fetch.** The default *From* is a week before the last fetch, and the fetch itself moved the last fetch to today, so right after it the fields showed a week ago instead of the range just fetched. The fetched range now stays until you change it or the account.
 - **Security Detail → Prices opened at an older date.** The prices table remembered how far it had been scrolled, under one setting shared by every security, so opening a security started some rows down — at a past date — instead of at the newest price. Prices now always opens at the newest date. The Transactions, Dividends, Price Anomalies, Corporate Actions and holdings tables still remember their scroll position, but per security.
 
 ## 2026-11-13

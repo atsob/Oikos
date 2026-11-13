@@ -280,6 +280,7 @@ function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number
     onSuccess: async (data) => {
       const lastTo = { ...ebLastTo, [accountId!]: ebTo }
       setEbLastTo(lastTo)
+      setEbRange({ acc: accountId, from: ebFrom, to: ebTo })   // keep the fetched range on screen: the default moves with the new last fetch
       saveSettings({ account_id: accountId, profile_per_account: profilePerAccount, eb_last_to: lastTo })
       setStmtBalance(data.balance?.amount ?? null)
       setStmtDate(data.balance?.date ?? ebTo)
