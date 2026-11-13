@@ -82,7 +82,8 @@ const PRICES_TAB_COLS = [
 
 function PricesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-prices', PRICES_TAB_COLS)
-  const gridScroll = useGridScrollState('security-detail-prices')
+  // No scroll restore here: the price list is newest first and should open at the newest date (a saved offset —
+  // shared by every security — opened it some rows down, at an older date).
   const gridFilter = useGridFilterState('security-detail-prices')
   const { gridApi, onGridReady } = useGridApi(api => {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
@@ -458,8 +459,6 @@ function PricesTab({ secId }: { secId: number }) {
           quickFilterText={priceSearch}
           rowSelection="multiple"
           onSelectionChanged={e => setSelectedDates(e.api.getSelectedRows().map((r: Record<string, unknown>) => r.date as string))}
-          initialState={gridScroll.initialState}
-          onStateUpdated={gridScroll.onStateUpdated}
           onFilterChanged={gridFilter.onFilterChanged}
           onColumnMoved={gridCols.onColumnMoved}
           onColumnResized={gridCols.onColumnResized}
@@ -767,10 +766,10 @@ const invActionColor = (a: string) => a === 'Buy' ? 'text-blue-700' : a === 'Sel
 function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const phone = usePhone()
   const holdingsGridCols = useGridColumnState('security-detail-holdings-by-account', HOLDINGS_BY_ACCOUNT_COLS)
-  const holdingsGridScroll = useGridScrollState('security-detail-holdings-by-account')
+  const holdingsGridScroll = useGridScrollState(`security-detail-holdings-by-account-${secId}`)   // per security: an offset from another one means nothing here
   const { gridApi: holdingsGridApi, onGridReady: onHoldingsGridReady } = useGridApi()
   const txGridCols = useGridColumnState('security-detail-all-transactions', ALL_TRANSACTIONS_COLS)
-  const txGridScroll = useGridScrollState('security-detail-all-transactions')
+  const txGridScroll = useGridScrollState(`security-detail-all-transactions-${secId}`)   // per security: an offset from another one means nothing here
   const txGridFilter = useGridFilterState('security-detail-all-transactions')
   const { gridApi: txGridApi, onGridReady: onTxGridReady } = useGridApi(api => {
     if (txGridFilter.filterModel) api.setFilterModel(txGridFilter.filterModel)
@@ -1090,7 +1089,7 @@ const PRICE_ANOMALIES_COLS = [
 
 function PriceAnomaliesTab({ secId }: { secId: number }) {
   const gridCols = useGridColumnState('security-detail-anomalies', PRICE_ANOMALIES_COLS)
-  const gridScroll = useGridScrollState('security-detail-anomalies')
+  const gridScroll = useGridScrollState(`security-detail-anomalies-${secId}`)   // per security: an offset from another one means nothing here
   const { gridApi, onGridReady } = useGridApi()
   const qc = useQueryClient()
   const [threshold, setThreshold] = useState(100)
@@ -1267,7 +1266,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [deleteMut])
   const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
-  const gridScroll = useGridScrollState('security-detail-dividends')
+  const gridScroll = useGridScrollState(`security-detail-dividends-${secId}`)   // per security: an offset from another one means nothing here
   const gridFilter = useGridFilterState('security-detail-dividends')
   const { gridApi, onGridReady } = useGridApi(api => {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
@@ -1672,7 +1671,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     setEditPreview(null); setEditApplyMsg(null)
   }
   const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
-  const gridScroll = useGridScrollState('security-detail-corporate-actions')
+  const gridScroll = useGridScrollState(`security-detail-corporate-actions-${secId}`)   // per security: an offset from another one means nothing here
   const { gridApi, onGridReady } = useGridApi()
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>

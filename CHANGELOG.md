@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-14
+
+### Fixed
+- **Security Detail → Prices opened at an older date.** The prices table remembered how far it had been scrolled, under one setting shared by every security, so opening a security started some rows down — at a past date — instead of at the newest price. Prices now always opens at the newest date. The Transactions, Dividends, Price Anomalies, Corporate Actions and holdings tables still remember their scroll position, but per security.
+
 ## 2026-11-13
 
 ### Fixed
