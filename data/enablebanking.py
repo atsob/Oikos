@@ -81,6 +81,9 @@ def _jwt() -> str:
 
 def _req(method: str, path: str, **kw) -> Any:
     r = requests.request(method, BASE + path, headers={"Authorization": f"Bearer {_jwt()}"}, timeout=_TIMEOUT, **kw)
+    if r.status_code == 429:
+        raise EnableBankingError("The bank's daily limit of reads for this account is used up; try again tomorrow "
+                                 "(banks allow only a few reads a day per account).")
     if r.status_code >= 400:
         try:
             body = r.json()
@@ -239,16 +242,86 @@ def _amount(x: dict | None) -> float | None:
         return None
 
 
-def balance(uid: str) -> dict | None:
-    """The booked (accounting) balance when the bank gives one, else its first balance: {amount, currency, date, type}."""
+# Which of the bank's balances is "the balance". An account: the booked one when given, else the available one
+# (Alpha gives only ITAV/FWAV for a current account, and ITAV is its balance). A credit card: the amount owed —
+# a booked-type figure when given (Eurobank: XPCD; its FWAV is the credit still available), else FWAV (Alpha: FWAV
+# is what is owed, ITAV the credit available) — shown negative, as Oikos keeps a card's balance.
+_ACCOUNT_ORDER = ["CLBD", "ITBD", "XPCD", "ITAV", "CLAV", "OPBD", "FWAV"]
+_CARD_ORDER = ["CLBD", "ITBD", "XPCD", "OPBD", "FWAV", "ITAV", "CLAV"]
+
+
+def balance(uid: str, card: bool = False) -> dict | None:
+    """The account's balance as Oikos shows it: {amount, currency, date, type} (see the orders above)."""
     bals = _req("GET", f"/accounts/{uid}/balances").get("balances", [])
     if not bals:
         return None
-    order = ["CLBD", "ITBD", "XPCD", "ITAV", "CLAV", "OPBD"]
+    order = _CARD_ORDER if card else _ACCOUNT_ORDER
     b = min(bals, key=lambda b: order.index(b.get("balance_type")) if b.get("balance_type") in order else 99)
-    return {"amount": _amount(b.get("balance_amount")), "currency": (b.get("balance_amount") or {}).get("currency"),
+    amt = _amount(b.get("balance_amount"))
+    if card and amt is not None:
+        amt = -abs(amt)
+    return {"amount": amt, "currency": (b.get("balance_amount") or {}).get("currency"),
             "date": b.get("reference_date") or (b.get("last_change_date_time") or "")[:10] or None,
             "type": b.get("balance_type")}
+
+
+# ── Stored bank balances (shown on Cash accounts and in the Cash Register) ──
+# Banks allow only a few reads a day without the user present, so pages show the balance stored at the last read
+# (a bank fetch in Import & Reconcile, or the daily Bank Balances job), with the time it was read.
+
+def stored_balances() -> dict[str, dict]:
+    try:
+        return json.loads(get_app_setting("eb_balances") or "{}")
+    except Exception:
+        return {}
+
+
+def store_balance(oikos_account_id: int, bank: str, bal: dict | None) -> None:
+    if not bal or bal.get("amount") is None:
+        return
+    allb = stored_balances()
+    allb[str(oikos_account_id)] = {**bal, "bank": bank, "fetched_at": datetime.now(timezone.utc).isoformat()}
+    save_app_setting("eb_balances", json.dumps(allb))
+
+
+def _is_card(cur, oikos_account_id: int) -> bool:
+    cur.execute("SELECT Accounts_Type FROM Accounts WHERE Accounts_Id = %s", (oikos_account_id,))
+    row = cur.fetchone()
+    return bool(row and row[0] == "Credit Card")
+
+
+def account_balance(oikos_account_id: int, uid: str, hash_: str) -> dict | None:
+    """The bank's balance for a linked Oikos account, with the card rule and the account's Reverse +/− applied."""
+    from database.connection import get_connection
+    conn = get_connection()
+    try:
+        card = _is_card(conn.cursor(), oikos_account_id)
+    finally:
+        conn.close()
+    bal = balance(uid, card=card)
+    if bal and not card and bal.get("amount") is not None and account_options().get(hash_, {}).get("invert"):
+        bal["amount"] = -bal["amount"]
+    return bal
+
+
+def refresh_balances() -> dict:
+    """Read and store the balance of every linked account of every connection still valid. -> {ok, failed, errors}"""
+    m = account_map()
+    ok, errors = 0, []
+    for c in status()["connections"]:
+        if c["expired"]:
+            errors.append(f"{c['bank']}: access expired — connect the bank again")
+            continue
+        for a in c["accounts"]:
+            aid = m.get(a["hash"])
+            if not aid:
+                continue
+            try:
+                store_balance(aid, c["bank"], account_balance(aid, a["uid"], a["hash"]))
+                ok += 1
+            except Exception as e:
+                errors.append(f"{c['bank']} {a.get('name') or a.get('iban')}: {str(e)[:150]}")
+    return {"ok": ok, "failed": len(errors), "errors": errors}
 
 
 def _description(t: dict) -> tuple[str, str]:

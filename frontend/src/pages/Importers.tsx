@@ -166,6 +166,7 @@ function SuccessBox({ msg }: { msg: string }) {
 // ── Bank → Import & Reconcile ─────────────────────────────────────────────────
 
 function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number | null }) {
+  const qcReconcile = useQueryClient()
   const [step, setStep] = useState(1)
   // Opened from Enable Banking's Import button: that account, from the bank.
   const [accountId, setAccountId] = useState<number | null>(startAccountId)
@@ -283,6 +284,7 @@ function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number
       setEbRange({ acc: accountId, from: ebFrom, to: ebTo })   // keep the fetched range on screen: the default moves with the new last fetch
       saveSettings({ account_id: accountId, profile_per_account: profilePerAccount, eb_last_to: lastTo })
       setStmtBalance(data.balance?.amount ?? null)
+      qcReconcile.invalidateQueries({ queryKey: ['eb-balances'] })   // the fetch stored the bank's new balance
       setStmtDate(data.balance?.date ?? ebTo)
       setEmptyMsg(data.rows.length ? '' : `${data.bank} has no booked transactions for this account between those dates.`)
       const note = `${data.bank}, ${ebFrom} to ${ebTo}`

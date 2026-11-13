@@ -11,6 +11,7 @@ import {
 } from '@/lib/api'
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate, toLocalISODate } from '@/lib/utils'
+import { useBankBalances, bankBalanceLine } from '@/lib/bankBalance'
 import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
@@ -416,6 +417,9 @@ export default function Register() {
   const selectedAccountFuture = (accountsFuture as Record<string, unknown>[]).find(a => a.id === accountId)
   const isCreditCard = selectedAccount && String(selectedAccount.type) === 'Credit Card'
   const accountCurrency = String(selectedAccount?.currency ?? 'EUR')
+  // The bank's own balance (Enable Banking), as last read, next to the account's balance in the header
+  const bankBalances = useBankBalances()
+  const bankLine = accountId ? bankBalanceLine(bankBalances[String(accountId)], selectedAccount ? Number(selectedAccount.balance) : null, accountCurrency) : null
   const colDefs = useMemo(() => [
     {
       colId: 'select', checkboxSelection: true, width: 40, pinned: 'left' as const, sortable: false, filter: false, resizable: false,
@@ -435,7 +439,7 @@ export default function Register() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="Cash Register"
-        subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}` : 'Select an account'}
+        subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}${bankLine ? ` · ${bankLine.text}` : ''}` : 'Select an account'}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             {cameFromReport && (

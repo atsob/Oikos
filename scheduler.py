@@ -238,7 +238,7 @@ def _in_window(now: datetime, hour: int, minute: int, window: int = 5) -> bool:
 DEFAULT_JOB_TIMEOUT_MIN = 60
 JOB_TIMEOUT_MIN = {                   # job_id -> minutes a single run may take
     "market_data": 35, "signal_notifications": 15, "news_fetch": 15, "interest_rates": 10,
-    "recurring_drafts": 10, "plan_reminders": 5, "credit_card_payments": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
+    "recurring_drafts": 10, "plan_reminders": 5, "credit_card_payments": 10, "bank_balances": 10, "saxo_token_refresh": 5, "market_watch": 10, "market_watch_backtest": 15, "local_watch": 10, "local_watch_backtest": 15, "shiller_cape": 15, "daily_backup": 45,
     "securities_info": 90, "dividend_history": 120, "stock_splits": 90, "fund_composition": 120, "fund_countries": 60, "morningstar": 30,
     "fundamentals": 180, "morning_maintenance": 180, "weekly_summary": 90, "monthly_summary": 90,
 }
@@ -660,6 +660,21 @@ def _local_watch_backtest_job():
         _record_job("local_watch_backtest", "error", str(e)[:300])
 
 
+def _bank_balances_job():
+    """Read every linked bank account's balance through Enable Banking and store it for Cash accounts / Cash Register."""
+    try:
+        from data import enablebanking as eb
+        if not (eb.credentials_set() and eb.status()["connections"]):
+            _record_job("bank_balances", "success", "No bank connected (Importers → Bank → Enable Banking)")
+            return
+        r = eb.refresh_balances()
+        msg = f"{r['ok']} balance(s) read" + (f", {r['failed']} failed: " + "; ".join(r["errors"][:3]) if r["failed"] else "")
+        _record_job("bank_balances", "error" if r["failed"] and not r["ok"] else "success", msg[:500])
+    except Exception as e:
+        logging.warning(f"Bank balances failed: {e}")
+        _record_job("bank_balances", "error", str(e)[:300])
+
+
 def _saxo_token_refresh_job():
     """Keep the Saxo login alive: refresh the token before the refresh token lapses (see data/saxo_session.py)."""
     try:
@@ -810,6 +825,7 @@ if __name__ == "__main__":
     # Credit-card payment amounts: refresh at startup, then daily (before drafts are generated)
     _guard('credit_card_payments', _credit_card_payments_job)
     _last_card_payments_date: date = date.today()
+    _last_bank_balances_date: date = date.min      # bank balances: once a day from the configured time (not at every restart)
 
     # Recurring drafts: run once at startup
     logging.info("Running initial recurring drafts generation.")
@@ -892,6 +908,12 @@ if __name__ == "__main__":
         if _last_card_payments_date != date.today() and (now.hour, now.minute) >= (cc_h, cc_m):
             _guard('credit_card_payments', _credit_card_payments_job)
             _last_card_payments_date = date.today()
+
+        # ── Bank balances (Enable Banking): once per calendar day, from the configured time ──
+        bb_h, bb_m = _parse_daily(sc.get('bank_balances', ''), 7, 0)
+        if _last_bank_balances_date != date.today() and (now.hour, now.minute) >= (bb_h, bb_m):
+            _guard('bank_balances', _bank_balances_job)
+            _last_bank_balances_date = date.today()
 
         # ── Recurring drafts: once per calendar day ───────────────────────────
         if _last_recurring_drafts_date != date.today():

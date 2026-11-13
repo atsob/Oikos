@@ -7,6 +7,7 @@ import { fmtEur, fmtCur } from '@/lib/utils'
 import { useLiveRefetchInterval } from '@/lib/hooks'
 import { loadOpts, historyAccountIds } from '@/lib/dashboardOpts'
 import { INVESTMENT_ACCOUNT_TYPES } from '@/lib/accountTypes'
+import { useBankBalances, bankBalanceLine } from '@/lib/bankBalance'
 import { setPref } from '@/lib/preferences'
 
 // A Dashboard KPI card (Cash, Investments, Pension & Savings, Assets) opened up: the same card for every account that makes it up — value, change
@@ -42,6 +43,7 @@ export default function DashboardAccounts() {
   const opts = useMemo(loadOpts, [])
   const title = TITLES[group] ?? 'Accounts'
   const [showEmpty, setShowEmpty] = useState(false)
+  const bankBalances = useBankBalances()
 
   const { data: accounts = [] } = useQuery({ queryKey: ['accounts', opts.includeFuture], queryFn: () => getAccounts(opts.includeFuture) })
   const ids = useMemo(() => historyAccountIds(accounts as Record<string, unknown>[], opts), [accounts, opts])
@@ -101,11 +103,17 @@ export default function DashboardAccounts() {
                   <span className={`text-xs tabular-nums ${deltaColor(sec.total.delta_ytd)}`}>{fmtDelta(sec.total.delta_ytd)} YTD</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
-                  {sec.list.map(a => (
-                    <StatCard key={a.id} compact label={a.name} value={fmtEur(a.balance_eur)}
-                      subs={kpiSubs(a, `${a.currency && a.currency !== 'EUR' ? (a.balance_native != null ? fmtCur(a.balance_native, a.currency) : a.currency) : ''}${a.is_active ? '' : `${a.currency && a.currency !== 'EUR' ? ' · ' : ''}switched off`}` || undefined)}
+                  {sec.list.map(a => {
+                    const bank = bankBalanceLine(bankBalances[String(a.id)], a.currency && a.currency !== 'EUR' ? a.balance_native : a.balance_eur, a.currency)
+                    return (
+                    <div key={a.id} title={bank?.title}>
+                    <StatCard compact className="h-full" label={a.name} value={fmtEur(a.balance_eur)}
+                      subs={[...kpiSubs(a, `${a.currency && a.currency !== 'EUR' ? (a.balance_native != null ? fmtCur(a.balance_native, a.currency) : a.currency) : ''}${a.is_active ? '' : `${a.currency && a.currency !== 'EUR' ? ' · ' : ''}switched off`}` || undefined),
+                        ...(bank ? [{ text: bank.text, color: bank.color }] : [])]}
                       onClick={() => open(a)} />
-                  ))}
+                    </div>
+                    )
+                  })}
                 </div>
               </section>
             ))}

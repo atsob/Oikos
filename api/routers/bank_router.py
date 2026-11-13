@@ -685,6 +685,19 @@ def eb_account_option(data: dict):
     return {"ok": True}
 
 
+@router.get("/enablebanking/balances")
+def eb_balances():
+    """{Oikos account id: {amount, currency, date, type, bank, fetched_at}} — the bank's balance as last read."""
+    from data import enablebanking as eb
+    return eb.stored_balances()
+
+
+@router.post("/enablebanking/refresh-balances")
+def eb_refresh_balances():
+    from data import enablebanking as eb
+    return _eb_call(eb.refresh_balances)
+
+
 @router.get("/enablebanking/linked/{account_id}")
 def eb_linked(account_id: int):
     from data import enablebanking as eb
@@ -715,9 +728,8 @@ def eb_fetch(data: dict):
         raise HTTPException(400, "date_to is before date_from")
     invert = bool(eb.account_options().get(a["hash"], {}).get("invert"))
     rows = _eb_call(eb.transactions, a["uid"], d0, d1, invert)
-    bal = _eb_call(eb.balance, a["uid"])
-    if bal and invert and bal.get("amount") is not None:
-        bal["amount"] = -bal["amount"]
+    bal = _eb_call(eb.account_balance, account_id, a["uid"], a["hash"])
+    eb.store_balance(account_id, c["bank"], bal)
     return {"rows": rows, "balance": bal, "bank": c["bank"], "account": a["name"]}
 
 

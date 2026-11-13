@@ -1602,7 +1602,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None, search: Optional[str
 _BUILTIN_JOB_IDS = {
     "market_data", "daily_backup", "morning_maintenance",
     "weekly_summary", "monthly_summary", "securities_info",
-    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "local_watch_backtest", "fund_countries", "morningstar", "news_fetch", "fund_composition",
+    "dividend_history", "stock_splits", "recurring_drafts", "credit_card_payments", "bank_balances", "saxo_token_refresh", "market_watch", "market_watch_backtest", "local_watch", "local_watch_backtest", "fund_countries", "morningstar", "news_fetch", "fund_composition",
     "fundamentals", "shiller_cape", "interest_rates", "plan_reminders",
 }
 
@@ -1618,6 +1618,7 @@ _SEED_JOBS = [
     ("fund_countries",     "Fund Country Exposure",  "Refreshes the country breakdown of every held fund from its provider (iShares daily holdings, Vanguard market allocation, justETF) — funds whose breakdown was typed in by hand are left alone.", "5th of month at 07:30", True),
     ("morningstar",        "Morningstar Category & Style Box", "Fetches the Morningstar Category and Style Box of every ETF and fund from Morningstar's public screener, by ISIN — values set by hand on the Security Detail page are left alone.", "6th of month at 07:30", True),
     ("credit_card_payments", "Credit Card Payment Amounts", "Recalculates the amount of every credit-card payment template from the card's balance at its latest statement date, so forecasts and drafts use the current figure.", "Daily at 05:45", True),
+    ("bank_balances",      "Bank Balances",          "Reads the balance of every bank account linked in Importers → Bank → Enable Banking and stores it, so Cash accounts and the Cash Register show the bank's balance next to Oikos's. Does nothing until a bank is connected; banks allow only a few reads a day.", "Daily at 07:00", True),
     ("saxo_token_refresh", "Saxo Login Keep-alive", "Refreshes the Saxo OpenAPI token every few minutes so the importer never needs re-authorising (Importers → Saxo Bank: connect once). Does nothing until Saxo is connected.", "Every 10 min, 24×7", True),
     ("market_watch",       "Market Watch",           "Refreshes the Market Watch snapshot — hyperscaler free cash flow, credit spreads, the 10-year Treasury yield and market breadth (Yahoo Finance, TradingView; FRED if a key is set).", "Every 360 min, 24×7", True),
     ("local_watch",        "Local Market Watch",     "Refreshes the Local Market Watch snapshot for the country of usage (Tools → App Settings) — benchmark index trend, breadth of its large caps, the systemic banks and the 10-year spread to Germany (Yahoo Finance; FRED if a key is set).", "Every 360 min, 24×7", True),
@@ -1732,6 +1733,9 @@ def _run_scheduler_job_fn(job_id: str):
         elif job_id == "market_watch":
             from api.routers.market_watch import refresh_cache
             refresh_cache()
+        elif job_id == "bank_balances":
+            from data.enablebanking import refresh_balances
+            refresh_balances()
         elif job_id == "saxo_token_refresh":
             from data.saxo_session import ensure_access_token
             ensure_access_token(force=True)

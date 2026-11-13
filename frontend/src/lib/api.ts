@@ -933,6 +933,9 @@ export const ebFinishAuth = (data: { code: string; state: string }) => api.post<
 export const ebDisconnect = (sessionId: string) => api.delete(`/bank/enablebanking/session/${sessionId}`).then(r => r.data)
 export const ebSaveAccountMap = (accountMap: Record<string, number | null>) => api.post('/bank/enablebanking/account-map', { account_map: accountMap }).then(r => r.data)
 export const ebSetAccountOption = (hash: string, invert: boolean) => api.post('/bank/enablebanking/account-option', { hash, invert }).then(r => r.data)
+export type EbStoredBalance = { amount: number | null; currency: string; date: string | null; type: string; bank: string; fetched_at: string }
+export const ebBalances = () => api.get<Record<string, EbStoredBalance>>('/bank/enablebanking/balances').then(r => r.data)
+export const ebRefreshBalances = () => api.post<{ ok: number; failed: number; errors: string[] }>('/bank/enablebanking/refresh-balances').then(r => r.data)
 export const ebLinked = (accountId: number) => api.get<{ linked: boolean; bank?: string; account?: string; iban?: string; valid_until?: string | null }>(`/bank/enablebanking/linked/${accountId}`).then(r => r.data)
 export const ebFetch = (data: { account_id: number; date_from: string; date_to?: string }) =>
   api.post<{ rows: EbRow[]; balance: { amount: number | null; currency: string; date: string | null; type: string } | null; bank: string; account: string }>('/bank/enablebanking/fetch', data).then(r => r.data)

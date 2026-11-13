@@ -1828,7 +1828,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           balance; a counterparty name that is already one of your payees is used as the payee. Rows take the purchase date when the bank gives a plausible one
           (a card purchase is booked a day or two later), so they match what you entered. If the bank reports a card's
           purchases as credits (Eurobank does), tick <b>Reverse +/−</b> for that account in the tab; amounts and balance then
-          change sign. Some banks send no description for card transactions, only the date and amount. Pending transactions are left
+          change sign. Some banks send no description for card transactions, only the date and amount. Every read also stores the bank's balance, and the daily <b>Bank Balances</b> job reads it each morning; <b>Cash accounts</b> and the <b>Cash Register</b> show it next to Oikos's balance, with its date and ✓ when they agree (or the difference). Banks allow only a few reads a day per account; past that, the bank refuses until the next day. Pending transactions are left
           out until the bank books them. The bank's approval lasts as long as it allows, usually 180 days; the tab shows the
           days left, and connecting the bank again renews it and keeps the account links.
         </Note>

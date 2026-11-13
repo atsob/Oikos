@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-14
 
+### Added
+- **The bank's balance next to Oikos's.** For an account linked in Importers → Bank → Enable Banking, the account cards on **Cash accounts** and the header of the **Cash Register** show the bank's own balance and its date, with ✓ when it equals the balance in Oikos or the difference when it doesn't. Banks allow only a few reads a day per account, so the pages show the balance as last read: by a *From the bank* fetch in Import & Reconcile, or by the new daily **Bank Balances** scheduler job (07:00, Tools → Scheduler). A credit card shows the amount owed, negative as in Oikos (Alpha calls it FWAV, Eurobank XPCD).
+
 ### Fixed
 - **Import & Reconcile → From the bank: the dates jumped after a fetch.** The default *From* is a week before the last fetch, and the fetch itself moved the last fetch to today, so right after it the fields showed a week ago instead of the range just fetched. The fetched range now stays until you change it or the account.
 - **Security Detail → Prices opened at an older date.** The prices table remembered how far it had been scrolled, under one setting shared by every security, so opening a security started some rows down — at a past date — instead of at the newest price. Prices now always opens at the newest date. The Transactions, Dividends, Price Anomalies, Corporate Actions and holdings tables still remember their scroll position, but per security.
