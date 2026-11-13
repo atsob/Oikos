@@ -921,7 +921,7 @@ export const qifClearImpact = (
 }).then(r => r.data)
 
 // ── Enable Banking (PSD2 open banking) ────────────────────────────────────────
-export type EbAccount = { uid: string; hash: string; name: string; product: string; currency: string; iban: string; oikos_account_id?: number | null }
+export type EbAccount = { uid: string; hash: string; name: string; product: string; currency: string; iban: string; oikos_account_id?: number | null; invert?: boolean }
 export type EbConnection = { session_id: string; bank: string; country: string; valid_until: string | null; connected_at: string; expired: boolean; accounts: EbAccount[] }
 export type EbStatus = { app_id: string; key_set: boolean; connections: EbConnection[]; application?: { name: string; environment: string; active: boolean; redirect_urls: string[] }; application_error?: string }
 export type EbRow = { date: string; description: string; amount: number; balance: number | null; payee: string; ref: string | null }
@@ -932,6 +932,7 @@ export const ebStartAuth = (data: { bank: string; country: string; redirect_url:
 export const ebFinishAuth = (data: { code: string; state: string }) => api.post<EbConnection>('/bank/enablebanking/session', data).then(r => r.data)
 export const ebDisconnect = (sessionId: string) => api.delete(`/bank/enablebanking/session/${sessionId}`).then(r => r.data)
 export const ebSaveAccountMap = (accountMap: Record<string, number | null>) => api.post('/bank/enablebanking/account-map', { account_map: accountMap }).then(r => r.data)
+export const ebSetAccountOption = (hash: string, invert: boolean) => api.post('/bank/enablebanking/account-option', { hash, invert }).then(r => r.data)
 export const ebLinked = (accountId: number) => api.get<{ linked: boolean; bank?: string; account?: string; iban?: string; valid_until?: string | null }>(`/bank/enablebanking/linked/${accountId}`).then(r => r.data)
 export const ebFetch = (data: { account_id: number; date_from: string; date_to?: string }) =>
   api.post<{ rows: EbRow[]; balance: { amount: number | null; currency: string; date: string | null; type: string } | null; bank: string; account: string }>('/bank/enablebanking/fetch', data).then(r => r.data)

@@ -675,6 +675,16 @@ def eb_account_map(data: dict):
     return {"ok": True}
 
 
+@router.post("/enablebanking/account-option")
+def eb_account_option(data: dict):
+    """{hash, invert} — reverse the signs of one bank account's amounts and balance."""
+    from data import enablebanking as eb
+    if not data.get("hash"):
+        raise HTTPException(400, "hash is required")
+    eb.set_account_option(data["hash"], bool(data.get("invert")))
+    return {"ok": True}
+
+
 @router.get("/enablebanking/linked/{account_id}")
 def eb_linked(account_id: int):
     from data import enablebanking as eb
@@ -703,8 +713,11 @@ def eb_fetch(data: dict):
         raise HTTPException(400, "date_from (and date_to) must be dates (YYYY-MM-DD)")
     if d1 and d1 < d0:
         raise HTTPException(400, "date_to is before date_from")
-    rows = _eb_call(eb.transactions, a["uid"], d0, d1)
+    invert = bool(eb.account_options().get(a["hash"], {}).get("invert"))
+    rows = _eb_call(eb.transactions, a["uid"], d0, d1, invert)
     bal = _eb_call(eb.balance, a["uid"])
+    if bal and invert and bal.get("amount") is not None:
+        bal["amount"] = -bal["amount"]
     return {"rows": rows, "balance": bal, "bank": c["bank"], "account": a["name"]}
 
 

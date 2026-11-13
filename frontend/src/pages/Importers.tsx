@@ -13,7 +13,7 @@ import {
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport, saveSecurityMappings,
   revtParse, revtImport, revsParse, revsImport, importFile,
   getImporterSettings, saveImporterSettings, getLinkedAccount,
-  ebStatus, ebSaveCredentials, ebBanks, ebStartAuth, ebFinishAuth, ebDisconnect, ebSaveAccountMap, ebLinked, ebFetch,
+  ebStatus, ebSaveCredentials, ebBanks, ebStartAuth, ebFinishAuth, ebDisconnect, ebSaveAccountMap, ebSetAccountOption, ebLinked, ebFetch,
   saxoGetSettings, saxoSaveAccountMap, saxoSaveChargePayee, saxoGetAuthUrl, saxoExchangeCode, saxoSession, saxoSaveCredentials,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
@@ -165,16 +165,17 @@ function SuccessBox({ msg }: { msg: string }) {
 
 // ── Bank → Import & Reconcile ─────────────────────────────────────────────────
 
-function ImportReconcileTab() {
+function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number | null }) {
   const [step, setStep] = useState(1)
-  const [accountId, setAccountId] = useState<number | null>(null)
+  // Opened from Enable Banking's Import button: that account, from the bank.
+  const [accountId, setAccountId] = useState<number | null>(startAccountId)
   const [profileId, setProfileId] = useState<number | null>(null)
   const [file, setFile] = useState<File | null>(null)
   // profilePerAccount: {account_id: profile_id} — last profile used per account
   const [profilePerAccount, setProfilePerAccount] = useState<Record<number, number>>({})
   const [ebLastTo, setEbLastTo] = useState<Record<number, string>>({})   // per account: end date of the last bank fetch
   const saveSettings = useImporterSettings('bank_import', s => {
-    if (s.account_id) setAccountId(s.account_id as number)
+    if (s.account_id && !startAccountId) setAccountId(s.account_id as number)
     if (s.profile_per_account) setProfilePerAccount(s.profile_per_account as Record<number, number>)
     if (s.eb_last_to) setEbLastTo(s.eb_last_to as Record<number, string>)
   })
@@ -192,10 +193,26 @@ function ImportReconcileTab() {
 
   // From the bank (Enable Banking): for an account linked in Importers → Bank → Enable Banking, the rows come
   // straight from the bank instead of a statement file, with the bank's balance as the statement balance.
-  const [source, setSource] = usePersist<'file' | 'bank'>('bank_import_source', 'bank')
+  const [savedSource, setSavedSource] = usePersist<'file' | 'bank'>('bank_import_source', 'bank')
+  const [sourceOverride, setSourceOverride] = useState<'bank' | null>(startAccountId ? 'bank' : null)
+  const source = sourceOverride ?? savedSource
+  const setSource = (v: 'file' | 'bank') => { setSourceOverride(null); setSavedSource(v) }
+  const ebConnected = useQuery({ queryKey: ['eb-status', 'lite'], queryFn: () => ebStatus(false) })
+  const hasBanks = (ebConnected.data?.connections.length ?? 0) > 0
   const [stmtBalance, setStmtBalance] = useState<number | null>(null)
   const [stmtDate, setStmtDate] = useState<string | null>(null)
   const [emptyMsg, setEmptyMsg] = useState('')
+  const [autoNote, setAutoNote] = useState('')   // the note last filled in from a bank fetch
+  // A new account starts over: rows fetched or parsed for the previous one must never be applied to it.
+  const clearReview = () => {
+    setStep(1); setParsedRows([]); setReviewRows([]); setPayeeAssign({}); setResult(null)
+    setStmtBalance(null); setStmtDate(null); setEmptyMsg('')
+  }
+  const changeAccount = (id: number) => {
+    setAccountId(id || null)
+    clearReview()
+    if (notes === autoNote) setNotes('')
+  }
   const linked = useQuery({ queryKey: ['eb-linked', accountId], queryFn: () => ebLinked(accountId!), enabled: !!accountId })
   const fromBank = source === 'bank' && !!linked.data?.linked
   // The range starts a week before the end of the last fetch for this account (the overlap is matched, not
@@ -242,6 +259,7 @@ function ImportReconcileTab() {
 
   const parseMut = useMutation({
     mutationFn: () => parseStatement(profileId!, file!),
+    onMutate: clearReview,
     onSuccess: async (data) => {
       // Save account + profile mapping so next visit restores both
       if (accountId && profileId) {
@@ -258,6 +276,7 @@ function ImportReconcileTab() {
 
   const fetchMut = useMutation({
     mutationFn: () => ebFetch({ account_id: accountId!, date_from: ebFrom, date_to: ebTo }),
+    onMutate: clearReview,   // a new fetch never shows the previous rows, even when it finds none
     onSuccess: async (data) => {
       const lastTo = { ...ebLastTo, [accountId!]: ebTo }
       setEbLastTo(lastTo)
@@ -265,7 +284,9 @@ function ImportReconcileTab() {
       setStmtBalance(data.balance?.amount ?? null)
       setStmtDate(data.balance?.date ?? ebTo)
       setEmptyMsg(data.rows.length ? '' : `${data.bank} has no booked transactions for this account between those dates.`)
-      if (!notes) setNotes(`${data.bank}, ${ebFrom} to ${ebTo}`)
+      const note = `${data.bank}, ${ebFrom} to ${ebTo}`
+      if (!notes || notes === autoNote) setNotes(note)   // keep a note the user typed
+      setAutoNote(note)
       if (data.rows.length) await matchRows(data.rows as unknown as Record<string, unknown>[])
     },
   })
@@ -365,7 +386,7 @@ function ImportReconcileTab() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Account</label>
-                <Select value={accountId ?? ''} onChange={e => setAccountId(Number(e.target.value))}>
+                <Select value={accountId ?? ''} onChange={e => changeAccount(Number(e.target.value))}>
                   <option value="">— select account —</option>
                   <AccountOptions accounts={accounts as Record<string, unknown>[]} />
                 </Select>
@@ -382,13 +403,19 @@ function ImportReconcileTab() {
               </div>
               )}
             </div>
-            {linked.data?.linked && (
+            {hasBanks && !!accountId && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-xs font-medium text-slate-600">Source</span>
-                {([['bank', `From the bank (${linked.data.bank})`], ['file', 'Statement file']] as const).map(([k, label]) => (
-                  <button key={k} type="button" onClick={() => setSource(k)}
-                    className={`px-2.5 py-1 rounded text-xs font-medium ${source === k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>
-                ))}
+                {([['bank', linked.data?.linked ? `From the bank (${linked.data.bank})` : 'From the bank'], ['file', 'Statement file']] as const).map(([k, label]) => {
+                  const on = k === 'bank' ? fromBank : !fromBank
+                  return (
+                    <button key={k} type="button" onClick={() => setSource(k)} disabled={k === 'bank' && !linked.data?.linked}
+                      className={`px-2.5 py-1 rounded text-xs font-medium disabled:opacity-50 ${on ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>
+                  )
+                })}
+                {linked.data && !linked.data.linked && (
+                  <span className="text-xs text-slate-500">This account is not linked to a bank account: link it in Importers → Bank → Enable Banking.</span>
+                )}
               </div>
             )}
             {fromBank ? (
@@ -404,7 +431,7 @@ function ImportReconcileTab() {
                   </div>
                 </div>
                 <p className="text-xs text-slate-500">
-                  {linked.data?.account} {linked.data?.iban && <span className="font-mono">({linked.data.iban})</span>} at {linked.data?.bank}.
+                  {linked.data?.account || 'Bank account'} {linked.data?.iban && <span className="font-mono">({linked.data.iban})</span>} at {linked.data?.bank}.
                   Only booked transactions are fetched; pending ones come once the bank books them.
                   {accountId && ebLastTo[accountId] && <> Last fetched up to {ebLastTo[accountId]}.</>}
                 </p>
@@ -957,7 +984,7 @@ function daysLeft(iso: string | null): number | null {
   return Math.floor((new Date(iso).getTime() - Date.now()) / 86400000)
 }
 
-function EnableBankingTab() {
+function EnableBankingTab({ onImport }: { onImport?: (accountId: number) => void }) {
   const qc = useQueryClient()
   const redirectUrl = `${window.location.origin}/importers`
   const status = useQuery({ queryKey: ['eb-status'], queryFn: () => ebStatus(true) })
@@ -1010,6 +1037,10 @@ function EnableBankingTab() {
     mutationFn: (id: string) => ebDisconnect(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['eb-status'] }),
     onError: e => setMsg({ ok: false, text: apiErrorMsg(e) }),
+  })
+  const setInvert = useMutation({
+    mutationFn: (v: { hash: string; invert: boolean }) => ebSetAccountOption(v.hash, v.invert),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['eb-status'] }),
   })
   const mapAccount = useMutation({
     mutationFn: (m: Record<string, number | null>) => ebSaveAccountMap(m),
@@ -1131,7 +1162,9 @@ function EnableBankingTab() {
               <table data-cards className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
-                    <th className="py-1.5 pr-3">Bank account</th><th className="py-1.5 pr-3">IBAN</th><th className="py-1.5 pr-3">Ccy</th><th className="py-1.5">Oikos account</th>
+                    <th className="py-1.5 pr-3">Bank account</th><th className="py-1.5 pr-3">IBAN</th><th className="py-1.5 pr-3">Ccy</th><th className="py-1.5 pr-3">Oikos account</th>
+                    <th className="py-1.5 px-2 text-center" title="Tick when the bank shows this account's purchases as + (some credit cards, such as Eurobank's): every amount and the balance change sign">Reverse +/−</th>
+                    <th className="py-1.5"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1145,6 +1178,16 @@ function EnableBankingTab() {
                           <option value="">— not linked —</option>
                           <AccountOptions accounts={accounts as Record<string, unknown>[]} />
                         </Select>
+                      </td>
+                      <td className="py-1.5 px-2 text-center" data-label="Reverse +/−">
+                        <input type="checkbox" checked={!!a.invert} disabled={setInvert.isPending}
+                          onChange={e => setInvert.mutate({ hash: a.hash, invert: e.target.checked })} />
+                      </td>
+                      <td className="py-1.5 pl-2 text-right whitespace-nowrap">
+                        {a.oikos_account_id && !c.expired && onImport && (
+                          <button className="text-xs text-blue-600 hover:underline" onClick={() => onImport(a.oikos_account_id!)}
+                            title="Fetch this account's transactions in Import & Reconcile">Import →</button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -4254,6 +4297,7 @@ export default function Importers() {
   const [section, setSection] = usePersist<'bank' | 'brokerage' | 'qif'>('importers_section', 'bank')
   const [savedBankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
   const bankTab = BANK_TABS.includes(savedBankTab) ? savedBankTab : BANK_TABS[0]   // a renamed tab (Salt Edge) falls back
+  const [reconcileAccount, setReconcileAccount] = useState<number | null>(null)   // set by Enable Banking's Import button
   const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
   const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
 
@@ -4288,8 +4332,8 @@ export default function Importers() {
         {section === 'bank' && (
           <>
             <SubTabs tabs={BANK_TABS} active={bankTab} onChange={setBankTab} />
-            {bankTab === BANK_TABS[0] && <ImportReconcileTab />}
-            {bankTab === BANK_TABS[1] && <EnableBankingTab />}
+            {bankTab === BANK_TABS[0] && <ImportReconcileTab key={reconcileAccount ?? 0} startAccountId={reconcileAccount} />}
+            {bankTab === BANK_TABS[1] && <EnableBankingTab onImport={id => { setReconcileAccount(id); setBankTab(BANK_TABS[0]) }} />}
             {bankTab === BANK_TABS[2] && <RevolutPersonalTab />}
             {bankTab === BANK_TABS[3] && <RevolutSavingsTab />}
             {bankTab === BANK_TABS[4] && <ImportProfilesTab />}

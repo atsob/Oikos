@@ -1822,10 +1822,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <code>/importers</code>), and use <i>Activate by linking accounts</i> to link the accounts you want; the application
           then runs in restricted mode and can read only those. Enter the application ID and the .pem file in the tab (the key
           stays on the server), pick the bank, <b>Connect</b>, approve at the bank, and choose the Oikos account for each bank
-          account. In <b>Import &amp; Reconcile</b> a linked account then has a <b>Source</b> switch: <i>From the bank</i>
+          account. In <b>Import &amp; Reconcile</b> (or with <b>Import →</b> next to a linked account in the tab) a linked account then has a <b>Source</b> switch: <i>From the bank</i>
           fetches the booked transactions between two dates (from a week before the last fetch, so nothing falls between two
           runs) and goes through the usual matching, payee rules and reconciliation, with the bank's balance as the statement
-          balance; a counterparty name that is already one of your payees is used as the payee. Pending transactions are left
+          balance; a counterparty name that is already one of your payees is used as the payee. Rows take the purchase date when the bank gives a plausible one
+          (a card purchase is booked a day or two later), so they match what you entered. If the bank reports a card's
+          purchases as credits (Eurobank does), tick <b>Reverse +/−</b> for that account in the tab; amounts and balance then
+          change sign. Some banks send no description for card transactions, only the date and amount. Pending transactions are left
           out until the bank books them. The bank's approval lasts as long as it allows, usually 180 days; the tab shows the
           days left, and connecting the bank again renews it and keeps the account links.
         </Note>

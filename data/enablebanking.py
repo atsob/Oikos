@@ -148,6 +148,21 @@ def save_account_map(m: dict) -> None:
     save_app_setting("eb_account_map", json.dumps({k: int(v) for k, v in m.items() if v}))
 
 
+def account_options() -> dict[str, dict]:
+    """{bank account hash: {"invert": bool}} — invert: the bank reports this account's debits as credits (some
+    credit cards mark a purchase CRDT), so every amount and the balance change sign."""
+    try:
+        return json.loads(get_app_setting("eb_account_options") or "{}")
+    except Exception:
+        return {}
+
+
+def set_account_option(hash_: str, invert: bool) -> None:
+    opts = account_options()
+    opts[hash_] = {**opts.get(hash_, {}), "invert": bool(invert)}
+    save_app_setting("eb_account_options", json.dumps(opts))
+
+
 def _mask(iban: str | None) -> str:
     return f"{iban[:4]} … {iban[-4:]}" if iban and len(iban) > 8 else (iban or "")
 
@@ -191,7 +206,7 @@ def disconnect(session_id: str) -> None:
 
 
 def status() -> dict:
-    m = account_map()
+    m, opts = account_map(), account_options()
     now = datetime.now(timezone.utc)
     conns = []
     for c in _connections():
@@ -200,7 +215,8 @@ def status() -> dict:
         except ValueError:
             expired = False
         conns.append({**c, "expired": expired,
-                      "accounts": [{**a, "oikos_account_id": m.get(a["hash"])} for a in c["accounts"]]})
+                      "accounts": [{**a, "oikos_account_id": m.get(a["hash"]),
+                                    "invert": bool(opts.get(a["hash"], {}).get("invert"))} for a in c["accounts"]]})
     return {"app_id": get_app_setting("eb_app_id") or "", "key_set": bool(get_app_setting("eb_private_key")),
             "connections": conns}
 
@@ -246,10 +262,25 @@ def _description(t: dict) -> tuple[str, str]:
     return " ".join(desc.split()), party or ""
 
 
-def transactions(uid: str, date_from: date, date_to: date | None = None) -> list[dict]:
+def _row_date(t: dict) -> str | None:
+    """The purchase date (transaction_date) when it is plausible — on or up to 10 days before the booking date, as
+    a card purchase is booked a day or two later — else the booking date. Matching against the register needs the
+    purchase date (that is the date entered by hand); some banks send a nonsense one now and then (years off)."""
+    booked = (t.get("booking_date") or t.get("value_date") or "")[:10]
+    tx = (t.get("transaction_date") or "")[:10]
+    if tx and booked:
+        try:
+            gap = (date.fromisoformat(booked) - date.fromisoformat(tx)).days
+            return tx if 0 <= gap <= 10 else booked
+        except ValueError:
+            return booked
+    return booked or tx or None
+
+
+def transactions(uid: str, date_from: date, date_to: date | None = None, invert: bool = False) -> list[dict]:
     """Booked transactions as statement rows {date, description, amount, balance, payee, ref}, oldest first.
     Pending ones are left out: a bank often changes their text or amount when it books them, so importing them
-    would leave duplicates."""
+    would leave duplicates. invert flips every amount and balance (a bank that reports a card's debits as credits)."""
     params: dict[str, Any] = {"date_from": date_from.isoformat()}
     if date_to:
         params["date_to"] = date_to.isoformat()
@@ -267,12 +298,15 @@ def transactions(uid: str, date_from: date, date_to: date | None = None) -> list
                 amt = -abs(amt)
             elif t.get("credit_debit_indicator") == "CRDT":
                 amt = abs(amt)
-            d = t.get("booking_date") or t.get("value_date") or t.get("transaction_date")
+            d = _row_date(t)
             if not d:
                 continue
             desc, party = _description(t)
-            rows.append({"date": d[:10], "description": desc, "amount": round(amt, 2),
-                         "balance": _amount(t.get("balance_after_transaction")), "payee": party,
+            bal = _amount(t.get("balance_after_transaction"))
+            if invert:
+                amt, bal = -amt, (-bal if bal is not None else None)
+            rows.append({"date": d, "description": desc, "amount": round(amt, 2) + 0.0,
+                         "balance": bal, "payee": party,
                          "ref": t.get("entry_reference") or t.get("transaction_id")})
         key, pages = data.get("continuation_key"), pages + 1
         if not key or pages >= 100:
