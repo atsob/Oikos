@@ -2,6 +2,15 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-13
+
+### Fixed
+- **Date fields on a phone: typing a date.** A date field opens the phone's number keypad, which has no `/` key, so a date could not be typed in full. The separators are now added as you type (`13112026` becomes `13/11/2026`, following the date format in App Settings), and eight digits in a row are taken as a date too. Typing a separator yourself still works.
+- **Date fields on a phone: the calendar icon did nothing.** It asked the browser to open a hidden date field's picker, which iPhone Safari ignores. The phone's own date field now sits, invisible, over the icon, so a tap opens the phone's date picker. This applies to every date field, the transaction forms included.
+
+### Added
+- **P&L on a phone: Sort by.** On a phone the P&L tables (By Account, By Security and an account's positions) are cards without their sortable headers. A **Sort by** list with a ▲/▼ button above the cards now sorts them, largest first for figures and A to Z for names. It is the same saved sort as the column headers on a computer.
+
 ## 2026-11-09
 
 ### Fixed

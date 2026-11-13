@@ -181,7 +181,11 @@ Input.displayName = 'Input'
 function parseDateText(text: string, format: string, shortYear = false): string | null {
   const t = text.trim()
   if (!t) return ''
-  const parts = t.split(/[/.\-\s]+/)
+  // Digits only, as typed on a phone's number keypad (no "/" key): 8 digits in the setting's order.
+  const compact = /^\d{8}$/.test(t)
+    ? (format === 'YYYY-MM-DD' ? [t.slice(0, 4), t.slice(4, 6), t.slice(6)] : [t.slice(0, 2), t.slice(2, 4), t.slice(4)])
+    : null
+  const parts = compact ?? t.split(/[/.\-\s]+/)
   if (parts.length !== 3 || parts.some(p => !/^\d+$/.test(p))) return null
   // A 4-digit first part is always year-first, whatever the setting.
   const [y, m, d] = parts[0].length === 4 ? parts
@@ -192,6 +196,20 @@ function parseDateText(text: string, format: string, shortYear = false): string 
   if (y.length !== 4 && !(shortYear && y.length === 2)) return null
   if (dt.getFullYear() !== year || dt.getMonth() !== Number(m) - 1 || dt.getDate() !== Number(d)) return null
   return `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+// The field opens the number keypad on phones, which has no "/" key: while typing forward, add
+// the separator once a day/month (or year) part is complete. Deleting is left alone, and a
+// separator the user types right after an added one is not doubled.
+function autoSeparate(next: string, prev: string, format: string): string {
+  if (next.length <= prev.length || !/\d$/.test(next)) {
+    return next.length > prev.length ? next.replace(/([/.\-\s])[/.\-\s]+$/, '$1') : next
+  }
+  const sep = format === 'YYYY-MM-DD' ? '-' : '/'
+  const sizes = format === 'YYYY-MM-DD' ? [4, 2] : [2, 2]
+  const parts = next.split(/[/.\-\s]+/)
+  if (parts.length > 2 || parts.join('').length === 8) return next
+  return parts[parts.length - 1].length === sizes[parts.length - 1] ? next + sep : next
 }
 
 export const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
@@ -234,8 +252,9 @@ export const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttri
           value={text}
           onFocus={() => setEditing(true)}
           onChange={e => {
-            setText(e.target.value)
-            const v = parseDateText(e.target.value, dateFormat)
+            const typed = autoSeparate(e.target.value, text, dateFormat)
+            setText(typed)
+            const v = parseDateText(typed, dateFormat)
             if (v !== null) emit(v)
           }}
           onBlur={e => {
@@ -267,7 +286,14 @@ export const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttri
           max={max}
           value={iso}
           onChange={e => emit(e.target.value)}
-          className="absolute inset-0 opacity-0 pointer-events-none w-full h-full"
+          // Sits over the calendar button, invisible, so a tap lands on the native date field
+          // itself: phones (iOS Safari above all) open their own picker for that, while a
+          // scripted showPicker() on a hidden field is often ignored there. A click on a
+          // computer still calls showPicker(), since a desktop date field opens its picker only
+          // from its own icon. 16px text stops iOS zooming in when the field takes focus.
+          onClick={e => { try { e.currentTarget.showPicker() } catch { /* opens natively */ } }}
+          disabled={disabled}
+          className="absolute right-0 top-0 h-full w-8 opacity-0 cursor-pointer text-base disabled:cursor-default"
         />
       </div>
     )
@@ -860,9 +886,49 @@ export function useSortTablePersisted<T>(
     setSortKey(key)
   }, [sortKey, sortDir, setSortKey, setSortDir])
 
+  const setSort = useCallback((key: string, dir: 'asc' | 'desc') => {
+    setSortKey(key); setSortDir(dir)
+  }, [setSortKey, setSortDir])
+
   const sorted = useMemo(() => _sortRows(data, sortKey, sortDir), [data, sortKey, sortDir])
 
-  return { sorted, sortKey, sortDir, toggleSort }
+  return { sorted, sortKey, sortDir, toggleSort, setSort }
+}
+
+// ── MobileSort ────────────────────────────────────────────────────────────────
+// On a phone a report table shows as cards, without its header row, so its columns can't be
+// tapped to sort. This "Sort by" list with an up/down button stands in for them there (hidden
+// from 768px up). It sets the same saved sort as the column headers. Picking a column sorts
+// numbers largest first and text A to Z; the arrow button reverses it.
+export function MobileSort({ options, currentKey, currentDir, onSet }: {
+  options: { key: string; label: string; text?: boolean }[]
+  currentKey: string | null
+  currentDir: 'asc' | 'desc'
+  onSet: (key: string, dir: 'asc' | 'desc') => void
+}) {
+  const key = options.some(o => o.key === currentKey) ? currentKey! : ''
+  return (
+    <div className="md:hidden flex items-center gap-2 py-2 px-1 text-sm">
+      <span className="text-slate-500 whitespace-nowrap">Sort by</span>
+      <select
+        className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+        value={key}
+        onChange={e => { const o = options.find(x => x.key === e.target.value); if (o) onSet(o.key, o.text ? 'asc' : 'desc') }}
+      >
+        {!key && <option value="">—</option>}
+        {options.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+      </select>
+      <button
+        type="button"
+        disabled={!key}
+        onClick={() => onSet(key, currentDir === 'asc' ? 'desc' : 'asc')}
+        className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-slate-700 disabled:opacity-40"
+        title={currentDir === 'asc' ? 'Ascending: tap for descending' : 'Descending: tap for ascending'}
+      >
+        {currentDir === 'asc' ? '▲' : '▼'}
+      </button>
+    </div>
+  )
 }
 
 // ── ColHeader ─────────────────────────────────────────────────────────────────

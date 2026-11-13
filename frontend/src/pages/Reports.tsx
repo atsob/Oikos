@@ -32,7 +32,7 @@ import {
   createTransfer, createTransaction,
   api,
 } from '@/lib/api'
-import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink, DateInput } from '@/components/ui'
+import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, MobileSort, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink, DateInput } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
@@ -2697,11 +2697,33 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
     }).filter(a => a.children.length > 0)
   })()
 
-  const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort } = useSortTablePersisted(accounts, 'pnl-accounts-sort', 'value', 'desc')
-  const { sorted: sortedSecs, sortKey: scSK, sortDir: scSD, toggleSort: scSort } = useSortTablePersisted(securityRows, 'pnl-securities-sort', 'current_value_eur', 'desc')
-  const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort } = useSortTablePersisted(drillRows ?? [], 'pnl-drill-sort', 'current_value_eur', 'desc')
+  const { sorted: sortedAccounts, sortKey: acSK, sortDir: acSD, toggleSort: acSort, setSort: acSet } = useSortTablePersisted(accounts, 'pnl-accounts-sort', 'value', 'desc')
+  const { sorted: sortedSecs, sortKey: scSK, sortDir: scSD, toggleSort: scSort, setSort: scSet } = useSortTablePersisted(securityRows, 'pnl-securities-sort', 'current_value_eur', 'desc')
+  const { sorted: sortedDrill,    sortKey: drSK, sortDir: drSD, toggleSort: drSort, setSort: drSet } = useSortTablePersisted(drillRows ?? [], 'pnl-drill-sort', 'current_value_eur', 'desc')
 
   if (isLoading || ltLoading) return <div className="flex justify-center py-12"><Spinner /></div>
+
+  // Sort list for the phone, where the tables show as cards without their sortable headers.
+  const P = win.toUpperCase()
+  const posSortOpts = [
+    { key: 'current_value_eur', label: 'Value (€)' }, { key: pk, label: `P&L (${P})` },
+    ...(showPct ? [{ key: 'pnl_pct', label: 'P&L %' }] : []),
+    { key: 'unrealized_pnl_eur', label: 'Unrealized' }, { key: 'unrealized_pnl_pct', label: 'Unreal. %' },
+    { key: 'realized_pnl_eur', label: 'Realized' }, { key: 'realized_pnl_pct', label: 'Real. %' },
+    { key: 'dividend_yoc_pct', label: 'YOC %' }, { key: 'securities_name', label: 'Security', text: true },
+  ]
+  const acctSortOpts = [
+    { key: 'value', label: 'Value (€)' }, { key: 'pnl', label: `P&L (${P})` },
+    ...(showPct ? [{ key: 'pnl_pct', label: 'P&L %' }] : []),
+    { key: 'unrealized', label: 'Unrealized' }, { key: 'unrealized_pct', label: 'Unrealized %' },
+    { key: 'realized', label: 'Realized' }, { key: 'realized_pct', label: 'Realized %' },
+    { key: 'name', label: 'Account', text: true },
+  ]
+  const mobileSort = drillRows
+    ? <MobileSort options={posSortOpts} currentKey={drSK} currentDir={drSD} onSet={drSet} />
+    : pnlView === 'security'
+      ? <MobileSort options={posSortOpts} currentKey={scSK} currentDir={scSD} onSet={scSet} />
+      : <MobileSort options={acctSortOpts} currentKey={acSK} currentDir={acSD} onSet={acSet} />
 
   const checkboxBar = (
     <div className="flex flex-wrap gap-4 items-center py-2 px-1 border-b border-slate-100">
@@ -2758,6 +2780,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
         )}
       </div>
       {checkboxBar}
+      {mobileSort}
       {drillRows ? (() => {
         const drillValue    = drillRows.reduce((s, r) => s + Number(r.current_value_eur ?? 0), 0)
         const drillPnl      = drillRows.reduce((s, r) => s + Number(r[pk] ?? 0), 0)
