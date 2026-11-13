@@ -28,7 +28,7 @@ reporting and portfolio analysis. FastAPI + React/TypeScript on PostgreSQL. Sing
 - **Signals and alerts** — Action verdicts (Add / Hold / Reduce / Sell), support / resistance, Market Watch and Local Market Watch, with a
   Dashboard you can customize and optional **Telegram** notifications.
 - **Plan** — dated to-do steps (a rebalancing plan, a tax-year checklist) with a morning Telegram reminder.
-- **Imports** — Interactive Brokers, Saxo, Revolut, bank statements and open banking (GoCardless, Salt Edge); market data from Yahoo
+- **Imports** — Interactive Brokers, Saxo, Revolut, bank statements and open banking (Enable Banking); market data from Yahoo
   Finance, TradingView and optional EODHD / FRED keys.
 - **AI assistant** (optional) — a local model through Ollama, or Anthropic's API; a read-only connector lets Claude query your data.
 - **Phone-friendly** — installs as a home-screen app; tables become cards on a small screen.

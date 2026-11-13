@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions, DateInput } from '@/components/ui'
 import { Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
-import { fmtNum } from '@/lib/utils'
+import { fmtNum, todayLocal } from '@/lib/utils'
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
   getPayeeRules, createPayeeRule, updatePayeeRule, deletePayeeRule,
@@ -13,6 +13,7 @@ import {
   getReconciliationHistoryAccounts, getReconciliationHistory, ibFlexFetch, ibFlexParse, ibFlexImport, saveSecurityMappings,
   revtParse, revtImport, revsParse, revsImport, importFile,
   getImporterSettings, saveImporterSettings, getLinkedAccount,
+  ebStatus, ebSaveCredentials, ebBanks, ebStartAuth, ebFinishAuth, ebDisconnect, ebSaveAccountMap, ebLinked, ebFetch,
   saxoGetSettings, saxoSaveAccountMap, saxoSaveChargePayee, saxoGetAuthUrl, saxoExchangeCode, saxoSession, saxoSaveCredentials,
   saxoFetchAccounts, saxoFetchTrades, saxoImport,
   saxoPdfPreview, saxoPdfImport,
@@ -171,9 +172,11 @@ function ImportReconcileTab() {
   const [file, setFile] = useState<File | null>(null)
   // profilePerAccount: {account_id: profile_id} — last profile used per account
   const [profilePerAccount, setProfilePerAccount] = useState<Record<number, number>>({})
+  const [ebLastTo, setEbLastTo] = useState<Record<number, string>>({})   // per account: end date of the last bank fetch
   const saveSettings = useImporterSettings('bank_import', s => {
     if (s.account_id) setAccountId(s.account_id as number)
     if (s.profile_per_account) setProfilePerAccount(s.profile_per_account as Record<number, number>)
+    if (s.eb_last_to) setEbLastTo(s.eb_last_to as Record<number, string>)
   })
 
   // When account changes, restore last-used profile for that account
@@ -186,6 +189,25 @@ function ImportReconcileTab() {
   const [payeeAssign, setPayeeAssign] = useState<Record<number, { payee_name: string; category_id: number | null }>>({})
   const [notes, setNotes] = useState('')
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
+
+  // From the bank (Enable Banking): for an account linked in Importers → Bank → Enable Banking, the rows come
+  // straight from the bank instead of a statement file, with the bank's balance as the statement balance.
+  const [source, setSource] = usePersist<'file' | 'bank'>('bank_import_source', 'bank')
+  const [stmtBalance, setStmtBalance] = useState<number | null>(null)
+  const [stmtDate, setStmtDate] = useState<string | null>(null)
+  const [emptyMsg, setEmptyMsg] = useState('')
+  const linked = useQuery({ queryKey: ['eb-linked', accountId], queryFn: () => ebLinked(accountId!), enabled: !!accountId })
+  const fromBank = source === 'bank' && !!linked.data?.linked
+  // The range starts a week before the end of the last fetch for this account (the overlap is matched, not
+  // imported twice), or 30 days back the first time; dates the user changes hold for that account only.
+  const [ebRange, setEbRange] = useState<{ acc: number | null; from: string; to: string } | null>(null)
+  const shiftDays = (iso: string, days: number) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10) }
+  const lastTo = accountId ? ebLastTo[accountId] : undefined
+  const range = ebRange && ebRange.acc === accountId ? ebRange
+    : { acc: accountId, from: lastTo ? shiftDays(lastTo, -7) : shiftDays(todayLocal(), -30), to: todayLocal() }
+  const ebFrom = range.from, ebTo = range.to
+  const setEbFrom = (v: string) => setEbRange({ ...range, from: v })
+  const setEbTo = (v: string) => setEbRange({ ...range, to: v })
 
   const { data: accounts = [] } = useQuery({ queryKey: ['bank-accounts'], queryFn: getBankAccounts })
   const { data: profiles = [] } = useQuery({ queryKey: ['import-profiles'], queryFn: getImportProfiles })
@@ -225,10 +247,32 @@ function ImportReconcileTab() {
       if (accountId && profileId) {
         const newMap = { ...profilePerAccount, [accountId]: profileId }
         setProfilePerAccount(newMap)
-        saveSettings({ account_id: accountId, profile_per_account: newMap })
+        saveSettings({ account_id: accountId, profile_per_account: newMap, eb_last_to: ebLastTo })
       }
       const rows: Record<string, unknown>[] = data.rows ?? []
       if (!rows.length) return
+      setStmtBalance(null); setStmtDate(null)
+      await matchRows(rows)
+    },
+  })
+
+  const fetchMut = useMutation({
+    mutationFn: () => ebFetch({ account_id: accountId!, date_from: ebFrom, date_to: ebTo }),
+    onSuccess: async (data) => {
+      const lastTo = { ...ebLastTo, [accountId!]: ebTo }
+      setEbLastTo(lastTo)
+      saveSettings({ account_id: accountId, profile_per_account: profilePerAccount, eb_last_to: lastTo })
+      setStmtBalance(data.balance?.amount ?? null)
+      setStmtDate(data.balance?.date ?? ebTo)
+      setEmptyMsg(data.rows.length ? '' : `${data.bank} has no booked transactions for this account between those dates.`)
+      if (!notes) setNotes(`${data.bank}, ${ebFrom} to ${ebTo}`)
+      if (data.rows.length) await matchRows(data.rows as unknown as Record<string, unknown>[])
+    },
+  })
+
+  // Match statement rows (from a file or the bank) against the account's transactions in the app, and pre-fill the
+  // payee/category of new ones from the payee rules (or, from the bank, an existing payee with the counterparty's name).
+  async function matchRows(rows: Record<string, unknown>[]) {
       setParsedRows(rows)
 
       const dates = rows.map(r => r.date as string).sort()
@@ -254,7 +298,12 @@ function ImportReconcileTab() {
         const status = exact ? 'matched' : fuzzy ? 'possible_dup' : 'new'
         const defaultAction = exact ? 'Reconcile' : fuzzy ? 'Skip' : 'Import'
         if (defaultAction === 'Import') {
-          initialPayeeAssign[i] = applyRules(String(r.description ?? ''))
+          const byRule = applyRules(String(r.description ?? ''))
+          const party = String(r.payee ?? '').trim().toUpperCase()
+          const known = !byRule.payee_name && party
+            ? (payees as { name: string }[]).find(p => String(p.name).trim().toUpperCase() === party)
+            : undefined
+          initialPayeeAssign[i] = known ? { payee_name: known.name, category_id: null } : byRule
         }
         return {
           ...r,
@@ -268,16 +317,15 @@ function ImportReconcileTab() {
       setPayeeAssign(initialPayeeAssign)
       setReviewRows(matched)
       setStep(2)
-    },
-  })
+  }
 
   const applyMut = useMutation({
     mutationFn: () => {
       const acc = (accounts as Record<string, unknown>[]).find(a => a.id === accountId)
       return applyBankImport({
         account_id: accountId,
-        stmt_date: parsedRows.length ? parsedRows[parsedRows.length - 1].date : null,
-        stmt_balance: null,
+        stmt_date: stmtDate ?? (parsedRows.length ? parsedRows[parsedRows.length - 1].date : null),
+        stmt_balance: stmtBalance,
         app_balance: acc ? Number(acc.balance) : null,
         notes,
         rows: reviewRows.map(r => ({
@@ -305,13 +353,14 @@ function ImportReconcileTab() {
   return (
     <div className="space-y-6">
       <InfoBox>
-        Import a CSV or Excel bank statement, match transactions already in the app, import new ones, and mark everything reconciled.
+        Import a CSV or Excel bank statement, or fetch the transactions straight from the bank for an account linked in
+        Enable Banking; match transactions already in the app, import new ones, and mark everything reconciled.
       </InfoBox>
 
       {/* Step 1: Account + Profile + File */}
       {step >= 1 && (
         <Card>
-          <CardHeader><CardTitle>Step 1 — Account, Profile & File</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{fromBank ? 'Step 1 — Account & Dates' : 'Step 1 — Account, Profile & File'}</CardTitle></CardHeader>
           <CardBody className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -321,6 +370,7 @@ function ImportReconcileTab() {
                   <AccountOptions accounts={accounts as Record<string, unknown>[]} />
                 </Select>
               </div>
+              {!fromBank && (
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Import Profile</label>
                 <Select value={profileId ?? ''} onChange={e => setProfileId(Number(e.target.value))}>
@@ -330,7 +380,41 @@ function ImportReconcileTab() {
                   ))}
                 </Select>
               </div>
+              )}
             </div>
+            {linked.data?.linked && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-xs font-medium text-slate-600">Source</span>
+                {([['bank', `From the bank (${linked.data.bank})`], ['file', 'Statement file']] as const).map(([k, label]) => (
+                  <button key={k} type="button" onClick={() => setSource(k)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium ${source === k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{label}</button>
+                ))}
+              </div>
+            )}
+            {fromBank ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
+                    <DateInput className="w-36" value={ebFrom} onChange={e => setEbFrom(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
+                    <DateInput className="w-36" value={ebTo} onChange={e => setEbTo(e.target.value)} />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">
+                  {linked.data?.account} {linked.data?.iban && <span className="font-mono">({linked.data.iban})</span>} at {linked.data?.bank}.
+                  Only booked transactions are fetched; pending ones come once the bank books them.
+                  {accountId && ebLastTo[accountId] && <> Last fetched up to {ebLastTo[accountId]}.</>}
+                </p>
+                <Button disabled={!accountId || !ebFrom || fetchMut.isPending} onClick={() => fetchMut.mutate()}>
+                  {fetchMut.isPending ? <><Spinner size={14} /> Fetching from the bank…</> : <>Fetch &amp; Match</>}
+                </Button>
+                {fetchMut.isError && <ErrorBox msg={apiErrorMsg(fetchMut.error)} />}
+                {emptyMsg && !fetchMut.isPending && <InfoBox>{emptyMsg}</InfoBox>}
+              </div>
+            ) : (<>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Statement File (CSV / XLSX)</label>
               {file ? (
@@ -351,6 +435,7 @@ function ImportReconcileTab() {
               {parseMut.isPending ? <><Spinner size={14} /> Parsing…</> : <>Parse & Match</>}
             </Button>
             {parseMut.isError && <ErrorBox msg={apiErrorMsg(parseMut.error)} />}
+            </>)}
           </CardBody>
         </Card>
       )}
@@ -860,35 +945,215 @@ function ImportHistoryTab() {
   )
 }
 
-// ── Bank → Salt Edge ──────────────────────────────────────────────────────────
+// ── Bank → Enable Banking (PSD2 open banking) ─────────────────────────────────
+// Links the user's own bank accounts (Alpha Bank, Eurobank, Piraeus, NBG …) through Enable Banking, which holds the
+// PSD2 licence a bank's account API requires. The private key stays on the server; this page only uploads it once.
+// The bank's login sends the browser back to /importers?code=…&state=eb_…, which this tab picks up to finish.
 
-function SaltEdgeTab() {
+const EB_COUNTRIES = ['GR', 'CY', 'DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'PT', 'IE', 'LT', 'FI']
+
+function daysLeft(iso: string | null): number | null {
+  if (!iso) return null
+  return Math.floor((new Date(iso).getTime() - Date.now()) / 86400000)
+}
+
+function EnableBankingTab() {
+  const qc = useQueryClient()
+  const redirectUrl = `${window.location.origin}/importers`
+  const status = useQuery({ queryKey: ['eb-status'], queryFn: () => ebStatus(true) })
+  const { data: accounts = [] } = useQuery({ queryKey: ['bank-accounts'], queryFn: getBankAccounts })
+  const [appIdInput, setAppId] = useState<string | null>(null)
+  const [pem, setPem] = useState<{ name: string; text: string } | null>(null)
+  const [country, setCountry] = usePersist('eb_country', 'GR')
+  const [bank, setBank] = useState('')
+  // Back from the bank: ?code=…&state=eb_… (or ?error=…). Read once; the effect below finishes the connection.
+  const [back] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    const state = params.get('state') ?? ''
+    return state.startsWith('eb_')
+      ? { state, code: params.get('code'), error: params.get('error_description') || params.get('error') || 'cancelled' }
+      : null
+  })
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(
+    back && !back.code ? { ok: false, text: `The bank did not give access: ${back.error}.` } : null)
+  const finishing = useRef(false)
+
+  const s = status.data
+  const appId = appIdInput ?? s?.app_id ?? ''
+  const ready = !!(s?.app_id && s?.key_set)
+  const banks = useQuery({ queryKey: ['eb-banks', country], queryFn: () => ebBanks(country), enabled: ready, staleTime: 3600_000 })
+
+  // Finish the connection once, then clean the address bar.
+  useEffect(() => {
+    if (!back || finishing.current) return
+    finishing.current = true
+    const url = new URL(window.location.href)
+    ;['code', 'state', 'error', 'error_description'].forEach(k => url.searchParams.delete(k))
+    window.history.replaceState({}, '', url.toString())
+    if (!back.code) return
+    ebFinishAuth({ code: back.code, state: back.state })
+      .then(c => { setMsg({ ok: true, text: `${c.bank} connected: ${c.accounts.length} account(s). Link each one to an Oikos account below.` }); qc.invalidateQueries({ queryKey: ['eb-status'] }) })
+      .catch(e => setMsg({ ok: false, text: apiErrorMsg(e) }))
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveCreds = useMutation({
+    mutationFn: () => ebSaveCredentials({ app_id: appId.trim(), private_key: pem?.text }),
+    onSuccess: () => { setPem(null); setMsg({ ok: true, text: 'Saved, and Enable Banking accepted the key.' }); qc.invalidateQueries({ queryKey: ['eb-status'] }) },
+    onError: e => setMsg({ ok: false, text: apiErrorMsg(e) }),
+  })
+  const connect = useMutation({
+    mutationFn: () => ebStartAuth({ bank, country, redirect_url: redirectUrl }),
+    onSuccess: d => { window.location.href = d.url },
+    onError: e => setMsg({ ok: false, text: apiErrorMsg(e) }),
+  })
+  const disconnect = useMutation({
+    mutationFn: (id: string) => ebDisconnect(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['eb-status'] }),
+    onError: e => setMsg({ ok: false, text: apiErrorMsg(e) }),
+  })
+  const mapAccount = useMutation({
+    mutationFn: (m: Record<string, number | null>) => ebSaveAccountMap(m),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['eb-status'] }); qc.invalidateQueries({ queryKey: ['eb-linked'] }) },
+  })
+
+  const app = s?.application
+  const redirectMissing = !!app && !(app.redirect_urls ?? []).includes(redirectUrl)
+
   return (
     <div className="space-y-4">
       <InfoBox>
-        Connect directly to your bank via <strong>Salt Edge</strong> (PSD2 open banking). Supports Greek banks (Alpha Bank, Eurobank, Piraeus, NBG) and 5,000+ institutions across Europe.
+        Read your bank accounts' transactions and balances straight from the bank (PSD2 open banking) through{' '}
+        <strong>Enable Banking</strong>: Alpha Bank, Eurobank, Piraeus, NBG and most European banks. Link each bank account
+        to an Oikos account here, then use <strong>Import &amp; Reconcile → From the bank</strong> to bring its transactions in
+        with the usual matching and payee rules.
       </InfoBox>
+      {msg && (msg.ok ? <SuccessBox msg={msg.text} /> : <ErrorBox msg={msg.text} />)}
+
       <Card>
+        <CardHeader><CardTitle>1 — Your Enable Banking application</CardTitle></CardHeader>
         <CardBody className="space-y-3">
-          <p className="text-sm text-slate-600">You need a <strong>free Salt Edge developer account</strong> to use this feature.</p>
           <ol className="text-sm text-slate-600 space-y-1 list-decimal list-inside">
-            <li>Sign up at <strong>saltedge.com/dashboard</strong> and create an application</li>
-            <li>Copy your <strong>App-id</strong> and <strong>Secret</strong></li>
-            <li>Use the credentials below to connect to your bank</li>
+            <li>In the Enable Banking Control Panel, register an application with environment <strong>Production</strong> and
+              <strong> Generate in the browser</strong>; the browser downloads its private key as <code>&lt;application ID&gt;.pem</code>.</li>
+            <li>Add this redirect URL to the application (and the address of every other way you open Oikos):{' '}
+              <code className="bg-slate-100 px-1 rounded break-all">{redirectUrl}</code></li>
+            <li>Click <strong>Activate by linking accounts</strong> there and link the bank accounts you want. The application then
+              runs in restricted mode: it can read only those accounts.</li>
+            <li>Enter the application ID and the .pem file below.</li>
           </ol>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">App-id</label>
-              <input type="password" className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" placeholder="Salt Edge App-id" />
+              <label className="block text-xs font-medium text-slate-600 mb-1">Application ID</label>
+              <input className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" value={appId}
+                onChange={e => setAppId(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Secret</label>
-              <input type="password" className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" placeholder="Salt Edge Secret" />
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Private key (.pem){s?.key_set && !pem && <span className="text-green-600 font-normal"> — stored on the server</span>}
+              </label>
+              <label className="flex items-center gap-2 border border-dashed border-slate-300 rounded px-2 py-1.5 text-sm text-slate-600 cursor-pointer hover:bg-slate-50">
+                <Upload size={14} />
+                <span className="truncate">{pem ? pem.name : s?.key_set ? 'Replace the key…' : 'Choose the .pem file…'}</span>
+                <input type="file" accept=".pem,.key,.txt" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) f.text().then(text => setPem({ name: f.name, text })); e.target.value = '' }} />
+              </label>
             </div>
           </div>
-          <p className="text-xs text-slate-400">Salt Edge open banking connection requires backend integration. Configure credentials in Tools → Settings.</p>
+          <Button disabled={!appId.trim() || (!pem && !s?.key_set) || saveCreds.isPending} onClick={() => saveCreds.mutate()}>
+            {saveCreds.isPending ? <><Spinner size={14} /> Checking…</> : 'Save & check'}
+          </Button>
+          {app && (
+            <div className="text-sm text-slate-600 space-y-1">
+              <div>
+                Application <strong>{app.name}</strong> ({app.environment?.toLowerCase()}):{' '}
+                {app.active ? <span className="text-green-700">active</span> : <span className="text-amber-700">not active yet — use <em>Activate by linking accounts</em> in the Control Panel</span>}
+              </div>
+              {redirectMissing && <div className="text-amber-700">The redirect URL above is not in the application's list; the bank login will be refused until it is added.</div>}
+            </div>
+          )}
+          {s?.application_error && <ErrorBox msg={s.application_error} />}
         </CardBody>
       </Card>
+
+      <Card>
+        <CardHeader><CardTitle>2 — Connect a bank</CardTitle></CardHeader>
+        <CardBody className="space-y-3">
+          {!ready ? <p className="text-sm text-slate-500">Save the application ID and key first.</p> : (
+            <>
+              <div className="flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Country</label>
+                  <Select value={country} onChange={e => { setCountry(e.target.value); setBank('') }}>
+                    {EB_COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </Select>
+                </div>
+                <div className="flex-1 min-w-[12rem]">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Bank</label>
+                  <Select value={bank} onChange={e => setBank(e.target.value)}>
+                    <option value="">{banks.isLoading ? 'Loading…' : '— select bank —'}</option>
+                    {(banks.data ?? []).map(b => <option key={b.name} value={b.name}>{b.name}{b.beta ? ' (beta)' : ''}</option>)}
+                  </Select>
+                </div>
+                <Button disabled={!bank || connect.isPending} onClick={() => connect.mutate()}>
+                  {connect.isPending ? <><Spinner size={14} /> Opening the bank…</> : 'Connect'}
+                </Button>
+              </div>
+              {banks.isError && <ErrorBox msg={apiErrorMsg(banks.error)} />}
+              <p className="text-xs text-slate-500">
+                You log in at the bank (its app or an SMS code) and approve read access to balances and transactions. The
+                approval lasts as long as the bank allows, usually 180 days; then connect the bank again here. Connecting a bank
+                again replaces its old connection and keeps the account links.
+              </p>
+            </>
+          )}
+        </CardBody>
+      </Card>
+
+      {(s?.connections ?? []).map(c => {
+        const left = daysLeft(c.valid_until)
+        return (
+          <Card key={c.session_id}>
+            <CardHeader>
+              <div className="flex flex-wrap items-center gap-2 justify-between">
+                <CardTitle>{c.bank} <span className="text-xs font-normal text-slate-500">{c.country}</span></CardTitle>
+                <div className="flex items-center gap-3 text-xs">
+                  {c.expired || (left != null && left < 0)
+                    ? <span className="text-red-600">Access expired — connect the bank again</span>
+                    : left != null && <span className={left <= 14 ? 'text-amber-700' : 'text-slate-500'}>Access for {left} more day{left === 1 ? '' : 's'}</span>}
+                  <button className="text-red-500 hover:underline" disabled={disconnect.isPending}
+                    onClick={() => { if (confirm(`Disconnect ${c.bank}? Oikos stops reading its accounts; the links to Oikos accounts are kept for a new connection.`)) disconnect.mutate(c.session_id) }}>
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <table data-cards className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                    <th className="py-1.5 pr-3">Bank account</th><th className="py-1.5 pr-3">IBAN</th><th className="py-1.5 pr-3">Ccy</th><th className="py-1.5">Oikos account</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.accounts.map(a => (
+                    <tr key={a.hash} className="border-b border-slate-100">
+                      <td className="py-1.5 pr-3">{a.name || a.product || '—'}</td>
+                      <td className="py-1.5 pr-3 font-mono text-xs">{a.iban || '—'}</td>
+                      <td className="py-1.5 pr-3">{a.currency}</td>
+                      <td className="py-1.5">
+                        <Select value={a.oikos_account_id ?? ''} onChange={e => mapAccount.mutate({ [a.hash]: e.target.value ? Number(e.target.value) : null })}>
+                          <option value="">— not linked —</option>
+                          <AccountOptions accounts={accounts as Record<string, unknown>[]} />
+                        </Select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardBody>
+          </Card>
+        )
+      })}
     </div>
   )
 }
@@ -3981,19 +4246,21 @@ function TransferIssuesTab() {
 
 // ── Main Importers Page ───────────────────────────────────────────────────────
 
-const BANK_TABS = ['📥 Import & Reconcile', '🏦 Salt Edge', '💚 Revolut Personal', '🐣 Revolut Savings', '⚙️ Import Profiles', '🏷️ Payee Rules', '📋 Import History']
+const BANK_TABS = ['📥 Import & Reconcile', '🏦 Enable Banking', '💚 Revolut Personal', '🐣 Revolut Savings', '⚙️ Import Profiles', '🏷️ Payee Rules', '📋 Import History']
 const BROKERAGE_TABS = ['📊 Interactive Brokers', '💚 Revolut Trading', '📈 Saxo Bank', '₿ Coinbase', '🔷 Crypto.com', '📉 Capital.com', '💱 FXPro']
 const QIF_TABS = ['📁 QIF Importer', '🔁 Transfer Issues']
 
 export default function Importers() {
   const [section, setSection] = usePersist<'bank' | 'brokerage' | 'qif'>('importers_section', 'bank')
-  const [bankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
+  const [savedBankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
+  const bankTab = BANK_TABS.includes(savedBankTab) ? savedBankTab : BANK_TABS[0]   // a renamed tab (Salt Edge) falls back
   const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
   const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
 
   // Back from Saxo's login (?code=…&state=saxo_import): show the Saxo tab, which finishes the connection
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('state') === 'saxo_import') { setSection('brokerage'); setBrokerTab(BROKERAGE_TABS[2]) }
+    if (new URLSearchParams(window.location.search).get('state')?.startsWith('eb_')) { setSection('bank'); setBankTab(BANK_TABS[1]) }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -4022,7 +4289,7 @@ export default function Importers() {
           <>
             <SubTabs tabs={BANK_TABS} active={bankTab} onChange={setBankTab} />
             {bankTab === BANK_TABS[0] && <ImportReconcileTab />}
-            {bankTab === BANK_TABS[1] && <SaltEdgeTab />}
+            {bankTab === BANK_TABS[1] && <EnableBankingTab />}
             {bankTab === BANK_TABS[2] && <RevolutPersonalTab />}
             {bankTab === BANK_TABS[3] && <RevolutSavingsTab />}
             {bankTab === BANK_TABS[4] && <ImportProfilesTab />}

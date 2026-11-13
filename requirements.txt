@@ -17,6 +17,7 @@ ollama>=0.1.0
 pgvector>=0.3.0
 pdfplumber
 requests
+PyJWT[crypto]>=2.8          # Enable Banking: RS256-signed API tokens
 urllib3
 tradingview-datafeed
 tradingview-screener

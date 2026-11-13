@@ -1802,8 +1802,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Ul>
           <li>
-            <b>Bank</b> — Import &amp; Reconcile (generic file import with matching against existing
-            transactions), Salt Edge, Revolut Personal, Revolut Savings, Import Profiles (define column
+            <b>Bank</b> — Import &amp; Reconcile (a statement file, or the transactions straight from the bank, matched
+            against existing transactions), Enable Banking, Revolut Personal, Revolut Savings, Import Profiles (define column
             mappings for a bank's export format), Payee Rules (auto-categorize by payee), Import History.
           </li>
           <li>
@@ -1812,6 +1812,23 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           </li>
           <li><b>QIF</b> — bulk import from a Quicken/QIF file, plus a Transfer Issues tool for fixing unmatched transfer pairs.</li>
         </Ul>
+        <Note>
+          <b>Enable Banking: transactions straight from your bank.</b> Importers → Bank → <b>Enable Banking</b> reads the
+          balances and booked transactions of your own accounts at Alpha Bank, Eurobank, Piraeus, NBG and most European banks
+          (PSD2 open banking), through <a href="https://enablebanking.com" target="_blank" rel="noreferrer">Enable Banking</a>,
+          which holds the licence a bank's API requires. Set it up once: in Enable Banking's Control Panel register an
+          application in the <i>Production</i> environment with <i>Generate in the browser</i> (the browser downloads its
+          private key as a .pem file), add the redirect URL the tab shows (the address you open Oikos at, plus
+          <code>/importers</code>), and use <i>Activate by linking accounts</i> to link the accounts you want; the application
+          then runs in restricted mode and can read only those. Enter the application ID and the .pem file in the tab (the key
+          stays on the server), pick the bank, <b>Connect</b>, approve at the bank, and choose the Oikos account for each bank
+          account. In <b>Import &amp; Reconcile</b> a linked account then has a <b>Source</b> switch: <i>From the bank</i>
+          fetches the booked transactions between two dates (from a week before the last fetch, so nothing falls between two
+          runs) and goes through the usual matching, payee rules and reconciliation, with the bank's balance as the statement
+          balance; a counterparty name that is already one of your payees is used as the payee. Pending transactions are left
+          out until the bank books them. The bank's approval lasts as long as it allows, usually 180 days; the tab shows the
+          days left, and connecting the bank again renews it and keeps the account links.
+        </Note>
         <P>
           Import Profiles and Payee Rules are reusable — set a bank's column mapping or a payee's default
           category once, then every future import uses it automatically.

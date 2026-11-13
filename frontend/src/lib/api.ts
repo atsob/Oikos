@@ -920,6 +920,22 @@ export const qifClearImpact = (
   exclude_inv_account_ids: excludeInvAccountIds,
 }).then(r => r.data)
 
+// ── Enable Banking (PSD2 open banking) ────────────────────────────────────────
+export type EbAccount = { uid: string; hash: string; name: string; product: string; currency: string; iban: string; oikos_account_id?: number | null }
+export type EbConnection = { session_id: string; bank: string; country: string; valid_until: string | null; connected_at: string; expired: boolean; accounts: EbAccount[] }
+export type EbStatus = { app_id: string; key_set: boolean; connections: EbConnection[]; application?: { name: string; environment: string; active: boolean; redirect_urls: string[] }; application_error?: string }
+export type EbRow = { date: string; description: string; amount: number; balance: number | null; payee: string; ref: string | null }
+export const ebStatus = (check = false) => api.get<EbStatus>('/bank/enablebanking/status', { params: { check } }).then(r => r.data)
+export const ebSaveCredentials = (data: { app_id: string; private_key?: string }) => api.post('/bank/enablebanking/credentials', data).then(r => r.data)
+export const ebBanks = (country: string) => api.get<{ name: string; country: string; beta: boolean }[]>('/bank/enablebanking/banks', { params: { country } }).then(r => r.data)
+export const ebStartAuth = (data: { bank: string; country: string; redirect_url: string }) => api.post<{ url: string }>('/bank/enablebanking/auth', data).then(r => r.data)
+export const ebFinishAuth = (data: { code: string; state: string }) => api.post<EbConnection>('/bank/enablebanking/session', data).then(r => r.data)
+export const ebDisconnect = (sessionId: string) => api.delete(`/bank/enablebanking/session/${sessionId}`).then(r => r.data)
+export const ebSaveAccountMap = (accountMap: Record<string, number | null>) => api.post('/bank/enablebanking/account-map', { account_map: accountMap }).then(r => r.data)
+export const ebLinked = (accountId: number) => api.get<{ linked: boolean; bank?: string; account?: string; iban?: string; valid_until?: string | null }>(`/bank/enablebanking/linked/${accountId}`).then(r => r.data)
+export const ebFetch = (data: { account_id: number; date_from: string; date_to?: string }) =>
+  api.post<{ rows: EbRow[]; balance: { amount: number | null; currency: string; date: string | null; type: string } | null; bank: string; account: string }>('/bank/enablebanking/fetch', data).then(r => r.data)
+
 // ── Coinbase ──────────────────────────────────────────────────────────────────
 export const getImporterSettings = (key: string) => api.get(`/bank/importer-settings/${key}`).then(r => r.data)
 export const saveImporterSettings = (key: string, data: Record<string, unknown>) => api.post(`/bank/importer-settings/${key}`, data).then(r => r.data)

@@ -600,6 +600,114 @@ def save_importer_settings(key: str, data: dict):
     return {"ok": True}
 
 
+# ── Enable Banking (PSD2 open banking) ───────────────────────────────────────
+# The private key never leaves the server: status reports only whether one is stored.
+
+def _eb_call(fn, *a, **kw):
+    from data.enablebanking import EnableBankingError
+    try:
+        return fn(*a, **kw)
+    except EnableBankingError as e:
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach Enable Banking: {e}"[:400])
+
+
+@router.get("/enablebanking/status")
+def eb_status(check: bool = False):
+    from data import enablebanking as eb
+    out = eb.status()
+    if check and eb.credentials_set():
+        try:
+            out["application"] = eb.application()
+        except Exception as e:
+            out["application_error"] = str(e)[:400]
+    return out
+
+
+@router.post("/enablebanking/credentials")
+def eb_credentials(data: dict):
+    from data import enablebanking as eb
+    _eb_call(eb.save_credentials, data.get("app_id", ""), data.get("private_key") or None)
+    return {"ok": True, "application": _eb_call(eb.application)}
+
+
+@router.get("/enablebanking/banks")
+def eb_banks(country: str = "GR"):
+    from data import enablebanking as eb
+    return _eb_call(eb.banks, country)
+
+
+@router.post("/enablebanking/auth")
+def eb_auth(data: dict):
+    from data import enablebanking as eb
+    if not data.get("bank") or not data.get("redirect_url"):
+        raise HTTPException(400, "bank and redirect_url are required")
+    return {"url": _eb_call(eb.start_auth, data["bank"], data.get("country", "GR"), data["redirect_url"])}
+
+
+@router.post("/enablebanking/session")
+def eb_session(data: dict):
+    from data import enablebanking as eb
+    return _eb_call(eb.finish_auth, data.get("code", ""), data.get("state", ""))
+
+
+@router.delete("/enablebanking/session/{session_id}")
+def eb_disconnect(session_id: str):
+    from data import enablebanking as eb
+    _eb_call(eb.disconnect, session_id)
+    return {"ok": True}
+
+
+@router.post("/enablebanking/account-map")
+def eb_account_map(data: dict):
+    """{bank account hash: Oikos account id | null} — merged into the stored map."""
+    from data import enablebanking as eb
+    m = eb.account_map()
+    for k, v in (data.get("account_map") or {}).items():
+        if v:
+            m[k] = int(v)
+        else:
+            m.pop(k, None)
+    eb.save_account_map(m)
+    return {"ok": True}
+
+
+@router.get("/enablebanking/linked/{account_id}")
+def eb_linked(account_id: int):
+    from data import enablebanking as eb
+    hit = eb.linked_account(account_id)
+    if not hit:
+        return {"linked": False}
+    c, a = hit
+    return {"linked": True, "bank": c["bank"], "account": a["name"], "iban": a["iban"],
+            "valid_until": c.get("valid_until")}
+
+
+@router.post("/enablebanking/fetch")
+def eb_fetch(data: dict):
+    """Booked transactions of the bank account linked to `account_id`, as statement rows for Import & Reconcile,
+    plus the bank's balance."""
+    from data import enablebanking as eb
+    account_id = int(data.get("account_id") or 0)
+    hit = eb.linked_account(account_id)
+    if not hit:
+        raise HTTPException(400, "This account is not linked to a bank account in Importers → Bank → Enable Banking.")
+    c, a = hit
+    try:
+        d0 = _date.fromisoformat(data["date_from"])
+        d1 = _date.fromisoformat(data["date_to"]) if data.get("date_to") else None
+    except (KeyError, ValueError):
+        raise HTTPException(400, "date_from (and date_to) must be dates (YYYY-MM-DD)")
+    if d1 and d1 < d0:
+        raise HTTPException(400, "date_to is before date_from")
+    rows = _eb_call(eb.transactions, a["uid"], d0, d1)
+    bal = _eb_call(eb.balance, a["uid"])
+    return {"rows": rows, "balance": bal, "bank": c["bank"], "account": a["name"]}
+
+
 # ── Saxo Bank ─────────────────────────────────────────────────────────────────
 
 @router.get("/saxo-settings")
