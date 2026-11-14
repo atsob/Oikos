@@ -374,15 +374,14 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
         logging.exception("INVESTMENT P&L query failed")
         blocks.append(f"INVESTMENT P&L: unavailable ({e})")
 
-    # 4 + 5. The week's spending by category and its largest transactions. The model gets them as context (so it can name a standout
-    # expense); the lists themselves are appended by Oikos after the model's prose — see _spending_by_category / format_lists.
-    categories = _spending_by_category(conn, week_start, period_end)
-    if categories:
-        blocks.append("SPENDING BY CATEGORY THIS WEEK (expenses only):\n" + "\n".join(f"  {c}: €{t:,.2f}" for c, t in categories))
+    # 4 + 5. The week's largest expense and largest income, so the model can name a standout. The full category and
+    # transaction lists are appended by Oikos after the model's prose (format_lists) and are not given to the model:
+    # given them, llama3.1 copied them into its text under headings of its own, and both lists showed twice.
     transactions = _top_transactions(conn, week_start, period_end)
-    if transactions:
-        blocks.append("TOP 5 INDIVIDUAL TRANSACTIONS THIS WEEK:\n" + "\n".join(
-            f"  {d}  [{'income' if amt > 0 else 'expense'}]  {payee}  €{abs(amt):,.2f}" for d, payee, amt in transactions))
+    for kind, pick in (("expense", lambda a: a < 0), ("income", lambda a: a > 0)):
+        top = next(((d, p, a) for d, p, a in transactions if pick(a)), None)
+        if top:
+            blocks.append(f"LARGEST {kind.upper()} THIS WEEK: {top[1]}, €{abs(top[2]):,.2f} on {top[0]}")
 
     return "\n\n".join(blocks)
 
@@ -450,12 +449,13 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     Then 2 short paragraphs (the spending by category and the top transactions are listed after
     your text separately — do not list categories or transactions yourself):
     - Cash flows: the week's income, total expenses, and net. Quote the net explanation from
-      the context verbatim. If one expense clearly stands out, name the payee and date. Mention
-      an income transaction only if one is marked [income] in the TOP 5 list; if the context says
-      there was no income, say so and do not mention any income.
+      the context verbatim. Name the largest expense (payee, amount and date). Mention an income
+      transaction only if the context gives a LARGEST INCOME line; if the context says there was
+      no income, say so and do not mention any income.
     - Investments: the investment P&L for the week, with its exact figure. It is the gain or loss
       on your investments, not a change in net worth. If positive, say it was a good week; if
       negative, mention the loss.
+    Do not say how much your net worth changed: the context does not give that figure.
 
     Rules:
     - Only use numbers that appear in the CONTEXT block. Never invent or calculate.
@@ -472,7 +472,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 # identical helper; see its comment for the full rationale.
 _DATA_LINE_PREFIXES = (
     "NET WORTH SNAPSHOT", "NET WORTH:", "CASH FLOWS", "WEEKLY CASH FLOWS",
-    "INVESTMENT P&L", "SPENDING BY CATEGORY", "TOP 5 INDIVIDUAL TRANSACTIONS", "TOP TRANSACTIONS",
+    "INVESTMENT P&L", "SPENDING BY CATEGORY", "TOP 5 INDIVIDUAL TRANSACTIONS", "TOP TRANSACTIONS", "LARGEST",
 )
 
 
@@ -490,6 +490,18 @@ def _is_echoed_block_header(line: str) -> bool:
             and any(label.startswith(p) for p in _DATA_LINE_PREFIXES))
 
 
+_LIST_LINE = re.compile(
+    r"^\s*([-*•]|\d+[.)])\s"                 # a bullet or numbered item
+    r"|^\s*\*\*[^*]+\*\*:?\s*$"              # a bold heading on its own line ("**Spending by Category:**")
+    r"|^.{0,100}€-?[\d,.]*\d\s*$")           # a short line ending in an amount ("Household: Super Market: €408.51")
+
+
+def _is_list_line(line: str) -> bool:
+    """A list item or list heading in the model's text. The prose has none (the prompt forbids lists, and every sentence
+    ends in a full stop); the lists are Oikos's own, appended after the prose — llama3.1 still wrote some of its own."""
+    return bool(_LIST_LINE.search(line))
+
+
 def strip_echoed_data_lines(text: str) -> str:
     """Drop any line the LLM copied verbatim from the CONTEXT block instead of turning into
     prose. See monthly_summary.py's identical helper for the full rationale. A copied list block — its header and the
@@ -503,8 +515,8 @@ def strip_echoed_data_lines(text: str) -> str:
         if in_block and re.search(r"€-?[\d,.]+\s*$", line) and len(line) < 120:
             continue
         in_block = False
-        if not _is_echoed_data_line(line):
-            kept.append(line)
+        if not _is_echoed_data_line(line) and not _is_list_line(line):
+            kept.append(line.replace("**", ""))
     out, blank_run = [], 0
     for line in kept:
         if line.strip() == "":
