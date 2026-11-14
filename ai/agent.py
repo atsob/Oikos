@@ -5,7 +5,8 @@ from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_core.tools import Tool
 
 from ai.web_search import web_search
-from ai.finance_tools import spending_by_category, spending_vs_budget, category_transactions, holdings_performance, portfolio_value, net_worth_history, investment_pnl
+from ai.finance_tools import spending_by_category, spending_vs_budget, category_transactions, holdings_performance, portfolio_value, net_worth_history, investment_pnl, net_worth_sources, spending_reduction
+from ai import more_tools as _more
 
 
 def _compact_schema(db) -> str:
@@ -80,7 +81,10 @@ def create_ai_agent(llm, db, rag_engine):
     rag_tool = Tool(
         name="Financial_Knowledge_Base",
         func=lambda q: str(rag_engine.query(q)),
-        description="Use for financial concepts, definitions, or qualitative analysis not answerable from the database.",
+        # It searches the user's own transactions by meaning — the old description ("financial concepts ...") sent "why are gold
+        # and silver falling?" here, which came back with transactions from 2004.
+        description="Searches the user's OWN transactions by meaning (e.g. payments for the car service, what I paid the plumber). "
+                    "Never for markets, prices, news or general knowledge.",
     )
 
     budget_tool = Tool(
@@ -156,6 +160,54 @@ def create_ai_agent(llm, db, rag_engine):
         return_direct=True,
     )
 
+    nw_sources_tool = Tool(
+        name="Net_Worth_Sources",
+        func=lambda q: net_worth_sources(q),
+        description=(
+            "USE THIS for where net worth growth came from — income less expenses (savings) versus investment gains versus "
+            "the rest, \"is it investments or income vs expenses\", \"how much did I save\". Input: the span, e.g. last 12 "
+            "months (the default), this year, last 3 years."
+        ),
+        return_direct=True,
+    )
+
+    reduce_tool = Tool(
+        name="Spending_Reduction",
+        func=lambda q: spending_reduction(q),
+        description=(
+            "USE THIS for where spending could be reduced or cut, what to save on, where the user spends too much. Input: the "
+            "period, e.g. this year (the default), last year, Q3 2026. Leaves taxes and reimbursed costs out, compares with a "
+            "year before and says what a cut would save."
+        ),
+        return_direct=True,
+    )
+
+    # The other ready-made answers (ai/more_tools.py): each returns the finished answer, from the app's own reports.
+    more_tools = [Tool(name=name, func=fn, description=desc, return_direct=True) for name, fn, desc in (
+        ("Upcoming_Bills", _more.upcoming_bills, "USE THIS for what is due / upcoming bills and payments, the cash flow forecast, "
+         "and whether an account will have enough or go below zero. Input: the horizon and any account, e.g. next 30 days, payroll 0095."),
+        ("Subscriptions", _more.subscriptions, "USE THIS for subscriptions and recurring charges (what the user pays every month, "
+         "standing orders) with the yearly cost and price rises. Input: anything, e.g. subscriptions."),
+        ("Compare_Periods", _more.compare_periods, "USE THIS to compare spending between two periods by category (this month vs last "
+         "month, October vs September, 2026 vs 2025). Input: the two periods, e.g. October 2026 vs September 2026."),
+        ("Payee_Spending", _more.payee_spending, "USE THIS for spending at a payee / shop / merchant (\"how much at Sklavenitis\") "
+         "or the payees paid the most. Input: the payee name and the period, e.g. Sklavenitis this year."),
+        ("Income", _more.income, "USE THIS for income, salary, earnings, bonuses by source and month, against a year before. "
+         "Input: the period, e.g. this year."),
+        ("Dividends_and_Interest", _more.dividends_interest, "USE THIS for dividends and interest received and expected. Input: the period, e.g. this year."),
+        ("Taxes", _more.taxes, "USE THIS for taxes paid by kind and month, against a year before and as a share of income. Input: the period."),
+        ("Credit_Cards", _more.credit_cards, "USE THIS for credit cards: what is owed, limits, available credit, statements and the "
+         "next payment. Input: a card name or all."),
+        ("Account_Balances", _more.account_balances, "USE THIS for the balance of a bank / cash / card account and whether it agrees "
+         "with the bank. Input: the account name or last 4 digits, or all."),
+        ("Unusual_Transactions", _more.unusual_transactions, "USE THIS for unusual, suspicious or double charges and spending spikes. "
+         "Input: the period, e.g. this month."),
+        ("Market_Move", _more.market_move, "USE THIS for why a security, metal, index or market is falling or rising, or its "
+         "news: price moves, what the user holds of it, and recent headlines. Input: the security or market, e.g. gold silver."),
+        ("Allocation", _more.allocation, "USE THIS for portfolio allocation by asset class against targets, currency and country "
+         "exposure, rebalancing. Input: anything, e.g. allocation."),
+    )]
+
     web_search_tool = Tool(
         name="Web_Search",
         func=lambda q: web_search(q),
@@ -187,8 +239,9 @@ DATABASE SCHEMA:
 
 Categories are on `splits` (splits.categories_id, splits.amount; join splits.transactions_id = transactions.transactions_id), NOT on transactions or payees — never join payees to categories.
 "Overspent" / "over budget" means spending above the user's budget: ALWAYS answer it with the Spending_vs_Budget tool, never with your own SQL.
-For spending per category use the Spending_by_Category tool; for the transactions behind a category, Category_Transactions.
+Where spending could be reduced or cut is the Spending_Reduction tool. Bills due and the cash forecast are Upcoming_Bills; subscriptions are Subscriptions; two periods side by side are Compare_Periods; a payee or shop is Payee_Spending; income is Income; dividends and interest are Dividends_and_Interest; taxes are Taxes; cards are Credit_Cards; an account's balance is Account_Balances; unusual charges are Unusual_Transactions; allocation and exposure are Allocation; why a security or market is moving (and its news) is Market_Move. For spending per category use the Spending_by_Category tool; for the transactions behind a category, Category_Transactions.
 The portfolio's value, net worth and cash / pension / asset totals are the Portfolio_Value_and_Net_Worth tool — never computed from holdings yourself (simple_avg_price is the purchase price, not today's).
+Where net worth growth came from (income less expenses versus investment gains) is the Net_Worth_Sources tool — Investment_PnL gives only the investment half.
 How investments performed (best / worst performers, today or over a period, gains and losses) is the Holdings_Performance tool — never the investments table, which holds trades, not performance.
 When a question follows up on the conversation so far ("more details", "why", "which ones"), answer about that same topic and period: after a budget answer, "more details" means Category_Transactions for the categories most over budget.
 The user does NOT see tool results — only your Final Answer. Put the figures and rows into the Final Answer itself; never say "listed above".
@@ -222,7 +275,7 @@ Question: {input}
     agent_executor = create_sql_agent(
         llm=llm,
         db=db,
-        extra_tools=[budget_tool, category_tool, category_tx_tool, perf_tool, value_tool, nw_history_tool, pnl_tool, rag_tool, web_search_tool],
+        extra_tools=[budget_tool, category_tool, category_tx_tool, perf_tool, value_tool, nw_history_tool, nw_sources_tool, reduce_tool, *more_tools, pnl_tool, rag_tool, web_search_tool],
         agent_type="zero-shot-react-description",
         verbose=True,
         prefix=custom_prefix,

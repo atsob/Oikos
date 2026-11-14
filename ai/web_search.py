@@ -28,7 +28,13 @@ def web_search(query: str, max_results: int = 5) -> str:
     query = _scrub_query(query)
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
+            try:
+                results = list(ddgs.text(query, max_results=max_results))
+            except Exception:                     # ddgs raises "No results found." instead of returning nothing
+                results = []
+            if not results:                       # try the news index before giving up
+                results = [{"title": r.get("title", ""), "body": r.get("body", ""), "href": r.get("url", "")}
+                           for r in (ddgs.news(query, timelimit="m", max_results=max_results) or [])]
         if not results:
             return "No web results found."
         return "\n\n".join(

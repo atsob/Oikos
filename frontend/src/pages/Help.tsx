@@ -1985,18 +1985,23 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           knowledge base — current stock/crypto prices, recent news, general facts.
         </P>
         <P>
-          Seven kinds of question have ready-made tools, so the answer comes from the same query as the Reports rather than
+          Twenty-one kinds of question have ready-made tools, so the answer comes from the same query as the Reports rather than
           from SQL the model writes itself: <b>spending vs budget</b> ("Which categories did I overspend in Q1 2026?" —
           each category's annual budget from Reports → Budget pro-rated to the period's days, the ones over it by
           how much, and the totals), <b>spending by category</b> ("Where did my money go last month?", by full path) and
-          the <b>transactions behind a category</b> ("Show me the Dental spending in Q1 2026") and <b>how your holdings
+          <b>where spending could be reduced</b> ("Where can I save money?" — taxes and reimbursed business costs left
+          out, mostly fixed costs as one total, the largest flexible categories against the same days a year before, the ones
+          that grew most and what a 20% cut of the five largest would save a year) and the <b>transactions behind a category</b> ("Show me the Dental spending in Q1 2026") and <b>how your holdings
           performed</b> ("Which were my 10 worst performing investments today?" — today is the latest close against the
           one before; a period such as this month or YTD, the latest close against the last one before it; "since
           purchase", the value against its FIFO cost; in EUR, all accounts together) and <b>portfolio value and net
           worth</b> ("What is my current portfolio value?" — the Dashboard's own figures, by account, with the change
           since yesterday, last month and last year) and <b>how net worth changed</b> ("How has my net worth changed over
           the last 3 months?" — month-end values to today, and the change in cash, investments, pension &amp; savings and
-          assets; changes include money moved in or out) and <b>investment P&amp;L</b> ("What's my YTD P&amp;L in total and
+          assets; changes include money moved in or out) and <b>where that change came from</b> ("Where does my net worth
+          growth come from, investments or income vs expenses?", "How much did I save this year?" — over the last 12 months
+          by default: income less expenses from your categorised transactions, tax counted as an expense, against investment
+          gains and the rest — pension &amp; savings growth, asset values, exchange rates, money without a category) and <b>investment P&amp;L</b> ("What's my YTD P&amp;L in total and
           per investment account?" — the figures of Reports → Inv. Performance, realized and unrealized, for today, this
           week, month, quarter, year to date or all time). A question that plainly asks one of these — with words such as
           overspend or budget, total spending, net worth or portfolio value, best or worst performing — goes straight to
@@ -2005,6 +2010,25 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           answer, word for word. A period can be a quarter (Q1 2026), a month (March 2026), a year, "last month",
           "this year" or two dates. The chat remembers the last few exchanges, so a follow-up such as "Can you give more
           details?" after a budget answer lists the transactions of the categories most over budget.
+        </P>
+        <P>
+          The others: <b>upcoming bills</b> ("What's due next month?", "Will I have enough on Payroll 0095?" — Reports → Cash
+          Flow Forecast: scheduled and recurring payments, usual spending, card payments, dividends and bond maturities, and
+          any account that would go below zero, when, by how much and because of which payments), <b>subscriptions</b> ("What
+          subscriptions do I pay?" — recurring templates, and payees charged a steady amount in at least 3 of the last 4 months,
+          with the yearly cost and any price rise), <b>two periods compared</b> ("October vs September", "Did I spend more this
+          month than last?" — a month still running against the same days of the other), <b>spending at a payee</b> ("How much
+          did I spend at Sklavenitis this year?", "Top 10 shops"), <b>income</b> (by source and month, against a year before),
+          <b>dividends and interest</b> (received, and expected over the next 12 months), <b>taxes</b> (by kind and month, as a
+          share of gross income), <b>credit cards</b> (owed, limit, available, statement day, next payment, the bank's figure),
+          <b>account balances</b> ("What's the balance of Alpha IRIS?", "Do my accounts match the bank?" — an account named by a
+          word or its last 4 digits), <b>unusual transactions</b> (far above a payee's usual amount, large first payments to a
+          new payee, possible double charges, categories above their usual), <b>allocation</b> (asset classes against the
+          targets of Portfolio Analysis, by currency and by country) and <b>why something is moving</b> ("Why are silver and gold
+          falling?" — the price moves of the securities named, held ones and spot prices first, what you hold of them and its
+          P&amp;L this month, and the news: what Oikos stored for them over two weeks and a news search of the past week; it lists
+          the headlines rather than inventing a cause). The <b>transaction search</b> the model can use looks through your own
+          transactions by meaning; it is not a source of market or general knowledge.
         </P>
         <P>
           The same underlying engine also generates the scheduled <b>Monthly</b> and <b>Weekly AI Summary</b>{' '}

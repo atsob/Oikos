@@ -465,3 +465,141 @@ def investment_pnl(text: str = "") -> str:
         lines.append("Largest contributors: worst " + "; ".join(f"{r.securities_name} {signed(getattr(r, key))}" for r in top.head(3).itertuples())
                      + " — best " + "; ".join(f"{r.securities_name} {signed(getattr(r, key))}" for r in top.tail(3).iloc[::-1].itertuples()) + ".")
     return "\n".join(lines)
+
+
+def net_worth_sources(text: str = "") -> str:
+    """Where a change in net worth came from: income less expenses (the categorised cash flows, tax counted as an
+    expense) against investment P&L (Reports -> Inv. Performance), over the last 12 months by default, this year to
+    date, or the last N years. What neither explains (pension & savings growth, asset values, FX, uncategorised money,
+    a pension cash-out moving between parts) is shown as the rest."""
+    from ai.monthly_summary import _net_worth_as_of
+    from api.routers.reports import get_pnl, get_pnl_period
+
+    t = text.lower()
+    today = date.today()
+    ny = re.search(r"(\d{1,2})\s*years?", t)
+    if re.search(r"this year|ytd|year to date|since (january|the start of the year)", t):
+        start, label, years = date(today.year - 1, 12, 31), "this year", None
+    else:
+        years = max(1, min(int(ny.group(1)), 10)) if ny else 1
+        try:
+            start = today.replace(year=today.year - years)
+        except ValueError:                       # 29 February
+            start = today.replace(year=today.year - years, day=28)
+        label = "the last 12 months" if years == 1 else f"the last {years} years"
+
+    conn = get_connection()
+    try:
+        a, b = _net_worth_as_of(conn, start.isoformat()), _net_worth_as_of(conn, today.isoformat())
+        cf = pd.read_sql("""
+            SELECT
+                SUM(CASE WHEN c.Categories_Type = 'Income'   THEN s.Amount ELSE 0 END) AS income,
+                SUM(CASE WHEN c.Categories_Type = 'Expense'  THEN s.Amount ELSE 0 END) AS expense,
+                SUM(CASE WHEN c.Categories_Type = 'Tax'      THEN s.Amount ELSE 0 END) AS tax,
+                SUM(CASE WHEN c.Categories_Type = 'Interest' THEN s.Amount ELSE 0 END) AS interest
+            FROM Splits s
+            JOIN Categories c ON c.Categories_Id = s.Categories_Id
+            JOIN Transactions t ON t.Transactions_Id = s.Transactions_Id
+            WHERE t.Date > %(start)s AND t.Date <= %(end)s AND t.Is_Draft = FALSE
+        """, conn, params={"start": start, "end": today}).iloc[0]
+    finally:
+        conn.close()
+    if not a or not b:
+        return "Not enough history to say where the change in net worth came from."
+    income, expense, tax, interest = (float(cf[k] or 0) for k in ("income", "expense", "tax", "interest"))
+    saved = income + expense + tax + interest
+
+    if years is None:
+        df = pd.DataFrame(get_pnl(start_date="1900-01-01", end_date=None))
+        key = "pnl_ytd_eur"
+    else:
+        df = pd.DataFrame(get_pnl_period(years=years))
+        key = "pnl_eur"
+    pnl = float(pd.to_numeric(df[key], errors="coerce").fillna(0).sum()) if not df.empty and key in df else 0.0
+
+    change = b["total"] - a["total"]
+    rest = change - saved - pnl
+
+    def signed(v: float) -> str:
+        return f"{'+' if v >= 0 else '−'}€{abs(v):,.2f}"
+
+    def share(v: float) -> str:
+        return f" ({v / change * 100:.0f}% of the change)".replace("-", "−") if abs(change) >= 1 else ""
+
+    parts = sorted((("income less expenses", saved), ("investment gains", pnl), ("everything else", rest)), key=lambda x: -abs(x[1]))
+    lines = [
+        f"Over {label} ({start:%d/%m/%Y} to {today:%d/%m/%Y}) net worth went from €{a['total']:,.2f} to €{b['total']:,.2f}: {signed(change)}.",
+        f"It came mostly from {parts[0][0]} ({signed(parts[0][1])}).",
+        "",
+        f"- Income less expenses: {signed(saved)}{share(saved)} — income €{income:,.2f}, expenses €{abs(expense):,.2f}, "
+        f"tax €{abs(tax):,.2f}" + (f", interest {signed(interest)}" if abs(interest) >= 0.5 else "") + " (categorised transactions; transfers between your own accounts are not income).",
+        f"- Investment gains: {signed(pnl)}{share(pnl)} — as in Reports → Inv. Performance: change in value less money put in "
+        "or taken out, dividends included.",
+        f"- Everything else: {signed(rest)}{share(rest)} — pension & savings growth, asset values, exchange rates and money "
+        "without a category, plus money moving between parts (e.g. a pension paid out to cash).",
+        "",
+        "Net worth by part: " + "; ".join(f"{lbl} {signed(b[k] - a[k])} (now €{b[k]:,.2f})" for k, lbl in
+                                         (("cash", "Cash"), ("investments", "Investments"), ("pension", "Pension & Savings"), ("assets", "Assets"))) + ".",
+    ]
+    return "\n".join(lines)
+
+
+# Spending that is mostly fixed — shown as one total, not as something to cut. Matched on any level of the category path
+# (and Taxes are left out altogether, as are business costs that are reimbursed).
+_FIXED_TOP = re.compile(r"^(taxes?|insurance|health ?care|medical|bills?|utilities|rent|mortgage|loans?|education|school)\b", re.I)
+_REIMBURSED = re.compile(r"\(reimbursed\)", re.I)
+
+
+def spending_reduction(text: str = "") -> str:
+    """Where spending could be reduced, for a period (this year to date by default): the flexible categories, largest
+    first, against the same days a year before, the ones that grew most, and what a 20% cut of the top five would save
+    a year. Taxes and reimbursed business costs are left out; mostly fixed costs (insurance, healthcare, bills,
+    utilities, rent / loans, education) are one total."""
+    start, end = parse_period(text or "this year")
+    try:
+        p_start, p_end = start.replace(year=start.year - 1), end.replace(year=end.year - 1)
+    except ValueError:
+        p_start, p_end = start.replace(year=start.year - 1, day=28), end.replace(year=end.year - 1, day=28)
+    cur, prev = _spending(start, end), _spending(p_start, p_end)
+    conn = get_connection()
+    try:
+        types = pd.read_sql("SELECT Categories_Id AS cid, Categories_Type AS type FROM Categories", conn)
+    finally:
+        conn.close()
+    if cur.empty:
+        return f"No spending recorded from {start} to {end}."
+    df = cur.merge(types, on="cid", how="left").merge(prev[["cid", "spent"]].rename(columns={"spent": "before"}), on="cid", how="left")
+    df["before"] = df["before"].fillna(0.0)
+    df = df[(df["type"] != "Tax") & ~df["category"].str.contains(_REIMBURSED)]
+    df = df[df["spent"] > 0.005]
+    is_fixed = df["category"].apply(lambda c: any(_FIXED_TOP.match(p.strip()) for p in c.split(" : ")))   # e.g. Business Expenses : Bills
+    fixed, flex = df[is_fixed], df[~is_fixed].sort_values("spent", ascending=False)
+    days = (end - start).days + 1
+    year = 365 / days
+
+    def chg(r) -> str:
+        if r.before < 0.5:
+            return "new this year" if r.spent >= 1 else ""
+        d = r.spent - r.before
+        return f"{'+' if d >= 0 else '−'}€{abs(d):,.0f} vs a year before ({d / r.before * 100:+.0f}%)".replace("(-", "(−")
+
+    total = df["spent"].sum()
+    lines = [f"Where spending could be reduced, {start:%d/%m/%Y} to {end:%d/%m/%Y} ({days} days). Taxes and reimbursed business "
+             f"costs are left out. Of €{total:,.2f} spent, €{fixed['spent'].sum():,.2f} is mostly fixed (insurance, healthcare, "
+             f"bills, utilities, rent or loans, education) and €{flex['spent'].sum():,.2f} is flexible.",
+             "", "Largest flexible categories (per month, and against the same days a year before):"]
+    for i, r in enumerate(flex.head(12).itertuples(), 1):
+        c = chg(r)
+        lines.append(f"{i}. {r.category} — €{r.spent:,.2f} (€{r.spent / days * 30.4:,.0f}/month){'; ' + c if c else ''}")
+    grew = flex.assign(d=flex["spent"] - flex["before"]).sort_values("d", ascending=False)
+    grew = grew[(grew["d"] >= 50) & (grew["before"] >= 0.5)].head(5)
+    if not grew.empty:
+        lines += ["", "Grew most against a year before:"] + [
+            f"- {r.category}: €{r.before:,.0f} → €{r.spent:,.0f} ({chg(r).split(' vs ')[0]})" for r in grew.itertuples()]
+    top5 = flex.head(5)
+    if not top5.empty:
+        cut = top5["spent"].sum() * 0.2 * year
+        lines += ["", f"Cutting the five largest flexible categories by 20% would save about €{cut:,.0f} a year "
+                      f"(they come to €{top5['spent'].sum() * year:,.0f} a year at this pace)."]
+    return "\n".join(lines)
+
