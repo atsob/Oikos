@@ -20,6 +20,7 @@ Schedule (Windows Task Scheduler):
 
 import argparse
 import logging
+import re
 import textwrap
 import warnings
 from datetime import date, timedelta
@@ -248,6 +249,9 @@ def _gather_context(conn, week_start: str, period_end: str) -> str:
                     f" Separately, €{abs(other):,.2f} moved {'in' if other >= 0 else 'out'} from other "
                     f"cash activity (e.g. a transfer or investment contribution) — not counted above."
                 )
+            if income <= 0:
+                # Said outright: told it "may mention a notable income transaction", llama3.1 invented one for a week with none.
+                net_explanation += " There was no income this week."
             blocks.append(
                 f"CASH FLOWS ({week_start} to {period_end}):\n"
                 f"  Income €{income:,.2f} | Expenses €{expense:,.2f} | Tax €{tax:,.2f} | Other €{other:,.2f} (not in Net) | Net €{net:,.2f}\n"
@@ -446,9 +450,11 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     Then 2 short paragraphs (the spending by category and the top transactions are listed after
     your text separately — do not list categories or transactions yourself):
     - Cash flows: the week's income, total expenses, and net. Quote the net explanation from
-      the context verbatim. If one expense clearly stands out, name the payee and date; if a
-      notable income transaction offset the week's expenses, mention it as a positive note.
-    - Investments: the investment P&L for the week. If positive, say it was a good week; if
+      the context verbatim. If one expense clearly stands out, name the payee and date. Mention
+      an income transaction only if one is marked [income] in the TOP 5 list; if the context says
+      there was no income, say so and do not mention any income.
+    - Investments: the investment P&L for the week, with its exact figure. It is the gain or loss
+      on your investments, not a change in net worth. If positive, say it was a good week; if
       negative, mention the loss.
 
     Rules:
@@ -475,10 +481,30 @@ def _is_echoed_data_line(line: str) -> bool:
     return any(upper.startswith(p + ":") or upper.startswith(p + " (") for p in _DATA_LINE_PREFIXES)
 
 
+def _is_echoed_block_header(line: str) -> bool:
+    """A CONTEXT block header with any wording after the label ("SPENDING BY CATEGORY THIS WEEK (expenses only):",
+    "TOP 5 INDIVIDUAL TRANSACTIONS THIS WEEK:") — capitals up to the colon, so a prose sentence never matches."""
+    s = line.strip()
+    label = s.split(":", 1)[0].split(" (", 1)[0]
+    return (s.endswith(":") and label == label.upper() and label.upper() != label.lower()
+            and any(label.startswith(p) for p in _DATA_LINE_PREFIXES))
+
+
 def strip_echoed_data_lines(text: str) -> str:
     """Drop any line the LLM copied verbatim from the CONTEXT block instead of turning into
-    prose. See monthly_summary.py's identical helper for the full rationale."""
-    kept = [line for line in text.split("\n") if not _is_echoed_data_line(line)]
+    prose. See monthly_summary.py's identical helper for the full rationale. A copied list block — its header and the
+    item lines under it — goes whole: Oikos appends the categories and top transactions itself, so llama3.1 copying them
+    showed both lists twice."""
+    kept, in_block = [], False
+    for line in text.split("\n"):
+        if _is_echoed_block_header(line):
+            in_block = True
+            continue
+        if in_block and re.search(r"€-?[\d,.]+\s*$", line) and len(line) < 120:
+            continue
+        in_block = False
+        if not _is_echoed_data_line(line):
+            kept.append(line)
     out, blank_run = [], 0
     for line in kept:
         if line.strip() == "":
