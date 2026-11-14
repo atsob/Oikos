@@ -2,6 +2,12 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-15
+
+### Fixed
+- **Morningstar Category & Style Box: every download failed.** Morningstar stopped accepting the access key Oikos used to look a fund up by ISIN, so the download reported "1 error(s)" for any fund and the monthly job updated none. Oikos now tries the other public keys of Morningstar's own fund pages in turn, and they answer the same data.
+- **Market Data → Securities: a space in the search box hid matches.** The search looked for the text exactly as typed, so a space left at the end ("Xtra ") found only names with a space after it and none of the Xtrackers ETFs. Spaces at either end are now ignored.
+
 ## 2026-11-14
 
 ### Added

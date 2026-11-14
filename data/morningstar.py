@@ -34,7 +34,10 @@ from database.connection import get_connection
 
 log = logging.getLogger(__name__)
 
-SCREENER = "https://lt.morningstar.com/api/rest.svc/klr5zyak8x/security/screener"
+# The public access keys of Morningstar's own fund pages, tried in turn: Morningstar withdraws one now and then (klr5zyak8x has
+# answered 401 since mid-November 2026), and the others answer the same data.
+SCREENER_KEYS = ("dr6pz9spfi", "9vehuxllxs", "klr5zyak8x")
+SCREENER = "https://lt.morningstar.com/api/rest.svc/{key}/security/screener"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"}
 DATAPOINTS = "SecId|Name|ISIN|CategoryName|GlobalCategoryName|EquityStyleBox|BondStyleBox|EffectiveDuration|EffectiveMaturity"
 # The same screener, asked in turn for ETFs and then for funds; the first universe that knows the ISIN answers.
@@ -110,13 +113,29 @@ def clean_non_equity_sectors(cur) -> int:
     return n
 
 
+_working_key: str | None = None
+
+
+def _screener(params: dict) -> requests.Response:
+    """The screener's answer, from the first access key Morningstar still accepts (remembered for the next call)."""
+    global _working_key
+    keys = ([_working_key] if _working_key else []) + [k for k in SCREENER_KEYS if k != _working_key]
+    for key in keys:
+        r = requests.get(SCREENER.format(key=key), headers=HEADERS, timeout=30, params=params)
+        if r.status_code in (401, 403):
+            log.warning("Morningstar screener key %s refused (HTTP %s)", key, r.status_code)
+            continue
+        r.raise_for_status()
+        _working_key = key
+        return r
+    raise RuntimeError("Morningstar refused every screener access key (HTTP 401/403)")
+
+
 def lookup(isin: str) -> dict | None:
     """-> {"id", "category", "broad", "style_box", "duration", "maturity"} for an ISIN, or None when Morningstar does not know it."""
     for universe in UNIVERSES:
-        r = requests.get(SCREENER, headers=HEADERS, timeout=30, params={
-            "page": 1, "pageSize": 20, "outputType": "json", "version": 1, "languageId": "en-GB", "currencyId": "EUR",
-            "universeIds": universe, "securityDataPoints": DATAPOINTS, "term": isin})
-        r.raise_for_status()
+        r = _screener({"page": 1, "pageSize": 20, "outputType": "json", "version": 1, "languageId": "en-GB", "currencyId": "EUR",
+                       "universeIds": universe, "securityDataPoints": DATAPOINTS, "term": isin})
         rows = [x for x in r.json().get("rows", []) if x.get("ISIN") == isin]      # the term also matches names
         if not rows:
             continue

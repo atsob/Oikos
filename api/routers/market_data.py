@@ -353,6 +353,7 @@ def get_currency_detail(cid: int, quote: Optional[str] = Query(None)):
 
 @router.get("/securities")
 def get_securities(search: Optional[str] = Query(None)):
+    search = (search or "").strip() or None   # a stray space ("Xtra ") found only "EXTRA 14/12", not the Xtrackers ETFs
     # Matches against every text-like column shown/editable on the Securities tab
     # (CONCAT_WS skips NULLs), so a term like "Consumer Defensive" or "ATHEX" finds
     # a security by sector/industry/exchange/etc., not just name or ticker.
