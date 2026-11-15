@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
+import { useShownCount, countText } from '@/lib/rowCount'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
@@ -804,6 +805,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [transferOpen, setTransferOpen] = useState(false)
   const [txSearch, setTxSearch] = useState('')
+  const txShown = useShownCount()
 
   const accounts = accountsData as Record<string, unknown>[]
   const investmentAccounts = accounts
@@ -980,7 +982,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <Input className="pl-8 w-44 sm:w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
             </div>
-            <span className="text-xs text-slate-400 whitespace-nowrap">{transactions.length} transactions</span>
+            <span className="text-xs text-slate-400 whitespace-nowrap">{countText(txShown.shown, transactions.length, 'transactions')}</span>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={openNew}><Plus size={14} /> New Transaction</Button>
@@ -1028,6 +1030,7 @@ function InvestmentTransactionsTab({ secId }: { secId: number }) {
             onGridReady={onTxGridReady}
             rowData={transactions}
             quickFilterText={txSearch}
+            onModelUpdated={txShown.onModelUpdated}
             initialState={txGridScroll.initialState}
             onStateUpdated={txGridScroll.onStateUpdated}
             onFilterChanged={txGridFilter.onFilterChanged}
@@ -2615,8 +2618,8 @@ function DownloadsTab({ secId, security }: { secId: number; security: Record<str
       )}
 
       <div>
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">EODHD</p>
-        <p className="text-xs text-slate-400 mb-2">Looks up ISIN via EODHD Fundamentals when Yahoo Finance doesn't provide it.</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">ISIN</p>
+        <p className="text-xs text-slate-400 mb-2">Looks up a missing ISIN on TradingView (the listing of this security's TV Symbol and Exchange), then in EODHD's search on the same exchange.</p>
         <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 px-4">
           <ActionRow id="eodhd-isin" label="Fetch ISIN" onClick={() => run('eodhd-isin', () => downloadIsin(secId))} />
         </div>

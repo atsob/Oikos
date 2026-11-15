@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
+import { useShownCount, countText } from '@/lib/rowCount'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
-import type { ColDef, RowClickedEvent } from 'ag-grid-community'
+import type { ColDef, ICellRendererParams, RowClickedEvent } from 'ag-grid-community'
 import Plot from '@/components/Plot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { useRole } from '@/lib/auth'
@@ -64,6 +65,18 @@ const ANOMALY_COLS: ColDef[] = [
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
 
 // ── Securities CRUD tab ───────────────────────────────────────────────────────
+// A ticker cell that opens the security's page on Yahoo Finance or TradingView in a new tab. The click stops here, so it
+// does not also count towards the row's double-click-to-edit.
+function ExtLink({ href, title, children }: { href: string; title: string; children: React.ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" title={title} onClick={e => e.stopPropagation()}
+    className="text-blue-700 hover:underline">{children}</a>
+}
+
+// TradingView's chart for EXCHANGE:SYMBOL — works for every symbol shape (U.UN, KIMBER/A, ESSITY_B); without an exchange, TradingView picks the main listing.
+function tradingViewUrl(symbol: string, exchange?: string): string {
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(exchange ? `${exchange}:${symbol}` : symbol)}`
+}
+
 function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -83,6 +96,9 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     queryFn: () => getSecurities(search || undefined),
     placeholderData: keepPreviousData,
   })
+  // All securities, for "23 of 583": the same query as an empty search box, so it is fetched once.
+  const { data: allSecurities } = useQuery({ queryKey: ['securities', ''], queryFn: () => getSecurities(undefined) })
+  const shownCount = useShownCount()
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: getCurrencies })
   const { data: taxRules = [] } = useQuery({ queryKey: ['tax-category-rules'], queryFn: getTaxCategoryRules })
   const { data: issuers = [] } = useQuery({ queryKey: ['issuers'], queryFn: () => getIssuers() })
@@ -204,8 +220,14 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'tax_category', headerName: 'Tax Category', width: 130, hide: true },
     { field: 'sector', headerName: 'Sector', width: 140, hide: true },
     { field: 'industry', headerName: 'Industry', width: 140, hide: true },
-    { field: 'yahoo_ticker', headerName: 'Yahoo Ticker', width: 110, cellStyle: { fontFamily: 'monospace' } },
-    { field: 'tv_symbol', headerName: 'TV Symbol', width: 100 },
+    { field: 'yahoo_ticker', headerName: 'Yahoo Ticker', width: 110, cellStyle: { fontFamily: 'monospace' },
+      cellRenderer: (p: ICellRendererParams) => p.value
+        ? <ExtLink href={`https://finance.yahoo.com/quote/${encodeURIComponent(String(p.value))}`} title="Open on Yahoo Finance">{String(p.value)}</ExtLink>
+        : null },
+    { field: 'tv_symbol', headerName: 'TV Symbol', width: 100,
+      cellRenderer: (p: ICellRendererParams) => p.value
+        ? <ExtLink href={tradingViewUrl(String(p.value), p.data?.tv_exchange as string | undefined)} title="Open on TradingView">{String(p.value)}</ExtLink>
+        : null },
     { field: 'tv_exchange', headerName: 'TV Exchange', width: 110 },
     { field: 'isin', headerName: 'ISIN', width: 130 },
     { field: 'maturity_date', headerName: 'Maturity Date', width: 115, valueFormatter: p => p.value?.slice(0, 10) ?? '' },
@@ -258,7 +280,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{(securities as unknown[]).length} securities</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? (securities as unknown[]).length, (allSecurities as unknown[] | undefined)?.length, 'securities')}</span>
         </div>
         <div className="flex items-center gap-2">
           {gridFilter.hasFilters && (
@@ -273,7 +295,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: 'calc(100dvh - 220px)', width: '100%' }}>
-        <AppGrid theme="legacy" rowData={securities} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+        <AppGrid theme="legacy" rowData={securities} onModelUpdated={shownCount.onModelUpdated} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}
@@ -352,6 +374,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
     queryFn: getCurrencies,
   })
 
+  const shownCount = useShownCount()
   const filtered = search
     ? (currencies as Record<string,unknown>[]).filter(r =>
         String(r.code ?? '').toLowerCase().includes(search.toLowerCase()) ||
@@ -461,7 +484,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} currencies</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, (currencies as unknown[]).length, 'currencies')}</span>
         </div>
         <div className="flex items-center gap-2">
           {gridFilter.hasFilters && (
@@ -476,7 +499,7 @@ function CurrenciesTab({ search, onSearchChange }: { search: string; onSearchCha
         </div>
       </div>
       <div className="ag-theme-alpine" style={{ height: '420px', width: '100%' }}>
-        <AppGrid theme="legacy" rowData={filtered} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
+        <AppGrid theme="legacy" rowData={filtered} onModelUpdated={shownCount.onModelUpdated} columnDefs={gridCols.colDefs} onGridReady={onGridReady}
           defaultColDef={{ resizable: true, sortable: true, filter: true }} columnTypes={AG_GRID_COLUMN_TYPES}
           initialState={gridScroll.initialState}
           onStateUpdated={gridScroll.onStateUpdated}

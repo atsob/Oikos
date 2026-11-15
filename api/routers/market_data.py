@@ -838,9 +838,10 @@ def download_tv_info(data: dict = {}):
 
 @router.post("/download/isin")
 def download_isin(data: dict = {}):
-    """Fetch missing ISINs from EODHD Fundamentals."""
+    """Fetch missing ISINs: TradingView first (the TV symbol's own listing), then EODHD's search for the rest."""
     try:
-        from data.downloaders import download_isin_from_eodhd
+        from data.downloaders import download_isin_from_eodhd, download_isin_from_tradingview
+        download_isin_from_tradingview(target_sec_id=data.get("security_id"))
         download_isin_from_eodhd(target_sec_id=data.get("security_id"))
         return {"ok": True, "message": "ISIN lookup complete"}
     except Exception as e:

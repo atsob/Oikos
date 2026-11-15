@@ -2073,13 +2073,83 @@ _TV_TO_EODHD_EXCH: dict[str, str] = {
 }
 
 
+def isin_valid(isin: str) -> bool:
+    """An ISIN's shape and check digit (Luhn over the letters as numbers) — catches a typo or a mangled value, not another
+    company's valid ISIN."""
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", isin or ""):
+        return False
+    digits = "".join(str(int(ch, 36)) for ch in isin[:-1])
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        n = int(d) * (2 if i % 2 == 0 else 1)
+        total += n // 10 + n % 10
+    return (10 - total % 10) % 10 == int(isin[-1])
+
+
+_TV_SEARCH = "https://symbol-search.tradingview.com/symbol_search/v3/"
+_TV_HEADERS = {"Origin": "https://www.tradingview.com", "Referer": "https://www.tradingview.com/",
+               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"}
+
+
+def tradingview_isin(tv_symbol: str, tv_exchange: str) -> str | None:
+    """The ISIN TradingView's symbol search gives the listing TV_Exchange:TV_Symbol — the exact symbol on that exchange only."""
+    for params in ({"exchange": tv_exchange}, {}):
+        r = requests.get(_TV_SEARCH, headers=_TV_HEADERS, timeout=20, params={
+            "text": tv_symbol, "hl": 0, "lang": "en", "search_type": "", "domain": "production", **params})
+        r.raise_for_status()
+        for x in r.json().get("symbols", []):
+            if x.get("symbol") == tv_symbol and (x.get("prefix") or x.get("source_id")) == tv_exchange:
+                isin = (x.get("isin") or "").strip().upper()
+                return isin if isin_valid(isin) else None
+    return None
+
+
+def download_isin_from_tradingview(target_sec_id=None) -> int:
+    """Fill a missing ISIN from TradingView for every security with a TV symbol and exchange. The listing is the exact one
+    Oikos downloads prices from, so its ISIN is the security's own (an audit of 426 securities found it right in all of them).
+    Only fills an empty ISIN. Returns the number written."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        sql = """SELECT Securities_Id, Securities_Name, TV_Symbol, TV_Exchange FROM Securities
+                 WHERE COALESCE(TRIM(ISIN), '') = '' AND COALESCE(TRIM(TV_Symbol), '') <> '' AND COALESCE(TRIM(TV_Exchange), '') <> ''"""
+        params: list = []
+        if target_sec_id:
+            sql += " AND Securities_Id = %s"
+            params.append(int(target_sec_id))
+        cur.execute(sql + " ORDER BY Securities_Name", params)
+        rows = cur.fetchall()
+        print(f"TradingView: looking up ISIN for {len(rows)} securities…")
+        n = 0
+        for sec_id, name, sym, exch in rows:
+            try:
+                isin = tradingview_isin(sym.strip(), exch.strip())
+            except Exception as e:
+                print(f"  {name} ({exch}:{sym}): lookup failed — {e}")
+                continue
+            if not isin:
+                print(f"  {name} ({exch}:{sym}): no ISIN on TradingView")
+                continue
+            cur.execute("UPDATE Securities SET ISIN = %s WHERE Securities_Id = %s AND COALESCE(TRIM(ISIN), '') = ''", (isin, sec_id))
+            n += cur.rowcount
+            print(f"  {name} ({exch}:{sym}): ISIN={isin}")
+            time.sleep(0.25)
+        conn.commit()
+        print(f"TradingView: {n} ISIN(s) written.")
+        return n
+    finally:
+        cur.close()
+        conn.close()
+
+
 def download_isin_from_eodhd(target_sec_id=None):
     """Fetch ISIN from EODHD Fundamentals API for securities missing it.
 
     Uses the already-configured EODHD API key.  For each security it first
     calls the fundamentals endpoint with filter=General::ISIN; if that returns
     nothing (wrong exchange suffix, unlisted security) it falls back to the
-    EODHD search endpoint and matches by ticker symbol.
+    EODHD search endpoint and matches by ticker symbol on the security's own exchange (the free plan answers only the search).
+    Run after download_isin_from_tradingview, which covers every security with a TV symbol.
 
     Only fills NULL/empty ISIN slots — never overwrites an existing value.
     """
@@ -2094,7 +2164,7 @@ def download_isin_from_eodhd(target_sec_id=None):
     try:
         sql = """
             SELECT Securities_Id, Securities_Name,
-                   COALESCE(NULLIF(Yahoo_Ticker,''), NULLIF(TV_Symbol,'')) AS ticker,
+                   COALESCE(NULLIF(TV_Symbol,''), NULLIF(Yahoo_Ticker,'')) AS ticker,   -- the TV symbol has no Yahoo suffix
                    TV_Exchange
             FROM   Securities
             WHERE  COALESCE(NULLIF(Yahoo_Ticker,''), NULLIF(TV_Symbol,'')) IS NOT NULL
@@ -2119,19 +2189,25 @@ def download_isin_from_eodhd(target_sec_id=None):
         isin_updates = []
 
         for sec_id, sec_name, ticker, tv_exchange in rows:
-            eodhd_exch = _TV_TO_EODHD_EXCH.get(tv_exchange or '', 'US')
+            # The security's own EODHD exchange: from its TV exchange, or US for a Yahoo ticker without an exchange suffix. With
+            # neither known there is nothing to check a match against, so it is skipped rather than guessed.
+            eodhd_exch = _TV_TO_EODHD_EXCH.get(tv_exchange or '') or (None if tv_exchange or '.' in ticker else 'US')
             isin = None
+            if not eodhd_exch:
+                print(f"  {sec_name} ({ticker}): skipped — exchange {tv_exchange or '?'} not covered by the EODHD lookup")
+                continue
+            base = ticker.upper()
 
             # Primary: fundamentals endpoint with exchange suffix
             try:
                 resp = requests.get(
-                    f"https://eodhd.com/api/fundamentals/{ticker}.{eodhd_exch}",
+                    f"https://eodhd.com/api/fundamentals/{base}.{eodhd_exch}",
                     params={"api_token": api_key, "filter": "General::ISIN"},
                     timeout=10,
                 )
                 if resp.status_code == 200:
                     raw = resp.text.strip().strip('"')
-                    if raw and len(raw) == 12 and raw not in ('null', 'None', 'N/A', ''):
+                    if isin_valid(raw.upper()):
                         isin = raw.upper()
             except Exception as e:
                 logging.debug(f"EODHD fundamentals error for {ticker}: {e}")
@@ -2140,16 +2216,18 @@ def download_isin_from_eodhd(target_sec_id=None):
             if not isin:
                 try:
                     sresp = requests.get(
-                        f"https://eodhd.com/api/search/{ticker}",
+                        f"https://eodhd.com/api/search/{base}",
                         params={"api_token": api_key, "limit": 10},
                         timeout=10,
                     )
                     if sresp.status_code == 200:
                         for item in sresp.json():
-                            if item.get('Code', '').upper() == ticker.upper():
-                                raw = (item.get('ISIN') or item.get('isin') or '').strip()
-                                if raw and len(raw) == 12:
-                                    isin = raw.upper()
+                            # Same code on the security's own exchange only: the first "CVX" in the results can be a Buenos
+                            # Aires CEDEAR or a Canadian CDR, and taking any exchange gave stocks another listing's ISIN.
+                            if item.get('Code', '').upper() == base and (item.get('Exchange') or '').upper() == eodhd_exch.upper():
+                                raw = (item.get('ISIN') or item.get('isin') or '').strip().upper()
+                                if isin_valid(raw):
+                                    isin = raw
                                     break
                 except Exception as e:
                     logging.debug(f"EODHD search error for {ticker}: {e}")

@@ -4,7 +4,13 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-15
 
+### Added
+- **Market Data → Securities: tickers open their page.** Clicking a Yahoo Ticker opens the security on Yahoo Finance, and clicking a TV Symbol opens its TradingView chart for the security's TV Exchange, each in a new tab.
+- **"23 of 583" when a list is filtered.** The count next to a search box now shows how many rows are shown out of all of them whenever a search or a column filter hides some ("23 of 583 securities"), and the plain total otherwise. On Market Data → Securities and Currencies, Static Data → Payees, Categories, Accounts, Institutions and Issuers, Security Detail → All Transactions, the Cash Register (out of the account's transactions in the date range) and Investments (out of the account's transactions in the date range, before the action filter and search).
+
 ### Fixed
+- **Import & Reconcile → From the bank: "— Αγορά" on every card purchase.** Alpha Bank sends "Αγορά" (purchase) as the payment details of each card purchase, and Oikos added it to the description ("HERON … — Αγορά"). Payment details that only name the kind of transaction are now left out; details that say something (a refund, a bill reference) are kept.
+- **Fetch ISIN gave stocks another listing's ISIN.** EODHD's free plan answers only its search, and Oikos took the first result with the same ticker on any exchange, so a US or European stock could get the ISIN of a Buenos Aires CEDEAR, a Canadian CDR or an unrelated company (Chevron, Walmart, Enel, TotalEnergies, Hitachi … 35 in all, now corrected). *Fetch ISIN* now asks **TradingView** first, for the exact listing of the security's TV Symbol and Exchange, and uses EODHD's search only for the rest and only on the security's own exchange; every ISIN is checked for a valid check digit before it is saved.
 - **Morningstar Category & Style Box: every download failed.** Morningstar stopped accepting the access key Oikos used to look a fund up by ISIN, so the download reported "1 error(s)" for any fund and the monthly job updated none. Oikos now tries the other public keys of Morningstar's own fund pages in turn, and they answer the same data.
 - **Market Data → Securities: a space in the search box hid matches.** The search looked for the text exactly as typed, so a space left at the end ("Xtra ") found only names with a space after it and none of the Xtrackers ETFs. Spaces at either end are now ignored.
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useGridApi, useSettings } from '@/lib/hooks'
+import { useShownCount, countText } from '@/lib/rowCount'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
 import type { RowClickedEvent } from 'ag-grid-community'
@@ -93,6 +94,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     enabled: !!mergeSource,
   })
 
+  const shownCount = useShownCount()
   const filtered = search
     ? (payees as Record<string, unknown>[]).filter(r =>
         String(r.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
@@ -222,7 +224,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
           {autoDefaultMsg && <span className="text-xs text-slate-500 bg-slate-100 rounded px-3 py-1">{autoDefaultMsg}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} payees · double-click to edit</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, (payees as unknown[]).length, 'payees')} · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={() => openEdit({ id: null, name: '', categories_id: null })}>
@@ -249,7 +251,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
         <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
-          rowData={filtered}
+          rowData={filtered} onModelUpdated={shownCount.onModelUpdated}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
@@ -376,6 +378,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
     enabled: !!mergeSource,
   })
 
+  const shownCount = useShownCount()
   const filtered = search
     ? (categories as Record<string, unknown>[]).filter(r =>
         String(r.full_path ?? '').toLowerCase().includes(search.toLowerCase()) ||
@@ -480,7 +483,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} categories · double-click to edit</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, (categories as unknown[]).length, 'categories')} · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Category</Button>
@@ -501,7 +504,7 @@ function CategoriesTab({ search, onSearchChange }: { search: string; onSearchCha
         <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
-          rowData={filtered}
+          rowData={filtered} onModelUpdated={shownCount.onModelUpdated}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
@@ -657,6 +660,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
     ? rowsWithBalanceEur
     : rowsWithBalanceEur.filter(a => Boolean(a.is_active))
 
+  const shownCount = useShownCount()
   const filtered = search
     ? visible.filter(r =>
         Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
@@ -818,7 +822,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
             Show inactive
           </label>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} accounts · double-click to edit</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, visible.length, 'accounts')} · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Account</Button>
@@ -836,7 +840,7 @@ function AccountsTab({ search, onSearchChange }: { search: string; onSearchChang
         <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
-          rowData={filtered}
+          rowData={filtered} onModelUpdated={shownCount.onModelUpdated}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
@@ -1324,6 +1328,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
     [data, exposureByInstitution]
   )
 
+  const shownCount = useShownCount()
   const filtered = search
     ? rowsWithExposure.filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
     : rowsWithExposure
@@ -1437,7 +1442,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} institutions · double-click to edit</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, rowsWithExposure.length, 'institutions')} · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Institution</Button>
@@ -1455,7 +1460,7 @@ function InstitutionsTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHan
         <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
-          rowData={filtered}
+          rowData={filtered} onModelUpdated={shownCount.onModelUpdated}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}
@@ -1539,6 +1544,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
 
   const { data = [], isLoading } = useQuery({ queryKey: ['issuers'], queryFn: () => getIssuers() })
 
+  const shownCount = useShownCount()
   const filtered = search
     ? (data as Record<string, unknown>[]).filter(r => Object.values(r).some(v => String(v ?? '').toLowerCase().includes(search.toLowerCase())))
     : data as Record<string, unknown>[]
@@ -1634,7 +1640,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
             <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => onSearchChange(e.target.value)} />
           </div>
           {deleteError && <span className="text-xs text-red-600 bg-red-50 rounded px-3 py-1">{deleteError}</span>}
-          <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length} issuers · double-click to edit</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{countText(shownCount.shown ?? filtered.length, (data as unknown[]).length, 'issuers')} · double-click to edit</span>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="secondary" onClick={openNew}><Plus size={13} /> Add Issuer</Button>
@@ -1652,7 +1658,7 @@ function IssuersTab({ search, onSearchChange }: { search: string; onSearchChange
         <AppGrid
           theme="legacy"
           onGridReady={onGridReady}
-          rowData={filtered}
+          rowData={filtered} onModelUpdated={shownCount.onModelUpdated}
           getRowId={p => String(p.data.id)}
           onRowClicked={(e: RowClickedEvent) => { if ((e.event as MouseEvent)?.detail === 2) openEdit(e.data as Record<string, unknown>) }}
           initialState={gridScroll.initialState}

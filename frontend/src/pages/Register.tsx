@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePersist, useGridColumnState, useLiveRefetchInterval } from '@/lib/hooks'
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { countText } from '@/lib/rowCount'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
@@ -252,6 +253,13 @@ export default function Register() {
   // stale count from the previous account/date range/search doesn't linger.
   const [totalCount, setTotalCount] = useState<number | null>(null)
   useEffect(() => { setTotalCount(null) }, [accountId, search, fromDate, toDate])
+  // With a search, the count without it (same account and dates), for "23 of 1,204 transactions".
+  const { data: unsearched } = useQuery({
+    queryKey: ['register-unsearched-total', accountId, fromDate, toDate],
+    queryFn: () => getTransactions({ account_id: accountId, from_date: fromDate, to_date: toDate, limit: 1, offset: 0 }),
+    enabled: !!accountId && !!search,
+  })
+  const countLabel = countText(totalCount, search ? unsearched?.total : totalCount, 'transactions')
 
   // "Select all N filtered" (the custom header checkbox above) — true once selectedIds
   // covers every row matching the current filters, not just what's been scrolled past.
@@ -609,7 +617,7 @@ export default function Register() {
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <Input className="pl-8 w-full" placeholder="Search this account…" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            <p className="text-xs text-slate-400 mt-2">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</p>
+            <p className="text-xs text-slate-400 mt-2">{countLabel}</p>
             <TxCards rows={cardRows} currency={accountCurrency} loading={cards.isLoading} hasMore={!!cards.hasNextPage}
               loadingMore={cards.isFetchingNextPage} onMore={() => cards.fetchNextPage()} onOpen={r => openRow(r)} />
           </div>
@@ -627,7 +635,7 @@ export default function Register() {
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <Input className="pl-8 w-56" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
-                <span className="text-xs text-slate-400 whitespace-nowrap">{totalCount != null ? `${totalCount.toLocaleString()} transactions` : ''}</span>
+                <span className="text-xs text-slate-400 whitespace-nowrap">{countLabel}</span>
               </div>
               <div className="flex items-center gap-2">
                 {selectAllLoading && <span className="text-xs text-slate-400 whitespace-nowrap">Selecting…</span>}

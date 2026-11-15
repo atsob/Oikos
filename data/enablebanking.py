@@ -19,6 +19,7 @@ when a bank is connected again, the uid does not), eb_pending_state (the state o
 """
 from __future__ import annotations
 
+import unicodedata
 import json
 import secrets
 import time
@@ -324,11 +325,22 @@ def refresh_balances() -> dict:
     return {"ok": ok, "failed": len(errors), "errors": errors}
 
 
+# Payment details that only name the kind of transaction ("Αγορά" — purchase — on every Alpha card purchase): they say
+# nothing the amount does not, so "HERON … — Αγορά" becomes "HERON …". Compared without accents or case.
+_GENERIC_REMIT = {"αγορα", "αγορες", "αγορα με καρτα", "αγορα καρτας", "purchase", "card purchase", "pos purchase"}
+
+
+def _plain(text: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", text.lower()) if unicodedata.category(ch) != "Mn").strip(" .")
+
+
 def _description(t: dict) -> tuple[str, str]:
     """(description, counterparty) of a transaction."""
     party = (t.get("creditor") or {}).get("name") if t.get("credit_debit_indicator") == "DBIT" \
         else (t.get("debtor") or {}).get("name")
     remit = " ".join(s.strip() for s in (t.get("remittance_information") or []) if s and s.strip())
+    if party and _plain(remit) in _GENERIC_REMIT:
+        remit = ""
     code = (t.get("bank_transaction_code") or {}).get("description") or ""
     parts = [p for p in (party, remit) if p]
     desc = " — ".join(parts) if parts else (t.get("note") or code or "")

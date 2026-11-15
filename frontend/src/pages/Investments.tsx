@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi } from '@/lib/hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useShownCount, countText } from '@/lib/rowCount'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, IDatasource, IGetRowsParams } from 'ag-grid-community'
 import {
@@ -338,6 +339,7 @@ export default function Investments() {
   const phone = usePhone()
   const [showDates, setShowDates] = useState(false)      // phone: the From / To fields stay folded until asked for
   const [cashSearch, setCashSearch] = useState('')
+  const cashShown = useShownCount()
   const PAGE_SIZE = 200
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -410,6 +412,14 @@ export default function Investments() {
   // count from the previous account/date range/search/action doesn't linger.
   const [txTotalCount, setTxTotalCount] = useState<number | null>(null)
   useEffect(() => { setTxTotalCount(null) }, [accountId, fromDate, toDate, actionFilter, txSearch])
+  // With an action filter or a search, the count without them (same account and dates), for "23 of 412 transactions".
+  const txFiltered = !!(actionFilter || txSearch)
+  const { data: unfilteredTx } = useQuery({
+    queryKey: ['investments-unfiltered-total', accountId, fromDate, toDate],
+    queryFn: () => getInvestments({ account_id: accountId ?? undefined, from_date: fromDate, to_date: toDate, limit: 1, offset: 0 }),
+    enabled: txFiltered,
+  })
+  const txCountLabel = countText(txTotalCount, txFiltered ? (unfilteredTx as { total?: number } | undefined)?.total : txTotalCount, 'transactions')
 
   // The account's own ledger balance shown in the page subtitle — the newest
   // transaction's running_balance, from whichever block happened to load row 0
@@ -876,7 +886,7 @@ export default function Investments() {
                   <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <Input className="pl-8 w-full" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
                 </div>
-                <p className="text-xs text-slate-400 mt-2">{txTotalCount != null ? `${txTotalCount.toLocaleString()} transactions` : ''}</p>
+                <p className="text-xs text-slate-400 mt-2">{txCountLabel}</p>
                 <InvCards rows={invCardRows} loading={invCards.isLoading} hasMore={!!invCards.hasNextPage} loadingMore={invCards.isFetchingNextPage}
                   onMore={() => invCards.fetchNextPage()} onOpen={r => openEdit(r)} />
               </>
@@ -916,7 +926,7 @@ export default function Investments() {
                         <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                         <Input className="pl-8 w-56" placeholder="Search…" value={cashSearch} onChange={e => setCashSearch(e.target.value)} />
                       </div>
-                      <span className="text-xs text-slate-400 whitespace-nowrap">{cashRows.length} transactions</span>
+                      <span className="text-xs text-slate-400 whitespace-nowrap">{countText(cashShown.shown, cashRows.length, 'transactions')}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       {selectedCashIds.length > 0 && (
@@ -942,6 +952,7 @@ export default function Investments() {
                       ref={cashGridRef}
                       rowData={cashRows}
                       quickFilterText={cashSearch}
+                      onModelUpdated={cashShown.onModelUpdated}
                       columnDefs={cashGridCols.colDefs}
                       defaultColDef={{ resizable: true, sortable: true, filter: true }}
                       columnTypes={AG_GRID_COLUMN_TYPES}
@@ -988,7 +999,7 @@ export default function Investments() {
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                     <Input className="pl-8 w-56" placeholder="Search…" value={txSearch} onChange={e => setTxSearch(e.target.value)} />
                   </div>
-                  <span className="text-xs text-slate-400 whitespace-nowrap">{txTotalCount != null ? `${txTotalCount.toLocaleString()} transactions` : ''}</span>
+                  <span className="text-xs text-slate-400 whitespace-nowrap">{txCountLabel}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {selectedTxIds.length > 0 && (
