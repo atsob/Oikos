@@ -5,7 +5,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ## 2026-11-15
 
 ### Added
-- **Market Data → Securities: tickers open their page.** Clicking a Yahoo Ticker opens the security on Yahoo Finance, and clicking a TV Symbol opens its TradingView chart for the security's TV Exchange, each in a new tab.
+- **Tickers open their page on Yahoo Finance and TradingView.** On Market Data → Securities, clicking a Yahoo Ticker opens the security on Yahoo Finance, and clicking a TV Symbol opens its TradingView chart for the security's TV Exchange, each in a new tab. Security Detail → Overview shows the same two links under Security Details (Yahoo Finance and TradingView), for a security that has them. With a TradingView symbol, its row (EXCHANGE:SYMBOL) replaces the Symbol and Market rows; a security without one keeps them.
 - **"23 of 583" when a list is filtered.** The count next to a search box now shows how many rows are shown out of all of them whenever a search or a column filter hides some ("23 of 583 securities"), and the plain total otherwise. On Market Data → Securities and Currencies, Static Data → Payees, Categories, Accounts, Institutions and Issuers, Security Detail → All Transactions, the Cash Register (out of the account's transactions in the date range) and Investments (out of the account's transactions in the date range, before the action filter and search).
 
 ### Fixed

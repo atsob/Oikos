@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useShownCount, countText } from '@/lib/rowCount'
+import { yahooUrl, tradingViewUrl } from '@/lib/externalLinks'
+import ExtLink from '@/components/ExtLink'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
@@ -65,18 +67,6 @@ const ANOMALY_COLS: ColDef[] = [
 type TickerSearchResult = { symbol: string; name: string; type: string; exchange: string }
 
 // ── Securities CRUD tab ───────────────────────────────────────────────────────
-// A ticker cell that opens the security's page on Yahoo Finance or TradingView in a new tab. The click stops here, so it
-// does not also count towards the row's double-click-to-edit.
-function ExtLink({ href, title, children }: { href: string; title: string; children: React.ReactNode }) {
-  return <a href={href} target="_blank" rel="noopener noreferrer" title={title} onClick={e => e.stopPropagation()}
-    className="text-blue-700 hover:underline">{children}</a>
-}
-
-// TradingView's chart for EXCHANGE:SYMBOL — works for every symbol shape (U.UN, KIMBER/A, ESSITY_B); without an exchange, TradingView picks the main listing.
-function tradingViewUrl(symbol: string, exchange?: string): string {
-  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(exchange ? `${exchange}:${symbol}` : symbol)}`
-}
-
 function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchChange: (v: string) => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -222,7 +212,7 @@ function SecuritiesTab({ search, onSearchChange }: { search: string; onSearchCha
     { field: 'industry', headerName: 'Industry', width: 140, hide: true },
     { field: 'yahoo_ticker', headerName: 'Yahoo Ticker', width: 110, cellStyle: { fontFamily: 'monospace' },
       cellRenderer: (p: ICellRendererParams) => p.value
-        ? <ExtLink href={`https://finance.yahoo.com/quote/${encodeURIComponent(String(p.value))}`} title="Open on Yahoo Finance">{String(p.value)}</ExtLink>
+        ? <ExtLink href={yahooUrl(String(p.value))} title="Open on Yahoo Finance">{String(p.value)}</ExtLink>
         : null },
     { field: 'tv_symbol', headerName: 'TV Symbol', width: 100,
       cellRenderer: (p: ICellRendererParams) => p.value

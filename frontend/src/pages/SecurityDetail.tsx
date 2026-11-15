@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useLiveRefetchInterval, useGridApi, useSettings } from '@/lib/hooks'
 import { useShownCount, countText } from '@/lib/rowCount'
+import { yahooUrl, tradingViewUrl } from '@/lib/externalLinks'
+import ExtLink from '@/components/ExtLink'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import AppGrid from '@/components/AppGrid'
@@ -2139,11 +2141,17 @@ function OverviewTab({ secId, security, securityLoading, onEditDetails }: { secI
 
       <OverviewPanel title="Security Details" actions={<Button size="sm" variant="secondary" onClick={onEditDetails}>Edit Details</Button>}>
         <OverviewRow label="Name" value={String(security.name ?? '—')} />
-        <OverviewRow label="Symbol" value={String(security.ticker ?? '—')} />
+        {/* With a TV symbol, its TradingView row (EXCHANGE:SYMBOL, linked) stands in for Symbol and Market. */}
+        {!String(security.tv_symbol ?? '').trim() && <OverviewRow label="Symbol" value={String(security.ticker ?? '—')} />}
         <OverviewRow label="Type" value={String(security.type ?? '—')} />
         <OverviewRow label="Sector" value={String(security.sector ?? '') || '—'} />
         <OverviewRow label="Industry" value={String(security.industry ?? '') || '—'} />
-        <OverviewRow label="Market" value={String(security.tv_exchange ?? '') || '—'} />
+        {!String(security.tv_symbol ?? '').trim() && String(security.tv_exchange ?? '').trim() && <OverviewRow label="Market" value={String(security.tv_exchange)} />}
+        {!!String(security.yahoo_ticker ?? '').trim() && <OverviewRow label="Yahoo Finance" value={
+          <ExtLink href={yahooUrl(String(security.yahoo_ticker).trim())} title="Open on Yahoo Finance">{String(security.yahoo_ticker).trim()} ↗</ExtLink>} />}
+        {!!String(security.tv_symbol ?? '').trim() && <OverviewRow label="TradingView" value={
+          <ExtLink href={tradingViewUrl(String(security.tv_symbol).trim(), String(security.tv_exchange ?? '').trim() || undefined)} title="Open on TradingView">
+            {String(security.tv_exchange ?? '').trim() ? `${String(security.tv_exchange).trim()}:` : ''}{String(security.tv_symbol).trim()} ↗</ExtLink>} />}
         <OverviewRow label="Currency" value={<CurrencyLink code={curr} />} />
       </OverviewPanel>
 
