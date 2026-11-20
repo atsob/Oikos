@@ -690,7 +690,8 @@ def eb_balances():
     """{Oikos account id: {amount, currency, date, type, bank, fetched_at, cleared_after_today}} — the bank's balance as
     last read, with the total of the account's *cleared* transactions dated after today. The balance shown in Oikos is as
     of today, but a cleared transaction is one the bank has already booked (a payment due on a Monday that the bank took
-    on the Friday before), so the comparison with the bank adds it."""
+    on the Friday before), so the comparison with the bank adds it. Only the next 7 days count: a bank takes a payment
+    early by a weekend or a holiday, and an instalment months ahead marked cleared by hand is not in its balance."""
     from data import enablebanking as eb
     from database.connection import get_connection
     balances = eb.stored_balances()
@@ -701,7 +702,8 @@ def eb_balances():
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT Accounts_Id, COALESCE(SUM(Total_Amount), 0) FROM Transactions "
-                    "WHERE Accounts_Id = ANY(%s) AND Cleared AND Date > CURRENT_DATE AND NOT COALESCE(Is_Draft, FALSE) "
+                    "WHERE Accounts_Id = ANY(%s) AND Cleared AND Date > CURRENT_DATE AND Date <= CURRENT_DATE + 7 "
+                    "AND NOT COALESCE(Is_Draft, FALSE) "
                     "GROUP BY Accounts_Id",
                     (ids,),
                 )
