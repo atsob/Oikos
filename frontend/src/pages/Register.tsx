@@ -8,7 +8,7 @@ import type { ColDef, GridReadyEvent, GridApi, RowClickedEvent, IDatasource, IGe
 import {
   getAccounts, getTransactions, getTransactionIds, getTransactionById, getPayees, getCategories,
   clearAccount, reconcileAccount, searchAllTransactions,
-  syncBalances, batchDeleteTransactions, batchMoveTransactions,
+  syncBalances, batchDeleteTransactions, batchMoveTransactions, batchSetCleared,
 } from '@/lib/api'
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate, toLocalISODate } from '@/lib/utils'
@@ -191,6 +191,20 @@ export default function Register() {
       setBatchMsg(`Moved ${res.moved} transaction${res.moved === 1 ? '' : 's'}.`)
     } catch (e: unknown) {
       setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch move failed')
+    } finally { setBatchSaving(false) }
+  }
+
+  const handleBatchCleared = async (cleared: boolean) => {
+    setBatchSaving(true); setBatchMsg(null)
+    try {
+      const res = await batchSetCleared(selectedIds, cleared)
+      batchInvalidate()
+      qc.invalidateQueries({ queryKey: ['eb-balances'] })   // the bank comparison counts cleared transactions of the next days
+      gridRef.current?.api.deselectAll()
+      setSelectedIds([])
+      setBatchMsg(`Marked ${res.changed} transaction${res.changed === 1 ? '' : 's'} ${cleared ? 'cleared' : 'uncleared'}.`)
+    } catch (e: unknown) {
+      setBatchMsg(e instanceof Error ? `Error: ${e.message}` : 'Batch update failed')
     } finally { setBatchSaving(false) }
   }
 
@@ -653,6 +667,8 @@ export default function Register() {
                     <span className="text-xs text-slate-500 whitespace-nowrap">
                       {allFilteredSelected ? `All ${selectedIds.length} selected` : `${selectedIds.length} selected`}
                     </span>
+                    {!readOnly && <Button variant="secondary" size="sm" disabled={batchSaving} onClick={() => handleBatchCleared(true)}>Mark Cleared</Button>}
+                    {!readOnly && <Button variant="secondary" size="sm" disabled={batchSaving} onClick={() => handleBatchCleared(false)} title="Also removes Reconciled">Mark Uncleared</Button>}
                     {!readOnly && <Button variant="secondary" size="sm" onClick={() => setBatchMoveOpen(true)}>Move to Account…</Button>}
                     {!readOnly && <Button variant="destructive" size="sm" disabled={batchSaving} onClick={handleBatchDelete}>Delete Selected</Button>}
                   </>

@@ -164,6 +164,9 @@ export const deleteTransaction = (id: number) =>
 export const batchDeleteTransactions = (ids: number[]): Promise<{ deleted: number; skipped: { id: number; reason: string }[] }> =>
   api.post('/register/transactions/batch-delete', { ids }).then(r => r.data)
 
+export const batchSetCleared = (ids: number[], cleared: boolean): Promise<{ changed: number }> =>
+  api.post('/register/transactions/batch-cleared', { ids, cleared }).then(r => r.data)
+
 export const batchMoveTransactions = (ids: number[], accountsId: number): Promise<{ moved: number }> =>
   api.post('/register/transactions/batch-move', { ids, accounts_id: accountsId }).then(r => r.data)
 

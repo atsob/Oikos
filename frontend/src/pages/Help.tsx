@@ -422,7 +422,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           saving an empty memo.
         </Note>
         <Note>
-          Select multiple rows with the checkbox column to batch-apply <b>Move to Account…</b> or{' '}
+          Select multiple rows with the checkbox column to batch-apply <b>Mark Cleared</b>, <b>Mark Uncleared</b> (which also
+          removes Reconciled; a transfer's other leg keeps its own flags), <b>Move to Account…</b> or{' '}
           <b>Delete Selected</b> instead of doing each one individually — including <b>Transfers</b>: deleting
           either leg of a transfer removes both, and moving one leg keeps the other leg's "Transfer To" pointing
           at the right account (only the leg you selected actually moves accounts). A row that's the cash side

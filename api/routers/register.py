@@ -557,6 +557,33 @@ def batch_delete_transactions(data: dict):
         conn.close()
 
 
+@router.post("/transactions/batch-cleared")
+def batch_set_cleared(data: dict):
+    """Mark several Transactions rows cleared or uncleared at once. Unclearing also drops Reconciled: a transaction the
+    bank has not booked cannot be reconciled. Only these rows change — a transfer's other leg keeps its own flags, as it
+    does when one leg is edited. The flags do not change balances, so none are recalculated."""
+    ids = [int(i) for i in (data.get("ids") or [])]
+    if not ids or "cleared" not in data:
+        raise HTTPException(400, "ids and cleared are required")
+    cleared = bool(data["cleared"])
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        if cleared:
+            cur.execute("UPDATE Transactions SET Cleared = TRUE WHERE Transactions_Id = ANY(%s) AND NOT Cleared", (ids,))
+        else:
+            cur.execute("UPDATE Transactions SET Cleared = FALSE, Reconciled = FALSE "
+                        "WHERE Transactions_Id = ANY(%s) AND (Cleared OR Reconciled)", (ids,))
+        changed = cur.rowcount
+        conn.commit()
+        return {"changed": changed}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.post("/transactions/batch-move")
 def batch_move_transactions(data: dict):
     """Move several Transactions rows to a different account at once. For a transfer
