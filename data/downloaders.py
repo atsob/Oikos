@@ -1481,8 +1481,11 @@ def download_securities_fundamentals(target_sec_id=None):
         conn.close()
 
 
-def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
+def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None, replace=False):
     """Download historical security prices from Yahoo Finance.
+
+    replace=True (with target_sec_id): the downloaded history replaces every stored price of that security, in the
+    same transaction. Used after a split (see _detect_price_splits).
 
     Requests are made in parallel (up to MAX_WORKERS concurrent threads) to
     minimise wall-clock time.  All rows are collected in memory first, then
@@ -1571,6 +1574,16 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
                     logging.info(f"  ✔ {sec_name}: {len(rows)} rows")
                     print(f"  ✔ {sec_name}: {len(rows)} rows")
 
+        # ── Splits: replace the security's history instead of patching its last days ──
+        split_sids: dict = {}
+        if replace and target_sec_id and all_rows:
+            cur.execute("DELETE FROM Historical_Prices WHERE Securities_Id = %s", (int(target_sec_id),))
+        elif all_rows:
+            split_sids = _detect_price_splits(cur, all_rows, datetime.today().strftime("%Y-%m-%d"))
+            if split_sids:
+                _record_price_splits(cur, conn, split_sids, {sid: sname for sid, sname, _, _ in securities}, "Yahoo Finance", record=False)
+                all_rows = [r for r in all_rows if int(r[0]) not in split_sids]
+
         # ── Single batch upsert ───────────────────────────────────────────────
         if all_rows:
             execute_batch(cur, """
@@ -1595,6 +1608,8 @@ def download_historical_prices_from_yahoo(tsperiod=None, target_sec_id=None):
             f"Yahoo price download complete — {len(all_rows)} rows upserted "
             f"for {total} securities."
         )
+        for _sid in split_sids:
+            download_historical_prices_from_yahoo("max", target_sec_id=_sid, replace=True)
 
     except Exception as e:
         conn.rollback()
@@ -1690,6 +1705,89 @@ def get_smart_date_range(time_input="1mo"):
 # ======================================================
 # TRADINGVIEW DOWNLOAD
 # ======================================================
+
+# ── Splits seen in downloaded prices ──────────────────────────────────────────
+# TradingView and Yahoo send history adjusted for splits, but a download only rewrites its own last few days, so after
+# a split the stored prices before them stay unadjusted: a cliff in the chart, and the >5× guard keeps the adjusted
+# prices out. A split shows as stored ÷ downloaded being one constant split ratio (2, 8, 1/10, 3/2 …) on every
+# overlapping day before the split and 1 after it. Such a security has its whole history downloaded again (replacing
+# the stored prices only once the new ones have arrived), and the split is recorded as a corporate action, with the
+# usual dashboard notice, unless one is already on record within a week: applying it to holdings stays a user step.
+_SPLIT_RATIOS = sorted({n / m for n in range(1, 51) for m in range(1, 51)
+                        if n != m and (n == 1 or m == 1 or max(n, m) <= 10) and max(n, m) / min(n, m) >= 1.2})
+
+
+def _detect_price_splits(cur, rows: list, today_str: str) -> dict:
+    """{sid: (ratio, effective_date)} for each security whose downloaded rows show a split against the stored prices.
+    `rows` are (sid, date, close, …); ratio = stored ÷ downloaded (8.0 for an 8-for-1 split, 0.1 for 1-for-10)."""
+    by_sid: dict[int, dict[str, float]] = {}
+    for r in rows:
+        if r[2] is not None and float(r[2]) > 0:
+            by_sid.setdefault(int(r[0]), {})[str(r[1])] = float(r[2])
+    if not by_sid:
+        return {}
+    dates = sorted({d for v in by_sid.values() for d in v})
+    cur.execute(
+        "SELECT Securities_Id, Date::text, Close FROM Historical_Prices "
+        "WHERE Securities_Id = ANY(%s) AND Date >= %s AND Date <= %s AND Close > 0",
+        (list(by_sid), dates[0], dates[-1]),
+    )
+    stored: dict[int, dict[str, float]] = {}
+    for sid, d, c in cur.fetchall():
+        stored.setdefault(int(sid), {})[str(d)] = float(c)
+    found = {}
+    for sid, inc in by_sid.items():
+        st = stored.get(sid, {})
+        pairs = [(d, st[d] / inc[d]) for d in sorted(inc) if d in st and d < today_str]
+        k = len(pairs)
+        while k > 0 and abs(pairs[k - 1][1] - 1) <= 0.02:   # days already stored after the split
+            k -= 1
+        pre = pairs[:k]
+        if len(pre) < 2:
+            continue
+        ratios = sorted(r for _, r in pre)
+        med = ratios[len(ratios) // 2]
+        if any(abs(r / med - 1) > 0.02 for r in ratios):
+            continue
+        snap = min(_SPLIT_RATIOS, key=lambda x: abs(med / x - 1))
+        if abs(med / snap - 1) > 0.02:
+            continue
+        eff = pairs[k][0] if k < len(pairs) else next((d for d in sorted(inc) if d > pre[-1][0]), today_str)
+        found[sid] = (snap, eff)
+    return found
+
+
+def _record_price_splits(cur, conn, found: dict, names: dict, source: str, record: bool = True) -> None:
+    """Log each detected split and record it as a corporate action (with its dashboard notice) unless one is on record.
+    Yahoo's prices are adjusted for dividends too, so a large special dividend can look like a 5-for-4 split: for Yahoo
+    the history is only downloaded again (harmless either way), and the split records come from Yahoo's own split data."""
+    from datetime import date as _date, timedelta as _td
+    new_ids = []
+    for sid, (ratio, eff) in found.items():
+        name = names.get(sid, f"id={sid}")
+        label = f"{ratio:g}-for-1 split" if ratio >= 1 else f"1-for-{1 / ratio:g} reverse split"
+        logging.warning("%s SPLIT DETECTED — %s: %s around %s; downloading the whole history again", source, name, label, eff)
+        print(f"  ✂️ {name}: {label} around {eff} — downloading the whole history again")
+        if not record:
+            continue
+        d = _date.fromisoformat(eff)
+        cur.execute(
+            "SELECT 1 FROM corporate_actions WHERE securities_id=%s AND action_type IN ('Split','Reverse Split') "
+            "AND effective_date BETWEEN %s AND %s",
+            (sid, d - _td(days=7), d + _td(days=7)),
+        )
+        if cur.fetchone():
+            continue
+        cur.execute("""
+            INSERT INTO corporate_actions (securities_id, action_type, effective_date, ratio_new, ratio_old, description)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING corporate_actions_id
+        """, (sid, 'Split' if ratio >= 1 else 'Reverse Split', d, ratio, 1.0, f"{label} (detected in {source} prices)"))
+        new_ids.append(cur.fetchone()[0])
+    conn.commit()
+    if new_ids:
+        from database.queries import record_new_split_notifications
+        record_new_split_notifications(new_ids)
+
 
 def _period_to_n_bars(tsperiod: str) -> int:
     s = str(tsperiod).lower().strip()
@@ -2261,8 +2359,11 @@ def download_isin_from_eodhd(target_sec_id=None):
         conn.close()
 
 
-def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=None):
+def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=None, replace=False):
     """Download and upsert historical daily prices from TradingView into DB.
+
+    replace=True (with target_sec_id): the downloaded history replaces every stored price of that security, in the
+    same transaction, so nothing is lost if the download fails. Used after a split (see _detect_price_splits).
 
     Securities must have TV_Symbol and TV_Exchange populated.
 
@@ -2430,6 +2531,16 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                         _tv_inst.ws = None
                 except Exception:
                     pass
+
+        # ── Splits: replace the security's history instead of patching its last days ──
+        split_sids: dict = {}
+        if replace and target_sec_id and all_rows:
+            cur.execute("DELETE FROM Historical_Prices WHERE Securities_Id = %s", (int(target_sec_id),))
+        elif all_rows:
+            split_sids = _detect_price_splits(cur, all_rows, datetime.today().strftime("%Y-%m-%d"))
+            if split_sids:
+                _record_price_splits(cur, conn, split_sids, {sid: sname for sid, sname, _, _, _ in securities}, "TradingView")
+                all_rows = [r for r in all_rows if int(r[0]) not in split_sids]
 
         # ── Validate before upsert ───────────────────────────────────────────
         # Two guards:
@@ -2695,6 +2806,8 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
             f"TradingView price download complete — {len(all_rows)} rows upserted "
             f"for {total} securities."
         )
+        for _sid in split_sids:
+            download_historical_prices_from_tradingview("max", target_sec_id=_sid, replace=True)
 
     except Exception as e:
         conn.rollback()

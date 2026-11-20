@@ -1746,6 +1746,18 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           ShrIn/ShrOut transactions for every account that held the security as of the effective date. Once
           applied, editing it again goes back to updating the record's fields only.
         </Note>
+        <Note>
+          <b>Splits in downloaded prices.</b> TradingView and Yahoo send price history already adjusted for splits, but a
+          price download rewrites only its last few days. So when a download's prices differ from the stored ones by one
+          constant split ratio (2-for-1, 8-for-1, 1-for-10, 3-for-2 …) on every earlier day, Oikos treats it as a split:
+          it downloads the security's <b>whole history again</b> and replaces the stored prices with it (only once the
+          new prices have arrived, so a failed download loses nothing). For TradingView it also records the split under{' '}
+          <b>Corporate Actions</b> with the usual dashboard notice, unless one is already on record within a week; for
+          Yahoo the record comes from Yahoo's own split history. Applying the split to your holdings stays your step
+          (<b>Save &amp; Apply</b>, above). Apart from that, a downloaded close more than <b>5×</b> away from the stored
+          one for the same day, or from the last stored close for a new day, is skipped and logged as a wrong quote — unless
+          TradingView's own previous day in the same download is at the new level, as on the day of a split.
+        </Note>
       </>
     ),
   },
