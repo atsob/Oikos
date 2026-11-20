@@ -639,7 +639,7 @@ export function Spinner({ size = 20 }: { size?: number }) {
 }
 
 // ── PageHeader ────────────────────────────────────────────────────────────────
-export function PageHeader({ title, subtitle, actions, phoneTitle }: { title: string; subtitle?: string; actions?: React.ReactNode; phoneTitle?: string }) {
+export function PageHeader({ title, subtitle, actions, phoneTitle }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode; phoneTitle?: string }) {
   // On a phone the title is shown in the app bar at the top (see Layout), so it is not repeated here.
   const setPhoneTitle = useContext(PhoneTitleContext)
   const barTitle = phoneTitle || title        // a page whose own title is empty (Security Detail) can still name itself in the bar

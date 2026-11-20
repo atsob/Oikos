@@ -447,7 +447,10 @@ export default function Register() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="Cash Register"
-        subtitle={selectedAccount ? `${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}${bankLine ? ` · ${bankLine.text}` : ''}` : 'Select an account'}
+        subtitle={selectedAccount ? <>
+          {`${String(selectedAccount.name)} · ${fmtCur(Number(selectedAccount.balance), accountCurrency)}`}
+          {bankLine && <> · <span className={`font-medium ${bankLine.color}`} title={bankLine.title}>{bankLine.text}</span></>}
+        </> : 'Select an account'}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             {cameFromReport && (

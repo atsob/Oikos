@@ -24,5 +24,5 @@ export function bankBalanceLine(b: EbStoredBalance | undefined, oikosBalance: nu
   const title = `${b.bank} balance${b.type ? ` (${b.type})` : ''}${b.date ? ` on ${fmtDate(b.date)}` : ''}, read ${new Date(b.fetched_at).toLocaleString()}`
     + (same ? ' — the same as in Oikos' : diff != null ? ' — compared with the balance shown in Oikos' : '')
     + (diff != null && Math.abs(ahead) >= 0.01 ? `, counting ${fmtCur(ahead, b.currency || currency || 'EUR')} of cleared transactions dated after today.` : diff != null ? '.' : '')
-  return { text, color: same ? 'text-slate-500' : 'text-amber-700', title }
+  return { text, color: same ? 'text-green-700' : 'text-red-600', title }
 }
