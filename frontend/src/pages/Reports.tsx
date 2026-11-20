@@ -34,7 +34,7 @@ import {
 } from '@/lib/api'
 import { Card, CardBody, Input, Select, Spinner, Button, Tooltip, ColHeader, MobileSort, ColumnsMenu, CopyToExcelButton, useSortTable, useSortTablePersisted, ACCOUNT_TYPE_ORDER, AG_GRID_COLUMN_TYPES, AccountLink, DateInput } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
-import { fmtEur, fmtPct, fmtNum, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
+import { fmtEur, fmtPct, fmtNum, fmtDate, plotLayout, todayLocal, toLocalISODate } from '@/lib/utils'
 import { getCurrencySymbol } from '@/lib/settings'
 import { LINKABLE_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { useTheme } from '@/lib/theme'
@@ -5500,6 +5500,10 @@ type Signal = {
   ma_trend: string | null
   ma_cross_event: string | null
   trailing_high_1y: number | null
+  trailing_stop_pct: number | null      // this security's own stop distance (scaled to its volatility by default)
+  trailing_stop_price: number | null
+  trailing_stop_triggered: boolean | null
+  trailing_stop_since: string | null    // first day of the current run below the stop
   action: string | null          // the stored Action verdict (database/action_signal.py)
   action_score: number | null
   action_why: string | null
@@ -5812,12 +5816,8 @@ function PortfolioActionSignalsTab() {
     const costBasis = r.total_cost_eur != null ? Number(r.total_cost_eur) : null
     const prevClose = sec?.prev_close != null ? Number(sec.prev_close) : null
     const change = r.price_today != null && prevClose != null ? Number(r.price_today) - prevClose : null
-    const trailingStopPrice = r.trailing_high_1y != null ? Number(r.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
-    const trailingStopTriggered = trailingStopPrice != null && r.price_today != null ? Number(r.price_today) < trailingStopPrice : null
     return {
       ...r,
-      trailing_stop_price: trailingStopPrice,
-      trailing_stop_triggered: trailingStopTriggered,
       ma_rising: (() => {
         const a = maDir(r.ma50_chg_pct) === 'up', b = maDir(r.ma200_chg_pct) === 'up'
         return r.ma50_chg_pct == null && r.ma200_chg_pct == null ? null : a && b ? 'Both rising' : a ? 'MA50 rising' : b ? 'MA200 rising' : 'Neither'
@@ -6034,13 +6034,18 @@ function PortfolioActionSignalsTab() {
         filterValueGetter: (p: { data: { above_ma200: boolean | null } }) =>
           p.data.above_ma200 == null ? '—' : p.data.above_ma200 ? 'Above' : 'Below' },
       { field: 'trailing_stop_triggered', headerName: 'Trailing Stop', width: 130,
-        headerTooltip: `Triggered when price has fallen ${settings.trailingStopPct}% or more from its own trailing 1-year high (Tools → System → App Settings → Trailing Stop).`,
+        headerTooltip: 'Triggered when price has fallen its Stop % or more from its own trailing 1-year high; the date is when the current run below the stop began (Tools → System → App Settings → Trailing Stop).',
         cellClass: (p: { value: boolean | null }) => `text-xs font-semibold ${p.value === true ? 'text-red-600' : p.value === false ? 'text-slate-400' : ''}`,
-        valueFormatter: p => p.value == null ? '—' : p.value ? '🔻 Triggered' : 'OK',
+        valueFormatter: (p: { value: boolean | null; data?: { trailing_stop_since?: string | null } }) => p.value == null ? '—' : p.value
+          ? `🔻 since ${p.data?.trailing_stop_since ? fmtDate(p.data.trailing_stop_since) : '?'}` : 'OK',
         filterValueGetter: (p: { data: { trailing_stop_triggered: boolean | null } }) =>
           p.data.trailing_stop_triggered == null ? '—' : p.data.trailing_stop_triggered ? '🔻 Triggered' : 'OK' },
+      { field: 'trailing_stop_pct', headerName: 'Stop %', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 90, hide: true,
+        headerTooltip: "This security's stop distance below its 1-year high: by default 2 × its 1-year volatility × √(3/12), between the minimum and maximum set in App Settings.", valueFormatter: numFmt(1) },
+      { field: 'trailing_stop_since', headerName: 'Stop Since', width: 110, hide: true,
+        headerTooltip: 'The first day of the current run below the trailing stop.', valueFormatter: (p: { value: string | null }) => p.value ? fmtDate(p.value) : '' },
       { field: 'trailing_stop_price', headerName: 'Stop Price', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
-        headerTooltip: 'Trailing 1-year high minus the configured stop %.', valueFormatter: numFmt(4) },
+        headerTooltip: 'Trailing 1-year high minus the Stop %.', valueFormatter: numFmt(4) },
       { field: 'trailing_high_1y', headerName: '1Y High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 100, hide: true,
         headerTooltip: 'Highest price in the last 1 year (post-split adjusted) — the reference price for the Trailing Stop.', valueFormatter: numFmt(4) },
       { field: 'week52_high', headerName: '52-Week High', type: 'numericColumn', filter: 'agNumberColumnFilter', width: 120, hide: true, valueFormatter: numFmt(4) },

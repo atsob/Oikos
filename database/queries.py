@@ -1,5 +1,6 @@
 import math
 import time
+import logging
 import pandas as pd
 from psycopg2.extras import execute_values
 from database.connection import get_connection, get_db
@@ -1316,6 +1317,63 @@ def _get_trailing_stop_pct() -> float:
     return stop_pct
 
 
+def _get_trailing_stop_cfg() -> dict:
+    """The Trailing Stop settings (Tools -> System -> App Settings). mode 'volatility' (the default) scales each
+    security's stop to its own 1-year volatility — stop % = mult × annual volatility × √(3/12), the move it makes in about
+    three months at that many standard deviations — kept between min and max; mode 'fixed' uses pct for every security
+    (also used in 'volatility' mode for a security with no volatility yet). A fixed 20% suits a broad ETF but trips on
+    ordinary swings of silver, crypto or a volatile stock, where it fires on noise and stays on."""
+    cfg = {"mode": "volatility", "pct": 20.0, "min": 15.0, "max": 50.0, "mult": 2.0}
+    try:
+        conn = get_connection()
+        _ensure_user_preferences_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
+            row = cur.fetchone()
+        conn.close()
+        st = (row[0] if row and row[0] else {}) or {}
+        if st.get("trailingStopMode") in ("fixed", "volatility"):
+            cfg["mode"] = st["trailingStopMode"]
+        for key, name in (("pct", "trailingStopPct"), ("min", "trailingStopMinPct"), ("max", "trailingStopMaxPct"), ("mult", "trailingStopVolMult")):
+            if st.get(name) is not None:
+                cfg[key] = float(st[name])
+    except Exception:
+        pass
+    if cfg["max"] < cfg["min"]:
+        cfg["max"] = cfg["min"]
+    return cfg
+
+
+def _trailing_stop_since(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds trailing_stop_since: for a security whose stop is triggered, the first day of the current run below it —
+    the day after it last closed at or above its stop (the 1-year high of that day less today's stop %). A run older
+    than the price history read (2 years) gives the oldest day read."""
+    df["trailing_stop_since"] = None
+    hit = df[df["trailing_stop_triggered"] == True]  # noqa: E712
+    if hit.empty:
+        return df
+    pct = {int(r.securities_id): float(r.trailing_stop_pct) for r in hit.itertuples()}
+    conn = get_connection()
+    try:
+        px = pd.read_sql("SELECT Securities_Id AS sid, Date AS d, Close AS c FROM Historical_Prices "
+                         "WHERE Securities_Id = ANY(%s) AND Date >= CURRENT_DATE - INTERVAL '3 years' AND Close > 0 "
+                         "ORDER BY Securities_Id, Date", conn, params=(list(pct),))
+    finally:
+        conn.close()
+    since = {}
+    for sid, g in px.groupby("sid"):
+        c = g.set_index(pd.to_datetime(g["d"]))["c"].astype(float)
+        hi = c.rolling("365D").max()
+        below = c < hi * (1 - pct[int(sid)] / 100)
+        below = below[below.index >= below.index.max() - pd.Timedelta(days=730)]
+        if below.empty or not below.iloc[-1]:
+            continue
+        above = below[~below]
+        since[int(sid)] = (below[below.index > above.index[-1]].index[0] if len(above) else below.index[0]).date().isoformat()
+    df["trailing_stop_since"] = df["securities_id"].map(lambda x: since.get(int(x)))
+    return df
+
+
 def get_portfolio_signals(selected_acc_id=None):
     """Cached wrapper around _compute_portfolio_signals — the underlying query scans
     ~5 years of daily prices across every security with several window functions
@@ -1329,22 +1387,22 @@ def get_portfolio_signals(selected_acc_id=None):
     day via the scheduler.
     """
     now = time.time()
-    stop_pct = _get_trailing_stop_pct()
+    stop_cfg = _get_trailing_stop_cfg()
     from api.access import scope_now
     mine = scope_now()
-    cache_key = (selected_acc_id, stop_pct, tuple(mine) if mine is not None else None)       # a restricted user's signals cover their own accounts
+    cache_key = (selected_acc_id, tuple(sorted(stop_cfg.items())), tuple(mine) if mine is not None else None)       # a restricted user's signals cover their own accounts
     cached = _portfolio_signals_cache.get(cache_key)
     if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
         return cached[1].copy()
-    df = _compute_portfolio_signals(selected_acc_id, stop_pct)
+    df = _compute_portfolio_signals(selected_acc_id, stop_cfg)
     _portfolio_signals_cache[cache_key] = (now, df)
     return df.copy()
 
 
-def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσθήκη '=' εδώ
+def _compute_portfolio_signals(selected_acc_id=None, stop_cfg=None):
     """Get signals for my investment portfolio."""
-    if stop_pct is None:
-        stop_pct = _get_trailing_stop_pct()
+    if stop_cfg is None:
+        stop_cfg = _get_trailing_stop_cfg()
     # The recommendation CASE below reads Signal_Notifications.Last_Known_Signal
     # (BUY-threshold hysteresis) — make sure it exists even on a fresh install
     # that hasn't run refresh_signal_notifications() yet.
@@ -1580,17 +1638,32 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
         -- risk-adjusted return (sharpe_ratio/quality_score). Without this, a
         -- security that just cratered out of a 1-year uptrend can still show
         -- "HIGH CONVICTION BUY" until the 1-year Sharpe window itself rolls over.
+        -- Each security's own stop distance: scaled to its 1-year volatility (2 standard deviations over about three
+        -- months by default, kept between a minimum and a maximum), or one fixed percentage — see _get_trailing_stop_cfg.
+        with_stop AS (
+            SELECT *,
+                ROUND((CASE WHEN %s = 'volatility' AND vol_1y_ann IS NOT NULL
+                            THEN GREATEST(%s, LEAST(%s, %s * vol_1y_ann * 0.5))
+                            ELSE %s END)::numeric, 1) AS trailing_stop_pct
+            FROM recommendations
+        ),
+        with_stop_price AS (
+            SELECT *,
+                ROUND((trailing_high_1y * (1 - trailing_stop_pct / 100.0))::numeric, 4) AS trailing_stop_price,
+                CASE WHEN trailing_high_1y IS NULL OR price_today IS NULL THEN NULL
+                     ELSE price_today < trailing_high_1y * (1 - trailing_stop_pct / 100.0) END AS trailing_stop_triggered
+            FROM with_stop
+        ),
         with_trend AS (
             SELECT *,
-                (ma_trend = 'Death' OR (trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0))) AS bearish_trend,
+                (ma_trend = 'Death' OR COALESCE(trailing_stop_triggered, FALSE)) AS bearish_trend,
                 CASE
-                    WHEN ma_trend = 'Death' AND trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0)
-                         THEN 'Death Cross + Trailing Stop'
+                    WHEN ma_trend = 'Death' AND COALESCE(trailing_stop_triggered, FALSE) THEN 'Death Cross + Trailing Stop'
                     WHEN ma_trend = 'Death' THEN 'Death Cross'
-                    WHEN trailing_high_1y IS NOT NULL AND price_today < trailing_high_1y * (1 - %s / 100.0) THEN 'Trailing Stop'
+                    WHEN COALESCE(trailing_stop_triggered, FALSE) THEN 'Trailing Stop'
                     ELSE NULL
                 END AS trend_reason
-            FROM recommendations
+            FROM with_stop_price
         )
         SELECT *,
             CASE
@@ -1621,10 +1694,14 @@ def _compute_portfolio_signals(selected_acc_id=None, stop_pct=None): # Προσ�
     """
 
     # Το pandas.read_sql χειρίζεται σωστά τις παραμέτρους για την αποφυγή SQL Injection
-    df = pd.read_sql(query, conn, params=(selected_acc_id, selected_acc_id, stop_pct, stop_pct, stop_pct))
-    cur = conn.cursor()
-    cur.close()
+    c = stop_cfg
+    df = pd.read_sql(query, conn, params=(selected_acc_id, selected_acc_id, c["mode"], c["min"], c["max"], c["mult"], c["pct"]))
     conn.close()
+    try:
+        df = _trailing_stop_since(df)
+    except Exception as e:
+        logging.warning("trailing stop 'since' dates failed: %s", e)
+        df["trailing_stop_since"] = None
     return df
 
 
@@ -7445,19 +7522,6 @@ def _get_trend_alerts() -> list:
     if df is None or df.empty:
         return []
 
-    stop_pct = 20.0
-    try:
-        conn = get_connection()
-        _ensure_user_preferences_table(conn)
-        with conn.cursor() as cur:
-            cur.execute("SELECT Pref_Value FROM User_Preferences WHERE Pref_Key = 'app-settings'")
-            row = cur.fetchone()
-        conn.close()
-        if row and row[0] and row[0].get('trailingStopPct') is not None:
-            stop_pct = float(row[0]['trailingStopPct'])
-    except Exception:
-        pass
-
     _ensure_live_alert_dismissals_table()
     conn = get_connection()
     try:
@@ -7503,10 +7567,14 @@ def _get_trend_alerts() -> list:
                                 f"200-day MA (bearish trend signal)." + pnl_clause(row)),
                     'securities_id': sid, 'type': 'ma_cross',
                 })
-        if qty > 0 and row.get('trailing_high_1y') is not None and row.get('price_today') is not None:
+        if qty > 0 and row.get('trailing_high_1y') is not None and row.get('price_today') is not None \
+                and row.get('trailing_stop_pct') is not None:
             high = float(row['trailing_high_1y'])
             price = float(row['price_today'])
+            stop_pct = float(row['trailing_stop_pct'])
             stop_price = high * (1 - stop_pct / 100)
+            since = row.get('trailing_stop_since')
+            since = since if isinstance(since, str) and since else None
             if price < stop_price:
                 active.add((sid, 'trailing_stop'))
                 if (sid, 'trailing_stop') not in dismissed:
@@ -7516,7 +7584,9 @@ def _get_trend_alerts() -> list:
                         'level': 'warning' if still_in_profit else 'error',
                         'message': (f"🔻 **Trailing Stop** — {name} is at **{price:,.4f}**, more than "
                                     f"{stop_pct:g}% below its trailing 1-year high of {high:,.4f} "
-                                    f"(stop: {stop_price:,.4f})." + pnl_clause(row)),
+                                    f"(stop: {stop_price:,.4f}"
+                                    + (f"; below it since {pd.Timestamp(since).strftime('%d/%m/%Y')}" if since else "")
+                                    + ")." + pnl_clause(row)),
                         'securities_id': sid, 'type': 'trailing_stop',
                     })
 

@@ -136,8 +136,11 @@ function PricesTab({ secId }: { secId: number }) {
   const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
   const [settings] = useSettings()
-  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
-  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
+  // the security's own stop (scaled to its volatility by default), worked out with the signals
+  const trailingStopPrice = signal?.trailing_stop_price != null ? Number(signal.trailing_stop_price) : null
+  const trailingStopTriggered = signal?.trailing_stop_triggered == null ? null : Boolean(signal.trailing_stop_triggered)
+  const trailingStopPct = signal?.trailing_stop_pct != null ? Number(signal.trailing_stop_pct) : settings.trailingStopPct
+  const trailingStopSince = signal?.trailing_stop_since ? String(signal.trailing_stop_since) : null
   // Shares the ['sec-transactions', secId] query with InvestmentTransactionsTab —
   // switching tabs doesn't re-fetch.
   const { data: txHistory = [] } = useQuery({
@@ -402,7 +405,7 @@ function PricesTab({ secId }: { secId: number }) {
         )}
         {trailingStopTriggered != null && (
           <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-            {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
+            {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${fmtNum(trailingStopPct, 1)}% off 1Y high${trailingStopSince ? `, since ${fmtDate(trailingStopSince)}` : ''})` : `Trailing Stop OK (${fmtNum(trailingStopPct, 1)}%)`}
           </span>
         )}
       </div>
@@ -656,8 +659,11 @@ function AnalysisTab({ secId }: { secId: number }) {
   const [settings] = useSettings()
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
   const fundamental = (fundamentalsData as Record<string, unknown>[]).find(f => Number(f.securities_id) === secId)
-  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
-  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
+  // the security's own stop (scaled to its volatility by default), worked out with the signals
+  const trailingStopPrice = signal?.trailing_stop_price != null ? Number(signal.trailing_stop_price) : null
+  const trailingStopTriggered = signal?.trailing_stop_triggered == null ? null : Boolean(signal.trailing_stop_triggered)
+  const trailingStopPct = signal?.trailing_stop_pct != null ? Number(signal.trailing_stop_pct) : settings.trailingStopPct
+  const trailingStopSince = signal?.trailing_stop_since ? String(signal.trailing_stop_since) : null
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
   if (!signal) return <p className="text-sm text-slate-400 py-8 text-center">No analysis data available for this security yet.</p>
@@ -712,8 +718,8 @@ function AnalysisTab({ secId }: { secId: number }) {
           value={signal.above_ma200 == null ? '—' : signal.above_ma200 ? 'Above' : 'Below'}
           color={signal.above_ma200 == null ? undefined : signal.above_ma200 ? 'text-green-600' : 'text-red-600'} />
         <MiniStat
-          label={<Tooltip text={`Triggered when price has fallen ${settings.trailingStopPct}% or more from its own trailing 1-year high. Configurable under Tools → System → App Settings → Trailing Stop.`}>Trailing Stop</Tooltip>}
-          value={trailingStopTriggered == null ? '—' : trailingStopTriggered ? `🔻 Triggered @ ${fmt(trailingStopPrice, 4)}` : `OK (stop @ ${fmt(trailingStopPrice, 4)})`}
+          label={<Tooltip text={`Triggered when price has fallen ${fmtNum(trailingStopPct, 1)}% or more from its own trailing 1-year high — this security's own stop, scaled to its volatility unless set to a fixed % under Tools → System → App Settings → Trailing Stop.`}>Trailing Stop</Tooltip>}
+          value={trailingStopTriggered == null ? '—' : trailingStopTriggered ? `🔻 Triggered @ ${fmt(trailingStopPrice, 4)}${trailingStopSince ? ` since ${fmtDate(trailingStopSince)}` : ''}` : `OK (stop @ ${fmt(trailingStopPrice, 4)}, −${fmtNum(trailingStopPct, 1)}%)`}
           color={trailingStopTriggered == null ? undefined : trailingStopTriggered ? 'text-red-600' : undefined} />
       </AnalysisSection>
 
@@ -2245,8 +2251,11 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
   const signal = (signalsData as Record<string, unknown>[]).find(s => Number(s.securities_id) === secId)
   const [settings] = useSettings()
-  const trailingStopPrice = signal?.trailing_high_1y != null ? Number(signal.trailing_high_1y) * (1 - settings.trailingStopPct / 100) : null
-  const trailingStopTriggered = trailingStopPrice != null && signal?.price_today != null ? Number(signal.price_today) < trailingStopPrice : null
+  // the security's own stop (scaled to its volatility by default), worked out with the signals
+  const trailingStopPrice = signal?.trailing_stop_price != null ? Number(signal.trailing_stop_price) : null
+  const trailingStopTriggered = signal?.trailing_stop_triggered == null ? null : Boolean(signal.trailing_stop_triggered)
+  const trailingStopPct = signal?.trailing_stop_pct != null ? Number(signal.trailing_stop_pct) : settings.trailingStopPct
+  const trailingStopSince = signal?.trailing_stop_since ? String(signal.trailing_stop_since) : null
 
   const pctChange = (() => {
     const h = history as Record<string, unknown>[]
@@ -2393,7 +2402,7 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
           )}
           {trailingStopTriggered != null && (
             <span className={`text-xs font-semibold px-2 py-1 rounded ${trailingStopTriggered ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-              {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${settings.trailingStopPct}% off 1Y high)` : `Trailing Stop OK`}
+              {trailingStopTriggered ? `🔻 Trailing Stop Triggered (${fmtNum(trailingStopPct, 1)}% off 1Y high${trailingStopSince ? `, since ${fmtDate(trailingStopSince)}` : ''})` : `Trailing Stop OK (${fmtNum(trailingStopPct, 1)}%)`}
             </span>
           )}
           {pctChange != null && !isLoading && (

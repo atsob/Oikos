@@ -12,7 +12,11 @@ export interface AppSettings {
   loanAlertLeadDays: number // Dashboard heads-up window for an upcoming Loan payment (Loan_Next_Due_Date)
   liveRefreshSeconds: number // auto-refresh interval for price/balance-driven views (0 = off)
   riskFreeRateSource: string // 'eur_estr' | 'us_tbill' — Sharpe Ratio's risk-free rate proxy
-  trailingStopPct: number // % below the trailing 1-year high that flags a security's Trailing Stop as triggered
+  trailingStopPct: number // fixed mode: % below the trailing 1-year high that flags a security's Trailing Stop as triggered
+  trailingStopMode: string // 'volatility' (each security's stop = mult × 1-year volatility × √(3/12), within min–max) | 'fixed'
+  trailingStopVolMult: number // volatility mode: how many standard deviations of a 3-month move
+  trailingStopMinPct: number // volatility mode: the tightest stop
+  trailingStopMaxPct: number // volatility mode: the widest stop
   telegramAlerts: boolean // send a Telegram message when Market Watch / Local Market Watch turns red or leaves red (needs TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)
   telegramAlertGroups: Record<string, boolean> // Dashboard alert groups (sr, price, signals, action, events, corporate, portfolio) also sent to Telegram when new — all off by default
   dashboardAlertGroups: Record<string, boolean> // Dashboard alert groups shown on the Dashboard — a group is shown unless it is set to false here (Telegram has its own list)
@@ -34,6 +38,10 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   liveRefreshSeconds: 60,
   riskFreeRateSource: 'eur_estr',
   trailingStopPct: 20,
+  trailingStopMode: 'volatility',
+  trailingStopVolMult: 2,
+  trailingStopMinPct: 15,
+  trailingStopMaxPct: 50,
   telegramAlerts: true,
   telegramAlertGroups: {},
   dashboardAlertGroups: {},

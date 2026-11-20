@@ -181,7 +181,7 @@ def compute_all() -> pd.DataFrame:
     sig = get_portfolio_signals(None)
     if sig is None or sig.empty:
         return pd.DataFrame(columns=["securities_id", "level", "score", "raw", "held", "why"])
-    stop_pct = _get_trailing_stop_pct()
+    default_stop = _get_trailing_stop_pct()
     fs = get_fundamental_scores()
     fsm = fs.set_index("securities_id")[["f_score", "f_score_max", "z_zone"]].to_dict("index") if fs is not None and len(fs) else {}
     # the risk-free rate the Sharpe column used, recovered from any row: sharpe = (annual - rfr) / vol
@@ -206,6 +206,8 @@ def compute_all() -> pd.DataFrame:
             continue
         base = r.to_dict()
         base.update(fsm.get(sid, {}))
+        # the security's own stop distance (scaled to its volatility, see _get_trailing_stop_cfg), as on the signals page
+        stop_pct = float(r["trailing_stop_pct"]) if pd.notna(r.get("trailing_stop_pct")) else default_stop
         daily = _daily_frame(g, stop_pct, rfr).tail(HISTORY_DAYS + 5)
         scores, last_pts, last = [], [], None
         for i in range(len(daily)):

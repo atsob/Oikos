@@ -2463,14 +2463,46 @@ function AppSettingsPanel() {
           {/* Trailing stop */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Trailing Stop</h3>
-            <label className="text-xs font-medium text-slate-500 block mb-1">% below trailing 1-year high</label>
-            <input type="number" min={1} max={90} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
-              value={form.trailingStopPct} onChange={e => set('trailingStopPct', Math.min(90, Math.max(1, Number(e.target.value) || 1)))} />
+            <label className="text-xs font-medium text-slate-500 block mb-1">Stop distance</label>
+            <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs bg-white"
+              value={form.trailingStopMode} onChange={e => set('trailingStopMode', e.target.value)}>
+              <option value="volatility">Scaled to each security's volatility</option>
+              <option value="fixed">The same % for every security</option>
+            </select>
+            {form.trailingStopMode === 'fixed' ? (
+              <div className="mt-3">
+                <label className="text-xs font-medium text-slate-500 block mb-1">% below trailing 1-year high</label>
+                <input type="number" min={1} max={90} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm max-w-xs"
+                  value={form.trailingStopPct} onChange={e => set('trailingStopPct', Math.min(90, Math.max(1, Number(e.target.value) || 1)))} />
+              </div>
+            ) : (
+              <div className="mt-3 grid grid-cols-3 gap-3 max-w-md">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 block mb-1">× volatility</label>
+                  <input type="number" min={0.5} max={5} step={0.5} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                    value={form.trailingStopVolMult} onChange={e => set('trailingStopVolMult', Math.min(5, Math.max(0.5, Number(e.target.value) || 2)))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 block mb-1">Minimum %</label>
+                  <input type="number" min={1} max={90} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                    value={form.trailingStopMinPct} onChange={e => set('trailingStopMinPct', Math.min(90, Math.max(1, Number(e.target.value) || 15)))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 block mb-1">Maximum %</label>
+                  <input type="number" min={1} max={95} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                    value={form.trailingStopMaxPct} onChange={e => set('trailingStopMaxPct', Math.min(95, Math.max(1, Number(e.target.value) || 50)))} />
+                </div>
+              </div>
+            )}
             <p className="mt-2 text-xs text-slate-400">
               How far a security's price can fall from its own trailing 1-year high before the Trailing Stop flag
-              trips, shown on Securities Analysis → Portfolio Action Signals and on a Security Detail's Overview and
-              Prices tabs. A trend-following exit rule — 15–25% is typical for individual equities, tighter for
-              lower-volatility names, wider for small-caps or crypto.
+              trips (Securities Analysis → Portfolio Action Signals, Security Detail, Dashboard alerts and the Action
+              verdict). <b>Scaled to volatility</b> (default): stop % = {form.trailingStopVolMult} × the security's 1-year
+              volatility × √(3/12) — about {form.trailingStopVolMult} standard deviations of a three-month move — kept between{' '}
+              {form.trailingStopMinPct}% and {form.trailingStopMaxPct}%: a broad ETF at 13% volatility gets {form.trailingStopMinPct}%,
+              a stock at 40% gets {Math.min(form.trailingStopMaxPct, Math.max(form.trailingStopMinPct, form.trailingStopVolMult * 40 * 0.5))}%,
+              silver or a volatile stock is capped at {form.trailingStopMaxPct}%. A fixed % fits low-volatility
+              holdings but trips on ordinary swings of volatile ones. The Stop % column and the badges show each security's own figure.
             </p>
           </div>
 
