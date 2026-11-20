@@ -1726,6 +1726,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           355.5550"), just like Close/MA50/MA200 — click it in the legend to toggle that line off if it's in the way.
         </Note>
         <Note>
+          <b>Below 52-Week High by %</b> is a price alert (Security Detail → Alerts, or Market Data → Alerts) that works
+          out its own level: it triggers when the price falls the given percentage below the highest close of the past
+          year, so 20 means 52-week high × 0.8, and the level moves up with a new high. Unlike the Trailing Stop, it works
+          for a security you do not hold, and each alert has its own percentage. The Alerts tables show it as
+          "20% → level" (hover for the high), and the charts draw the level as a red dashed line.
+        </Note>
+        <Note>
           The <b>Setup</b> tab shows a read-only <b>Price Scale</b> field (only when non-default) for securities
           quoted in a minor currency unit, e.g. London Stock Exchange shares priced in pence (GBp/GBX) rather than
           pounds — this is what keeps their Market Value, Analyst Target Price, and other price-like figures

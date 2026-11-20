@@ -1534,8 +1534,8 @@ function CapeRatiosTab() {
 }
 
 // ── Alerts Tab ────────────────────────────────────────────────────────────────
-const ALERT_TYPES = ['price_above', 'price_below', 'fx_above', 'fx_below', 'allocation_drift']
-const ALERT_TYPE_LABEL: Record<string, string> = { price_above: '▲ Price Above Threshold', price_below: '▼ Price Below Threshold', fx_above: '▲ Currency Rate Above Threshold', fx_below: '▼ Currency Rate Below Threshold', allocation_drift: '⚖ Allocation Drift' }
+const ALERT_TYPES = ['price_above', 'price_below', 'pct_below_high', 'fx_above', 'fx_below', 'allocation_drift']
+const ALERT_TYPE_LABEL: Record<string, string> = { price_above: '▲ Price Above Threshold', price_below: '▼ Price Below Threshold', pct_below_high: '▼ Below 52-Week High by %', fx_above: '▲ Currency Rate Above Threshold', fx_below: '▼ Currency Rate Below Threshold', allocation_drift: '⚖ Allocation Drift' }
 const ASSET_TYPES_FOR_DRIFT = ['Stock', 'ETF', 'Bond', 'Mutual Fund', 'Crypto', 'Other']
 
 function AlertsTab() {
@@ -1601,9 +1601,10 @@ function AlertsTab() {
   const doSave = () => {
     if (!form.alert_type) return setErr('Alert type is required')
     if (!form.threshold) return setErr('Threshold is required')
-    const isPriceAlert = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+    const isPriceAlert = form.alert_type === 'price_above' || form.alert_type === 'price_below' || form.alert_type === 'pct_below_high'
     const isFx = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
     if (isFx && (!form.currencies_id || !form.currencies_id_quote)) return setErr('Choose the currency and the currency its rate is quoted in')
+    if (form.alert_type === 'pct_below_high' && !(Number(form.threshold) > 0 && Number(form.threshold) < 100)) return setErr('Enter a percentage between 0 and 100')
     if (isFx && form.currencies_id === form.currencies_id_quote) return setErr('A currency cannot be quoted in itself')
     if (isPriceAlert && !form.securities_id) return setErr('Security is required for price alerts')
     if (form.alert_type === 'allocation_drift' && !form.asset_type) return setErr('Asset type is required for allocation drift alerts')
@@ -1615,7 +1616,7 @@ function AlertsTab() {
       currencies_id_quote: isFx ? Number(form.currencies_id_quote) : null,
       asset_type: form.asset_type || null,
       threshold: Number(form.threshold),
-      direction: form.alert_type === 'price_above' || form.alert_type === 'fx_above' ? 'above' : form.alert_type === 'price_below' || form.alert_type === 'fx_below' ? 'below' : 'drift',
+      direction: form.alert_type === 'price_above' || form.alert_type === 'fx_above' ? 'above' : form.alert_type === 'price_below' || form.alert_type === 'fx_below' || form.alert_type === 'pct_below_high' ? 'below' : 'drift',
       note: form.note || null,
     })
   }
@@ -1630,12 +1631,12 @@ function AlertsTab() {
 
   const alertTypeBadge = (t: unknown) => {
     const s = String(t ?? '')
-    const color = s === 'price_above' || s === 'fx_above' ? 'bg-green-100 text-green-700' : s === 'price_below' || s === 'fx_below' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : s === 'fx_above' ? '💱 Rate Above' : s === 'fx_below' ? '💱 Rate Below' : '⚖ Alloc Drift'
+    const color = s === 'price_above' || s === 'fx_above' ? 'bg-green-100 text-green-700' : s === 'price_below' || s === 'fx_below' || s === 'pct_below_high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+    const label = s === 'price_above' ? '▲ Price Above' : s === 'price_below' ? '▼ Price Below' : s === 'pct_below_high' ? '▼ Below 52W High' : s === 'fx_above' ? '💱 Rate Above' : s === 'fx_below' ? '💱 Rate Below' : '⚖ Alloc Drift'
     return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{label}</span>
   }
 
-  const isPriceType = form.alert_type === 'price_above' || form.alert_type === 'price_below'
+  const isPriceType = form.alert_type === 'price_above' || form.alert_type === 'price_below' || form.alert_type === 'pct_below_high'
   const isFxType = form.alert_type === 'fx_above' || form.alert_type === 'fx_below'
 
   if (isLoading) return <div className="flex justify-center py-12"><Spinner /></div>
@@ -1706,9 +1707,10 @@ function AlertsTab() {
               </select>
             </Field>
           )}
-          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : isFxType ? 'Rate Threshold *' : 'Price Threshold *'}>
+          <Field label={form.alert_type === 'allocation_drift' ? 'Drift Threshold (%)' : isFxType ? 'Rate Threshold *' : form.alert_type === 'pct_below_high' ? '% Below 52-Week High *' : 'Price Threshold *'}>
             <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
           </Field>
+          {form.alert_type === 'pct_below_high' && <p className="text-xs text-slate-400">Triggers when the price falls this far below the highest close of the past year: 20 means 52-week high × 0.8. The level follows the high as it moves.</p>}
           <Field label="Note"><Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="optional" /></Field>
         </Modal>
       )}
@@ -1731,7 +1733,8 @@ function AlertsTab() {
               const isActive = Boolean(row.is_active)
               const triggered = row.current_price != null && row.threshold != null && (
                 ((row.alert_type === 'price_above' || row.alert_type === 'fx_above') && Number(row.current_price) > Number(row.threshold)) ||
-                ((row.alert_type === 'price_below' || row.alert_type === 'fx_below') && Number(row.current_price) < Number(row.threshold))
+                ((row.alert_type === 'price_below' || row.alert_type === 'fx_below') && Number(row.current_price) < Number(row.threshold)) ||
+                (row.alert_type === 'pct_below_high' && row.trigger_level != null && Number(row.current_price) < Number(row.trigger_level))
               )
               return (
                 <tr key={String(row.alert_id)} className={`hover:bg-slate-50 cursor-pointer ${!isActive ? 'opacity-50' : ''}`} onDoubleClick={() => openEdit(row)}>
@@ -1745,7 +1748,9 @@ function AlertsTab() {
                   <td className="px-3 py-2">{alertTypeBadge(row.alert_type)}</td>
                   <td className="px-3 py-2 font-medium">{row.securities_name != null ? String(row.securities_name) : '—'}</td>
                   <td className="px-3 py-2 text-slate-500 text-xs">{row.asset_type != null ? String(row.asset_type) : '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? fmtNum(Number(row.threshold), 4) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold == null ? '—' : row.alert_type === 'pct_below_high'
+                    ? <span title={row.high_1y != null ? `52-week high ${fmtNum(Number(row.high_1y), 4)}` : undefined}>{fmtNum(Number(row.threshold), 2)}% → {row.trigger_level != null ? fmtNum(Number(row.trigger_level), 4) : '—'}</span>
+                    : fmtNum(Number(row.threshold), 4)}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${triggered ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
                     {row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}
                   </td>

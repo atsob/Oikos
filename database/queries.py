@@ -6515,6 +6515,14 @@ def get_alerts() -> pd.DataFrame:
                    Securities_Id, Close AS current_price, Date AS price_date
             FROM   Historical_Prices
             ORDER  BY Securities_Id, Date DESC
+        ),
+        -- "Below 52-week high by %" alerts: the highest close of the past year, as the Trailing Stop uses
+        high_1y AS (
+            SELECT Securities_Id, MAX(Close) AS high_1y
+            FROM   Historical_Prices
+            WHERE  Date >= CURRENT_DATE - INTERVAL '1 year'
+              AND  Securities_Id IN (SELECT Securities_Id FROM Alerts WHERE Alert_Type = 'pct_below_high')
+            GROUP  BY Securities_Id
         )
         SELECT a.Alert_Id        AS alert_id,
                a.Alert_Type      AS alert_type,
@@ -6529,10 +6537,15 @@ def get_alerts() -> pd.DataFrame:
                a.Currencies_Id   AS currencies_id,
                a.Currencies_Id_Quote AS currencies_id_quote,
                lp.current_price  AS current_price,
-               lp.price_date     AS price_date
+               lp.price_date     AS price_date,
+               h.high_1y         AS high_1y,
+               -- the price that triggers the alert: the threshold itself, or the 52-week high less the threshold %
+               CASE WHEN a.Alert_Type = 'pct_below_high' THEN h.high_1y * (1 - a.Threshold / 100.0)
+                    WHEN a.Alert_Type IN ('price_above', 'price_below') THEN a.Threshold END AS trigger_level
         FROM   Alerts a
         LEFT JOIN Securities s    ON s.Securities_Id  = a.Securities_Id
         LEFT JOIN latest_price lp ON lp.Securities_Id = a.Securities_Id
+        LEFT JOIN high_1y h       ON h.Securities_Id  = a.Securities_Id
         ORDER  BY a.Created_At DESC
     """, conn)
     conn.close()
@@ -7539,7 +7552,7 @@ def check_triggered_alerts() -> list:
 
         # ── price alerts ──────────────────────────────────────────────────────
         price_rows = alerts_df[
-            alerts_df['alert_type'].isin(['price_above', 'price_below'])
+            alerts_df['alert_type'].isin(['price_above', 'price_below', 'pct_below_high'])
             & alerts_df['securities_id'].notna()
         ]
         if not price_rows.empty:
@@ -7549,7 +7562,10 @@ def check_triggered_alerts() -> list:
                 SELECT DISTINCT ON (hp.Securities_Id)
                        hp.Securities_Id AS securities_id,
                        hp.Close         AS current_price,
-                       s.Securities_Name AS securities_name
+                       s.Securities_Name AS securities_name,
+                       (SELECT MAX(h.Close) FROM Historical_Prices h
+                         WHERE h.Securities_Id = hp.Securities_Id
+                           AND h.Date >= CURRENT_DATE - INTERVAL '1 year') AS high_1y
                 FROM   Historical_Prices hp
                 JOIN   Securities s ON s.Securities_Id = hp.Securities_Id
                 WHERE  hp.Securities_Id = ANY(%s)
@@ -7576,6 +7592,18 @@ def check_triggered_alerts() -> list:
                         'securities_id': sid,
                         'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
                     })
+                elif row['alert_type'] == 'pct_below_high' and info.get('high_1y') is not None:
+                    high = float(info['high_1y'])
+                    level = high * (1 - thr / 100)
+                    if cur_px < level:
+                        results.append({
+                            'level': 'error',
+                            'message': (f"🔻 **Price Alert** — {name} is at **{cur_px:,.4f}**, more than "
+                                        f"{thr:g}% below its 52-week high of {high:,.4f} "
+                                        f"(alert level: {level:,.4f}).{suffix}"),
+                            'securities_id': sid,
+                            'type': 'price_alert', 'key': f"price_alert:{int(row['alert_id'])}",
+                        })
                 elif row['alert_type'] == 'price_below' and cur_px < thr:
                     results.append({
                         'level': 'error',

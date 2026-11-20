@@ -1831,6 +1831,9 @@ class _PersistentTvDatafeed(TvDatafeed):
     # Matches any chart-session token (cs_xxxxxxxxxxxxxxxx) that is NOT ours.
     # Used to filter stale frames out of raw_data before parsing.
     _CS_RE = _re.compile(r'\bcs_[a-zA-Z0-9]+\b')
+    # One WebSocket message can carry several protocol packets (~m~<len>~m~<json>), so a late packet of the previous
+    # symbol can share a message with this symbol's: filtering must be per packet, not per message or line.
+    _PKT_RE = _re.compile(r'~m~\d+~m~')
 
     # TradingView frames that signal the end of a series request (success or error).
     # Breaking on error frames avoids waiting for the 5 s socket timeout when
@@ -1938,7 +1941,11 @@ class _PersistentTvDatafeed(TvDatafeed):
                 ws_broke = True
                 break
 
-            if any(frame in result for frame in self._TERMINAL_FRAMES):
+            # Only this session's terminal packet ends the loop: a late series_completed of the previous symbol,
+            # bundled into the same message, must not cut this symbol's data short.
+            if ('critical_error' in result or any(
+                    frame in pkt for pkt in self._PKT_RE.split(result) if chart_session in pkt
+                    for frame in self._TERMINAL_FRAMES)):
                 # Always delete the chart session and drain residual frames,
                 # regardless of whether the terminal frame is success or error.
                 # Without this, stale error-session frames (symbol_error, etc.)
@@ -1984,17 +1991,18 @@ class _PersistentTvDatafeed(TvDatafeed):
                     pass
 
         # ── Chart-session filtering ───────────────────────────────────────────
-        # Despite chart_delete_session + the drain window, a late-arriving du
-        # frame from a *previous* session can still slip through and appear at
-        # the top of raw_data for this security (its chart_session token is
-        # different from ours).  Strip any line that contains a foreign
-        # cs_xxxxxxxxxxxxxxxx token to eliminate bleed unconditionally.
-        filtered_lines = [
-            line for line in raw_data.split('\n')
-            if chart_session in line                  # belongs to our session
-            or not self._CS_RE.search(line)           # general protocol frame (no cs_ at all)
+        # Despite chart_delete_session + the drain window, a late "du" (data update) packet of the *previous*
+        # symbol can arrive in the same WebSocket message as this symbol's packets. Filtering whole lines kept it
+        # (the line also held our token), and the parser takes the first price series it finds, so the security got
+        # a single bar: the other symbol's price for today (Orange Juice 23,166.95, Clorox 0.18, the S&P 500 69.05).
+        # Keep only this session's packets (and general ones with no cs_ token), and parse this session's
+        # timescale_update — the full history answer — when there is one.
+        packets = [
+            pkt for pkt in self._PKT_RE.split(raw_data)
+            if pkt.strip() and (chart_session in pkt or not self._CS_RE.search(pkt))
         ]
-        raw_data = '\n'.join(filtered_lines)
+        history = [pkt for pkt in packets if chart_session in pkt and '"timescale_update"' in pkt]
+        raw_data = '\n'.join(history or packets)
 
         return self._TvDatafeed__create_df(raw_data, symbol_full)
 

@@ -153,9 +153,9 @@ function PricesTab({ secId }: { secId: number }) {
   })
   const priceAlerts = useMemo(() => (allAlerts as Record<string, unknown>[]).filter(a =>
     Boolean(a.is_active) &&
-    (a.alert_type === 'price_above' || a.alert_type === 'price_below') &&
+    (a.alert_type === 'price_above' || a.alert_type === 'price_below' || a.alert_type === 'pct_below_high') &&
     Number(a.securities_id) === secId &&
-    a.threshold != null
+    a.trigger_level != null
   ), [allAlerts, secId])
   // Shares the ['sec-holdings', secId] query with OverviewTab/InvestmentTransactionsTab.
   const { data: holdingsData } = useQuery({
@@ -271,8 +271,9 @@ function PricesTab({ secId }: { secId: number }) {
 
   const alertTraces = useMemo(() => !historyDates.length ? [] : priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
-    const y = Number(a.threshold)
-    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    const y = Number(a.trigger_level)
+    const pct = a.alert_type === 'pct_below_high' ? ` (${fmtNum(Number(a.threshold), 2)}% below 52W high)` : ''
+    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${pct}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
       x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
       line: { color: isAbove ? '#0d9488' : '#db2777', width: 2, dash: 'dash' as const },
@@ -2236,9 +2237,9 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
   })
   const priceAlerts = useMemo(() => (allAlerts as Record<string, unknown>[]).filter(a =>
     Boolean(a.is_active) &&
-    (a.alert_type === 'price_above' || a.alert_type === 'price_below') &&
+    (a.alert_type === 'price_above' || a.alert_type === 'price_below' || a.alert_type === 'pct_below_high') &&
     Number(a.securities_id) === secId &&
-    a.threshold != null
+    a.trigger_level != null
   ), [allAlerts, secId])
   // Shares the ['portfolio-signals'] query with AnalysisTab/PricesTab/PortfolioActionSignalsTab.
   const { data: signalsData = [] } = useQuery({ queryKey: ['portfolio-signals'], queryFn: getPortfolioSignals, staleTime: 300_000 })
@@ -2266,8 +2267,9 @@ function OverviewPriceChart({ secId, avgCostPerShare }: { secId: number; avgCost
 
   const alertTraces = useMemo(() => !historyDates.length ? [] : priceAlerts.map(a => {
     const isAbove = a.alert_type === 'price_above'
-    const y = Number(a.threshold)
-    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${a.note ? ` · ${String(a.note)}` : ''}`
+    const y = Number(a.trigger_level)
+    const pct = a.alert_type === 'pct_below_high' ? ` (${fmtNum(Number(a.threshold), 2)}% below 52W high)` : ''
+    const label = `${isAbove ? '▲' : '▼'} Alert ${fmtNum(y, 4)}${pct}${a.note ? ` · ${String(a.note)}` : ''}`
     return {
       x: historyDates, y: [y, y], type: 'scatter' as const, mode: 'lines' as const, name: label,
       line: { color: isAbove ? '#0d9488' : '#db2777', width: 2, dash: 'dash' as const },
@@ -3667,7 +3669,7 @@ function AlertsTab({ secId }: { secId: number }) {
   // Price alerts are the only kind tied to a single security (allocation-drift alerts are
   // asset-type-wide and belong on the Market Data page instead).
   const rows = (data as Record<string, unknown>[]).filter(r =>
-    (r.alert_type === 'price_above' || r.alert_type === 'price_below') && Number(r.securities_id) === secId
+    (r.alert_type === 'price_above' || r.alert_type === 'price_below' || r.alert_type === 'pct_below_high') && Number(r.securities_id) === secId
   )
 
   const [showForm, setShowForm] = useState(false)
@@ -3703,6 +3705,7 @@ function AlertsTab({ secId }: { secId: number }) {
 
   const doSave = () => {
     if (!form.threshold) { setErr('Threshold is required'); return }
+    if (form.alert_type === 'pct_below_high' && !(Number(form.threshold) > 0 && Number(form.threshold) < 100)) { setErr('Enter a percentage between 0 and 100'); return }
     saveMut.mutate({
       alert_id: editId ?? undefined,
       alert_type: form.alert_type,
@@ -3734,11 +3737,13 @@ function AlertsTab({ secId }: { secId: number }) {
                 value={form.alert_type} onChange={e => setForm(f => ({ ...f, alert_type: e.target.value }))}>
                 <option value="price_above">▲ Price Above Threshold</option>
                 <option value="price_below">▼ Price Below Threshold</option>
+                <option value="pct_below_high">▼ Below 52-Week High by %</option>
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Price Threshold *</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">{form.alert_type === 'pct_below_high' ? '% Below 52-Week High *' : 'Price Threshold *'}</label>
               <Input type="number" step="any" value={form.threshold} onChange={e => setForm(f => ({ ...f, threshold: e.target.value }))} />
+              {form.alert_type === 'pct_below_high' && <p className="mt-1 text-xs text-slate-400">20 = 52-week high × 0.8; the level follows the high.</p>}
             </div>
           </div>
           <div>
@@ -3768,7 +3773,8 @@ function AlertsTab({ secId }: { secId: number }) {
               const isActive = Boolean(row.is_active)
               const triggered = row.current_price != null && row.threshold != null && (
                 (row.alert_type === 'price_above' && Number(row.current_price) > Number(row.threshold)) ||
-                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold))
+                (row.alert_type === 'price_below' && Number(row.current_price) < Number(row.threshold)) ||
+                (row.alert_type === 'pct_below_high' && row.trigger_level != null && Number(row.current_price) < Number(row.trigger_level))
               )
               return (
                 <tr key={String(row.alert_id)} className={`hover:bg-slate-50 ${!isActive ? 'opacity-50' : ''}`}>
@@ -3781,10 +3787,12 @@ function AlertsTab({ secId }: { secId: number }) {
                   </td>
                   <td className="px-3 py-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${row.alert_type === 'price_above' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {row.alert_type === 'price_above' ? '▲ Price Above' : '▼ Price Below'}
+                      {row.alert_type === 'price_above' ? '▲ Price Above' : row.alert_type === 'pct_below_high' ? '▼ Below 52W High' : '▼ Price Below'}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold != null ? fmtNum(Number(row.threshold), 4) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{row.threshold == null ? '—' : row.alert_type === 'pct_below_high'
+                    ? <span title={row.high_1y != null ? `52-week high ${fmtNum(Number(row.high_1y), 4)}` : undefined}>{fmtNum(Number(row.threshold), 2)}% → {row.trigger_level != null ? fmtNum(Number(row.trigger_level), 4) : '—'}</span>
+                    : fmtNum(Number(row.threshold), 4)}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${triggered ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
                     {row.current_price != null ? fmtNum(Number(row.current_price), 4) : '—'}
                   </td>
