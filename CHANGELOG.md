@@ -2,6 +2,14 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-20
+
+### Added
+- **Import from the Cash Register and Investments.** Both pages have an **Import** button (admin only; under ⋯ on a phone) that opens the importer for the selected account: the one whose saved settings already use it (Revolut Personal or Savings, Interactive Brokers, Revolut Trading, Saxo, Coinbase, Crypto.com, Capital.com or FXPro), otherwise Import & Reconcile with the account chosen for a cash account, or the Brokerage section for an investment account.
+
+### Fixed
+- **Importers → Bank always opened on the same account.** Import & Reconcile saved the account only after a fetch or a parse, and the page kept the settings it had read the first time it was opened, so coming back to it showed that old account. It now remembers the account as soon as you choose it, and every importer shows its latest saved choices when you return to it.
+
 ## 2026-11-15
 
 ### Added

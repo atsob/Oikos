@@ -16,7 +16,7 @@ import SaxoMargin from '@/components/SaxoMargin'
 import { PageHeader, Input, Button, Spinner, Card, ColHeader, useSortTablePersisted, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker, AG_GRID_COLUMN_TYPES } from '@/components/ui'
 import PricesUpdatedAuto from '@/components/PricesUpdatedAuto'
 import { fmtEur, fmtCur, fmtDate, fmtNum, fmtQty, todayLocal, toLocalISODate } from '@/lib/utils'
-import { Plus, Save, RefreshCw, ArrowLeftRight, ArrowLeft, Search, X } from 'lucide-react'
+import { Plus, Save, RefreshCw, ArrowLeftRight, ArrowLeft, Search, X, Upload } from 'lucide-react'
 import { InvTransferModal } from '@/components/InvTransferModal'
 import { InvTransactionModal, emptyInvForm, ACTIONS, createInvestment, updateInvestment, deleteInvestment } from '@/components/InvTransactionModal'
 import type { InvFormData } from '@/components/InvTransactionModal'
@@ -752,6 +752,11 @@ export default function Investments() {
               <ArrowLeftRight size={14} /> Transfer
             </Button>
             </>}
+            {isAdmin && <Button size="sm" variant="secondary" className="hidden sm:inline-flex" disabled={!accountId}
+              title={accountId ? 'Open the importer for this account' : 'Select an account first'}
+              onClick={() => navigate(`/importers?account=${accountId}&kind=investment`)}>
+              <Upload size={14} /> Import
+            </Button>}
             {isAdmin && <div className="hidden sm:block">
               <SyncBalancesButton
                 options={[
@@ -765,6 +770,7 @@ export default function Investments() {
             {isAdmin && <div className="sm:hidden">
               <MoreMenu items={[
                 { label: 'Transfer between accounts…', onClick: () => setTransferOpen(true) },
+                { label: 'Import…', onClick: () => navigate(`/importers?account=${accountId}&kind=investment`), disabled: !accountId },
                 { label: 'Sync investments', onClick: () => { void syncInv('investment') } },
                 { label: 'Sync pension', onClick: () => { void syncInv('pension') } },
                 { label: 'Sync holdings', onClick: () => { void syncInv('holdings') } },

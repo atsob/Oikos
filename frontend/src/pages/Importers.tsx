@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions, DateInput } from '@/components/ui'
@@ -30,11 +31,27 @@ import {
 
 const fmt2 = (n: number) => fmtNum(n, 2)
 
-/** Load saved importer settings and return a save function. Settings are applied via the returned `apply` callback. */
+/** Load saved importer settings and return a save function. Settings are applied once per mount via the `apply` callback.
+ *  A save merges into what is stored and updates the cached copy too, so coming back to the tab in the same session shows
+ *  the last choice, not the one loaded when the tab was first opened. */
 function useImporterSettings(key: string, apply: (s: Record<string, unknown>) => void) {
+  const qc = useQueryClient()
   const q = useQuery({ queryKey: ['importer-settings', key], queryFn: () => getImporterSettings(key), staleTime: Infinity })
-  useEffect(() => { if (q.data && Object.keys(q.data).length > 0) apply(q.data) }, [q.data])
-  const save = (data: Record<string, unknown>) => saveImporterSettings(key, data).catch(() => {})
+  const applied = useRef(false)
+  useEffect(() => {
+    if (applied.current || !q.data) return
+    applied.current = true
+    if (Object.keys(q.data).length > 0) apply(q.data)
+  }, [q.data])  // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async (data: Record<string, unknown>) => {
+    // Never write a partial save over settings that have not loaded yet: load them first.
+    const cur = (qc.getQueryData(['importer-settings', key]) as Record<string, unknown> | undefined)
+      ?? await qc.fetchQuery({ queryKey: ['importer-settings', key], queryFn: () => getImporterSettings(key), staleTime: Infinity }).catch(() => null)
+    if (cur === null) return
+    const merged = { ...cur, ...data }
+    qc.setQueryData(['importer-settings', key], merged)
+    return saveImporterSettings(key, merged).catch(() => {})
+  }
   return save
 }
 
@@ -165,10 +182,10 @@ function SuccessBox({ msg }: { msg: string }) {
 
 // ── Bank → Import & Reconcile ─────────────────────────────────────────────────
 
-function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number | null }) {
+function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { startAccountId?: number | null; startFromBank?: boolean }) {
   const qcReconcile = useQueryClient()
   const [step, setStep] = useState(1)
-  // Opened from Enable Banking's Import button: that account, from the bank.
+  // Opened from Enable Banking's Import button (that account, from the bank) or from a register's Import button (that account).
   const [accountId, setAccountId] = useState<number | null>(startAccountId)
   const [profileId, setProfileId] = useState<number | null>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -180,6 +197,8 @@ function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number
     if (s.profile_per_account) setProfilePerAccount(s.profile_per_account as Record<number, number>)
     if (s.eb_last_to) setEbLastTo(s.eb_last_to as Record<number, string>)
   })
+
+  useEffect(() => { if (startAccountId) saveSettings({ account_id: startAccountId }) }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // When account changes, restore last-used profile for that account
   useEffect(() => {
@@ -195,7 +214,7 @@ function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number
   // From the bank (Enable Banking): for an account linked in Importers → Bank → Enable Banking, the rows come
   // straight from the bank instead of a statement file, with the bank's balance as the statement balance.
   const [savedSource, setSavedSource] = usePersist<'file' | 'bank'>('bank_import_source', 'bank')
-  const [sourceOverride, setSourceOverride] = useState<'bank' | null>(startAccountId ? 'bank' : null)
+  const [sourceOverride, setSourceOverride] = useState<'bank' | null>(startAccountId && startFromBank ? 'bank' : null)
   const source = sourceOverride ?? savedSource
   const setSource = (v: 'file' | 'bank') => { setSourceOverride(null); setSavedSource(v) }
   const ebConnected = useQuery({ queryKey: ['eb-status', 'lite'], queryFn: () => ebStatus(false) })
@@ -211,6 +230,7 @@ function ImportReconcileTab({ startAccountId = null }: { startAccountId?: number
   }
   const changeAccount = (id: number) => {
     setAccountId(id || null)
+    if (id) saveSettings({ account_id: id })   // the next visit opens on this account
     clearReview()
     if (notes === autoNote) setNotes('')
   }
@@ -4296,11 +4316,40 @@ const BANK_TABS = ['📥 Import & Reconcile', '🏦 Enable Banking', '💚 Revol
 const BROKERAGE_TABS = ['📊 Interactive Brokers', '💚 Revolut Trading', '📈 Saxo Bank', '₿ Coinbase', '🔷 Crypto.com', '📉 Capital.com', '💱 FXPro']
 const QIF_TABS = ['📁 QIF Importer', '🔁 Transfer Issues']
 
+/** Which importer a register's Import button opens for an account: the importer whose saved settings use that account
+ *  (Revolut, a broker, Coinbase, …), else Import & Reconcile for a cash account and the last brokerage tab for an investment one. */
+type ImporterTarget = { section: 'bank' | 'brokerage'; tab: string; reconcile?: boolean }
+async function findImporter(qc: ReturnType<typeof useQueryClient>, accountId: number, kind: 'cash' | 'investment'): Promise<ImporterTarget | null> {
+  const load = (key: string, fn: () => Promise<Record<string, unknown>>) =>
+    qc.fetchQuery({ queryKey: [key], queryFn: fn, staleTime: 60_000 }).catch(() => ({} as Record<string, unknown>))
+  const imp = (key: string) =>
+    qc.fetchQuery({ queryKey: ['importer-settings', key], queryFn: () => getImporterSettings(key), staleTime: Infinity }).catch(() => ({} as Record<string, unknown>))
+  const uses = (s: Record<string, unknown>, ...fields: string[]) => fields.some(f => Number(s?.[f]) === accountId)
+  const [revp, revs, ib, revt, capcom, fxpro, saxo, cb, cdc] = await Promise.all([
+    imp('revp'), imp('revs'), imp('ib'), imp('revt'), imp('capitalcom'), imp('fxpro'),
+    load('saxoSettings', saxoGetSettings), load('coinbaseSettings', coinbaseGetSettings), load('cryptocomSettings', cryptocomGetSettings),
+  ])
+  if (uses(revp, 'account_id')) return { section: 'bank', tab: BANK_TABS[2] }
+  if (uses(revs, 'account_id')) return { section: 'bank', tab: BANK_TABS[3] }
+  if (uses(ib, 'account_id', 'cash_account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[0] }
+  if (uses(revt, 'account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[1] }
+  if (Object.values((saxo?.account_map ?? {}) as Record<string, number>).some(v => Number(v) === accountId)) return { section: 'brokerage', tab: BROKERAGE_TABS[2] }
+  if (uses(cb, 'account_id', 'cash_account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[3] }
+  if (uses(cdc, 'account_id', 'cash_account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[4] }
+  if (uses(capcom, 'account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[5] }
+  if (uses(fxpro, 'account_id')) return { section: 'brokerage', tab: BROKERAGE_TABS[6] }
+  return kind === 'cash' ? { section: 'bank', tab: BANK_TABS[0], reconcile: true } : null
+}
+
 export default function Importers() {
   const [section, setSection] = usePersist<'bank' | 'brokerage' | 'qif'>('importers_section', 'bank')
   const [savedBankTab, setBankTab] = usePersist('importers_bank_tab', BANK_TABS[0])
   const bankTab = BANK_TABS.includes(savedBankTab) ? savedBankTab : BANK_TABS[0]   // a renamed tab (Salt Edge) falls back
-  const [reconcileAccount, setReconcileAccount] = useState<number | null>(null)   // set by Enable Banking's Import button
+  // Set by Enable Banking's Import button (fromBank) or a register's Import button
+  const [reconcileStart, setReconcileStart] = useState<{ id: number; fromBank: boolean } | null>(null)
+  const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [opening, setOpening] = useState(() => !!searchParams.get('account'))
   const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
   const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
 
@@ -4308,6 +4357,23 @@ export default function Importers() {
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('state') === 'saxo_import') { setSection('brokerage'); setBrokerTab(BROKERAGE_TABS[2]) }
     if (new URLSearchParams(window.location.search).get('state')?.startsWith('eb_')) { setSection('bank'); setBankTab(BANK_TABS[1]) }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // From a register's Import button (?account=…&kind=cash|investment): open the importer that account uses
+  useEffect(() => {
+    const id = Number(searchParams.get('account'))
+    if (!id) return
+    const kind = searchParams.get('kind') === 'investment' ? 'investment' : 'cash'
+    findImporter(qc, id, kind).then(t => {
+      if (t) {
+        setSection(t.section)
+        if (t.section === 'bank') setBankTab(t.tab); else setBrokerTab(t.tab)
+        if (t.reconcile) setReconcileStart({ id, fromBank: false })
+      } else setSection('brokerage')
+    }).finally(() => {
+      setOpening(false)
+      setSearchParams(p => { p.delete('account'); p.delete('kind'); return p }, { replace: true })
+    })
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -4331,12 +4397,14 @@ export default function Importers() {
           ))}
         </div>
 
+        {opening && <div className="flex items-center gap-2 text-sm text-slate-500"><Spinner size={14} /> Opening the importer for this account…</div>}
+
         {/* Bank section */}
-        {section === 'bank' && (
+        {!opening && section === 'bank' && (
           <>
             <SubTabs tabs={BANK_TABS} active={bankTab} onChange={setBankTab} />
-            {bankTab === BANK_TABS[0] && <ImportReconcileTab key={reconcileAccount ?? 0} startAccountId={reconcileAccount} />}
-            {bankTab === BANK_TABS[1] && <EnableBankingTab onImport={id => { setReconcileAccount(id); setBankTab(BANK_TABS[0]) }} />}
+            {bankTab === BANK_TABS[0] && <ImportReconcileTab key={reconcileStart?.id ?? 0} startAccountId={reconcileStart?.id ?? null} startFromBank={reconcileStart?.fromBank ?? false} />}
+            {bankTab === BANK_TABS[1] && <EnableBankingTab onImport={id => { setReconcileStart({ id, fromBank: true }); setBankTab(BANK_TABS[0]) }} />}
             {bankTab === BANK_TABS[2] && <RevolutPersonalTab />}
             {bankTab === BANK_TABS[3] && <RevolutSavingsTab />}
             {bankTab === BANK_TABS[4] && <ImportProfilesTab />}
@@ -4346,7 +4414,7 @@ export default function Importers() {
         )}
 
         {/* Brokerage section */}
-        {section === 'brokerage' && (
+        {!opening && section === 'brokerage' && (
           <>
             <SubTabs tabs={BROKERAGE_TABS} active={brokerTab} onChange={setBrokerTab} />
             {brokerTab === BROKERAGE_TABS[0] && <IBFlexTab />}
@@ -4360,7 +4428,7 @@ export default function Importers() {
         )}
 
         {/* QIF section */}
-        {section === 'qif' && (
+        {!opening && section === 'qif' && (
           <>
             <SubTabs tabs={QIF_TABS} active={qifTab} onChange={setQifTab} />
             {qifTab === QIF_TABS[0] && <QIFTab />}

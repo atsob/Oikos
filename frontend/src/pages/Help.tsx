@@ -352,6 +352,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <b>Sync Balances</b> (top-right) refreshes Bank &amp; Cash balances only — the account types this
           page manages.
         </P>
+        <P>
+          <b>Import</b> (top-right, admin only; under ⋯ on a phone) opens the importer for the selected account: the one
+          whose saved settings use it (Revolut Personal or Savings, or a broker for a broker's cash account), otherwise
+          Importers → Bank → Import &amp; Reconcile with the account already chosen.
+        </P>
         <Note>
           The <b>calculator button</b> next to any Amount field (here, on a recurring template, and when
           reviewing a pending draft) opens a small pocket calculator pre-filled with that field's current
@@ -442,6 +447,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           <li><b>Transactions</b> — the full Buy/Sell/Dividend/Reinvest/etc. history, editable.</li>
           <li><b>Cash</b> — the cash-side movements linked to investment accounts (deposits, withdrawals, fees).</li>
         </Ul>
+        <P>
+          <b>Import</b> (top-right, admin only; under ⋯ on a phone) opens the importer that uses the selected account —
+          Interactive Brokers, Revolut Trading, Saxo (from its account mapping), Coinbase, Crypto.com, Capital.com, FXPro or
+          Revolut Savings — or the Brokerage section when none uses it yet.
+        </P>
         <Note>
           <b>Margin positions (FX Spot, CFDs).</b> A margin product — XAGEUR on Saxo, a CFD on an ETF — does not move its notional through your cash: opening it costs only the spread or commission, closing it
           moves only the profit or loss, and holding it costs the financing charges. Oikos books the cash side that way, so the broker's cash account matches the broker's own cash figure. For every Buy or Sell in a <b>Margin</b> account whose
@@ -1798,7 +1808,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <H2>Importers</H2>
         <P>Bring in transactions from banks and brokers instead of entering them by hand, grouped into three families:</P>
         <Note>
-          <b>Last run is remembered.</b> The importers that take a date range — Interactive Brokers, Saxo, Coinbase and Crypto.com — keep the range you used the last time you fetched a preview or imported, with the time it ran, and put it back in the date fields when you open the tab (on any device; with the account and credentials they already remembered). A line under the dates says when the last run was; if its "To" date is in the past it warns that newer records would be left out. Replace mode is never remembered.
+          <b>Last run is remembered.</b> The importers that take a date range — Interactive Brokers, Saxo, Coinbase and Crypto.com — keep the range you used the last time you fetched a preview or imported, with the time it ran, and put it back in the date fields when you open the tab (on any device; with the account and credentials they already remembered). Import &amp; Reconcile opens on the account you last chose there. A line under the dates says when the last run was; if its "To" date is in the past it warns that newer records would be left out. Replace mode is never remembered.
         </Note>
         <Ul>
           <li>

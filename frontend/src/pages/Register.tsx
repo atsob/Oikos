@@ -13,7 +13,7 @@ import {
 import { PageHeader, Select, Input, Button, Spinner, Card, useEscapeKey, SyncBalancesButton, ColumnsMenu, CopyToExcelButton, AccountOptions, BatchAccountPicker } from '@/components/ui'
 import { fmtCur, fmtDate, toLocalISODate } from '@/lib/utils'
 import { useBankBalances, bankBalanceLine } from '@/lib/bankBalance'
-import { Plus, Search, X, CheckCheck, ArrowLeft } from 'lucide-react'
+import { Plus, Search, X, CheckCheck, ArrowLeft, Upload } from 'lucide-react'
 import { TxModal, useTxModal, today } from '@/components/TxModal'
 import { CASH_ACCOUNT_TYPES } from '@/lib/accountTypes'
 import { usePhone } from '@/lib/useMedia'
@@ -483,6 +483,11 @@ export default function Register() {
             <Button size="sm" variant="secondary" className="hidden sm:inline-flex" onClick={() => { setReconcileMsg(null); setReconcileOpen(true) }} disabled={!accountId}>
               <CheckCheck size={14} /> Reconcile
             </Button>
+            {isAdmin && <Button size="sm" variant="secondary" className="hidden sm:inline-flex" disabled={!accountId}
+              title={accountId ? 'Open the importer for this account' : 'Select an account first'}
+              onClick={() => navigate(`/importers?account=${accountId}&kind=cash`)}>
+              <Upload size={14} /> Import
+            </Button>}
             <Button size="sm" className="hidden sm:inline-flex" onClick={() => tx.openNew(accountId!)} disabled={!accountId || Boolean(selectedAccount?.is_margin_financing)}><Plus size={14} /> New Transaction</Button>
             </>}
             {isAdmin && <div className="hidden sm:block">
@@ -499,6 +504,7 @@ export default function Register() {
               <MoreMenu items={[
                 { label: 'Clear transactions…', onClick: () => { setClearMsg(null); setClearOpen(true) }, disabled: !accountId },
                 { label: 'Reconcile…', onClick: () => { setReconcileMsg(null); setReconcileOpen(true) }, disabled: !accountId },
+                { label: 'Import…', onClick: () => navigate(`/importers?account=${accountId}&kind=cash`), disabled: !accountId },
                 { label: 'Sync bank & cash balances', onClick: () => { void syncCash() } },
               ]} />
             </div>}
