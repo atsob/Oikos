@@ -2477,6 +2477,42 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
             for (_s, _d), _c in existing_closes.items():
                 _stored_by_sid.setdefault(_s, {})[_d] = _c
 
+            # The last stored close before each incoming date (Guard 4): a new date has nothing stored to
+            # compare with, so it is checked against the security's latest earlier close (within 60 days).
+            _min_dt = min(uniq_dates)
+            cur.execute(
+                f"SELECT Securities_Id, Date::text, Close FROM Historical_Prices "
+                f"WHERE Securities_Id IN ({ph_s}) AND Close > 0 "
+                f"AND Date >= %s::date - 60 AND Date <= %s::date ORDER BY Securities_Id, Date",
+                uniq_sids + [_min_dt, max(uniq_dates)],
+            )
+            _prior_by_sid: dict[int, list[tuple[str, float]]] = {}
+            for _s, _d, _c in cur.fetchall():
+                _prior_by_sid.setdefault(int(_s), []).append((str(_d), float(_c)))
+
+            def _last_close_before(sid: int, dt: str) -> float | None:
+                last = None
+                for d, c in _prior_by_sid.get(sid, []):
+                    if d >= dt:
+                        break
+                    last = c
+                return last
+
+            # TradingView's own bars in this download, per security, to tell a split (TV's earlier bars,
+            # split-adjusted, agree with the new level) from a wrong quote (they do not).
+            _incoming_by_sid: dict[int, list[tuple[str, float]]] = {}
+            for _r in sorted(all_rows, key=lambda r: (int(r[0]), str(r[1]))):
+                if float(_r[2]) > 0:
+                    _incoming_by_sid.setdefault(int(_r[0]), []).append((str(_r[1]), float(_r[2])))
+
+            def _prev_incoming(sid: int, dt: str) -> float | None:
+                last = None
+                for d, c in _incoming_by_sid.get(sid, []):
+                    if d >= dt:
+                        break
+                    last = c
+                return last
+
             def _stored_is_outlier(sid: int, dt: str, close: float) -> bool:
                 others = sorted(c for d, c in _stored_by_sid.get(sid, {}).items() if d != dt and c > 0)
                 if len(others) < 3:
@@ -2560,6 +2596,30 @@ def download_historical_prices_from_tradingview(tsperiod="1m", target_sec_id=Non
                             f"TradingView SUSPICIOUS PRICE — {sec_name}: "
                             f"date={dt}  incoming={close:.6f}  "
                             f"stored={existing:.6f}  ratio={ratio:.1f}×  → SKIPPED"
+                        )
+                        logging.warning(msg)
+                        print(f"  ⚠️ {msg}")
+                        continue
+
+                # Guard 4 — a new date far from the last stored close. Guard 3 only sees a date that is
+                # already stored, so a wrong quote for a new day (Orange Juice once got 23,166.95 after
+                # 1.39) went straight in. A jump is let through only when TradingView's own previous bar in this
+                # download is at the same level: then the stored history is what differs (a split, which TV
+                # adjusts and Guard 3 keeps out of the stored days), not today's quote.
+                if not existing and close > 0:
+                    prev = _last_close_before(sid, dt)
+                    tv_prev = _prev_incoming(sid, dt)
+                    tv_agrees = tv_prev is not None and max(close / tv_prev, tv_prev / close) <= MAX_OVERWRITE_RATIO
+                    if prev and max(close / prev, prev / close) > MAX_OVERWRITE_RATIO and tv_agrees:
+                        logging.warning(
+                            "TradingView LEVEL CHANGE — %s: date=%s  incoming=%.6f  last stored close=%.6f; "
+                            "TradingView's earlier bars agree (a split?) → STORED", sec_name, dt, close, prev)
+                    elif prev and max(close / prev, prev / close) > MAX_OVERWRITE_RATIO:
+                        skipped_ratio += 1
+                        msg = (
+                            f"TradingView SUSPICIOUS PRICE — {sec_name}: "
+                            f"date={dt}  incoming={close:.6f}  "
+                            f"last stored close={prev:.6f}  ratio={max(close / prev, prev / close):.1f}×  → SKIPPED"
                         )
                         logging.warning(msg)
                         print(f"  ⚠️ {msg}")
