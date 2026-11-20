@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { usePersist } from '@/lib/hooks'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions, DateInput } from '@/components/ui'
-import { Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { fmtNum, todayLocal } from '@/lib/utils'
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
@@ -4350,6 +4350,9 @@ export default function Importers() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [opening, setOpening] = useState(() => !!searchParams.get('account'))
+  // Opened from a register's Import button: a Back button returns to it (the register keeps its account and dates)
+  const [cameFrom] = useState(() => searchParams.get('account') ? (searchParams.get('kind') === 'investment' ? 'Investments' : 'Cash Register') : null)
+  const navigate = useNavigate()
   const [brokerTab, setBrokerTab] = usePersist('importers_broker_tab', BROKERAGE_TABS[0])
   const [qifTab, setQifTab] = usePersist('importers_qif_tab', QIF_TABS[0])
 
@@ -4378,7 +4381,12 @@ export default function Importers() {
 
   return (
     <div>
-      <PageHeader title="Importers" subtitle="Import transactions from banks and brokers" />
+      <PageHeader title="Importers" subtitle="Import transactions from banks and brokers"
+        actions={cameFrom ? (
+          <Button size="sm" variant="secondary" onClick={() => navigate(-1)}>
+            <ArrowLeft size={13} /> Back to {cameFrom}
+          </Button>
+        ) : undefined} />
 
       <div className="px-3 sm:px-6 py-4">
         {/* Section selector */}

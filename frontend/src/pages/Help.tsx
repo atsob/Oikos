@@ -355,7 +355,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           <b>Import</b> (top-right, admin only; under ⋯ on a phone) opens the importer for the selected account: the one
           whose saved settings use it (Revolut Personal or Savings, or a broker for a broker's cash account), otherwise
-          Importers → Bank → Import &amp; Reconcile with the account already chosen.
+          Importers → Bank → Import &amp; Reconcile with the account already chosen. <b>Back to Cash Register</b> at the top of Importers returns to the register.
         </P>
         <Note>
           The <b>calculator button</b> next to any Amount field (here, on a recurring template, and when
@@ -450,7 +450,7 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         <P>
           <b>Import</b> (top-right, admin only; under ⋯ on a phone) opens the importer that uses the selected account —
           Interactive Brokers, Revolut Trading, Saxo (from its account mapping), Coinbase, Crypto.com, Capital.com, FXPro or
-          Revolut Savings — or the Brokerage section when none uses it yet.
+          Revolut Savings — or the Brokerage section when none uses it yet. <b>Back to Investments</b> at the top of Importers returns to it.
         </P>
         <Note>
           <b>Margin positions (FX Spot, CFDs).</b> A margin product — XAGEUR on Saxo, a CFD on an ETF — does not move its notional through your cash: opening it costs only the spread or commission, closing it
