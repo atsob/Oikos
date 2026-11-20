@@ -242,7 +242,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           P&amp;L on that position (e.g. "You're up 4.8% (€120.00) vs cost") — a Trailing Stop trip that's still
           net profitable shows as a milder warning rather than the usual red error, since giving back some gains
           is a very different situation from a real loss. Tools → System → App Settings → Trailing Stop sets how
-          far below the trailing 1-year high counts as a trip (default 20%).
+          far below the trailing 1-year high counts as a trip: by default each security gets its own distance, scaled to its
+          volatility — 2 × its 1-year volatility × √(3/12), about two standard deviations of a three-month move, kept between
+          15% and 50% — so a broad ETF trips at 15% while silver, crypto or a volatile stock is given up to 50%; or one fixed %
+          for all. The alert, the badges and the Trailing Stop column say since when the price has been below the stop, so an
+          old trip is told apart from a new one.
         </Note>
         <Note>
           A <b>Financial Health Change</b> alert fires when a stock's Altman <b>Z-Score</b> risk zone
@@ -1234,8 +1238,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           are trend-following signals, hidden by default except MA Trend and Trailing Stop: MA Trend is Golden
           (bullish — 50-day moving average above the 200-day) or Death (bearish — below); Cross Event is set only on
           the trading day the two actually crossed (a "golden cross" buy signal or "death cross" sell/avoid signal),
-          not just the current regime; Trailing Stop triggers once price has fallen the configured % below its own
-          trailing 1-year high (Tools → System → App Settings → Trailing Stop, default 20%). The same figures appear
+          not just the current regime; Trailing Stop triggers once price has fallen its own stop % below its
+          trailing 1-year high — scaled to the security's volatility by default (hidden <b>Stop %</b>, <b>Stop Since</b> and
+          <b>Stop Price</b> columns; Tools → System → App Settings → Trailing Stop), and shows since when it has been below it. The same figures appear
           on a security's own Analysis tab and its Overview/Prices tab charts (MA50/MA200 and the trailing-stop
           line as chart overlays, MA Trend/Trailing Stop as badges above the chart).
         </Note>
