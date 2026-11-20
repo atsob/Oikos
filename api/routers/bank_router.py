@@ -687,9 +687,30 @@ def eb_account_option(data: dict):
 
 @router.get("/enablebanking/balances")
 def eb_balances():
-    """{Oikos account id: {amount, currency, date, type, bank, fetched_at}} — the bank's balance as last read."""
+    """{Oikos account id: {amount, currency, date, type, bank, fetched_at, cleared_after_today}} — the bank's balance as
+    last read, with the total of the account's *cleared* transactions dated after today. The balance shown in Oikos is as
+    of today, but a cleared transaction is one the bank has already booked (a payment due on a Monday that the bank took
+    on the Friday before), so the comparison with the bank adds it."""
     from data import enablebanking as eb
-    return eb.stored_balances()
+    from database.connection import get_connection
+    balances = eb.stored_balances()
+    ids = [int(k) for k in balances if str(k).isdigit()]
+    if ids:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT Accounts_Id, COALESCE(SUM(Total_Amount), 0) FROM Transactions "
+                    "WHERE Accounts_Id = ANY(%s) AND Cleared AND Date > CURRENT_DATE AND NOT COALESCE(Is_Draft, FALSE) "
+                    "GROUP BY Accounts_Id",
+                    (ids,),
+                )
+                after = {str(a): float(v) for a, v in cur.fetchall()}
+        finally:
+            conn.close()
+        for k, v in balances.items():
+            v["cleared_after_today"] = after.get(str(k), 0.0)
+    return balances
 
 
 @router.post("/enablebanking/refresh-balances")
