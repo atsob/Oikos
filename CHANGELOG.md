@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-21
 
+### Improved
+- **Dashboard alerts load in about 2 seconds instead of 20–25.** The price check added for the "Below 52-Week High by %" alert worked out the 1-year high again for every stored day of each alerted security's history; it now does so once per security. The portfolio signals behind the Golden/Death Cross and Trailing Stop alerts (a query over five years of prices, about 5 seconds) were recomputed on any visit more than 3 minutes after the last; the last result is now shown at once and refreshed in the background for the next visit, and a change to holdings still recomputes them straight away.
+
 ### Added
 - **Sector and Industry for new ETFs and funds.** Yahoo gives funds no sector or industry, so a new ETF had both empty until typed in. The Morningstar download (monthly job, Market Data → Downloads → Morningstar, or a fund's own Downloads tab) now fills an empty Sector and Industry from the fund's Morningstar Category, in the labels already used for funds: Sector Equity, Fixed Income or Commodities, and Industry what it holds (Broad market, a stock sector such as Utilities or Health Care, Government bonds, Corporate bonds, Money market, Gold, Silver …), using the fund's name where the Category says too little ("Other Equity"). A value already there is never changed. A new ETF or fund saved with an ISIN is looked up straight away, so its Sector and Industry appear within seconds. The five ETFs that had neither now have both. The Stress Test also recognises the fund Industries Industrials, Financials, Real Estate, Consumer Discretionary and Communication Services.
 

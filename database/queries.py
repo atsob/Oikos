@@ -1,6 +1,7 @@
 import math
 import time
 import logging
+import threading
 import pandas as pd
 from psycopg2.extras import execute_values
 from database.connection import get_connection, get_db
@@ -1282,7 +1283,12 @@ def get_nwr_security_detail(start_date: str, interval: str, account_id: int):
 
 
 _PORTFOLIO_SIGNALS_TTL_SECONDS = 180
+# Older than the TTL but younger than this: served at once while a background refresh runs (see get_portfolio_signals).
+_PORTFOLIO_SIGNALS_STALE_SECONDS = 6 * 3600
 _portfolio_signals_cache: dict = {}  # {(selected_acc_id, stop_pct): (computed_at, DataFrame)}
+_portfolio_signals_refreshing: set = set()
+_portfolio_signals_lock = threading.Lock()
+_portfolio_signals_gen = [0]           # bumped by invalidate_portfolio_signals_cache, so a refresh started before it is dropped
 
 
 def invalidate_portfolio_signals_cache():
@@ -1292,6 +1298,7 @@ def invalidate_portfolio_signals_cache():
     keep showing its pre-change quantity/value for up to
     _PORTFOLIO_SIGNALS_TTL_SECONDS after the transaction that changed it.
     """
+    _portfolio_signals_gen[0] += 1
     _portfolio_signals_cache.clear()
 
 
@@ -1393,6 +1400,27 @@ def get_portfolio_signals(selected_acc_id=None):
     cache_key = (selected_acc_id, tuple(sorted(stop_cfg.items())), tuple(mine) if mine is not None else None)       # a restricted user's signals cover their own accounts
     cached = _portfolio_signals_cache.get(cache_key)
     if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_TTL_SECONDS:
+        return cached[1].copy()
+    if cached is not None and now - cached[0] < _PORTFOLIO_SIGNALS_STALE_SECONDS:
+        # stale but recent: answer with it at once and recompute in the background (several seconds), so a Dashboard
+        # visit does not wait for the query; the next call gets the fresh figures
+        with _portfolio_signals_lock:
+            start = cache_key not in _portfolio_signals_refreshing
+            _portfolio_signals_refreshing.add(cache_key)
+        if start:
+            import contextvars, threading
+
+            def _refresh(gen=_portfolio_signals_gen[0]):
+                try:
+                    df_new = _compute_portfolio_signals(selected_acc_id, stop_cfg)
+                    if gen == _portfolio_signals_gen[0]:          # not invalidated (holdings changed) while it ran
+                        _portfolio_signals_cache[cache_key] = (time.time(), df_new)
+                except Exception as e:
+                    logging.warning("Background portfolio-signals refresh failed: %s", e)
+                finally:
+                    with _portfolio_signals_lock:
+                        _portfolio_signals_refreshing.discard(cache_key)
+            threading.Thread(target=contextvars.copy_context().run, args=(_refresh,), daemon=True).start()
         return cached[1].copy()
     df = _compute_portfolio_signals(selected_acc_id, stop_cfg)
     _portfolio_signals_cache[cache_key] = (now, df)
@@ -7628,18 +7656,19 @@ def check_triggered_alerts() -> list:
         if not price_rows.empty:
             sec_ids = price_rows['securities_id'].astype(int).tolist()
             conn = get_connection()
+            # one row per security: its latest close and its 1-year high, each looked up once (a subquery in the
+            # SELECT list of a DISTINCT ON would run for every stored day of history before the latest one is kept)
             df_p = pd.read_sql("""
-                SELECT DISTINCT ON (hp.Securities_Id)
-                       hp.Securities_Id AS securities_id,
-                       hp.Close         AS current_price,
+                SELECT s.Securities_Id   AS securities_id,
+                       lp.Close          AS current_price,
                        s.Securities_Name AS securities_name,
-                       (SELECT MAX(h.Close) FROM Historical_Prices h
-                         WHERE h.Securities_Id = hp.Securities_Id
-                           AND h.Date >= CURRENT_DATE - INTERVAL '1 year') AS high_1y
-                FROM   Historical_Prices hp
-                JOIN   Securities s ON s.Securities_Id = hp.Securities_Id
-                WHERE  hp.Securities_Id = ANY(%s)
-                ORDER  BY hp.Securities_Id, hp.Date DESC
+                       hi.high_1y        AS high_1y
+                FROM   Securities s
+                CROSS JOIN LATERAL (SELECT h.Close FROM Historical_Prices h WHERE h.Securities_Id = s.Securities_Id
+                                    ORDER BY h.Date DESC LIMIT 1) lp
+                LEFT JOIN LATERAL (SELECT MAX(h.Close) AS high_1y FROM Historical_Prices h
+                                   WHERE h.Securities_Id = s.Securities_Id AND h.Date >= CURRENT_DATE - INTERVAL '1 year') hi ON TRUE
+                WHERE  s.Securities_Id = ANY(%s)
             """, conn, params=(sec_ids,))
             conn.close()
             prices_map = df_p.set_index('securities_id').to_dict('index')
