@@ -991,7 +991,13 @@ def upsert_security(data: dict):
         else:
             cur.execute(f"INSERT INTO Securities ({cols}) VALUES ({placeholders}) RETURNING Securities_Id", vals)
             sid = cur.fetchone()[0]
+            new_fund = _s('type') in ('ETF', 'Mutual Fund') and _s('isin') and not (_s('sector') and _s('industry'))
         conn.commit()
+        if not data.get('id') and new_fund:
+            # a new ETF / fund with an ISIN: fetch its Morningstar category in the background, which also fills an empty Sector / Industry
+            import threading
+            from data.morningstar import download_morningstar
+            threading.Thread(target=download_morningstar, kwargs={"target_sec_id": sid}, daemon=True).start()
         return {"id": sid}
     except Exception as e:
         conn.rollback()

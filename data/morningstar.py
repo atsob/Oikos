@@ -220,12 +220,98 @@ def download_morningstar(target_sec_id: int | None = None) -> dict:
         cleaned = clean_non_equity_sectors(cur)
         if cleaned:
             print(f"  Removed equity sector weights from {cleaned} fund(s) that are not equity funds.")
+        labelled = fill_sector_industry(cur, target_sec_id)
+        if labelled:
+            print(f"  Filled in Sector / Industry for {labelled} fund(s).")
         conn.commit()
         print(f"Morningstar complete — {done} updated, {missing} not found, {errors} error(s).")
-        return {"updated": done, "not_found": missing, "errors": errors}
+        return {"updated": done, "not_found": missing, "errors": errors, "labelled": labelled}
     finally:
         cur.close()
         conn.close()
+
+
+# ── Sector / Industry for funds ──────────────────────────────────────────────────────────────────
+# A fund's Securities.Sector is its asset class (Equity, Fixed Income, Commodities) and its Industry what it holds within it ("Broad market",
+# "Government bonds", "Gold", "Utilities" …), the labels used across Oikos (the Stress Test reads them). Both are worked out from the fund's
+# Morningstar Category, and from its name where the category says too little ("Other Equity", "Commodities - Precious Metals").
+_EQUITY_THEMES = (  # (words in the category or name, Industry) — the first match wins
+    (("technology", "semiconductor", "robotics", "artificial intelligence", "cyber", "digital", "cloud", "software"), "Information Technology"),
+    (("health", "biotech", "pharma", "medical"), "Health Care"),
+    (("utilities", "water"), "Utilities"),
+    (("energy", "oil", "uranium", "nuclear", "clean power"), "Energy"),
+    (("precious metals", "gold miners", "gold mining", "mining", "natural resources", "materials", "lithium", "battery"), "Materials"),
+    (("financial", "bank", "insurance"), "Financials"),
+    (("real estate", "property", "reit"), "Real Estate"),
+    (("industrial", "infrastructure", "aerospace", "defence", "defense", "space"), "Industrials"),
+    (("consumer goods", "consumer staples", "food"), "Consumer Staples"),
+    (("consumer discretionary", "luxury"), "Consumer Discretionary"),
+    (("communication", "media", "telecom"), "Communication Services"),
+)
+
+
+def classify_fund(category: str | None, name: str | None) -> tuple[str | None, str | None]:
+    """(Sector, Industry) for a fund from its Morningstar Category and name; None where neither says enough."""
+    c, n = (category or "").lower(), (name or "").lower()
+    if not c:
+        return None, None
+    if c in ("other", "relative value arbitrage") or "alternative" in c and "energy" not in c:  # says nothing: the name may
+        if "inflation" in n:
+            return "Fixed Income", "Inflation-linked bonds"
+        if "money market" in n or "overnight" in n:
+            return "Fixed Income", "Money market"
+        return None, None
+    if "money market" in c:
+        return "Fixed Income", "Money market"
+    if "commodit" in c:
+        if "precious" in c or "focused" in c or "gold" in n or "silver" in n:
+            for metal in ("gold", "silver", "platinum", "palladium"):
+                if metal in n:
+                    return "Commodities", metal.capitalize()
+            return "Commodities", "Precious metals"
+        return "Commodities", "Diversified commodities"
+    if "bond" in c or "fixed income" in c:
+        if "inflation" in c:
+            return "Fixed Income", "Inflation-linked bonds"
+        if "high yield" in c:
+            return "Fixed Income", "High yield bonds"
+        if "government" in c or "treasury" in c:
+            return "Fixed Income", "Government bonds"
+        if "corporate" in c or "fixed term" in c:
+            return "Fixed Income", "Corporate bonds"
+        return "Fixed Income", "Multi-sector bonds"
+    if "equity" in c or "stock" in c or "sector" in c or "alternative energy" in c:
+        # a sector or theme in the category first ("Sector Equity Utilities", "Thematic Equity Water"), then in the name
+        sector_like = c.startswith(("sector", "thematic", "other", "miscellaneous", "alternative energy", "equity precious"))
+        for text in ((c, n) if sector_like else (c,)):
+            for words, industry in _EQUITY_THEMES:
+                if any(w in text for w in words):
+                    return "Equity", industry
+        return ("Equity", None) if sector_like else ("Equity", "Broad market")
+    return None, None
+
+
+def fill_sector_industry(cur, target_sec_id: int | None = None) -> int:
+    """Fill an empty Sector and/or Industry of active ETFs and funds from their Morningstar Category (the override first). A value already
+    there, typed by hand or downloaded, is never changed. Returns the number of funds changed."""
+    sql = """SELECT s.Securities_Id, s.Securities_Name, COALESCE(fc.Morningstar_Category_Override, fc.Morningstar_Category)
+             FROM Securities s JOIN Fund_Composition fc USING (Securities_Id)
+             WHERE s.Securities_Type::text IN ('ETF','Mutual Fund','Closed-End Fund') AND s.Is_Active
+               AND (NULLIF(TRIM(s.Sector), '') IS NULL OR NULLIF(TRIM(s.Industry), '') IS NULL)"""
+    cur.execute(sql + (" AND s.Securities_Id = %s" if target_sec_id else ""), (target_sec_id,) if target_sec_id else ())
+    changed = 0
+    for sec_id, name, cat in cur.fetchall():
+        sector, industry = classify_fund(cat, name)
+        if not sector:
+            continue
+        cur.execute("""UPDATE Securities SET Sector = COALESCE(NULLIF(TRIM(Sector), ''), %s), Industry = COALESCE(NULLIF(TRIM(Industry), ''), %s)
+                       WHERE Securities_Id = %s
+                         AND (Sector IS DISTINCT FROM COALESCE(NULLIF(TRIM(Sector), ''), %s) OR Industry IS DISTINCT FROM COALESCE(NULLIF(TRIM(Industry), ''), %s))""",
+                    (sector, industry, sec_id, sector, industry))
+        if cur.rowcount:
+            changed += 1
+            print(f"  ✔ {name}: Sector {sector}, Industry {industry or '—'} (from Morningstar category {cat})")
+    return changed
 
 
 if __name__ == "__main__":

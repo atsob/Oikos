@@ -4,6 +4,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-21
 
+### Added
+- **Sector and Industry for new ETFs and funds.** Yahoo gives funds no sector or industry, so a new ETF had both empty until typed in. The Morningstar download (monthly job, Market Data → Downloads → Morningstar, or a fund's own Downloads tab) now fills an empty Sector and Industry from the fund's Morningstar Category, in the labels already used for funds: Sector Equity, Fixed Income or Commodities, and Industry what it holds (Broad market, a stock sector such as Utilities or Health Care, Government bonds, Corporate bonds, Money market, Gold, Silver …), using the fund's name where the Category says too little ("Other Equity"). A value already there is never changed. A new ETF or fund saved with an ISIN is looked up straight away, so its Sector and Industry appear within seconds. The five ETFs that had neither now have both. The Stress Test also recognises the fund Industries Industrials, Financials, Real Estate, Consumer Discretionary and Communication Services.
+
 ### Fixed
 - **Action verdict missed a crypto's triggered Trailing Stop.** The verdict measured the 52-week high over the last 252 prices, which for crypto (traded every day) is only about 8 months, so a higher peak earlier in the year was missed: Bitcoin, Ethereum, Ripple and Cosmos showed a triggered stop on the signals page but no "−2 trailing stop triggered" in the Action reasons. The verdict now takes the high over a calendar year, as the signals page does.
 

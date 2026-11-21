@@ -51,6 +51,8 @@ BOND_ASSUMPTIONS = {
 INDUSTRY_TO_SECTOR = {
     "Utilities": "Utilities", "Energy": "Energy", "Materials": "Basic Materials", "Health Care": "Healthcare",
     "Consumer Staples": "Consumer Defensive", "Information Technology": "Technology",
+    "Consumer Discretionary": "Consumer Cyclical", "Financials": "Financial Services", "Real Estate": "Real Estate",
+    "Industrials": "Industrials", "Communication Services": "Communication Services",
 }
 SECTOR_ALIASES = {"Electronic Technology": "Technology", "Technology Services": "Technology",
                   "Health Technology": "Healthcare", "Finance": "Financial Services"}
