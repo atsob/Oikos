@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-21
+
+### Fixed
+- **Action verdict missed a crypto's triggered Trailing Stop.** The verdict measured the 52-week high over the last 252 prices, which for crypto (traded every day) is only about 8 months, so a higher peak earlier in the year was missed: Bitcoin, Ethereum, Ripple and Cosmos showed a triggered stop on the signals page but no "−2 trailing stop triggered" in the Action reasons. The verdict now takes the high over a calendar year, as the signals page does.
+
 ## 2026-11-20
 
 ### Added

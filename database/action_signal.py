@@ -156,7 +156,9 @@ def _daily_frame(g: pd.Series, stop_pct: float, rfr: float) -> pd.DataFrame:
     ma50, ma200 = g.rolling(50).mean(), g.rolling(200).mean()
     ann = (g / g.shift(252) - 1) * 100
     vol = g.pct_change().rolling(252).std() * np.sqrt(252) * 100
-    hi = g.rolling(252).max()
+    # the 52-week high over a calendar year, as the signals SQL does: 252 rows is only ~8 months for crypto (7-day trading)
+    hi = pd.Series(g.to_numpy(), index=pd.to_datetime(g.index)).rolling("365D", min_periods=1).max()
+    hi.index = g.index
     ok200 = ma200.notna()
     prev50, prev200 = ma50.shift(), ma200.shift()
     cross = pd.Series([None] * len(g), index=g.index, dtype=object)
