@@ -7,6 +7,9 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 ### Added
 - **Import previews show what is already reconciled.** A row of an import preview that is already in Oikos now also says whether that transaction is reconciled: **🔒 Reconciled**, or **Not reconciled** in orange. In Import & Reconcile this is shown on matched and possible-duplicate rows, with a count of the rows already reconciled at the top (the statuses there, Matched and Possible Dup, also got their colours). In the Revolut and Brokerage importers it is shown on "Exists" rows; an investment takes the flag of its linked cash transaction, and one with no cash leg shows no tag.
 
+### Fixed
+- **Cash Register: "Today" is kept when changing period.** With Today ticked (transactions up to today), clicking 1M, 3M, 6M, YTD or All, or choosing another account, turned it off again and brought back future-dated transactions; it now stays on.
+
 ## 2026-11-21
 
 ### Improved

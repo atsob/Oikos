@@ -412,8 +412,8 @@ export default function Register() {
     setFromDate(from)
     // A period shortcut always means "from X up to now" — reset the upper bound too, in
     // case it was left narrowed (e.g. by jumping in from a global search hit) and would
-    // otherwise clash with the new lower bound and show nothing.
-    setToDate(DEFAULT_TO_DATE)
+    // otherwise clash with the new lower bound and show nothing. "Today" ticked is kept: up to today stays up to today.
+    setToDate(prev => prev === today() ? prev : DEFAULT_TO_DATE)
     setActivePeriod(label)
   }
 
@@ -534,8 +534,8 @@ export default function Register() {
         <Select className="w-full sm:w-56" value={accountId ?? ''} onChange={e => {
           setAccountId(Number(e.target.value) || null)
           // Same reasoning as setPeriod: don't carry over an upper bound narrowed by a
-          // previous global-search jump — a fresh account should start from a normal view.
-          setToDate(DEFAULT_TO_DATE)
+          // previous global-search jump — a fresh account should start from a normal view ("Today" ticked is kept).
+          setToDate(prev => prev === today() ? prev : DEFAULT_TO_DATE)
         }}>
           <option value="">— Select account —</option>
           <AccountOptions accounts={cashAccounts} />
