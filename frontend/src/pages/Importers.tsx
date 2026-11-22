@@ -102,17 +102,36 @@ function FileDropZone({ accept, onChange, label }: { accept: string; onChange: (
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
+/** Status of a preview row. For a row already in the app, `reconciled` tells whether that row is reconciled
+ *  (true / false); null means it has nothing to reconcile (an investment without a cash leg), undefined: not known. */
+function StatusBadge({ status, reconciled }: { status: string; reconciled?: boolean | null }) {
   const map: Record<string, string> = {
     exists: 'bg-green-100 text-green-700',
+    matched: 'bg-green-100 text-green-700',
     likely_dup: 'bg-yellow-100 text-yellow-700',
+    possible_dup: 'bg-yellow-100 text-yellow-700',
     new: 'bg-blue-100 text-blue-700',
     ignored: 'bg-gray-100 text-gray-500',
   }
   const label: Record<string, string> = {
-    exists: '✅ Exists', likely_dup: '⚠️ Likely Dup', new: '🆕 New', ignored: '⏭️ Ignored',
+    exists: '✅ Exists', matched: '✅ Matched', likely_dup: '⚠️ Likely Dup', possible_dup: '⚠️ Possible Dup',
+    new: '🆕 New', ignored: '⏭️ Ignored',
   }
-  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[status] ?? ''}`}>{label[status] ?? status}</span>
+  return (
+    <span className="inline-flex items-center whitespace-nowrap">
+      <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[status] ?? ''}`}>{label[status] ?? status}</span>
+      <ReconciledTag value={reconciled} />
+    </span>
+  )
+}
+
+/** Beside the status of a row already in the app: whether that row is reconciled (nothing for null / undefined). */
+function ReconciledTag({ value }: { value?: boolean | null }) {
+  if (value === true) return <span className="ml-1 px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-600 whitespace-nowrap"
+    title="The matching transaction in the app is already reconciled">🔒 Reconciled</span>
+  if (value === false) return <span className="ml-1 px-1.5 py-0.5 rounded text-xs bg-orange-50 text-orange-600 whitespace-nowrap"
+    title="The matching transaction in the app is not reconciled yet">Not reconciled</span>
+  return null
 }
 
 /** Checkbox cell for a broker preview row — records already imported ("exists") can't be re-selected. */
@@ -499,6 +518,7 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
               <span className="text-green-600">✅ {reviewRows.filter(r => r.status === 'matched').length} matched</span>
               <span className="text-yellow-600">⚠️ {reviewRows.filter(r => r.status === 'possible_dup').length} possible dup</span>
               <span className="text-blue-600">🆕 {reviewRows.filter(r => r.status === 'new').length} new</span>
+              <span className="text-slate-500">🔒 {reviewRows.filter(r => r.status !== 'new' && r.already_reconciled).length} already reconciled</span>
             </div>
           </CardHeader>
           <CardBody>
@@ -523,7 +543,8 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
                       <td className={`py-1 px-2 text-right font-mono ${Number(r.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {fmt2(Number(r.amount))}
                       </td>
-                      <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                      <td className="py-1 px-2"><StatusBadge status={r.status as string}
+                        reconciled={r.status !== 'new' ? Boolean(r.already_reconciled) : undefined} /></td>
                       <td className="py-1 px-2">
                         <select
                           value={r.action as string}
@@ -1431,7 +1452,7 @@ function RevolutSavingsTab() {
                       <tbody>
                         {inv.slice(0, 100).map((r, i) => (
                           <tr key={i} className="border-b border-slate-100">
-                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.action as string}</td>
                             <td className="py-1 px-2 text-right">{fmtNum(Number(r.quantity ?? 0), 4)}</td>
@@ -1469,7 +1490,7 @@ function RevolutSavingsTab() {
                       <tbody>
                         {tx.slice(0, 100).map((r, i) => (
                           <tr key={i} className="border-b border-slate-100">
-                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
                             <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
@@ -1895,7 +1916,7 @@ function IBFlexTab() {
                             <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
                               onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                           </td>
-                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
                           <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
@@ -1939,7 +1960,7 @@ function IBFlexTab() {
                               <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.desc as string)}
                                 onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                             </td>
-                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
                             <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
@@ -2166,7 +2187,7 @@ function RevolutTradingTab() {
                             <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
                               onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                           </td>
-                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.action as string}</td>
                           <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
@@ -2209,7 +2230,7 @@ function RevolutTradingTab() {
                               <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.desc as string)}
                                 onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                             </td>
-                            <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                            <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                             <td className="py-1 px-2">{r.date as string}</td>
                             <td className="py-1 px-2">{r.description as string}</td>
                             <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
@@ -2641,6 +2662,7 @@ function SaxoTab() {
                             <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${statusColor(r.status as string)}`}>
                               {statusLabel(r.status as string)}
                             </span>
+                            <ReconciledTag value={r.reconciled as boolean | null | undefined} />
                           </td>
                           <td className="py-1 pr-3 font-mono">{r.date as string}</td>
                           <td className="py-1 pr-3">{r.account as string}</td>
@@ -2679,6 +2701,7 @@ function SaxoTab() {
                           </td>
                           <td className="py-1 pr-3">
                             <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${statusColor(String(r.status ?? 'new'))}`}>{statusLabel(String(r.status ?? 'new'))}</span>
+                            <ReconciledTag value={r.reconciled as boolean | null | undefined} />
                           </td>
                           <td className="py-1 pr-3 font-mono">{r.date as string}</td>
                           <td className="py-1 pr-3">{r.charge_type as string}</td>
@@ -2833,6 +2856,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
                         <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${statusColor(r.status as string)}`}>
                           {r.status === 'exists' ? 'Exists' : 'New'}
                         </span>
+                        <ReconciledTag value={r.reconciled as boolean | null | undefined} />
                       </td>
                       <td className="py-1 pr-3 font-mono">{r.date as string}</td>
                       <td className="py-1 pr-3">{r.charge_type as string}</td>
@@ -3491,7 +3515,7 @@ function CapitalComTab() {
                           <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
                             onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                         </td>
-                        <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                        <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                         <td className="py-1 px-2">{r.date as string}</td>
                         <td className="py-1 px-2">{r.action as string}</td>
                         <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
@@ -3527,7 +3551,7 @@ function CapitalComTab() {
                             <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.description as string)}
                               onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.description as string) : n.delete(r.description as string); return n })} />
                           </td>
-                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.description as string}</td>
                           <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>
@@ -3681,7 +3705,7 @@ function FxProTab() {
                           <ImportCheckboxCell status={r.status as string} checked={selectedInv.has(r.desc as string)}
                             onToggle={v => setSelectedInv(prev => { const n = new Set(prev); v ? n.add(r.desc as string) : n.delete(r.desc as string); return n })} />
                         </td>
-                        <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                        <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                         <td className="py-1 px-2">{r.date as string}</td>
                         <td className="py-1 px-2">{r.action as string}</td>
                         <td className="py-1 px-2 font-mono">{r.symbol as string}</td>
@@ -3717,7 +3741,7 @@ function FxProTab() {
                             <ImportCheckboxCell status={r.status as string} checked={selectedTx.has(r.description as string)}
                               onToggle={v => setSelectedTx(prev => { const n = new Set(prev); v ? n.add(r.description as string) : n.delete(r.description as string); return n })} />
                           </td>
-                          <td className="py-1 px-2"><StatusBadge status={r.status as string} /></td>
+                          <td className="py-1 px-2"><StatusBadge status={r.status as string} reconciled={r.reconciled as boolean | null | undefined} /></td>
                           <td className="py-1 px-2">{r.date as string}</td>
                           <td className="py-1 px-2">{r.description as string}</td>
                           <td className="py-1 px-2 text-right">{fmtNum(Number(r.amount ?? 0), 2)}</td>

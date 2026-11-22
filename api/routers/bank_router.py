@@ -22,6 +22,60 @@ def _df(df: pd.DataFrame) -> list:
     return [{k: None if isinstance(v, float) and math.isnan(v) else v for k, v in r.items()} for r in records]
 
 
+# ── Reconciled flag on import previews ────────────────────────────────────────
+
+def _mark_reconciled(resp):
+    """Tell, on each preview row already in the app (status "exists"), whether that row is reconciled.
+
+    Rows are found by their description, the same key the importers' duplicate check uses. A cash row carries its own
+    Reconciled flag; an investment row has none, so it takes the flag of the cash transaction it is linked to, and gets
+    None (nothing to reconcile) when it has no cash leg. Adds `reconciled` (True / False / None) to those rows only.
+    """
+    if not isinstance(resp, dict):
+        return resp
+    rows = [r for v in resp.values() if isinstance(v, list) for r in v
+            if isinstance(r, dict) and r.get("status") == "exists"]
+    descs = list({str(r.get("desc") or r.get("description") or "") for r in rows} - {""})
+    if not descs:
+        return resp
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT Description, BOOL_AND(Reconciled) FROM Transactions
+                WHERE Description = ANY(%s) GROUP BY Description
+            """, (descs,))
+            tx = {d: bool(f) for d, f in cur.fetchall()}
+            cur.execute("""
+                SELECT i.Description, BOOL_AND(t.Reconciled) FROM Investments i
+                LEFT JOIN Transactions t ON t.Transactions_Id = i.Transactions_Id
+                WHERE i.Description = ANY(%s) GROUP BY i.Description
+            """, (descs,))
+            inv = {d: f for d, f in cur.fetchall()}
+    except Exception:
+        return resp   # the flag is a hint: a failed lookup must not break the preview
+    for r in rows:
+        d = str(r.get("desc") or r.get("description") or "")
+        r["reconciled"] = inv[d] if d in inv else tx.get(d)
+    return resp
+
+
+def _with_reconciled(fn):
+    """Decorator for the import preview endpoints: adds the reconciled flag to their rows (see _mark_reconciled)."""
+    import functools
+    import inspect
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def _a(*args, **kwargs):
+            return _mark_reconciled(await fn(*args, **kwargs))
+        return _a
+
+    @functools.wraps(fn)
+    def _s(*args, **kwargs):
+        return _mark_reconciled(fn(*args, **kwargs))
+    return _s
+
+
 # ── Accounts ──────────────────────────────────────────────────────────────────
 
 @router.get("/accounts")
@@ -432,6 +486,7 @@ def ib_flex_fetch(data: dict):
 
 
 @router.post("/ib-flex-parse")
+@_with_reconciled
 def ib_flex_parse(data: dict):
     """Parse IB Flex XML → preview records."""
     xml = data.get("xml", "")
@@ -897,6 +952,7 @@ def saxo_fetch_accounts(data: dict):
 
 
 @router.post("/saxo-fetch-trades")
+@_with_reconciled
 def saxo_fetch_trades(data: dict):
     """Fetch + parse trades for all mapped accounts, return preview records."""
     try:
@@ -1033,6 +1089,7 @@ def saxo_import(data: dict):
 # ── Saxo PDF ──────────────────────────────────────────────────────────────────
 
 @router.post("/saxo-pdf-preview")
+@_with_reconciled
 async def saxo_pdf_preview(
     file: UploadFile = File(...),
     account_id_override: str = Query(""),
@@ -1125,6 +1182,7 @@ def coinbase_test(data: dict):
 
 
 @router.post("/coinbase-fetch")
+@_with_reconciled
 def coinbase_fetch(data: dict):
     try:
         from data.coinbase_connector import (
@@ -1273,6 +1331,7 @@ def cryptocom_test(data: dict):
 
 
 @router.post("/cryptocom-fetch")
+@_with_reconciled
 def cryptocom_fetch(data: dict):
     try:
         from data.cryptocom_connector import (
@@ -1393,6 +1452,7 @@ def cryptocom_import(data: dict):
 # ── Capital.com ───────────────────────────────────────────────────────────────
 
 @router.post("/capitalcom-parse")
+@_with_reconciled
 async def capitalcom_parse(
     trades: UploadFile = File(...),
     funds: UploadFile = File(...),
@@ -1468,6 +1528,7 @@ async def capitalcom_import(
 # ── FxPro ─────────────────────────────────────────────────────────────────────
 
 @router.post("/fxpro-parse")
+@_with_reconciled
 async def fxpro_parse(
     files: list[UploadFile] = File(...),
     account_id: int = Query(...),
@@ -1549,6 +1610,7 @@ async def fxpro_import(
 # ── Revolut Savings ───────────────────────────────────────────────────────────
 
 @router.post("/revolut-savings-parse")
+@_with_reconciled
 async def revolut_savings_parse(
     file: UploadFile = File(...),
     account_id: int = Query(...),
@@ -1639,6 +1701,7 @@ async def revolut_savings_import(
 # ── Revolut Trading ───────────────────────────────────────────────────────────
 
 @router.post("/revolut-trading-parse")
+@_with_reconciled
 async def revolut_trading_parse(
     file: UploadFile = File(...),
     account_id: int = Query(...),

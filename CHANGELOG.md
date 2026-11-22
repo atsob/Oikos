@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-22
+
+### Added
+- **Import previews show what is already reconciled.** A row of an import preview that is already in Oikos now also says whether that transaction is reconciled: **🔒 Reconciled**, or **Not reconciled** in orange. In Import & Reconcile this is shown on matched and possible-duplicate rows, with a count of the rows already reconciled at the top (the statuses there, Matched and Possible Dup, also got their colours). In the Revolut and Brokerage importers it is shown on "Exists" rows; an investment takes the flag of its linked cash transaction, and one with no cash leg shows no tag.
+
 ## 2026-11-21
 
 ### Improved

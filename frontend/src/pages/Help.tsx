@@ -1966,6 +1966,13 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           rows already in the database ("Exists") can't be re-selected. A checkbox in the column header
           selects/deselects everything in that table at once.
         </Note>
+        <Note>
+          <b>Reconciled or not</b>: a preview row that is already in Oikos ("Exists" in the Revolut and Brokerage
+          importers, "Matched" or "Possible Dup" in Import &amp; Reconcile) also shows whether that transaction is
+          reconciled — <b>🔒 Reconciled</b>, or <b>Not reconciled</b> in orange. An investment takes the flag of its
+          linked cash transaction; one with no cash leg (a transfer of shares, say) shows no tag. Import &amp; Reconcile
+          also counts the rows already reconciled at the top of the review.
+        </Note>
       </>
     ),
   },
