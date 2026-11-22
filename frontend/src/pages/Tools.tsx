@@ -2519,6 +2519,29 @@ function AppSettingsPanel() {
             </p>
           </div>
 
+          {/* Import & Reconcile matching */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">Import &amp; Reconcile Matching</h3>
+            <div className="grid grid-cols-2 gap-3 max-w-md">
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Days apart</label>
+                <input type="number" min={0} max={30} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={form.reconcileDayWindow} onChange={e => set('reconcileDayWindow', Math.min(30, Math.max(0, Math.round(Number(e.target.value) || 0))))} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-500 block mb-1">Amount difference %</label>
+                <input type="number" min={0} max={50} step={1} className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+                  value={form.reconcileAmountTolPct} onChange={e => set('reconcileAmountTolPct', Math.min(50, Math.max(0, Number(e.target.value) || 0)))} />
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              When a statement row has no transaction in Oikos with the same date and amount, Importers → Bank → Import &amp;
+              Reconcile offers one as a <i>Possible Dup</i> when it is at most {form.reconcileDayWindow} day(s) away and either has
+              the same amount, or shares a word of its name and its amount is at most {form.reconcileAmountTolPct}% off (0 turns
+              this second check off). The row can then be reconciled, or updated to the statement's date and amount.
+            </p>
+          </div>
+
           {/* Live data refresh */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Live Data Refresh</h3>

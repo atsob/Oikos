@@ -1975,8 +1975,9 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
         </Note>
         <Note>
           <b>Import &amp; Reconcile — differences and Update</b>: a statement row is <i>Matched</i> to a transaction in
-          Oikos with the same date and amount, and a <i>Possible Dup</i> of one with the same amount within 3 days, or
-          with a word of the name in common within 3 days and an amount up to 25% off. Where the transaction in Oikos
+          Oikos with the same date and amount, and a <i>Possible Dup</i> of one within 5 days that has the same amount,
+          or a word of the name in common and an amount up to 5% off (both limits are set in Tools → System → App
+          Settings → Import &amp; Reconcile Matching; 0% turns the name check off). Where the transaction in Oikos
           differs, it is shown under the description (<i>In Oikos: date · amount · payee</i>, what differs in amber), and
           the row's Action list adds <b>Update</b>: the transaction in Oikos takes the statement's date and amount and is
           reconciled. The other leg of a transfer follows. The amount is not changed (you get a message instead) for a

@@ -23,6 +23,8 @@ export interface AppSettings {
   defaultBenchmarkId: number // security id of the benchmark that comparisons (Action backtest) use unless a report picks another — 0 = VWCE
   srAlertMinValue: number // Support / Resistance alerts only for holdings / currency exposure worth at least this many EUR
   homeCountry: string // ISO alpha-2 country of usage ('' = not set) — which market Market Data → Local Market Watch follows
+  reconcileDayWindow: number // Import & Reconcile: a statement row and an app transaction this many days apart can still be a possible duplicate
+  reconcileAmountTolPct: number // Import & Reconcile: same name, amount up to this % apart → possible duplicate (0 = off)
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -48,6 +50,8 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   defaultBenchmarkId: 0,
   srAlertMinValue: 500,
   homeCountry: '',
+  reconcileDayWindow: 5,
+  reconcileAmountTolPct: 5,
 }
 
 // Backed by lib/preferences.ts (server-side storage) instead of a standalone

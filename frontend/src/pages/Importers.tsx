@@ -6,6 +6,7 @@ import {
   PageHeader, Card, CardHeader, CardTitle, CardBody, Button, Select, Spinner, ColHeader, useSortTable, AccountOptions, DateInput } from '@/components/ui'
 import { ArrowLeft, Upload, CheckCircle, XCircle, Trash2, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { fmtNum, todayLocal } from '@/lib/utils'
+import { getSettings } from '@/lib/settings'
 import {
   getBankAccounts, getAllAccounts, getImportProfiles, createImportProfile, deleteImportProfile,
   getPayeeRules, createPayeeRule, updatePayeeRule, deletePayeeRule,
@@ -348,7 +349,9 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
       // Simple matching: exact date + amount, or same amount within a few days (fuzzy —
       // catches bank clearing-date drift without flagging every unrelated transaction
       // that happens to share an amount somewhere across the whole statement's date range).
-      const FUZZY_DAY_WINDOW = 3
+      // Both set in Tools → System → App Settings → Import & Reconcile matching.
+      const FUZZY_DAY_WINDOW = Math.max(0, Number(getSettings().reconcileDayWindow ?? 5))
+      const AMOUNT_TOL = Math.max(0, Number(getSettings().reconcileAmountTolPct ?? 5)) / 100
       const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
       const app = appData as Record<string, unknown>[]
       const isExact = (r: Record<string, unknown>, a: Record<string, unknown>) =>
@@ -369,11 +372,11 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
           !exactIds.has(a.id) && Math.abs(Number(a.amount) - amount) < 0.02 && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW
         )
         // Same name within a few days but another amount (a card charge settled at a different rate, a corrected
-        // amount): a possible duplicate too, for Update to correct — within 25% (at least 1) and the same sign.
-        const similar = !exact && !fuzzy && app.find(a => {
+        // amount): a possible duplicate too, for Update to correct — within the App Settings % and the same sign.
+        const similar = !exact && !fuzzy && AMOUNT_TOL > 0 && app.find(a => {
           const aa = Number(a.amount)
           return !exactIds.has(a.id) && Math.sign(aa) === Math.sign(amount)
-            && Math.abs(aa - amount) <= Math.max(1, 0.25 * Math.abs(amount))
+            && Math.abs(aa - amount) <= AMOUNT_TOL * Math.abs(amount) + 0.005
             && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW && sharesWord(r, a)
         })
         const m = exact || fuzzy || similar || undefined
