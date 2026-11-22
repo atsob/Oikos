@@ -350,16 +350,35 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
       // that happens to share an amount somewhere across the whole statement's date range).
       const FUZZY_DAY_WINDOW = 3
       const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
+      const app = appData as Record<string, unknown>[]
+      const isExact = (r: Record<string, unknown>, a: Record<string, unknown>) =>
+        a.date === r.date && Math.abs(Number(a.amount) - Number(r.amount)) < 0.02
+      // An app transaction that matches a statement row exactly is not offered as the possible duplicate of another.
+      const exactIds = new Set(rows.flatMap(r => app.filter(a => isExact(r, a)).map(a => a.id)))
+      // Words of 4+ letters (not plain numbers) in a description or payee, for the "same name, other amount" match.
+      const words = (t: unknown) => new Set(String(t ?? '').toUpperCase().split(/[^\p{L}\p{N}]+/u)
+        .filter(w => w.length >= 4 && !/^\d+$/.test(w)))
+      const sharesWord = (r: Record<string, unknown>, a: Record<string, unknown>) => {
+        const mine = words(r.description)
+        return [...words(a.payee), ...words(a.description)].some(w => mine.has(w))
+      }
       const matched = rows.map((r, i) => {
         const amount = Number(r.amount)
-        const exact = (appData as Record<string, unknown>[]).find(a =>
-          a.date === r.date && Math.abs(Number(a.amount) - amount) < 0.02
+        const exact = app.find(a => isExact(r, a))
+        const fuzzy = !exact && app.find(a =>
+          !exactIds.has(a.id) && Math.abs(Number(a.amount) - amount) < 0.02 && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW
         )
-        const fuzzy = !exact && (appData as Record<string, unknown>[]).find(a =>
-          Math.abs(Number(a.amount) - amount) < 0.02 && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW
-        )
-        const status = exact ? 'matched' : fuzzy ? 'possible_dup' : 'new'
-        const defaultAction = exact ? 'Reconcile' : fuzzy ? 'Skip' : 'Import'
+        // Same name within a few days but another amount (a card charge settled at a different rate, a corrected
+        // amount): a possible duplicate too, for Update to correct — within 25% (at least 1) and the same sign.
+        const similar = !exact && !fuzzy && app.find(a => {
+          const aa = Number(a.amount)
+          return !exactIds.has(a.id) && Math.sign(aa) === Math.sign(amount)
+            && Math.abs(aa - amount) <= Math.max(1, 0.25 * Math.abs(amount))
+            && daysApart(String(a.date), String(r.date)) <= FUZZY_DAY_WINDOW && sharesWord(r, a)
+        })
+        const m = exact || fuzzy || similar || undefined
+        const status = exact ? 'matched' : m ? 'possible_dup' : 'new'
+        const defaultAction = exact ? 'Reconcile' : m ? 'Skip' : 'Import'
         if (defaultAction === 'Import') {
           const byRule = applyRules(String(r.description ?? ''))
           const party = String(r.payee ?? '').trim().toUpperCase()
@@ -372,8 +391,12 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
           ...r,
           _idx: i,
           status,
-          match_tx_id: exact ? exact.id : fuzzy ? fuzzy.id : null,
-          already_reconciled: ((exact || fuzzy) || undefined)?.reconciled ?? false,
+          match_tx_id: m ? m.id : null,
+          already_reconciled: m?.reconciled ?? false,
+          // The app transaction it was matched to, shown under the description where it differs
+          match_date: m ? String(m.date) : null,
+          match_amount: m ? Number(m.amount) : null,
+          match_payee: m ? String(m.payee ?? '') : null,
           action: defaultAction,
         }
       })
@@ -411,6 +434,10 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
   }
 
   const nMatched = reviewRows.filter(r => r.action === 'Reconcile').length
+  const nUpdate = reviewRows.filter(r => r.action === 'Update').length
+  // The matched app transaction has another date or amount than the statement row (Update would change it)
+  const differs = (r: Record<string, unknown>) =>
+    r.match_date !== r.date || Math.abs(Number(r.match_amount) - Number(r.amount)) >= 0.005
   const nImport = reviewRows.filter(r => r.action === 'Import').length
 
   return (
@@ -539,7 +566,18 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
                   {reviewRows.map(r => (
                     <tr key={r._idx as number} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="py-1 px-2 whitespace-nowrap">{r.date as string}</td>
-                      <td className="py-1 px-2 max-w-[200px] truncate" title={r.description as string}>{r.description as string}</td>
+                      <td className="py-1 px-2 max-w-[260px]">
+                        <div className="truncate" title={r.description as string}>{r.description as string}</div>
+                        {r.match_tx_id != null && differs(r) && (
+                          <div className="text-[11px] text-slate-500 truncate" title="The transaction in Oikos it was matched to">
+                            In Oikos:{' '}
+                            <span className={r.match_date !== r.date ? 'text-amber-600 font-semibold' : ''}>{r.match_date as string}</span>{' · '}
+                            <span className={`font-mono ${Math.abs(Number(r.match_amount) - Number(r.amount)) >= 0.005 ? 'text-amber-600 font-semibold' : ''}`}>
+                              {fmt2(Number(r.match_amount))}</span>{' · '}
+                            {r.match_payee as string}
+                          </div>
+                        )}
+                      </td>
                       <td className={`py-1 px-2 text-right font-mono ${Number(r.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {fmt2(Number(r.amount))}
                       </td>
@@ -550,8 +588,11 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
                           value={r.action as string}
                           onChange={e => updateRow(r._idx as number, 'action', e.target.value)}
                           className="text-xs border border-slate-200 rounded px-1 py-0.5"
+                          title={r.action === 'Update' ? 'Give the transaction in Oikos the date and amount of this statement row, then reconcile it' : undefined}
                         >
-                          {['Reconcile', 'Import', 'Skip'].map(a => <option key={a}>{a}</option>)}
+                          {(r.match_tx_id == null ? ['Import', 'Skip']
+                            : differs(r) ? ['Reconcile', 'Update', 'Import', 'Skip'] : ['Reconcile', 'Import', 'Skip'])
+                            .map(a => <option key={a}>{a}</option>)}
                         </select>
                       </td>
                       <td className="py-1 px-2">
@@ -611,7 +652,8 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
 
             <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
               <div className="text-sm text-slate-600">
-                Ready to <strong>reconcile {nMatched}</strong> and <strong>import {nImport}</strong> transaction(s).
+                Ready to <strong>reconcile {nMatched}</strong>,{' '}
+                {nUpdate > 0 && <><strong>update and reconcile {nUpdate}</strong>, </>}and <strong>import {nImport}</strong> transaction(s).
               </div>
               <input
                 type="text" value={notes} onChange={e => setNotes(e.target.value)}
@@ -631,7 +673,7 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
       {step === 3 && result && (
         <Card>
           <CardBody>
-            <SuccessBox msg={`Done! Reconciled ${result.reconciled} and imported ${result.imported} transaction(s).${(result.errors as string[])?.length ? ` Errors: ${(result.errors as string[]).join(', ')}` : ''}`} />
+            <SuccessBox msg={`Done! Reconciled ${result.reconciled}${result.updated ? ` (${result.updated} updated)` : ''} and imported ${result.imported} transaction(s).${(result.errors as string[])?.length ? ` Errors: ${(result.errors as string[]).join(', ')}` : ''}`} />
             <Button variant="secondary" className="mt-3" onClick={() => { setStep(1); setFile(null); setParsedRows([]); setReviewRows([]); setResult(null) }}>
               Start New Import
             </Button>

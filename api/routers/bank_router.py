@@ -281,6 +281,7 @@ def get_app_transactions(account_id: int, date_from: str, date_to: str):
         df = pd.read_sql("""
             SELECT t.Transactions_Id AS id, t.Date::text AS date,
                    COALESCE(p.Payees_Name, t.Description) AS payee,
+                   t.Description AS description,
                    t.Total_Amount AS amount, t.Reconciled AS reconciled
             FROM Transactions t
             LEFT JOIN Payees p ON p.Payees_Id = t.Payees_Id
@@ -304,7 +305,7 @@ def apply_import(data: dict):
       notes: str,
       rows: [{
         date: str, description: str, amount: float,
-        action: 'Reconcile' | 'Import' | 'Skip',
+        action: 'Reconcile' | 'Update' | 'Import' | 'Skip',   # Update: match_tx_id takes this row's date and amount, then is reconciled
         match_tx_id: int | null,
         already_reconciled: bool,
         payee_name: str | null,
@@ -321,6 +322,7 @@ def apply_import(data: dict):
 
     reconcile_ids = []
     imported_count = 0
+    updated_count = 0
     errors = []
 
     conn = get_connection()
@@ -340,6 +342,21 @@ def apply_import(data: dict):
                 tx_id = row.get("match_tx_id")
                 if tx_id and not row.get("already_reconciled"):
                     reconcile_ids.append(int(tx_id))
+            elif action == "Update":
+                tx_id = row.get("match_tx_id")
+                if not tx_id:
+                    continue
+                cur.execute("SAVEPOINT upd")
+                try:
+                    msg = _update_from_statement(cur, int(tx_id), row["date"], float(row["amount"]))
+                    cur.execute("RELEASE SAVEPOINT upd")
+                    updated_count += 1
+                    if msg:
+                        errors.append(msg)
+                    reconcile_ids.append(int(tx_id))
+                except Exception as e:
+                    cur.execute("ROLLBACK TO SAVEPOINT upd")
+                    errors.append(f"{row['date']} {row.get('description', '')}: {getattr(e, 'detail', None) or e}")
             elif action == "Import":
                 try:
                     payee_name = (row.get("payee_name") or "").strip()
@@ -406,9 +423,60 @@ def apply_import(data: dict):
     finally:
         conn.close()
 
-    if errors:
-        return {"reconciled": len(reconcile_ids), "imported": imported_count, "errors": errors}
-    return {"reconciled": len(reconcile_ids), "imported": imported_count, "errors": []}
+    return {"reconciled": len(reconcile_ids), "imported": imported_count, "updated": updated_count, "errors": errors}
+
+
+def _update_from_statement(cur, tx_id: int, new_date: str, new_amount: float) -> str:
+    """Import & Reconcile's Update: give the app transaction the statement's date and amount (only what differs).
+
+    The other leg of a transfer follows (same date, opposite amount), as does a single split's amount. The amount is
+    left alone, with a message back, where changing it would need more than that: a transaction split over several
+    categories, an investment's cash leg, or a transfer between currencies. A margin-managed row is refused (409).
+    """
+    from database.margin import refuse_if_managed
+    cur.execute("""SELECT Date::text, Total_Amount, Transfers_Id, Total_Amount_Target, Description
+                   FROM Transactions WHERE Transactions_Id = %s""", (tx_id,))
+    r = cur.fetchone()
+    if r is None:
+        raise ValueError(f"transaction {tx_id} not found")
+    old_date, old_amount, tid, amt_target, desc = r
+    changes: dict = {}
+    if new_date and new_date != old_date:
+        changes["date"] = new_date
+    note = ""
+    if abs(float(old_amount) - new_amount) >= 0.005:
+        cur.execute("SELECT COUNT(*) FROM Splits WHERE Transactions_Id = %s", (tx_id,))
+        n_splits = cur.fetchone()[0]
+        cur.execute("SELECT 1 FROM Investments WHERE Transactions_Id = %s LIMIT 1", (tx_id,))
+        is_inv = cur.fetchone() is not None
+        why = ("it is split over several categories" if n_splits > 1 else
+               "it is the cash side of an investment" if is_inv else
+               "it is a transfer between currencies" if amt_target is not None else "")
+        if why:
+            note = f"{old_date} {desc or ''}: amount not changed ({why}) — edit it in the Cash Register"
+        else:
+            changes["total_amount"] = new_amount
+    if not changes:
+        return note
+    refuse_if_managed(cur, [tx_id], set(changes))
+    cur.execute(f"UPDATE Transactions SET {', '.join(f'{k} = %s' for k in changes)} WHERE Transactions_Id = %s",
+                list(changes.values()) + [tx_id])
+    if "total_amount" in changes:
+        cur.execute("UPDATE Splits SET Amount = %s WHERE Transactions_Id = %s", (new_amount, tx_id))
+    if tid:
+        mirror = {k: v for k, v in changes.items() if k == "date"}
+        if "total_amount" in changes:
+            mirror["total_amount"] = -new_amount
+        cur.execute("SELECT Transactions_Id FROM Transactions WHERE Transfers_Id = %s AND Transactions_Id <> %s",
+                    (tid, tx_id))
+        for (pid,) in cur.fetchall():
+            cur.execute(f"UPDATE Transactions SET {', '.join(f'{k} = %s' for k in mirror)} WHERE Transactions_Id = %s",
+                        list(mirror.values()) + [pid])
+            if "total_amount" in mirror:
+                cur.execute("UPDATE Splits SET Amount = %s WHERE Transactions_Id = %s", (-new_amount, pid))
+            cur.execute("SELECT Accounts_Id FROM Transactions WHERE Transactions_Id = %s", (pid,))
+            crud.refresh_account_balance(cur, cur.fetchone()[0])
+    return note
 
 
 # ── Reconciliation History ────────────────────────────────────────────────────
