@@ -269,8 +269,8 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
 
   const { data: accounts = [] } = useQuery({ queryKey: ['bank-accounts'], queryFn: getBankAccounts })
   const { data: profiles = [] } = useQuery({ queryKey: ['import-profiles'], queryFn: getImportProfiles })
-  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
-  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees', 'bank'], queryFn: getPayees })
+  const { data: categories = [] } = useQuery({ queryKey: ['categories', 'bank'], queryFn: getCategories })
   const { data: payeeRules = [] } = useQuery({ queryKey: ['payee-rules'], queryFn: getPayeeRules })
   const { data: payeeCatUsage = [] } = useQuery({ queryKey: ['payee-category-usage'], queryFn: getPayeeCategoryUsage })
 
@@ -872,8 +872,8 @@ function PayeeRulesTab() {
   const [editing, setEditing] = useState<Record<string, unknown>>(EMPTY_RULE)
   const { data: rules = [] } = useQuery({ queryKey: ['payee-rules'], queryFn: getPayeeRules })
   const { sorted: prSorted, sortKey: prSK, sortDir: prSD, toggleSort: prSort } = useSortTable(rules as Record<string, unknown>[], 'priority', 'desc')
-  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
-  const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: getCategories })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees', 'bank'], queryFn: getPayees })
+  const { data: categories = [] } = useQuery({ queryKey: ['categories', 'bank'], queryFn: getCategories })
 
   const saveMut = useMutation({
     mutationFn: (d: Record<string, unknown>) => d.rule_id
@@ -2809,7 +2809,7 @@ function SaxoPdfSection({ allAccounts, saxoAccounts }: { allAccounts: Array<{ id
   const effectiveAccountId = pdfAccountId !== '' ? pdfAccountId : (mappedAppId ?? '')
 
   const settingsQuery = useQuery({ queryKey: ['saxoSettings'], queryFn: saxoGetSettings })
-  const { data: payees = [] } = useQuery({ queryKey: ['payees'], queryFn: getPayees })
+  const { data: payees = [] } = useQuery({ queryKey: ['payees', 'bank'], queryFn: getPayees })
   const chargePayeeId: number | '' = settingsQuery.data?.charge_payee_id ?? ''
   const chargePayeeMut = useMutation({
     mutationFn: (payeeId: number | null) => saxoSaveChargePayee(payeeId),
