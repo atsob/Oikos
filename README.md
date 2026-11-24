@@ -2,21 +2,105 @@
 
 *A development of [ALL ABOUT 360 CONSULTING](https://github.com/atsob).*
 
-A personal finance app — bank & cash accounts, transactions, and multicurrency
-investments (stocks, ETFs, bonds, crypto) with cash flow forecasting, tax
-reporting, and portfolio analysis. FastAPI + React/TypeScript, backed by
-PostgreSQL. (An earlier Streamlit version has since been fully rebuilt on this
-stack.)
+A self-hosted personal finance app for one household: bank and cash accounts,
+credit cards, loans, pensions, property and multi-currency investments (stocks,
+ETFs, funds, bonds, crypto, options, CFDs) in one place, with bank imports and
+reconciliation, cash-flow forecasting, budgeting, portfolio analysis, tax
+reporting and an AI assistant that answers questions about your own data.
+FastAPI + React/TypeScript, backed by PostgreSQL.
 
-Self-hosted, single-tenant by design — everything below sets up one instance
-for one household. For the full walkthrough (PostgreSQL setup, the TLS
-certificate step, every `.env` variable, backups, troubleshooting), see
-[INSTALL.md](./INSTALL.md) — this page is just the fast path.
+Your data stays in your own database: no subscription, no third-party
+aggregator holding your bank login. Every account and security keeps its own
+currency, and reports convert through historical FX rates into the reporting
+currency you choose.
+
+For the full walkthrough (PostgreSQL setup, the TLS certificate step, every
+`.env` variable, backups, troubleshooting), see [INSTALL.md](./INSTALL.md).
+This page is the fast path.
+
+## Features
+
+**Everyday money**
+- **Dashboard** you can arrange: net worth, cash, investments, pension and
+  savings, and assets, with daily, monthly and year-to-date changes; insights,
+  alerts, upcoming bills, unusual transactions, pending drafts and the net
+  worth trend.
+- **Cash Register**: a ledger per account with splits, transfers (also across
+  currencies), scheduled and future-dated entries, cleared/reconciled status,
+  and the bank's own balance shown next to Oikos's. Credit cards show
+  available credit and credit used.
+- **Recurring templates** for rent, subscriptions, salary and loan instalments,
+  feeding the forecast and the upcoming bills.
+- **Plan**: a dated to-do list for money moves (rebalancing, tax-year steps),
+  with a daily Telegram reminder.
+
+**Importing**
+- **Import & Reconcile**: load a CSV or Excel statement, or fetch the
+  transactions straight from the bank. Rows are matched against what is
+  already in Oikos, near-duplicates are flagged, new ones are imported with
+  payee rules, and everything is marked reconciled.
+- **Open banking (PSD2)** through [Enable Banking](https://enablebanking.com):
+  balances and booked transactions from most European banks.
+- **Brokers and exchanges**: Interactive Brokers (Flex), Saxo Bank, Revolut
+  (Personal, Savings, Trading), Coinbase, Crypto.com, Capital.com, FXPro.
+- **QIF** import from Quicken and similar apps.
+
+**Investments**
+- Holdings, cost basis (FIFO, LIFO, WAC, including short positions), realized
+  and unrealized P&L, dividends, corporate actions, bonds with coupons and
+  maturities, and margin products (FX spot, CFDs) booked the way the broker
+  books them.
+- **Performance**: P&L over any period, TWR/MWR, benchmarks against indexes or
+  other accounts, best and worst days, dividend tracker, bond schedule.
+- **Portfolio X-Ray**: look-through asset allocation against targets, sector
+  weighting, Morningstar style box, bond quality, stock overlap between funds,
+  expense ratios and currency exposure.
+- **Signals and alerts**: price alerts, golden/death cross, trailing stops
+  scaled to each security's volatility, 52-week-high drops, bond and dividend
+  dates.
+- **Private funds** with commitments, capital calls, NAV, DPI/RVPI/TVPI and IRR.
+
+**Reports and planning**
+- Net worth history, income and expense by category with drill-down,
+  budget vs actual, spending trends, savings rate.
+- **Cash flow forecast** from scheduled entries, recurring templates and
+  detected payment patterns.
+- **Tax**: capital gains, dividend and interest income, tax-loss harvesting,
+  with tax rules you configure per instrument type. Greek-resident rules are
+  seeded, and others can be added.
+- **Financial planning**: retirement planner with Monte Carlo projections,
+  goals, FIRE calculator, loan amortization.
+- **Custom reports** and account presets (one person, a company, a trust).
+
+**Market data and news**
+- Prices and FX from Yahoo Finance, TradingView, Morningstar, ECB and FRED,
+  with scheduled downloads, a data-quality check, watchlists, CAPE ratios and
+  market watch panels.
+- A news feed filtered to the securities and institutions you hold.
+
+**AI**
+- **AI Assistant**: a chat that answers questions such as "Where did my money
+  go last month?" or "Which holdings did worst this year?" using ready-made
+  queries over your data, and can search the web. It runs on a local model
+  through [Ollama](https://ollama.com) or on Anthropic's Claude.
+- Weekly and monthly AI summaries on the Dashboard.
+- A read-only [MCP](https://modelcontextprotocol.io) server
+  (`mcp_server.py`) so Claude Desktop or Claude Code can query your Oikos
+  over HTTPS.
+
+**Running it**
+- Users with roles: Admin, Limited (only the accounts mapped to them) and
+  Read-only, enforced by the server.
+- Sign-in lockout after repeated failures, HTTPS, and settings and filters
+  stored on the server so they follow you across devices.
+- Works on a phone and can be added to the home screen.
+- Backup and restore, database maintenance tools and scheduled jobs from the
+  Tools page.
 
 ## Screenshots
 
-*(All figures below are from a seeded demo instance — fabricated data, not a
-real household's finances.)*
+*(All figures below are from a seeded demo instance with made-up data, not a
+real household's finances. The app has gained pages since they were taken.)*
 
 | | |
 |---|---|
