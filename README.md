@@ -100,14 +100,16 @@ This page is the fast path.
 ## Screenshots
 
 *(All figures below are from a seeded demo instance with made-up data, not a
-real household's finances. The app has gained pages since they were taken.)*
+real household's finances.)*
 
 | | |
 |---|---|
-| ![Dashboard](./docs/screenshots/dashboard.png) | ![Investment holdings](./docs/screenshots/holdings.png) |
-| Dashboard — net worth breakdown and trend | Investments — holdings with live gain/loss |
+| ![Dashboard](./docs/screenshots/dashboard.png) | ![Cash Register](./docs/screenshots/cash-register.png) |
+| Dashboard: net worth by group, insights, market watch and alerts | Cash Register: one account's ledger with cleared and reconciled status |
+| ![Investment holdings](./docs/screenshots/holdings.png) | ![Income & Expense](./docs/screenshots/income-expense.png) |
+| Investments: holdings with cost basis and gain/loss in the reporting currency | Income & Expense: income, spending and savings rate by month |
 | ![Cash Flow Forecast](./docs/screenshots/cash-flow-forecast.png) | ![Portfolio X-Ray asset allocation](./docs/screenshots/portfolio-xray.png) |
-| Cash Flow Forecast — projected balance over a chosen horizon | Portfolio X-Ray — look-through asset allocation vs. target |
+| Cash Flow Forecast: projected income and spending, with low-balance alerts | Portfolio X-Ray: look-through asset allocation against targets |
 
 ## Prerequisites
 
