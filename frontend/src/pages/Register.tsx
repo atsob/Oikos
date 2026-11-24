@@ -136,7 +136,11 @@ export default function Register() {
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState(monthsAgo(1))
-  const [toDate, setToDate] = useState(DEFAULT_TO_DATE)
+  // "Today" (up to today) is remembered like the account, so leaving for Importers and coming back keeps it.
+  const [upToToday, setUpToToday] = usePersist<boolean>('register_upToToday', false)
+  const [toDate, setToDate] = useState(() => upToToday ? today() : DEFAULT_TO_DATE)
+  // Preferences can arrive after the first render: adopt a remembered "Today" once they do.
+  useEffect(() => { if (upToToday) setToDate(prev => prev === DEFAULT_TO_DATE ? today() : prev) }, [upToToday])
   const [activePeriod, setActivePeriod] = useState<string>('1M')
   const phone = usePhone()
   const [showDates, setShowDates] = useState(false)      // phone: the From / To fields stay folded until asked for
@@ -563,13 +567,13 @@ export default function Register() {
         <Input type="date" className="w-36" value={fromDate} onChange={e => { setFromDate(e.target.value); setActivePeriod('') }} />
         <span className="text-slate-400 text-sm">to</span>
         <div className="flex items-center gap-2">
-          <Input type="date" className="w-36" value={toDate} onChange={e => setToDate(e.target.value)} />
+          <Input type="date" className="w-36" value={toDate} onChange={e => { setToDate(e.target.value); setUpToToday(e.target.value === today()) }} />
           <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <input
               type="checkbox"
               className="rounded"
               checked={toDate === today()}
-              onChange={e => setToDate(e.target.checked ? today() : DEFAULT_TO_DATE)}
+              onChange={e => { setToDate(e.target.checked ? today() : DEFAULT_TO_DATE); setUpToToday(e.target.checked) }}
             />
             <span className="text-xs text-slate-500">Today</span>
           </label>

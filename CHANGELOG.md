@@ -6,6 +6,7 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Fixed
 - **Import & Reconcile: the Category list is no longer blank.** After another page (Dashboard, Cash Register, Reports …) had been opened, the Category drop-down of new rows could show its group headings with empty lines under them, until the page was fully reloaded with Ctrl+Shift+R. The importer kept its category and payee lists under the same name as the other pages, whose lists are laid out differently, so it sometimes picked theirs up. It now keeps its own, and the categories always appear.
+- **Cash Register: "Today" is kept after Import.** Going to Importers (Import, or Import… in the menu) and coming back with **Back to Cash Register** cleared the Today tick, so future-dated transactions came back. Today is now remembered like the chosen account, also after closing the app.
 
 ## 2026-11-22
 
