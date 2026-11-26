@@ -7,6 +7,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import Plot from '@/components/Plot'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
+import type { PlaybookEpisode } from '@/lib/api'
 import { getMarketWatch, getMarketWatchSummary, getMarketWatchEvents, getMarketWatchPlaybook, saveMarketWatchPlaybook, getLocalWatchEvents, getLocalWatchPlaybook, saveLocalWatchPlaybook, getMarketWatchBacktest, getMarketWatchBacktestHistory, runMarketWatchBacktest } from '@/lib/api'
 import { Card, CardBody, Spinner, Button, Tooltip } from '@/components/ui'
 import { plotLayout, fmtNum } from '@/lib/utils'
@@ -94,9 +95,10 @@ function FcfCard({ d }: { d: Ind }) {
   const { isDark } = useTheme()
   const cos = (d.companies ?? []) as { ticker: string; name: string; ttm: number | null; ttm_capex: number | null; last_q: number; last_q_yoy: number | null; q: { fcf: number }[]; last_quarter: string }[]
   return (
-    <Shell title="Free cash flow of the hyperscalers" why="Shows whether the AI capex pays back" good="rising trend" warn="two quarters in a row negative in total, or trailing 4 quarters below zero (amber: capex over 90% of operating cash flow)" ind={d}>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <Shell title="Free cash flow of the hyperscalers" why="Shows whether the AI capex pays back" good="rising trend" warn="the five together negative in both of the last two quarters (red, not amber), or trailing 4 quarters below zero. Amber: capex over 90% of operating cash flow, or the last quarter 10% below a year ago" ind={d}>
+      <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-5 gap-3">
         <Stat label="Last quarter" value={`$${fmtNum(d.last_q_bn, 1)}bn`} tone={d.last_q_bn < 0 ? 'text-red-600' : ''} sub="all five, summed" />
+        <Stat label="Previous quarter" value={d.prev_q_bn == null ? '—' : `$${fmtNum(d.prev_q_bn, 1)}bn`} tone={d.prev_q_bn < 0 ? 'text-red-600' : ''} sub="all five, summed" />
         <Stat label="vs a year ago" value={d.last_q_yoy_pct == null ? '—' : signed(d.last_q_yoy_pct, 0, '%')} tone={tone(d.last_q_yoy_pct)} sub="same quarter" />
         <Stat label="Trailing 4 quarters" value={`$${fmtNum(d.ttm_bn, 0)}bn`} />
         <Stat label="…capex" value={`$${fmtNum(d.capex_ttm_bn, 0)}bn`} sub={d.capex_share_pct != null ? `${fmtNum(d.capex_share_pct, 0)}% of operating cash flow` : undefined} tone={d.capex_share_pct > 90 ? 'text-amber-600' : ''} />
@@ -104,17 +106,19 @@ function FcfCard({ d }: { d: Ind }) {
       <Plot
         data={[
           { type: 'bar', name: 'Same quarter a year ago', x: cos.filter(c => c.q.length > 4).map(c => c.ticker), y: cos.filter(c => c.q.length > 4).map(c => c.q[4].fcf), marker: { color: '#94a3b8' } },
+          { type: 'bar', name: 'Previous quarter', x: cos.filter(c => c.q.length > 1).map(c => c.ticker), y: cos.filter(c => c.q.length > 1).map(c => c.q[1].fcf), marker: { color: '#93c5fd' } },
           { type: 'bar', name: 'Latest quarter', x: cos.map(c => c.ticker), y: cos.map(c => c.last_q), marker: { color: '#3b82f6' } },
         ]}
         layout={{ height: 220, barmode: 'group', margin: { t: 10, r: 15, b: 30, l: 45 }, yaxis: { title: { text: '$bn' } }, legend: { orientation: 'h', y: -0.2 }, ...plotLayout(isDark) }}
         config={{ displayModeBar: false, responsive: true }} style={{ width: '100%' }} />
       <table className="w-full text-xs">
-        <thead><tr className="text-slate-400 text-right border-b border-slate-100"><th className="text-left font-normal py-1">Company</th><th className="font-normal">Last quarter</th><th className="font-normal">vs year ago</th><th className="font-normal">Trailing 4Q FCF</th><th className="font-normal">Trailing 4Q capex</th></tr></thead>
+        <thead><tr className="text-slate-400 text-right border-b border-slate-100"><th className="text-left font-normal py-1">Company</th><th className="font-normal">Last quarter</th><th className="font-normal">Previous quarter</th><th className="font-normal">vs year ago</th><th className="font-normal">Trailing 4Q FCF</th><th className="font-normal">Trailing 4Q capex</th></tr></thead>
         <tbody>
           {cos.map(c => (
             <tr key={c.ticker} className="text-right border-b border-slate-50">
               <td className="text-left py-1">{c.name} <span className="text-slate-400">{c.ticker}</span></td>
               <td className={`tabular-nums ${c.last_q < 0 ? 'text-red-600' : ''}`}>{fmtNum(c.last_q, 1)}</td>
+              <td className={`tabular-nums ${c.q[1] && c.q[1].fcf < 0 ? 'text-red-600' : ''}`}>{c.q[1] ? fmtNum(c.q[1].fcf, 1) : '—'}</td>
               <td className={`tabular-nums ${tone(c.last_q_yoy)}`}>{signed(c.last_q_yoy, 1)}</td>
               <td className={`tabular-nums ${c.ttm != null && c.ttm < 0 ? 'text-red-600' : ''}`}>{c.ttm == null ? '—' : fmtNum(c.ttm, 1)}</td>
               <td className="tabular-nums">{c.ttm_capex == null ? '—' : fmtNum(c.ttm_capex, 1)}</td>
@@ -127,20 +131,30 @@ function FcfCard({ d }: { d: Ind }) {
   )
 }
 
+const ddmmyyyy = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB')
+
+// Weekdays in a row the card has been in Warning, from the daily log (0 when it is not red).
+function RedRun({ r }: { r?: { run_days: number; run_since: string | null } | null }) {
+  if (!r) return null
+  return <Stat label="Days in a row red" value={String(r.run_days)} tone={r.run_days > 0 ? 'text-red-600' : ''} sub={r.run_since ? `since ${ddmmyyyy(r.run_since)}` : 'not red now'} />
+}
+
 function SpreadsCard({ d }: { d: Ind }) {
   const oas = d.kind === 'oas'
   return (
     <Shell title="Bond spreads / CDS" why="The cost of funding — credit stress shows up here first" good="stable spreads" warn={oas ? "high yield up 0.75 pp in 20 days, or at 4.5%, or up 1.0 pp in 60 days; investment grade at 1.3%" : "high-yield ratio down 3% in 20 days"} ind={d}>
       {oas ? (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-5 gap-3">
           <Stat label="High yield OAS" value={`${fmtNum(d.hy, 2)}%`} sub={`${signed(d.hy_chg_60d, 2, ' pp')} in 60 days`} /><Stat label="20-day change" value={signed(d.hy_chg_20d, 2, ' pp')} tone={tone(d.hy_chg_20d, true)} />
           <Stat label="Investment grade OAS" value={`${fmtNum(d.ig, 2)}%`} /><Stat label="20-day change" value={signed(d.ig_chg_20d, 2, ' pp')} tone={tone(d.ig_chg_20d, true)} />
+          <RedRun r={d.red_run} />
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <Stat label="High yield vs Treasuries, 20 days" value={signed(d.hy_ratio_chg_20d_pct, 2, '%')} tone={tone(d.hy_ratio_chg_20d_pct)} sub="HYG ÷ IEF price" />
           <Stat label="Inv. grade vs Treasuries, 20 days" value={signed(d.ig_ratio_chg_20d_pct, 2, '%')} tone={tone(d.ig_ratio_chg_20d_pct)} sub="LQD ÷ IEF price" />
           <Stat label="High-yield ratio vs 200-day average" value={d.below_200d ? 'below' : 'above'} tone={d.below_200d ? 'text-red-600' : 'text-green-700'} />
+          <RedRun r={d.red_run} />
         </div>
       )}
       {d.series && <Lines series={d.series} />}
@@ -191,8 +205,17 @@ export function Playbook({ level, scope = 'market' }: { level: Level; scope?: 'm
   })
   if (!data) return null
   const red = level === 'bad'
+  const ep = !g ? (data as { episode?: PlaybookEpisode | null }).episode : null
   const body = (
     <div className="space-y-2">
+      {ep && (
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm border-b border-slate-200 pb-2">
+          <span><span className="opacity-70">Red since:</span> <b>{ddmmyyyy(ep.red_since)}</b></span>
+          <span><span className="opacity-70">Days out of red:</span> <b>{ep.out_of_red_days}/{ep.out_of_red_needed}</b> <span className="opacity-70 text-xs">trading days</span></span>
+          <span><span className="opacity-70">Latest resume:</span> <b>{ddmmyyyy(ep.latest_resume)}</b></span>
+          {ep.resume && <span className="text-green-700 font-medium">The normal plan can resume (rule 4)</span>}
+        </div>
+      )}
       {text === null ? (
         <>
           <pre className="whitespace-pre-wrap text-sm font-sans">{data.text}</pre>

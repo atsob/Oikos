@@ -2423,14 +2423,28 @@ function InvPositionsSection({ startDate: initialStartDate }: { startDate: strin
 // ════════════════════════════════════════════════════════════════════════════
 // 3. INVESTMENT PERFORMANCE
 // ════════════════════════════════════════════════════════════════════════════
-type PnlWindow = 'dtd' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | '1y' | '3y' | '5y' | 'all'
+type PnlWindow = 'dtd' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | '1y' | '3y' | '5y' | 'all' | 'range'
 const PNL_WINDOWS = [
   { k: 'dtd' as PnlWindow, label: 'D' }, { k: 'wtd' as PnlWindow, label: 'W' },
   { k: 'mtd' as PnlWindow, label: 'M' }, { k: 'qtd' as PnlWindow, label: 'Q' },
   { k: 'ytd' as PnlWindow, label: 'YTD' },
   { k: '1y' as PnlWindow, label: '1Y' }, { k: '3y' as PnlWindow, label: '3Y' }, { k: '5y' as PnlWindow, label: '5Y' },
   { k: 'all' as PnlWindow, label: 'All' },
+  { k: 'range' as PnlWindow, label: 'From–To' },
 ]
+
+// The From-To window: each end is T (today), T-1…T-3 (that many weekdays back) or a custom date.
+const RANGE_FROM_PRESETS = ['T-1', 'T-2', 'T-3', 'custom'] as const
+const RANGE_TO_PRESETS = ['T', 'T-1', 'T-2', 'custom'] as const
+const isoLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function presetDate(preset: string, custom: string): string {
+  if (preset === 'custom') return custom
+  const n = preset === 'T' ? 0 : Number(preset.slice(2))
+  const d = new Date()
+  for (let i = 0; i < n;) { d.setDate(d.getDate() - 1); if (d.getDay() !== 0 && d.getDay() !== 6) i++ }
+  return isoLocal(d)
+}
+const ddmm = (iso: string) => iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '?'
 function pnlKey(w: PnlWindow) { return w === 'all' ? 'pnl_net_all_time_eur' : `pnl_${w}_eur` }
 const LONG_TERM_YEARS: Record<string, number> = { '1y': 1, '3y': 3, '5y': 5, '1Y': 1, '3Y': 3, '5Y': 5 }
 
@@ -2438,10 +2452,10 @@ const LONG_TERM_YEARS: Record<string, number> = { '1y': 1, '3y': 3, '5y': 5, '1Y
 // data (which covers DTD/WTD/MTD/QTD/YTD/All-Time and is live-refetched) — this only
 // fetches when one of those long-term periods is actually selected (`years` non-null),
 // and merges its per-(account,security) result into the base rows on demand.
-function useLongTermPnl(years: number | null) {
+function useLongTermPnl(years: number | { from: string; to: string } | null) {
   const { data, isLoading } = useQuery({
     queryKey: ['pnl-period', years],
-    queryFn: () => getPnlPeriod(years as number),
+    queryFn: () => getPnlPeriod(years as number | { from: string; to: string }),
     enabled: years != null,
   })
   return useMemo(() => {
@@ -2561,8 +2575,15 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
   }
 
   const { data = [], isLoading } = useQuery({ queryKey: ['pnl'], queryFn: () => getPnl('1900-01-01'), refetchInterval: liveRefetchMs })
-  const ltYears = LONG_TERM_YEARS[win] ?? null
+  const [rangeFrom, setRangeFrom] = usePersist<string>('pnl_range_from', 'T-1')
+  const [rangeTo, setRangeTo] = usePersist<string>('pnl_range_to', 'T')
+  const [rangeFromDate, setRangeFromDate] = usePersist<string>('pnl_range_from_date', '')
+  const [rangeToDate, setRangeToDate] = usePersist<string>('pnl_range_to_date', '')
+  const fromIso = presetDate(rangeFrom, rangeFromDate), toIso = presetDate(rangeTo, rangeToDate)
+  const rangeOk = !!fromIso && !!toIso && fromIso < toIso
+  const ltYears = win === 'range' ? (rangeOk ? { from: fromIso, to: toIso } : null) : (LONG_TERM_YEARS[win] ?? null)
   const { map: ltMap, isLoading: ltLoading } = useLongTermPnl(ltYears)
+  const winLabel = win === 'range' ? `${ddmm(fromIso)}→${ddmm(toIso)}` : win.toUpperCase()
 
   // Derive all data BEFORE any early return so hooks are always called in the same order
   // Only the accounts of the Account Preset (undefined = Full Portfolio).
@@ -2704,7 +2725,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
   if (isLoading || ltLoading) return <div className="flex justify-center py-12"><Spinner /></div>
 
   // Sort list for the phone, where the tables show as cards without their sortable headers.
-  const P = win.toUpperCase()
+  const P = winLabel
   const posSortOpts = [
     { key: 'current_value_eur', label: 'Value (€)' }, { key: pk, label: `P&L (${P})` },
     ...(showPct ? [{ key: 'pnl_pct', label: 'P&L %' }] : []),
@@ -2738,7 +2759,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KpiCard label="Portfolio Value" value={fmtEur(totalValue)} color="text-blue-700" tooltip="Current market value of all investment holdings across all accounts, converted to EUR." />
-        <KpiCard label={`P&L (${win.toUpperCase()})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${win.toUpperCase()} window — includes both unrealized mark-to-market changes and any realized gains.`}
+        <KpiCard label={`P&L (${winLabel})`} value={fmtEur(totalPnl)} color={totalPnl >= 0 ? 'text-green-700' : 'text-red-600'} tooltip={`Total profit or loss for the ${winLabel} window — includes both unrealized mark-to-market changes and any realized gains.`}
           subtitleNode={(showPct && totalPnlPct != null) || (totalMkt != null && totalFx != null) ? (
             <span className="flex flex-col gap-0.5 tabular-nums">
               {showPct && totalPnlPct != null && (
@@ -2769,6 +2790,23 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
               className={`px-2.5 py-1 rounded text-xs font-medium ${win === w.k ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{w.label}</button>
           ))}
         </div>
+        {win === 'range' && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-500">From</span>
+            <select className="rounded border border-slate-300 px-1.5 py-1 text-xs" value={rangeFrom} onChange={e => { setRangeFrom(e.target.value); if (e.target.value === 'custom' && !rangeFromDate) setRangeFromDate(fromIso) }}>
+              {RANGE_FROM_PRESETS.map(p => <option key={p} value={p}>{p === 'custom' ? 'Custom' : p}</option>)}
+            </select>
+            {rangeFrom === 'custom' && <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={rangeFromDate} max={toIso} onChange={e => setRangeFromDate(e.target.value)} />}
+            <span className="text-slate-500 ml-1">To</span>
+            <select className="rounded border border-slate-300 px-1.5 py-1 text-xs" value={rangeTo} onChange={e => { setRangeTo(e.target.value); if (e.target.value === 'custom' && !rangeToDate) setRangeToDate(toIso) }}>
+              {RANGE_TO_PRESETS.map(p => <option key={p} value={p}>{p === 'custom' ? 'Custom' : p === 'T' ? 'T (today)' : p}</option>)}
+            </select>
+            {rangeTo === 'custom' && <DateInput type="date" className="rounded border border-slate-300 px-2 py-1 text-xs" value={rangeToDate} min={fromIso} onChange={e => setRangeToDate(e.target.value)} />}
+            {rangeOk
+              ? <Tooltip text="P&L from the close of the From date to the close of the To date (the last trading day on or before each): change in market value plus sales, dividends and other cash flows in between. T-1…T-3 are weekdays back from today. Value and Unrealized stay as of today."><span className="text-slate-400">{fromIso.split('-').reverse().join('/')} → {toIso.split('-').reverse().join('/')}</span></Tooltip>
+              : <span className="text-red-600">The From date must be before the To date</span>}
+          </div>
+        )}
         {!drillRows && (
           <div className="flex items-center gap-1 sm:ml-auto">
             <span className="text-xs text-slate-500 mr-1">View</span>
@@ -2813,7 +2851,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
           <div className="flex flex-wrap gap-x-6 gap-y-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
             <span className="text-slate-500 font-medium">Totals:</span>
             <span className="tabular-nums">Value: <strong>{fmtEur(zeroIfDust(drillValue))}</strong></span>
-            <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({win.toUpperCase()}): <strong>{fmtEur(drillPnl)}</strong>{drillPnlPct != null && <span className="ml-1 opacity-75">({drillPnlPct >= 0 ? '+' : ''}{drillPnlPct.toFixed(2)}%)</span>}</span>
+            <span className={`tabular-nums ${drillPnl >= 0 ? 'text-green-700' : 'text-red-600'}`}>P&amp;L ({winLabel}): <strong>{fmtEur(drillPnl)}</strong>{drillPnlPct != null && <span className="ml-1 opacity-75">({drillPnlPct >= 0 ? '+' : ''}{drillPnlPct.toFixed(2)}%)</span>}</span>
             {drillMkt != null && <span className={`tabular-nums ${drillMkt >= 0 ? 'text-green-700' : 'text-red-600'}`}>Mkt: <strong>{fmtEur(drillMkt)}</strong></span>}
             {drillFx  != null && <span className={`tabular-nums ${drillFx  >= 0 ? 'text-green-700' : 'text-red-600'}`}>FX: <strong>{fmtEur(drillFx)}</strong></span>}
             <span className={`tabular-nums ${drillUnreal >= 0 ? 'text-green-700' : 'text-red-600'}`}>Unrealized: <strong>{fmtEur(drillUnreal)}</strong>{drillUnrealPct != null && <span className="ml-1 opacity-75">({drillUnrealPct >= 0 ? '+' : ''}{drillUnrealPct.toFixed(2)}%)</span>}</span>
@@ -2830,8 +2868,8 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                   <ColHeader label="Qty" sortKey="qty_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current quantity held." />
                   <ColHeader label="Price" sortKey="price_today" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Last available market price in the security's native currency." />
                   <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Current market value of the position in EUR." />
-                  <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey={pk} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains.`} />
-                  {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window as a percentage of current value.`} />}
+                  <ColHeader label={`P&L (${winLabel})`} sortKey={pk} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${winLabel} window — change in market value plus realised gains.`} />
+                  {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip={`P&L for the ${winLabel} window as a percentage of current value.`} />}
                   {showFxSplit && mktKey && <><ColHeader label="Market" sortKey={mktKey} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to the security's price movement in its local currency." /><ColHeader label="FX" sortKey={fxKey ?? ''} currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Part of the P&L attributable to currency (FX) rate movements when converting to EUR." /></>}
                   <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for still-open positions." />
                   <ColHeader label="Unreal. %" sortKey="unrealized_pnl_pct" currentKey={drSK} currentDir={drSD} onSort={drSort} align="right" tooltip="Unrealized gain/loss as a percentage of cost basis." />
@@ -2896,8 +2934,8 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
                 <ColHeader label="Qty" sortKey="qty_today" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Quantity held, all accounts together." />
                 <ColHeader label="Price" sortKey="price_today" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Last available market price in the security's native currency." />
                 <ColHeader label="Value (€)" sortKey="current_value_eur" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Current market value in EUR, all accounts together." />
-                <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey={pk} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window — change in market value plus realised gains, all accounts together.`} />
-                {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${win.toUpperCase()} window as a percentage of current value.`} />}
+                <ColHeader label={`P&L (${winLabel})`} sortKey={pk} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${winLabel} window — change in market value plus realised gains, all accounts together.`} />
+                {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip={`P&L for the ${winLabel} window as a percentage of current value.`} />}
                 {showFxSplit && mktKey && <><ColHeader label="Market" sortKey={mktKey} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Part of the P&L from the security's price movement in its local currency." /><ColHeader label="FX" sortKey={fxKey ?? ''} currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Part of the P&L from currency (FX) rate movements when converting to EUR." /></>}
                 <ColHeader label="Unrealized" sortKey="unrealized_pnl_eur" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Current value minus cost basis of the open position, all accounts together." />
                 <ColHeader label="Unreal. %" sortKey="unrealized_pnl_pct" currentKey={scSK} currentDir={scSD} onSort={scSort} align="right" tooltip="Unrealized gain/loss as a percentage of the combined cost basis." />
@@ -2974,7 +3012,7 @@ function PnlReport({ accountIds }: { accountIds?: number[] }) {
               <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <ColHeader label="Account" sortKey="name" currentKey={acSK} currentDir={acSD} onSort={acSort} tooltip="Brokerage or investment account. Click a row to drill into individual security positions." />
                 <ColHeader label="Value (€)" sortKey="value" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Current total market value of all holdings in this account, in EUR." />
-                <ColHeader label={`P&L (${win.toUpperCase()})`} sortKey="pnl" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip={`Total P&L for the ${win.toUpperCase()} window across all holdings in this account.`} />
+                <ColHeader label={`P&L (${winLabel})`} sortKey="pnl" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip={`Total P&L for the ${winLabel} window across all holdings in this account.`} />
                 {showPct && <ColHeader label="P&L %" sortKey="pnl_pct" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L as a percentage of the account's current market value." />}
                 {showFxSplit && mktKey && <><ColHeader label="Market" sortKey="market" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from price moves in local currency, excluding FX effects." /><ColHeader label="FX" sortKey="fx" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="P&L from EUR/foreign-currency exchange rate movements." /></>}
                 <ColHeader label="Unrealized" sortKey="unrealized" currentKey={acSK} currentDir={acSD} onSort={acSort} align="right" tooltip="Unrealized gain/loss: current value minus cost basis for open positions." />

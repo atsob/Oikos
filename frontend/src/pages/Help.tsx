@@ -978,7 +978,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
 
         <H3>💹 Inv. Performance</H3>
         <P>
-          Twelve sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, per account with drill-down to security level),{' '}
+          Twelve sub-tabs: <b>P&amp;L</b> (DTD/W/M/Q/YTD/1Y/3Y/5Y/All, or <b>From–To</b> between two dates — each end T (today), T-1, T-2, T-3
+          (weekdays back) or a custom date; per account with drill-down to security level),{' '}
           <b>Performance</b>, <b>Best / Worst Days</b>, <b>Savings</b> (interest/APY on savings-type accounts), <b>Dividend Tracker</b>,{' '}
           <b>Bond Schedule</b>, <b>Benchmark</b> (compare against any number of market indexes and/or other accounts at once),{' '}
           <b>Risk Metrics</b>, <b>Correlation</b>, <b>Monte Carlo</b> projections, <b>Stress Test</b>, and <b>TWR/MWR</b> (time- and
@@ -1560,9 +1561,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           ETFs above their averages as a cross-check). The banner sums them up: <b>green</b> — healthy (improving together: the market has reason to
           continue); <b>amber</b> — mixed, or all four <i>worsening</i> together (moving toward their red line over the
           last 20 trading days: a late-cycle pattern, not a crisis); <b>red</b> — two or more indicators in Warning,
-          the crash rules are on, and your <b>Playbook</b> (editable, shown on the tab) is displayed. Red lines: free
-          cash flow — two quarters in a row negative in total or trailing 4 quarters below zero (amber if capex is over
-          90% of operating cash flow); credit spreads — high yield up 0.75 pp in 20 days, or at 4.5%, or up 1.0 pp in 60
+          the crash rules are on, and your <b>Playbook</b> (editable, shown on the tab) is displayed. Above it Oikos shows, from
+          the daily log, <b>Red since</b> (the start of the red episode; red spells less than 10 trading days apart count as one),
+          <b>Days out of red</b> (trading days, of the 10 the resume rule asks for) and <b>Latest resume</b> (2 months after
+          Red since). Red lines: free cash flow — the five together negative in both of the last two quarters (the card shows
+          the last and the previous quarter) or trailing 4 quarters below zero (amber if capex is over 90% of operating cash
+          flow, or the last quarter is 10% below a year before); credit spreads (the card shows how many days in a row it has been red) — high yield up 0.75 pp in 20 days, or at 4.5%, or up 1.0 pp in 60
           days, or investment grade at 1.3%; 10-year — up 0.75 pp in about 3 months, or above 5.5% and up 0.5 pp; breadth — the S&amp;P 500
           within 5% of its high with under 40% of stocks above the 200-day average, or under 25% above the 50-day
           while the 200-day is under 50%. A daily indicator turns red only after 3 trading days in a row, and clears

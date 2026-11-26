@@ -1228,7 +1228,7 @@ def get_pnl(
 
 
 @router.get("/pnl-period")
-def get_pnl_period(years: int = Query(..., ge=1, le=10)):
+def get_pnl_period(years: Optional[int] = Query(None, ge=1, le=10), from_date: Optional[str] = Query(None), to_date: Optional[str] = Query(None)):
     """Single-period P&L (since N years ago) per (account, security) — same formula as
     get_pnl's YTD window, just measured from a different reference date.
 
@@ -1236,10 +1236,25 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
     computes six period variants (DTD/WTD/MTD/QTD/YTD/All-Time) in one query that's
     live-refetched on every P&L/Performance tab load — adding a 7th+ variant there would
     make that query (and its polling) proportionally heavier for everyone, all the time.
-    This one only runs when a long-term period (1Y/3Y/5Y) is actually selected in the UI."""
-    query = f"""
+    This one only runs when a long-term period (1Y/3Y/5Y) is actually selected in the UI.
+
+    from_date / to_date (YYYY-MM-DD) instead of years: the P&L between two dates — the From-To range of the P&L tab
+    (T-1, T-2, T-3 or any custom dates). Prices and FX are those of the last trading day on or before each date."""
+    try:
+        today = _dt.date.today()
+        if from_date:
+            ref, to = _dt.date.fromisoformat(from_date), (_dt.date.fromisoformat(to_date) if to_date else today)
+        elif years:
+            ref, to = today - relativedelta(years=years), today
+        else:
+            raise ValueError("give years or from_date")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if ref >= to:
+        raise HTTPException(400, "The From date must be before the To date")
+    query = """
     WITH periods AS (
-        SELECT (CURRENT_DATE - INTERVAL '{years} years')::date AS ref_start, CURRENT_DATE AS today
+        SELECT %(ref)s::date AS ref_start, %(to)s::date AS today
     ),
     historical_entities AS (
         SELECT Accounts_Id, Securities_Id FROM Holdings
@@ -1373,10 +1388,10 @@ def get_pnl_period(years: int = Query(..., ge=1, le=10)):
         END AS pnl_percent
     FROM prices_fx pf
     LEFT JOIN cash_flows cf ON pf.Accounts_Id = cf.Accounts_Id AND pf.Securities_Id = cf.Securities_Id
-    WHERE (pf.qty_today != 0 OR cf.cf_ref_eur IS NOT NULL)
+    WHERE (pf.qty_today != 0 OR pf.qty_ref != 0 OR cf.cf_ref_eur IS NOT NULL)
     """
     with get_db() as conn:
-        df = pd.read_sql(query, conn)
+        df = pd.read_sql(query, conn, params={"ref": ref, "to": to})
     return _df_to_list(df)
 
 

@@ -4,6 +4,12 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ## 2026-11-26
 
+### Added
+- **Inv. Performance → P&L: a From–To window.** Next to D, W, M … All, **From–To** shows the P&L between two dates. Each end is T (today), T-1, T-2 or T-3 (weekdays back) or a custom date, so T-1 → T is yesterday's close to today and T-3 → T-1 any earlier stretch. Like 1Y/3Y/5Y it counts the change in market value plus sales, dividends and other cash flows in between, per account and per security.
+- **Market Watch: when the playbook's resume rule is met.** Above the playbook Oikos now shows **Red since** (the start of the red episode, from the daily log), **Days out of red** (trading days, of the 10 needed) and **Latest resume** (2 months after Red since), and says when the normal plan can resume. These no longer need typing into the playbook text.
+- **Market Watch: free cash flow shows the previous quarter** as well as the last, in the figures, the chart and the per-company table, so the two-quarter red rule can be checked at a glance. The card's "Red when" text now says plainly that two negative quarters in a row turn it red, not amber.
+- **Market Watch: credit spreads show "Days in a row red"**, the trading days the card has been in Warning, with the date it turned red.
+
 ### Fixed
 - **Import & Reconcile matches a transaction dated just after the statement.** A bank row was not matched to the same transaction in Oikos when that transaction's date fell outside the statement's own dates, for example a charge entered on the 26th that the bank books on the 25th, fetched up to the 25th. It came up as New instead of Possible Dup. Oikos now also looks that many days before the first and after the last bank row (the days set in Tools → System → App Settings → Import & Reconcile Matching, 5 by default), so such a row is offered as a possible duplicate, ready to Update or Reconcile.
 

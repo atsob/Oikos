@@ -237,8 +237,9 @@ export const getPnl = (startDate = '1900-01-01', endDate?: string) =>
 // Single-period P&L (since N years ago) — kept separate from getPnl so selecting a
 // long-term window (1Y/3Y/5Y) doesn't add cost to that already-heavy, live-refetched
 // query; only fetched on demand when one of those periods is actually selected.
-export const getPnlPeriod = (years: number) =>
-  api.get('/reports/pnl-period', { params: { years } }).then(r => r.data)
+// years = since N years ago; or a From-To range of dates (YYYY-MM-DD) for the P&L tab's From-To window.
+export const getPnlPeriod = (p: number | { from: string; to: string }) =>
+  api.get('/reports/pnl-period', { params: typeof p === 'number' ? { years: p } : { from_date: p.from, to_date: p.to } }).then(r => r.data)
 
 export const getIncomeExpenseDetail = (startDate: string, endDate: string, grouping = 'month') =>
   api.get('/reports/income-expense-detail', { params: { start_date: startDate, end_date: endDate, grouping } }).then(r => r.data)
@@ -465,7 +466,8 @@ export const getMarketWatch = (refresh = false) =>
   api.get('/market-watch', { params: refresh ? { refresh: 1 } : undefined, timeout: 120000 }).then(r => r.data)
 export type MarketWatchEvent = { at: string; indicator: string; from: string; to: string; message: string }
 export const getMarketWatchEvents = () => api.get('/market-watch/events').then(r => r.data as MarketWatchEvent[])
-export const getMarketWatchPlaybook = () => api.get('/market-watch/playbook').then(r => r.data as { text: string; is_default: boolean })
+export type PlaybookEpisode = { red_now: boolean; red_since: string; last_red: string; out_of_red_days: number; out_of_red_needed: number; latest_resume: string; resume: boolean }
+export const getMarketWatchPlaybook = () => api.get('/market-watch/playbook').then(r => r.data as { text: string; is_default: boolean; episode?: PlaybookEpisode | null })
 export const saveMarketWatchPlaybook = (text: string) => api.put('/market-watch/playbook', { text }).then(r => r.data)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type MarketWatchBacktest = Record<string, any>

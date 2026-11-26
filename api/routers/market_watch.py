@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -540,13 +540,60 @@ DEFAULT_PLAYBOOK = (
     "6. Review the whole plan 3 months after any red episode.")
 
 
+def _red_runs(col: str) -> dict | None:
+    """From Market_Watch_Log (one row per day): the current run of Warning days of one column, and the red episode it belongs to.
+    run_days / run_since: weekdays in a row in Warning up to the latest log day (0 when not in Warning now).
+    episode_since: the first day of the latest red episode — red spells less than OUT_OF_RED_DAYS weekdays apart count as one,
+    so a banner that dips out of red for a few days and back does not restart the playbook's 2-month limit.
+    out_of_red_days: weekdays since the last Warning day, when no longer in Warning."""
+    import numpy as np
+    from database.connection import get_db
+    if col not in ("Overall", "Fcf", "Spreads", "Ten_Year", "Breadth"):
+        raise ValueError(col)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT Log_Date, {col} FROM Market_Watch_Log ORDER BY Log_Date")
+        rows = cur.fetchall()
+    if not rows:
+        return None
+    wd = lambda a, b: int(np.busday_count(a + timedelta(days=1), b + timedelta(days=1)))      # weekdays in (a, b]
+    bad = [d for d, v in rows if v == "bad"]
+    last_day, now_bad = rows[-1][0], rows[-1][1] == "bad"
+    run_since = None
+    if now_bad:
+        run_since = last_day
+        for d, v in reversed(rows[:-1]):
+            if v != "bad":
+                break
+            run_since = d
+    if not bad:
+        return {"red_now": False, "run_days": 0, "run_since": None, "episode_since": None, "last_red": None, "out_of_red_days": None}
+    ep = bad[-1]
+    for d in reversed(bad[:-1]):
+        if wd(d, ep) - 1 >= OUT_OF_RED_DAYS:          # weekdays strictly between the two red days
+            break
+        ep = d
+    return {"red_now": now_bad, "run_days": (wd(run_since, last_day) + (1 if run_since.weekday() < 5 else 0)) if run_since else 0,
+            "run_since": run_since.isoformat() if run_since else None, "episode_since": ep.isoformat(), "last_red": bad[-1].isoformat(),
+            "out_of_red_days": 0 if now_bad else wd(bad[-1], date.today())}
+
+
+OUT_OF_RED_DAYS = 10            # playbook: resume the normal plan after this many trading days out of red...
+RESUME_AFTER_MONTHS = 2         # ...or this many months after the red episode began, whichever comes first
+
+
 @router.get("")
 def get_market_watch(refresh: bool = False):
+    d = None
     if not refresh:
         d = _cached()
-        if d:
-            return d
-    return refresh_cache()
+    d = d or refresh_cache()
+    try:                                       # live from the daily log, not part of the cached snapshot
+        if d.get("spreads", {}).get("status") not in (None, "na"):
+            d["spreads"]["red_run"] = _red_runs("Spreads")
+    except Exception as e:
+        log.warning("Market Watch: red-run count failed: %s", e)
+    return d
 
 
 @router.get("/summary")
@@ -576,9 +623,29 @@ def get_market_watch_events(limit: int = 15):
         return [{"at": r[0].isoformat(timespec="seconds"), "indicator": r[1], "from": r[2], "to": r[3], "message": r[4]} for r in cur.fetchall()]
 
 
+def _playbook_episode() -> dict | None:
+    """The banner's red episode for the playbook's resume rule: red since, trading days out of red (of OUT_OF_RED_DAYS), the latest
+    resume date (RESUME_AFTER_MONTHS after the episode began) and whether the normal plan can resume."""
+    from dateutil.relativedelta import relativedelta
+    r = _red_runs("Overall")
+    if not r or not r["episode_since"]:
+        return None
+    since = date.fromisoformat(r["episode_since"])
+    latest = since + relativedelta(months=RESUME_AFTER_MONTHS)
+    out = r["out_of_red_days"] or 0
+    resume = (not r["red_now"] and out >= OUT_OF_RED_DAYS) or date.today() >= latest
+    return {"red_now": r["red_now"], "red_since": r["episode_since"], "last_red": r["last_red"], "out_of_red_days": out,
+            "out_of_red_needed": OUT_OF_RED_DAYS, "latest_resume": latest.isoformat(), "resume": resume}
+
+
 @router.get("/playbook")
 def get_playbook():
-    return {"text": get_app_setting("market_watch_playbook") or DEFAULT_PLAYBOOK, "is_default": not get_app_setting("market_watch_playbook")}
+    try:
+        ep = _playbook_episode()
+    except Exception as e:
+        log.warning("Market Watch: playbook episode failed: %s", e)
+        ep = None
+    return {"text": get_app_setting("market_watch_playbook") or DEFAULT_PLAYBOOK, "is_default": not get_app_setting("market_watch_playbook"), "episode": ep}
 
 
 @router.put("/playbook")
