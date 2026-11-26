@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-26
+
+### Fixed
+- **Import & Reconcile matches a transaction dated just after the statement.** A bank row was not matched to the same transaction in Oikos when that transaction's date fell outside the statement's own dates, for example a charge entered on the 26th that the bank books on the 25th, fetched up to the 25th. It came up as New instead of Possible Dup. Oikos now also looks that many days before the first and after the last bank row (the days set in Tools → System → App Settings → Import & Reconcile Matching, 5 by default), so such a row is offered as a possible duplicate, ready to Update or Reconcile.
+
 ## 2026-11-24
 
 ### Fixed

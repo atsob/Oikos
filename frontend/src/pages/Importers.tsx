@@ -339,19 +339,25 @@ function ImportReconcileTab({ startAccountId = null, startFromBank = false }: { 
   async function matchRows(rows: Record<string, unknown>[]) {
       setParsedRows(rows)
 
-      const dates = rows.map(r => r.date as string).sort()
-      const appData = await getAppTransactions(accountId!, dates[0], dates[dates.length - 1])
-
-      // Days between two YYYY-MM-DD dates, for the fuzzy match's proximity window below.
-      const daysApart = (d1: string, d2: string) =>
-        Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) / 86400000
-
       // Simple matching: exact date + amount, or same amount within a few days (fuzzy —
       // catches bank clearing-date drift without flagging every unrelated transaction
       // that happens to share an amount somewhere across the whole statement's date range).
       // Both set in Tools → System → App Settings → Import & Reconcile matching.
       const FUZZY_DAY_WINDOW = Math.max(0, Number(getSettings().reconcileDayWindow ?? 5))
       const AMOUNT_TOL = Math.max(0, Number(getSettings().reconcileAmountTolPct ?? 5)) / 100
+
+      // Load the app's transactions from the statement's first date to its last, widened by the fuzzy window on
+      // both sides: an app entry dated a day after the bank's last row (or before its first) can still match it.
+      const dates = rows.map(r => r.date as string).sort()
+      const shift = (d: string, days: number) => {
+        const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + days); return t.toISOString().slice(0, 10)
+      }
+      const appData = await getAppTransactions(accountId!, shift(dates[0], -Math.ceil(FUZZY_DAY_WINDOW)),
+        shift(dates[dates.length - 1], Math.ceil(FUZZY_DAY_WINDOW)))
+
+      // Days between two YYYY-MM-DD dates, for the fuzzy match's proximity window below.
+      const daysApart = (d1: string, d2: string) =>
+        Math.abs(new Date(d1).getTime() - new Date(d2).getTime()) / 86400000
       const initialPayeeAssign: Record<number, { payee_name: string; category_id: number | null }> = {}
       const app = appData as Record<string, unknown>[]
       const isExact = (r: Record<string, unknown>, a: Record<string, unknown>) =>
