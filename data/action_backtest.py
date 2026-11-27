@@ -17,6 +17,9 @@ Excess = the security's forward return in EUR minus the benchmark's over the sam
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import tempfile
 import threading
 import time
 import uuid
@@ -295,29 +298,64 @@ def run(params: dict, progress=None) -> dict:
 
 # ── background jobs (the UI starts one and polls it) ──────────────────────────────────────────────
 
-_JOBS: dict[str, dict] = {}
+# The API runs several uvicorn worker processes, and the UI's polls can reach any of them, so a job's state is kept in a small JSON file
+# in the container's temp folder (shared by all workers), not in one process's memory. Jobs older than an hour are removed.
+_JOB_DIR = os.path.join(tempfile.gettempdir(), "oikos-action-backtest")
+_JOB_TTL = 3600
 _LOCK = threading.Lock()
 
 
+def _job_file(jid: str) -> str:
+    return os.path.join(_JOB_DIR, f"{jid}.json")
+
+
+def _write_job(jid: str, job: dict) -> None:
+    tmp = _job_file(jid) + f".{os.getpid()}.{threading.get_ident()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(job, f, default=lambda o: o.item() if hasattr(o, "item") else str(o))
+    os.replace(tmp, _job_file(jid))  # atomic: a poll never reads a half-written file
+
+
+def _read_job(jid: str) -> dict | None:
+    if not jid.isalnum():
+        return None
+    try:
+        with open(_job_file(jid)) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
 def start_job(params: dict) -> str:
+    os.makedirs(_JOB_DIR, exist_ok=True)
+    now = time.time()
+    for name in os.listdir(_JOB_DIR):
+        try:
+            if now - os.path.getmtime(os.path.join(_JOB_DIR, name)) > _JOB_TTL:
+                os.remove(os.path.join(_JOB_DIR, name))
+        except OSError:
+            pass
     jid = uuid.uuid4().hex[:12]
-    with _LOCK:
-        for old in [k for k, v in _JOBS.items() if time.time() - v["started"] > 3600]:
-            _JOBS.pop(old, None)
-        _JOBS[jid] = {"status": "running", "stage": "Starting…", "started": time.time()}
+    job = {"status": "running", "stage": "Starting…", "started": now}
+    _write_job(jid, job)
+
+    def update(**kw):
+        with _LOCK:
+            job.update(kw)
+            _write_job(jid, job)
 
     def work():
         try:
-            result = run(params, lambda m: _JOBS[jid].update(stage=m))
-            _JOBS[jid].update(status="done", result=result, stage="Done")
+            result = run(params, lambda m: update(stage=m))
+            update(status="done", result=result, stage="Done")
         except Exception as e:  # shown to the user, not raised
-            _JOBS[jid].update(status="error", error=str(e), stage="Failed")
+            update(status="error", error=str(e), stage="Failed")
     threading.Thread(target=work, daemon=True).start()
     return jid
 
 
 def job_status(jid: str) -> dict | None:
-    j = _JOBS.get(jid)
+    j = _read_job(jid)
     return None if j is None else {k: v for k, v in j.items() if k != "started"} | {"seconds": round(time.time() - j["started"])}
 
 

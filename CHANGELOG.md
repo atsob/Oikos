@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-28
+
+### Fixed
+- **Securities Analysis → Action Backtest no longer says "Unknown or expired back-test".** A back-test started with **Run back-test** often failed with this message straight away. Oikos runs several server processes side by side, and the page's progress checks usually reached a different one from the process running the test, which knew nothing about it. The test's progress and result are now kept where every process can read them, so the run completes and shows its result.
+
 ## 2026-11-27
 
 ### Added
