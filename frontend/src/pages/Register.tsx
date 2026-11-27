@@ -52,6 +52,23 @@ function CategoryCell({ value, data, currency }: { value: string; data?: Record<
   const tooltip = splits.map(s => `${s.category ?? '(no category)'}: ${fmtCur(s.amount, currency)}`).join('\n')
   return <span className="italic text-slate-500 cursor-help" title={tooltip}>Split</span>
 }
+// Payee name as a link to that payee in Static Data → Payees (its edit window opens there).
+// "from=register" makes Static Data offer "Back to Cash Register" and return here when the
+// window is saved or cancelled. A row with no payee renders as plain text.
+function PayeeCell({ value, data }: { value?: string; data?: Record<string, unknown> }) {
+  const navigate = useNavigate()
+  if (!data) return null
+  const id = data.payees_id
+  if (id == null || !value) return <span>{value ?? ''}</span>
+  return (
+    <button type="button" title={`Open payee "${value}" in Static Data`}
+      onClick={e => { e.stopPropagation(); navigate(`/static-data?tab=Payees&edit=${id}&from=register`) }}
+      onDoubleClick={e => e.stopPropagation()}
+      className="text-blue-600 hover:underline text-left truncate max-w-full">
+      {value}
+    </button>
+  )
+}
 function ClearedCell({ data }: { data?: Record<string, unknown> }) {
   if (!data) return null
   if (data.is_draft) return <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">Draft</span>
@@ -85,7 +102,7 @@ function SelectAllHeaderCheckbox({ checked, indeterminate, disabled, onToggle }:
 // silently sorting by date instead and looking broken.
 const makeColDefs = (currency: string): ColDef[] => [
   { field: 'date', headerName: 'Date', width: 115, minWidth: 115, valueFormatter: p => fmtDate(p.value), sort: 'desc' },
-  { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140 },
+  { field: 'payee', headerName: 'Payee', flex: 1, minWidth: 140, cellRenderer: PayeeCell },
   { field: 'description', headerName: 'Description', flex: 2, minWidth: 180, maxWidth: 400, tooltipField: 'description',
     valueFormatter: (p: { value?: string; data?: { managed?: boolean } }) => p.data?.managed ? `🔒 ${p.value ?? ''}` : (p.value ?? '') },
   { field: 'category', headerName: 'Category', flex: 1, minWidth: 140, cellRenderer: CategoryCell, cellRendererParams: { currency } },

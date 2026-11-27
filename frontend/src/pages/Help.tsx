@@ -412,6 +412,12 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           doesn't need retyping from scratch. The original transaction is untouched; Save creates a new row.
         </Note>
         <Note>
+          A <b>Payee</b> name in the register is a link: clicking it opens that payee in <b>Static Data → Payees</b>
+          with its edit window open (name, Default Category, Track for news). <b>Save</b> or <b>Cancel</b> brings you
+          straight back to the Cash Register; if you look around Static Data first, <b>Back to Cash Register</b> at
+          the top of the page does the same. Double-click elsewhere on the row still edits the transaction.
+        </Note>
+        <Note>
           When choosing a payee or category, typing a name with no match shows an inline <b>"+ Add"</b> option.
           Categories can be nested by typing a path like <code>Vacation : Skiing</code> — this reuses whichever
           part of the path already exists and creates only the missing segment(s), rather than requiring you to

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { usePersist, useGridColumnState, useGridScrollState, useGridFilterState, useGridApi, useSettings } from '@/lib/hooks'
 import { useShownCount, countText } from '@/lib/rowCount'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -20,7 +20,7 @@ import { PageHeader, Input, Button, Spinner, Card, useEscapeKey, ColumnsMenu, Co
 import { fmtNum, fmtEur, todayLocal } from '@/lib/utils'
 import { INVESTMENT_ACCOUNT_TYPES, LINKABLE_ACCOUNT_TYPES, LOAN_LINKABLE_ASSET_TYPES, LOAN_TYPES, LOAN_LENGTH_UNITS } from '@/lib/accountTypes'
 import { PERIODICITIES } from '@/components/TxModal'
-import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2 } from 'lucide-react'
+import { Search, Plus, Trash2, Save, X, Pencil, ArrowRightLeft, Percent, Copy, Wand2, ArrowLeft } from 'lucide-react'
 import { CurrencyCell } from '@/components/CurrencyLink'
 
 const INTEREST_RATE_ACCOUNT_TYPES = ['Savings', 'Checking']
@@ -67,9 +67,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Payees Tab ────────────────────────────────────────────────────────────────
-function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }: {
+function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled, onDeepLinkClosed }: {
   search: string; onSearchChange: (v: string) => void
   deepLinkEditId?: string | null; onDeepLinkHandled?: () => void
+  // Called when the edit window a link opened is saved or cancelled (e.g. to go back
+  // to the Cash Register the link came from). Not called after Delete or Duplicate.
+  onDeepLinkClosed?: () => void
 }) {
   const qc = useQueryClient()
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
@@ -85,6 +88,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
   const [mergeError, setMergeError] = useState<string | null>(null)
   const [autoDefaultRunning, setAutoDefaultRunning] = useState(false)
   const [autoDefaultMsg, setAutoDefaultMsg] = useState<string | null>(null)
+  const [openedByLink, setOpenedByLink] = useState(false)
 
   const { data: payees = [], isLoading } = useQuery({ queryKey: ['payees'], queryFn: () => getPayees() })
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: () => getCategories() })
@@ -115,9 +119,15 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
   useEffect(() => {
     if (!deepLinkEditId || isLoading) return
     const row = (payees as Record<string, unknown>[]).find(p => String(p.id) === deepLinkEditId)
-    if (row) openEdit(row)
+    if (row) { openEdit(row); setOpenedByLink(true) }
     onDeepLinkHandled?.()
   }, [deepLinkEditId, isLoading, payees]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Closing (Save or Cancel) the edit window a link opened hands back to the parent.
+  const closeEdit = () => {
+    setEditRow(null)
+    if (openedByLink) { setOpenedByLink(false); onDeepLinkClosed?.() }
+  }
 
   const handleSave = async () => {
     if (!editRow) return
@@ -125,7 +135,7 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
     try {
       await upsertPayee({ id: editRow.id ?? undefined, name: editName, categories_id: editCatId ? Number(editCatId) : null, track_for_news: editTrackForNews })
       qc.invalidateQueries({ queryKey: ['payees'] })
-      setEditRow(null)
+      closeEdit()
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed') }
     finally { setSaving(false) }
   }
@@ -266,12 +276,12 @@ function PayeesTab({ search, onSearchChange, deepLinkEditId, onDeepLinkHandled }
       </div>
 
       {editRow && (
-        <Modal title={editRow.id ? 'Edit Payee' : 'New Payee'} onClose={() => setEditRow(null)}
+        <Modal title={editRow.id ? 'Edit Payee' : 'New Payee'} onClose={closeEdit}
           footer={<>
-            {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
-            {editRow.id && <Button variant="secondary" onClick={handleDuplicate} disabled={saving}><Copy size={14} /> Duplicate</Button>}
+            {editRow.id && <Button variant="destructive" onClick={() => { setEditRow(null); setOpenedByLink(false); handleDelete(Number(editRow.id)) }} disabled={saving}><Trash2 size={14} /> Delete</Button>}
+            {editRow.id && <Button variant="secondary" onClick={() => { setOpenedByLink(false); handleDuplicate() }} disabled={saving}><Copy size={14} /> Duplicate</Button>}
             <span className="flex-1" />
-            <Button variant="secondary" onClick={() => setEditRow(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={closeEdit}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !editName.trim()}><Save size={14} /> {saving ? 'Saving…' : 'Save'}</Button>
           </>}>
           <Field label="Name *">
@@ -2172,9 +2182,20 @@ export default function StaticData() {
   }, [deepLinkTab]) // eslint-disable-line react-hooks/exhaustive-deps
   const clearDeepLink = () => setSearchParams({}, { replace: true })
 
+  // "&from=register" (the Cash Register's Payee links): remembered past clearDeepLink so
+  // the page keeps a Back button, and closing the payee's window returns there.
+  const navigate = useNavigate()
+  const [cameFromRegister, setCameFromRegister] = useState(searchParams.get('from') === 'register')
+  const backToRegister = () => { setCameFromRegister(false); navigate(-1) }
+
   return (
     <div>
-      <PageHeader title="Static Data" subtitle="Master reference data" />
+      <PageHeader title="Static Data" subtitle="Master reference data"
+        actions={cameFromRegister ? (
+          <Button size="sm" variant="secondary" onClick={backToRegister}>
+            <ArrowLeft size={13} /> Back to Cash Register
+          </Button>
+        ) : undefined} />
       <div className="px-3 sm:px-6 py-4 space-y-4">
         <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {TABS.map(t => (
@@ -2187,7 +2208,8 @@ export default function StaticData() {
 
         <Card className="overflow-hidden">
           {tab === 'Payees'       && <PayeesTab search={search} onSearchChange={setSearch}
-            deepLinkEditId={deepLinkTab === 'Payees' ? deepLinkEditId : null} onDeepLinkHandled={clearDeepLink} />}
+            deepLinkEditId={deepLinkTab === 'Payees' ? deepLinkEditId : null} onDeepLinkHandled={clearDeepLink}
+            onDeepLinkClosed={cameFromRegister ? backToRegister : undefined} />}
           {tab === 'Categories'   && <CategoriesTab search={search} onSearchChange={setSearch} />}
           {tab === 'Institutions' && <InstitutionsTab search={search} onSearchChange={setSearch}
             deepLinkEditId={deepLinkTab === 'Institutions' ? deepLinkEditId : null} onDeepLinkHandled={clearDeepLink} />}

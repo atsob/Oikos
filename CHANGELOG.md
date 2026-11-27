@@ -2,6 +2,11 @@
 
 All notable changes to Oikos are recorded here, most recent first. Also viewable in-app under **Release Notes**.
 
+## 2026-11-27
+
+### Added
+- **Cash Register: Payee names are links.** Clicking a payee opens it in Static Data → Payees with its edit window open. Save or Cancel returns to the Cash Register, and **Back to Cash Register** at the top of Static Data does the same if you look around first. Double-clicking elsewhere on the row still edits the transaction.
+
 ## 2026-11-26
 
 ### Added
