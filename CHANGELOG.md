@@ -6,8 +6,10 @@ All notable changes to Oikos are recorded here, most recent first. Also viewable
 
 ### Added
 - **Security → Dividends fills in missing figures from the dividend history.** Where the data provider gives no Dividend Yield, Annual Rate, 5Y Avg Yield, Ex-Dividend Date, Payment Date or Frequency (common for ETFs), the card now shows a figure calculated from the recorded dividends and prices, marked **Calculated** with how it was worked out: the last 12 months' dividends, their yield on the latest close, the average yield of the last five complete years, the latest ex-date and pay date, and the number of payments in the past year. Provider figures still take precedence. Payout Ratio needs earnings data, so it is not calculated.
+- **Inv. Performance → Dividend Tracker uses the same calculated figures.** In **Recommendations**, a security with no provider yield or 5-year average now gets them from its dividend history (marked with a grey **\***; hover for how), so its score includes the yield instead of leaving it out. In **Forecast**, a holding with no provider dividend rate or yield is projected from its own dividends of the last 12 months × shares held (Basis **Div History**), its yield is shown as calculated, and a missing frequency is taken from the number of payments in the past year.
 
 ### Fixed
+- **Dividend Tracker → Recommendations: the Analyst column no longer shows "nan"** for securities with no analyst rating; it is now left empty.
 - **Securities Analysis → Action Backtest no longer says "Unknown or expired back-test".** A back-test started with **Run back-test** often failed with this message straight away. Oikos runs several server processes side by side, and the page's progress checks usually reached a different one from the process running the test, which knew nothing about it. The test's progress and result are now kept where every process can read them, so the run completes and shows its result.
 
 ## 2026-11-27

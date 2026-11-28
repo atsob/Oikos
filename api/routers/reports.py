@@ -1848,6 +1848,12 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             WHERE i.Action IN ('Dividend','IntInc','Reinvest')
               AND i.Date >= CURRENT_DATE - INTERVAL '12 months' /*ACCT_I*/
             GROUP BY i.Securities_Id
+        ),
+        div_ttm AS (   -- the security's own dividends of the last 12 months, per share (security currency)
+            SELECT Securities_Id, SUM(Amount) AS ttm_per_share, COUNT(*) AS ttm_payments
+            FROM Securities_Dividends
+            WHERE Ex_Date > CURRENT_DATE - INTERVAL '1 year' AND Amount IS NOT NULL
+            GROUP BY Securities_Id
         )
         SELECT s.Securities_Id AS securities_id, s.Securities_Name AS securities_name,
             s.Securities_Type AS securities_type,
@@ -1858,14 +1864,17 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
             s.Dividend_Frequency AS dividend_frequency,
             ld.last_ex_date, ld.last_amount,
-            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur
+            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur,
+            dt.ttm_per_share, dt.ttm_payments,
+            CASE WHEN pl.Close > 0 THEN dt.ttm_per_share / pl.Close * 100 END AS calc_yield
         FROM Securities s
         JOIN holdings_agg ha ON ha.Securities_Id = s.Securities_Id
         LEFT JOIN price_latest pl  ON pl.Securities_Id  = s.Securities_Id
         LEFT JOIN fx_latest    fx2 ON fx2.Currencies_Id_1 = s.Currencies_Id
         LEFT JOIN last_div     ld  ON ld.Securities_Id  = s.Securities_Id
         LEFT JOIN trailing_income ti ON ti.Securities_Id = s.Securities_Id
-        WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0)
+        LEFT JOIN div_ttm dt ON dt.Securities_Id = s.Securities_Id
+        WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL OR ti.trailing_12m_income_eur > 0 OR dt.ttm_per_share > 0)
         ORDER BY s.Securities_Name
     """
     acct_ids = _parse_account_ids(account_ids)
@@ -1893,16 +1902,28 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
         elif pd.notna(dy) and float(dy) > 0 and mv > 0:
             annual = mv * float(dy) / 100
             method = "Fwd Yield"
+        elif _fnum(r.get("ttm_per_share")) > 0 and qty > 0:
+            # no provider figure: the security's own last 12 months of dividends × the shares held (calculated)
+            annual = _fnum(r.get("ttm_per_share")) * qty * fx
+            method = "Dividend History"
         elif t12 > 0:
             annual = t12
             method = "Trailing 12m"
         else:
             continue
+        yield_calculated = not (pd.notna(dy) and float(dy) > 0) and pd.notna(r.get("calc_yield"))
+        if yield_calculated:
+            dy = float(r["calc_yield"])
 
         if annual <= 0:
             continue
 
         freq    = r.get("dividend_frequency")
+        if not freq or (isinstance(freq, float) and pd.isna(freq)):
+            # no provider frequency: the number of payments in the last 12 months (calculated)
+            _n = int(_fnum(r.get("ttm_payments")))
+            freq = {1: "Annual", 2: "Semi-Annual", 3: "Quarterly", 4: "Quarterly", 12: "Monthly"}.get(_n) or (
+                "Monthly" if _n >= 10 else None)
         ppy     = _ppy(freq)
         per_pmt = annual / ppy
 
@@ -1951,6 +1972,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             "frequency":                str(freq) if freq and not (isinstance(freq, float) and pd.isna(freq)) else "Quarterly (assumed)",
             "method":                   method,
             "dividend_yield":           float(dy) if pd.notna(dy) else None,
+            "yield_calculated":         bool(yield_calculated),
             "next_expected_ex_date":    str(next_ex_dates[0])  if next_ex_dates  else None,
             "next_expected_pay_date":   str(next_pay_dates[0]) if next_pay_dates else None,
             "last_known_ex_date":       str(pd.Timestamp(raw_ex).date())  if pd.notna(raw_ex)  else None,
@@ -2095,6 +2117,32 @@ def get_dividend_recommendations():
             FROM Securities_Dividends
             WHERE Ex_Date >= CURRENT_DATE - INTERVAL '3 years'
             GROUP BY Securities_Id
+        ),
+        -- calculated from the dividend history, used where the provider gives no yield / 5-year average
+        div_ttm AS (
+            SELECT Securities_Id, SUM(Amount) AS ttm_per_share
+            FROM Securities_Dividends
+            WHERE Ex_Date > CURRENT_DATE - INTERVAL '1 year' AND Amount IS NOT NULL
+            GROUP BY Securities_Id
+        ),
+        div_year AS (
+            SELECT Securities_Id, EXTRACT(YEAR FROM Ex_Date)::int AS yr, SUM(Amount) AS amt
+            FROM Securities_Dividends
+            WHERE Ex_Date >= date_trunc('year', CURRENT_DATE) - INTERVAL '5 years'
+              AND Ex_Date <  date_trunc('year', CURRENT_DATE) AND Amount IS NOT NULL
+            GROUP BY 1, 2
+        ),
+        price_year AS (
+            SELECT Securities_Id, EXTRACT(YEAR FROM Date)::int AS yr, AVG(Close) AS avg_close
+            FROM Historical_Prices
+            WHERE Date >= date_trunc('year', CURRENT_DATE) - INTERVAL '5 years'
+              AND Date <  date_trunc('year', CURRENT_DATE) AND Close > 0
+            GROUP BY 1, 2
+        ),
+        div_5y AS (
+            SELECT dy.Securities_Id, AVG(dy.amt / py.avg_close * 100) AS calc_five_year_yield
+            FROM div_year dy JOIN price_year py ON py.Securities_Id = dy.Securities_Id AND py.yr = dy.yr
+            GROUP BY dy.Securities_Id
         )
         SELECT
             s.Securities_Id            AS securities_id,
@@ -2114,7 +2162,9 @@ def get_dividend_recommendations():
             sd.sharpe_ratio,
             sd.price_days,
             COALESCE(dc.div_payments, 0) AS div_payments,
-            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur
+            COALESCE(ti.trailing_12m_income_eur, 0) AS trailing_12m_income_eur,
+            CASE WHEN pl.Close > 0 THEN dt.ttm_per_share / pl.Close * 100 END AS calc_yield,
+            d5.calc_five_year_yield
         FROM Securities s
         LEFT JOIN holdings_agg ha   ON ha.Securities_Id = s.Securities_Id
         LEFT JOIN price_latest pl   ON pl.Securities_Id = s.Securities_Id
@@ -2122,6 +2172,8 @@ def get_dividend_recommendations():
         LEFT JOIN sharpe_data  sd   ON sd.Securities_Id = s.Securities_Id
         LEFT JOIN div_consistency dc ON dc.Securities_Id = s.Securities_Id
         LEFT JOIN trailing_income ti ON ti.Securities_Id = s.Securities_Id
+        LEFT JOIN div_ttm dt ON dt.Securities_Id = s.Securities_Id
+        LEFT JOIN div_5y  d5 ON d5.Securities_Id = s.Securities_Id
         WHERE (s.Dividend_Yield IS NOT NULL OR s.Dividend_Rate IS NOT NULL
                OR ti.trailing_12m_income_eur > 0 OR dc.div_payments > 0)
         ORDER BY s.Securities_Name
@@ -2159,10 +2211,23 @@ def get_dividend_recommendations():
         five_yr = _ff(r.get("five_year_avg_yield"))
         div_pay = int(_ff(r.get("div_payments")))
         sharpe  = _sf(r.get("sharpe_ratio"))
-        analyst = str(r.get("analyst_rating") or "").strip().lower() or None
+        _ar     = r.get("analyst_rating")
+        analyst = (str(_ar).strip().lower() or None) if isinstance(_ar, str) else None   # NULL comes back as NaN: not "nan"
+        calc_y  = _ff(r.get("calc_yield"))
+        calc_5y = _ff(r.get("calc_five_year_yield"))
 
-        # Effective yield: forward → trailing-based fallback
-        eff_yield = dy if dy > 0 else (t12 / mv * 100 if mv > 0 and t12 > 0 else 0)
+        # Effective yield: provider's → last 12 months of the dividend history over the latest close → own income over market value
+        if dy > 0:
+            eff_yield, yield_src = dy, "provider"
+        elif calc_y > 0:
+            eff_yield, yield_src = calc_y, "history"
+        elif mv > 0 and t12 > 0:
+            eff_yield, yield_src = t12 / mv * 100, "income"
+        else:
+            eff_yield, yield_src = 0, None
+        five_yr_calc = five_yr <= 0 and calc_5y > 0
+        if five_yr_calc:
+            five_yr = calc_5y
 
         if eff_yield <= 0 and div_pay == 0:
             continue  # no dividend signal at all
@@ -2216,6 +2281,8 @@ def get_dividend_recommendations():
             "sector":              str(r["sector"]) if r.get("sector") and not (isinstance(r["sector"], float) and pd.isna(r["sector"])) else None,
             "effective_yield_pct": round(eff_yield, 2),
             "five_year_avg_yield": round(five_yr, 2) if five_yr > 0 else None,
+            "yield_source":        yield_src,          # provider | history | income: anything but provider is calculated
+            "five_year_calculated": five_yr_calc,
             "dividend_frequency":  freq_str,
             "analyst_rating":      analyst or None,
             "analyst_target_eur":  round(float(r["analyst_target_price"]) * _ff(r.get("current_price_eur"), 1) / _ff(r.get("current_price_eur"), 1), 2) if _sf(r.get("analyst_target_price")) else None,

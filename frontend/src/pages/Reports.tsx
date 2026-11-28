@@ -3435,6 +3435,7 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
   type RecRow = {
     securities_id: number; securities_name: string; securities_type: string; sector: string | null
     effective_yield_pct: number; five_year_avg_yield: number | null; dividend_frequency: string | null
+    yield_source: 'provider' | 'history' | 'income' | null; five_year_calculated: boolean
     analyst_rating: string | null; sharpe_ratio: number | null; div_payments_3yr: number
     trailing_12m_eur: number; market_value_eur: number | null; cost_basis_eur: number | null
     is_held: boolean; yield_score: number; sharpe_score: number | null; consistency_score: number
@@ -3608,12 +3609,12 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                     <ColHeader label="Ann. Rate (€)" sortKey="annual_forecast_eur"    currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Full-year projected dividend income in EUR, regardless of the period selected above." />
                     <ColHeader label="Per Pmt (€)"   sortKey="per_payment_eur"        currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Expected income per dividend payment (annual ÷ payments per year)." />
                     <ColHeader label="Frequency"     sortKey="frequency"              currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How often dividends are paid." />
-                    <ColHeader label="Yield %"       sortKey="dividend_yield"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata." />
+                    <ColHeader label="Yield %"       sortKey="dividend_yield"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Forward dividend yield from securities metadata. Where it gives none, calculated (marked *): the last 12 months of the dividend history ÷ latest close." />
                     <ColHeader label="Ex-Div"        sortKey="next_expected_ex_date"  currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected next ex-dividend date. Must hold shares before this date." />
                     <ColHeader label="Pay Date"      sortKey="next_expected_pay_date" currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Projected date cash arrives in your account." />
                     <ColHeader label="Mkt Val (€)"   sortKey="market_value_eur"       currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Current market value of held position." />
                     <ColHeader label="Cost (€)"      sortKey="cost_basis_eur"         currentKey={fcSK} currentDir={fcSD} onSort={fcSort} align="right" tooltip="Total acquisition cost of held position." />
-                    <ColHeader label="Basis"         sortKey="method"                 currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How the forecast was calculated: Dividend Rate (most accurate), Fwd Yield, or Trailing 12m actual income." />
+                    <ColHeader label="Basis"         sortKey="method"                 currentKey={fcSK} currentDir={fcSD} onSort={fcSort} tooltip="How the forecast was calculated: Dividend Rate (most accurate), Fwd Yield, Dividend History (the security's own dividends of the last 12 months × shares held, where the provider gives no rate or yield), or Trailing 12m actual income." />
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {fcSorted.map((r, i) => (
@@ -3623,14 +3624,14 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtEur(Number(r.annual_forecast_eur))}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
                         <td className="px-2 py-1.5 text-slate-500 truncate" title={String(r.frequency)}>{String(r.frequency)}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}{r.dividend_yield != null && r.yield_calculated ? <span className="text-slate-400" title="Calculated: last 12 months of the dividend history ÷ latest close">*</span> : null}</td>
                         <td className="px-2 py-1.5 text-right text-slate-500 whitespace-nowrap">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
                         <td className="px-2 py-1.5 text-right text-slate-500 whitespace-nowrap">{r.next_expected_pay_date ? String(r.next_expected_pay_date).slice(0, 10) : '—'}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.market_value_eur))}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.cost_basis_eur))}</td>
                         <td className="px-2 py-1.5">
                           <span className={`whitespace-nowrap px-1 py-0.5 rounded text-[10px] ${r.method === 'Dividend Rate' ? 'bg-green-100 text-green-700' : r.method === 'Fwd Yield' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {r.method === 'Dividend Rate' ? 'Div Rate' : r.method === 'Trailing 12m' ? 'Trail 12m' : String(r.method)}
+                            {r.method === 'Dividend Rate' ? 'Div Rate' : r.method === 'Trailing 12m' ? 'Trail 12m' : r.method === 'Dividend History' ? 'Div History' : String(r.method)}
                           </span>
                         </td>
                       </tr>
@@ -3754,9 +3755,9 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                   <ColHeader label="Score"        sortKey="composite_score"     currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
                     tooltip="Composite score (0–100): Yield 35% · Sharpe 25% · Consistency 25% · Analyst 10% · Yield Growth 5%. Missing factors are excluded and remaining weights renormalised." />
                   <ColHeader label="Yield %"      sortKey="effective_yield_pct" currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
-                    tooltip="Forward dividend yield (from securities metadata). Falls back to trailing 12-month income ÷ market value when forward yield is unavailable." />
+                    tooltip="Dividend yield from the data provider. Where it gives none, calculated (marked *): the last 12 months of the dividend history ÷ latest close, or else your own 12-month income ÷ market value." />
                   <ColHeader label="5yr Avg %"    sortKey="five_year_avg_yield" currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
-                    tooltip="5-year average dividend yield — used to assess yield stability and growth trend." />
+                    tooltip="5-year average dividend yield — used to assess yield stability and growth trend. Where the provider gives none, calculated (marked *): average over the last five complete years of each year's dividends ÷ that year's average close." />
                   <ColHeader label="Sharpe (1yr)" sortKey="sharpe_ratio"        currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
                     tooltip="Annualised Sharpe ratio from the last 365 days of daily prices, using 3% as risk-free rate. Requires ≥30 price points." />
                   <ColHeader label="Consistency"  sortKey="div_payments_3yr"    currentKey={recSK} currentDir={recSD} onSort={recSort} align="right"
@@ -3779,9 +3780,15 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                       </td>
                       <td className={`px-3 py-2 text-right tabular-nums font-medium ${r.effective_yield_pct >= 4 ? 'text-green-600' : 'text-slate-700'}`}>
                         {r.effective_yield_pct > 0 ? `${r.effective_yield_pct.toFixed(2)}%` : '—'}
+                        {r.effective_yield_pct > 0 && r.yield_source && r.yield_source !== 'provider' && (
+                          <span className="text-slate-400 font-normal" title={r.yield_source === 'history'
+                            ? 'Calculated: last 12 months of the dividend history ÷ latest close'
+                            : 'Calculated: your 12-month dividend income ÷ market value'}>*</span>)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
                         {r.five_year_avg_yield != null ? `${r.five_year_avg_yield.toFixed(2)}%` : '—'}
+                        {r.five_year_avg_yield != null && r.five_year_calculated && (
+                          <span className="text-slate-400" title="Calculated: average of each complete year's dividends ÷ that year's average close">*</span>)}
                       </td>
                       <td className={`px-3 py-2 text-right tabular-nums text-xs ${_sharpeColor(r.sharpe_ratio)}`}>
                         {r.sharpe_ratio != null ? r.sharpe_ratio.toFixed(2) : '—'}
