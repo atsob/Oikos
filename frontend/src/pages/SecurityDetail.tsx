@@ -1257,7 +1257,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
       colId: 'select', headerName: '', width: 42, pinned: 'left' as const,
       checkboxSelection: true, headerCheckboxSelection: true, sortable: false, filter: false, resizable: false,
     },
-    { field: 'ex_date', headerName: 'Ex-Date', width: 130 },
+    { field: 'ex_date', headerName: 'Ex-Date', width: 130, sort: 'desc' as const },
     { field: 'pay_date', headerName: 'Pay Date', width: 130 },
     { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
     { field: 'ca_id', headerName: 'Corp. Action', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? `✓ #${p.value}` : '—' },
@@ -1278,7 +1278,6 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [deleteMut])
   const gridCols = useGridColumnState('security-detail-dividends', DIVIDENDS_COLS)
-  const gridScroll = useGridScrollState(`security-detail-dividends-${secId}`)   // per security: an offset from another one means nothing here
   const gridFilter = useGridFilterState('security-detail-dividends')
   const { gridApi, onGridReady } = useGridApi(api => {
     if (gridFilter.filterModel) api.setFilterModel(gridFilter.filterModel)
@@ -1432,12 +1431,11 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
             </div>
           ) : (
           <div className="ag-theme-alpine" style={{ height: '300px', width: '100%' }}>
+            {/* newest ex-date first, and no remembered scroll: it always opens at the top with the latest dividends */}
             <AppGrid
               theme="legacy"
               onGridReady={onGridReady}
               rowData={dividends}
-              initialState={gridScroll.initialState}
-              onStateUpdated={gridScroll.onStateUpdated}
               onFilterChanged={gridFilter.onFilterChanged}
               onColumnMoved={gridCols.onColumnMoved}
               onColumnResized={gridCols.onColumnResized}

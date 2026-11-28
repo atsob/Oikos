@@ -687,7 +687,8 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           each template's own due date and frequency, <b>statistically-detected patterns</b> — payee/category
           combinations seen in every one of the last few complete months, for recurring bills you haven't set up
           a template for — <b>projected dividend income</b> for currently-held securities, using the same
-          Dividend Rate → Forward Yield → Trailing 12m fallback logic as Dividend Tracker's Forecast view,{' '}
+          same projection as Dividend Tracker's Forecast view (declared dividends first, then Dividend Rate →
+          Forward Yield → Dividend History → Trailing 12m),{' '}
           <b>projected interest income</b>: for a Savings or Checking account with a manually-defined rate schedule
           (Static Data → Accounts → the % icon), that balance-tiered schedule; otherwise, for Savings accounts only,
           the same last-real-interest-period APY%/cadence compounding as the Savings tab's own Forecast view — and{' '}
@@ -1106,6 +1107,11 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           to pay outside the window simply doesn't show up. Each row also shows its full annualized rate
           alongside the period amount for reference. Portfolio YOC always stays annualized regardless of period,
           and "Upcoming payments (next 3 months)" is a separate, fixed near-term view unaffected by the selector.
+          A dividend already declared in the security's dividend history (Security → Dividends) but not yet paid
+          is forecast at its own amount and pay date, and later payments are projected from it. Where the provider
+          gives no rate or yield, the annual amount comes from the security's own last 12 months of dividends
+          (Basis <b>Div History</b>); a missing frequency comes from the payments of the past year when the history
+          covers a full year, otherwise from another listing of the same ISIN, otherwise Quarterly is assumed.
         </Note>
         <Note>
           <b>Savings</b> has the same Actual/Forecast/Recommendations structure as Dividend Tracker. <b>Actual</b>{' '}
