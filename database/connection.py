@@ -686,6 +686,14 @@ def _run_startup_migrations():
         # Exposure by country: a security's / issuer's country (ISO alpha-2), whether an issuer is a government,
         # and a fund's own country breakdown (share of the fund per kind and country).
         "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Country VARCHAR(2)",
+        # How a security's dividends reach you: 'Units' = new units/shares instead of cash (e.g. a fund that
+        # distributes in units, or a standing reinvestment plan); NULL = Cash. A dividend-history row can override
+        # it for one dividend (a scrip option taken for that dividend).
+        "ALTER TABLE Securities ADD COLUMN IF NOT EXISTS Dividend_Paid_As VARCHAR(10) CHECK (Dividend_Paid_As IN ('Cash', 'Units'))",
+        "ALTER TABLE Securities_Dividends ADD COLUMN IF NOT EXISTS Paid_As VARCHAR(10) CHECK (Paid_As IN ('Cash', 'Units'))",
+        # a Dividend corporate action paid in units books Reinvest transactions (new units at Reinvest_Price, no cash)
+        "ALTER TABLE Corporate_Actions ADD COLUMN IF NOT EXISTS Paid_As VARCHAR(10) CHECK (Paid_As IN ('Cash', 'Units'))",
+        "ALTER TABLE Corporate_Actions ADD COLUMN IF NOT EXISTS Reinvest_Price NUMERIC(18, 8)",
         "ALTER TABLE Issuers ADD COLUMN IF NOT EXISTS Country VARCHAR(2)",
         "ALTER TABLE Issuers ADD COLUMN IF NOT EXISTS Is_Government BOOLEAN",
         """CREATE TABLE IF NOT EXISTS Fund_Country_Exposure (

@@ -1188,6 +1188,9 @@ function PriceAnomaliesTab({ secId }: { secId: number }) {
   )
 }
 
+const apiDetail = (e: unknown) =>
+  (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? (e instanceof Error ? e.message : 'Failed')
+
 // ── Dividends Tab ─────────────────────────────────────────────────────────────
 function DividendsTab({ secId, security }: { secId: number; security: Record<string, unknown> }) {
   const phone = usePhone()
@@ -1203,6 +1206,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })
     qc.invalidateQueries({ queryKey: ['sec-corporate-actions', secId] })
     qc.invalidateQueries({ queryKey: ['sec-transactions', secId] })
+    qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })      // a Paid As switch re-books cash ⇄ units
   }
 
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -1210,18 +1214,20 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
   const [newExDate, setNewExDate] = useState(todayLocal())
   const [newPayDate, setNewPayDate] = useState('')
   const [newAmount, setNewAmount] = useState('')
+  const [newPaidAs, setNewPaidAs] = useState('')
   const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null)
-  const [editForm, setEditForm] = useState<{ ex_date: string; pay_date: string; amount: string }>({ ex_date: '', pay_date: '', amount: '' })
+  const [editForm, setEditForm] = useState<{ ex_date: string; pay_date: string; amount: string; paid_as: string }>({ ex_date: '', pay_date: '', amount: '', paid_as: '' })
+  const secPaidAs = security.dividend_paid_as === 'Units' ? 'Units' : 'Cash'
 
   const updateMut = useMutation({
     mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateSecurityDividend(secId, id, d),
     onSuccess: () => { invalidate(); setEditRow(null) },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+    onError: (e: Error) => setMsg(`Error: ${apiDetail(e)}`),
   })
   const createMut = useMutation({
     mutationFn: (d: Record<string, unknown>) => createSecurityDividend(secId, d),
-    onSuccess: () => { invalidate(); setNewAmount(''); setNewPayDate(''); setMsg('Added.') },
-    onError: (e: Error) => setMsg(`Error: ${e.message}`),
+    onSuccess: () => { invalidate(); setNewAmount(''); setNewPayDate(''); setNewPaidAs(''); setMsg('Added.') },
+    onError: (e: Error) => setMsg(`Error: ${apiDetail(e)}`),
   })
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteSecurityDividend(secId, id),
@@ -1241,6 +1247,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
       ex_date: String(row.ex_date ?? ''),
       pay_date: String(row.pay_date ?? ''),
       amount: String(row.amount ?? ''),
+      paid_as: row.paid_as === 'Cash' || row.paid_as === 'Units' ? String(row.paid_as) : '',
     })
   }
 
@@ -1248,7 +1255,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     if (!editRow || !editForm.ex_date || !editForm.amount) return
     updateMut.mutate({
       id: Number(editRow.id),
-      d: { ex_date: editForm.ex_date, pay_date: editForm.pay_date || null, amount: Number(editForm.amount) },
+      d: { ex_date: editForm.ex_date, pay_date: editForm.pay_date || null, amount: Number(editForm.amount), paid_as: editForm.paid_as || null },
     })
   }
 
@@ -1260,6 +1267,11 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     { field: 'ex_date', headerName: 'Ex-Date', width: 130, sort: 'desc' as const },
     { field: 'pay_date', headerName: 'Pay Date', width: 130 },
     { field: 'amount', headerName: 'Amount per Share', flex: 1, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
+    { field: 'paid_as', headerName: 'Paid As', width: 120,
+      headerTooltip: "How this dividend reaches you: Cash, or Units (new units/shares instead of cash). Grey = the security's own setting.",
+      cellRenderer: (p: { value: unknown }) => p.value === 'Cash' || p.value === 'Units'
+        ? <span>{String(p.value)}</span>
+        : <span className="text-slate-400">{secPaidAs}</span> },
     { field: 'ca_id', headerName: 'Corp. Action', width: 120, valueFormatter: (p: { value: unknown }) => p.value != null ? `✓ #${p.value}` : '—' },
     {
       colId: 'actions', headerName: '', width: 85, pinned: 'right' as const, sortable: false, filter: false, resizable: false,
@@ -1286,7 +1298,7 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
   const handleAdd = () => {
     if (!newExDate || !newAmount) return
     setMsg(null)
-    createMut.mutate({ ex_date: newExDate, pay_date: newPayDate || null, amount: Number(newAmount) })
+    createMut.mutate({ ex_date: newExDate, pay_date: newPayDate || null, amount: Number(newAmount), paid_as: newPaidAs || null })
   }
 
   // Provider (Yahoo) figures first; where it gave none, the figure worked out from the dividend history and prices, marked "Calculated"
@@ -1366,6 +1378,15 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               <label className="block text-xs font-medium text-slate-500 mb-1">Amount per Share</label>
               <Input type="number" step="any" className="h-8 text-xs w-32" value={newAmount} onChange={e => setNewAmount(e.target.value)} />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Paid As</label>
+              <select className="h-8 rounded-md border border-slate-300 px-2 text-xs" value={newPaidAs} onChange={e => setNewPaidAs(e.target.value)}
+                  title="How this dividend reaches you. Default = the security's own setting (Setup → Dividends Paid As). Units: new units or shares instead of cash, e.g. a scrip option taken for this dividend.">
+                  <option value="">Default ({secPaidAs})</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Units">Units (reinvested)</option>
+                </select>
+            </div>
             <Button size="sm" disabled={!newExDate || !newAmount || createMut.isPending} onClick={handleAdd}>
               <Plus size={13} /> Add
             </Button>
@@ -1392,6 +1413,15 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Amount per Share</label>
                 <Input type="number" step="any" className="h-8 text-xs w-32" value={editForm.amount} onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Paid As</label>
+                <select className="h-8 rounded-md border border-slate-300 px-2 text-xs" value={editForm.paid_as} onChange={e => setEditForm(f => ({ ...f, paid_as: e.target.value }))}
+                  title="How this dividend reaches you. Default = the security's own setting (Setup → Dividends Paid As). Units: new units or shares instead of cash, e.g. a scrip option taken for this dividend.">
+                  <option value="">Default ({secPaidAs})</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Units">Units (reinvested)</option>
+                </select>
               </div>
               <Button size="sm" disabled={!editForm.ex_date || !editForm.amount || updateMut.isPending} onClick={saveEdit}>
                 <Save size={13} /> Save
@@ -1485,7 +1515,14 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   const invalidateCA = () => qc.invalidateQueries({ queryKey: ['sec-corporate-actions', secId] })
 
   const deleteMut = useMutation({ mutationFn: (id: number) => deleteCorporateAction(secId, id), onSuccess: () => { invalidateCA(); setDeleteId('') } })
-  const updateMut = useMutation({ mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateCorporateAction(secId, id, d), onSuccess: () => { invalidateCA(); qc.invalidateQueries({ queryKey: ['sec-dividends', secId] }); setEditRow(null) } })
+  const updateMut = useMutation({
+    mutationFn: ({ id, d }: { id: number; d: Record<string, unknown> }) => updateCorporateAction(secId, id, d),
+    onSuccess: () => {
+      invalidateCA(); qc.invalidateQueries({ queryKey: ['sec-dividends', secId] }); setEditRow(null)
+      qc.invalidateQueries({ queryKey: ['sec-transactions', secId] }); qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })   // Paid As may have re-booked them
+    },
+    onError: (e: unknown) => setEditApplyMsg({ ok: false, text: apiDetail(e) }),
+  })
 
   // ── edit-flow: preview + apply transactions for a not-yet-applied split ────
   const [editPreview, setEditPreview] = useState<Record<string, unknown>[] | null>(null)
@@ -1528,7 +1565,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     const shouldApply = isBareEditSplit
     setEditApplyMsg(null)
     updateMut.mutate(
-      { id: caId, d: { type: editForm.type, date: editForm.date, ex_date: editForm.ex_date || null, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null } },
+      { id: caId, d: { type: editForm.type, date: editForm.date, ex_date: editForm.ex_date || null, ratio_new: editForm.ratio_new || null, ratio_old: editForm.ratio_old || null, gross_per_share: editForm.gross_per_share || null, tax_rate: editForm.tax_rate || null, description: editForm.description || null, paid_as: editForm.type === 'Dividend' ? editForm.paid_as : null, reinvest_price: editForm.type === 'Dividend' && editForm.paid_as === 'Units' ? (editForm.reinvest_price || null) : null } },
       { onSuccess: () => { if (shouldApply) applySplitMut.mutate(caId) } },
     )
   }
@@ -1546,14 +1583,19 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   // dividend
   const [grossPerShare, setGrossPerShare] = useState('0')
   const [taxRate, setTaxRate] = useState(defaultTaxRate)
+  // paid in new units instead of cash (the security's setting, or the picked Dividends row's own): Reinvest at this price, no cash
+  const secPaidAs = security.dividend_paid_as === 'Units' ? 'Units' : 'Cash'
+  const [paidAs, setPaidAs] = useState<'Cash' | 'Units'>(secPaidAs)
+  const [reinvestPrice, setReinvestPrice] = useState('')
 
   // The Dividends tab's rows: a dividend that is already known there (ex-date, pay date, amount per share) is offered here instead of being retyped
   const { data: divData } = useQuery({ queryKey: ['sec-dividends', secId], queryFn: () => getSecurityDividends(secId) })
-  const divRows = useMemo(() => ((divData ?? []) as { id: number; ex_date: string; pay_date: string | null; amount: number; ca_id: number | null }[]), [divData])
-  const applyDividendRow = (r: { ex_date: string; pay_date: string | null; amount: number }) => {
+  const divRows = useMemo(() => ((divData ?? []) as { id: number; ex_date: string; pay_date: string | null; amount: number; ca_id: number | null; paid_as?: string | null }[]), [divData])
+  const applyDividendRow = (r: { ex_date: string; pay_date: string | null; amount: number; paid_as?: string | null }) => {
     setExDate(r.ex_date)
     if (r.pay_date) setDate(r.pay_date)
     setGrossPerShare(String(r.amount))
+    setPaidAs(r.paid_as === 'Units' || r.paid_as === 'Cash' ? r.paid_as : secPaidAs)
     setPreview(null)
   }
   // Start from the latest dividend that is not booked yet (if it is recent) — the usual case is booking what the Dividends tab just showed
@@ -1596,8 +1638,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     const g = Number(grossPerShare).toFixed(10)
     const tax = Number(taxRate)
     const net = (Number(grossPerShare) * (1 - tax / 100)).toFixed(10)
-    return `${secName} Dividend — ${g} gross / ${net} net per share`
-  }, [eventGroup, secName, ratioNew, ratioOld, ddType, grossPerShare, taxRate])
+    return `${secName} Dividend — ${g} gross / ${net} net per share${paidAs === 'Units' ? `, reinvested in units at ${reinvestPrice || '?'}` : ''}`
+  }, [eventGroup, secName, ratioNew, ratioOld, ddType, grossPerShare, taxRate, paidAs, reinvestPrice])
 
   const buildPayload = () => ({
     event_group: eventGroup,
@@ -1613,6 +1655,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     // dividend / return of capital
     gross_per_share: (eventGroup === 'dividend' || eventGroup === 'return_of_capital') ? grossPerShare : null,
     tax_rate: eventGroup === 'dividend' ? taxRate : null,
+    paid_as: eventGroup === 'dividend' ? paidAs : null,
+    reinvest_price: eventGroup === 'dividend' && paidAs === 'Units' ? (reinvestPrice || null) : null,
   })
 
   const handlePreview = async () => {
@@ -1641,7 +1685,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
       qc.invalidateQueries({ queryKey: ['sec-holdings', secId] })
       qc.invalidateQueries({ queryKey: ['sec-dividends', secId] })      // the Dividends tab shows the same ex-date, pay date and amount
     },
-    onError: (e: Error) => setExecuteMsg({ ok: false, text: e.message }),
+    onError: (e: Error) => setExecuteMsg({ ok: false, text: apiDetail(e) }),
   })
 
   // Preview column defs vary by event group
@@ -1662,14 +1706,19 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     ]
     return [
       { field: 'account', headerName: 'Account', flex: 2 },
+      { field: 'action', headerName: 'Action', width: 95 },
       { field: 'qty_held', headerName: 'Qty Held', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'gross_per_share', headerName: 'Gross/Share', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 8) },
       { field: 'gross_total', headerName: 'Gross Total', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'tax', headerName: 'Tax', width: 100, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
       { field: 'net_total', headerName: 'Net Total', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 2) },
+      ...(paidAs === 'Units' ? [
+        { field: 'reinvest_price', headerName: 'Unit Price', width: 110, valueFormatter: (p: { value: unknown }) => fmt(p.value, 6) },
+        { field: 'new_units', headerName: 'New Units', width: 120, valueFormatter: (p: { value: unknown }) => fmt(p.value, 6) },
+      ] : []),
       { field: 'currency', headerName: 'Ccy', width: 70, cellRenderer: CurrencyCell },
     ]
-  }, [eventGroup])
+  }, [eventGroup, paidAs])
   const { gridApi: previewGridApi, onGridReady: onPreviewGridReady } = useGridApi()
 
   const actionsColDefs = [
@@ -1681,12 +1730,13 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
     { field: 'ratio_old', headerName: 'Ratio Old', width: 100, valueFormatter: (p: { value: unknown }) => p.value != null ? String(p.value) : '—' },
     { field: 'gross_per_share', headerName: 'Gross/Share', width: 110, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? Number(p.value).toFixed(8) : '—' },
     { field: 'tax_rate', headerName: 'Tax Rate %', width: 100, type: 'numericColumn' as const, filter: 'agNumberColumnFilter', valueFormatter: (p: { value: unknown }) => p.value != null ? `${p.value}%` : '—' },
+    { field: 'paid_as', headerName: 'Paid As', width: 100, valueFormatter: (p: { value: unknown; data: Record<string, unknown> }) => p.data?.type === 'Dividend' ? (p.value === 'Units' ? `Units @ ${Number(p.data.reinvest_price ?? 0)}` : 'Cash') : '—' },
     { field: 'description', headerName: 'Description', flex: 1 },
     { field: 'recorded_at', headerName: 'Recorded At', width: 180 },
     {
       colId: 'actions', headerName: '', width: 75, pinned: 'right' as const,
       cellRenderer: (p: { data: Record<string, unknown> }) => (
-        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ex_date: String(p.data.ex_date ?? ''), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? '') }); setEditPreview(null); setEditApplyMsg(null) }}
+        <button onClick={() => { setEditRow(p.data); setEditForm({ type: String(p.data.type), date: String(p.data.date), ex_date: String(p.data.ex_date ?? ''), ratio_new: String(p.data.ratio_new ?? ''), ratio_old: String(p.data.ratio_old ?? ''), gross_per_share: String(p.data.gross_per_share ?? ''), tax_rate: String(p.data.tax_rate ?? ''), description: String(p.data.description ?? ''), paid_as: p.data.paid_as === 'Units' ? 'Units' : 'Cash', reinvest_price: String(p.data.reinvest_price ?? '') }); setEditPreview(null); setEditApplyMsg(null) }}
           className="text-blue-600 hover:underline text-xs flex items-center gap-1 mt-2">
           <Pencil size={11} /> Edit
         </button>
@@ -1695,7 +1745,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
   ]
   const startEdit = (p: Record<string, unknown>) => {
     setEditRow(p)
-    setEditForm({ type: String(p.type), date: String(p.date), ex_date: String(p.ex_date ?? ''), ratio_new: String(p.ratio_new ?? ''), ratio_old: String(p.ratio_old ?? ''), gross_per_share: String(p.gross_per_share ?? ''), tax_rate: String(p.tax_rate ?? ''), description: String(p.description ?? '') })
+    setEditForm({ type: String(p.type), date: String(p.date), ex_date: String(p.ex_date ?? ''), ratio_new: String(p.ratio_new ?? ''), ratio_old: String(p.ratio_old ?? ''), gross_per_share: String(p.gross_per_share ?? ''), tax_rate: String(p.tax_rate ?? ''), description: String(p.description ?? ''), paid_as: p.paid_as === 'Units' ? 'Units' : 'Cash', reinvest_price: String(p.reinvest_price ?? '') })
     setEditPreview(null); setEditApplyMsg(null)
   }
   const gridCols = useGridColumnState('security-detail-corporate-actions', actionsColDefs)
@@ -1783,6 +1833,19 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                         Net/Share: <strong>{(parseFloat(editForm.gross_per_share) * (1 - parseFloat(editForm.tax_rate || '0') / 100)).toFixed(8)}</strong>
                       </div>
                     )}
+                    {editForm.type === 'Dividend' && <>
+                      <div><label className="text-xs text-slate-500 block mb-1">Paid As</label>
+                        <select className="rounded-md border border-slate-300 px-2 py-1.5 text-sm w-40" value={editForm.paid_as ?? 'Cash'}
+                          onChange={e => setEditForm(f => ({ ...f, paid_as: e.target.value }))}
+                          title="Switching an executed dividend re-books its transactions: cash Dividends (with their cash transactions) or Reinvest entries (new units, no cash).">
+                          <option value="Cash">Cash</option>
+                          <option value="Units">Units (reinvested)</option>
+                        </select></div>
+                      {editForm.paid_as === 'Units' && (
+                        <div><label className="text-xs text-slate-500 block mb-1">Unit price</label>
+                          <Input type="number" step="any" className="w-32" value={editForm.reinvest_price ?? ''} onChange={e => setEditForm(f => ({ ...f, reinvest_price: e.target.value }))} placeholder="0.00" /></div>
+                      )}
+                    </>}
                   </>}
                   <div className="flex-1 min-w-48"><label className="text-xs text-slate-500 block mb-1">Description</label>
                     <Input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
@@ -1926,6 +1989,8 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
             Records a dividend payment by inserting a <strong>Dividend</strong> entry, dated on the payment date, for each account that held the shares
             <strong>before the ex-date</strong>. Enter the gross amount per share and the applicable withholding tax rate; the net amount is computed
             automatically. A dividend already on the Dividends tab can be picked below, and the Dividends tab is updated with what you record.
+            Paid in <strong>Units</strong> (new units or shares instead of cash): a <strong>Reinvest</strong> entry is inserted instead, with the
+            new units = net amount ÷ the reinvestment price, and no cash transaction.
           </p>
         )}
         {eventGroup === 'return_of_capital' && (
@@ -2011,6 +2076,25 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
                 (gross {Number(grossPerShare).toFixed(10)} − {taxRate}% tax)
               </p>
             )}
+            <div className="flex gap-6 flex-wrap items-end">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Paid as</label>
+                <select className="rounded-md border border-slate-300 px-3 py-1.5 text-sm w-48" value={paidAs}
+                  onChange={e => { setPaidAs(e.target.value === 'Units' ? 'Units' : 'Cash'); setPreview(null) }}>
+                  <option value="Cash">Cash</option>
+                  <option value="Units">Units (reinvested)</option>
+                </select>
+              </div>
+              {paidAs === 'Units' && (
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">Reinvestment price per unit <span className="text-slate-400">({String(security.currency ?? '')}, e.g. the NAV on the pay date)</span></label>
+                  <Input type="number" step="any" className="w-40" value={reinvestPrice} onChange={e => { setReinvestPrice(e.target.value); setPreview(null) }} placeholder="0.00" />
+                </div>
+              )}
+            </div>
+            {paidAs === 'Units' && (
+              <p className="text-xs text-slate-500">Compare the new units in the preview with your broker statement; if they differ, adjust the price.</p>
+            )}
           </div>
         )}
 
@@ -2037,7 +2121,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
               const v = e.target.value
               setExDate(v); setPreview(null)
               const r = eventGroup === 'dividend' ? divRows.find(x => x.ex_date === v) : undefined      // known on the Dividends tab: bring its pay date and amount
-              if (r) { if (r.pay_date) setDate(r.pay_date); setGrossPerShare(String(r.amount)) }
+              if (r) { if (r.pay_date) setDate(r.pay_date); setGrossPerShare(String(r.amount)); setPaidAs(r.paid_as === 'Units' || r.paid_as === 'Cash' ? r.paid_as : secPaidAs) }
             }} />
             {!exDate && <p className="text-xs text-amber-600 mt-1">No ex-date: the holdings on the payment date are used.</p>}
           </div>
@@ -2055,7 +2139,7 @@ function CorporateActionsTab({ secId, security }: { secId: number; security: Rec
 
         {/* Preview button */}
         <div className="flex gap-3 items-center">
-          <Button size="sm" variant="secondary" onClick={handlePreview} disabled={previewLoading}>
+          <Button size="sm" variant="secondary" onClick={handlePreview} disabled={previewLoading || (eventGroup === 'dividend' && paidAs === 'Units' && !(Number(reinvestPrice) > 0))}>
             {previewLoading ? <><Spinner size={14} /> Computing…</> : 'Preview'}
           </Button>
           {preview && preview.length === 0 && (

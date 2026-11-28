@@ -218,6 +218,7 @@ CREATE TABLE Securities (
     Dividend_Pay_Date    DATE,
     Payout_Ratio         NUMERIC(8,4),
     Five_Year_Avg_Yield  NUMERIC(8,4),
+    Dividend_Paid_As     VARCHAR(10) CHECK (Dividend_Paid_As IN ('Cash', 'Units')),   -- NULL = Cash; 'Units' = paid in new units/shares
     Issuer_Id            INTEGER REFERENCES Issuers(Issuers_Id) ON DELETE SET NULL,
     -- Some exchanges quote in a minor currency unit Yahoo reports as its own
     -- currency code — e.g. LSE ordinary shares in GBp/GBX (pence) rather than
@@ -239,6 +240,7 @@ CREATE TABLE IF NOT EXISTS Securities_Dividends (
     Ex_Date        DATE    NOT NULL,
     Pay_Date       DATE,
     Amount         NUMERIC(16,6) NOT NULL,
+    Paid_As        VARCHAR(10) CHECK (Paid_As IN ('Cash', 'Units')),   -- this dividend only (a scrip option); NULL = the security's setting
     UNIQUE (Securities_Id, Ex_Date)
 );
 CREATE INDEX IF NOT EXISTS idx_sec_div_sec_id  ON Securities_Dividends(Securities_Id);
@@ -622,6 +624,8 @@ CREATE TABLE IF NOT EXISTS Corporate_Actions (
     Ratio_Old             NUMERIC,
     Gross_Per_Share       NUMERIC(18, 8),
     Tax_Rate              NUMERIC(7, 4),       -- 0–100 percent
+    Paid_As               VARCHAR(10) CHECK (Paid_As IN ('Cash', 'Units')),   -- a dividend: NULL/Cash = cash; Units = Reinvest transactions
+    Reinvest_Price        NUMERIC(18, 8),      -- a dividend paid in units: the price of the new units (security currency)
     Description           TEXT,
     Created_At            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

@@ -394,6 +394,7 @@ def get_securities(search: Optional[str] = Query(None)):
                    s.Dividend_Pay_Date AS dividend_pay_date,
                    s.Payout_Ratio AS payout_ratio,
                    s.Five_Year_Avg_Yield AS five_year_avg_yield,
+                   s.Dividend_Paid_As AS dividend_paid_as,
                    s.Analyst_Rating AS analyst_rating,
                    s.Analyst_Target_Price AS analyst_target_price,
                    s.Issuer_Id AS issuer_id,

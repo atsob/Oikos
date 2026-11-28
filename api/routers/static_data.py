@@ -927,6 +927,7 @@ def get_securities_master(search: Optional[str] = Query(None)):
                    s.Dividend_Frequency AS dividend_frequency,
                    s.Ex_Dividend_Date AS ex_dividend_date, s.Dividend_Pay_Date AS dividend_pay_date,
                    s.Payout_Ratio AS payout_ratio, s.Five_Year_Avg_Yield AS five_year_avg_yield,
+                   s.Dividend_Paid_As AS dividend_paid_as,
                    s.Analyst_Rating AS analyst_rating, s.Analyst_Target_Price AS analyst_target_price,
                    COALESCE((SELECT Close FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1), 0) AS latest_price,
                    COALESCE((SELECT Date::text FROM Historical_Prices WHERE Securities_Id = s.Securities_Id ORDER BY Date DESC LIMIT 1), NULL) AS price_date,
@@ -942,7 +943,7 @@ def get_securities_master(search: Optional[str] = Query(None)):
                      s.Maturity_Date, s.Coupon_Rate, s.Coupon_Frequency, s.Face_Value,
                      s.Dividend_Yield, s.Dividend_Rate, s.Dividend_Frequency,
                      s.Ex_Dividend_Date, s.Dividend_Pay_Date,
-                     s.Payout_Ratio, s.Five_Year_Avg_Yield,
+                     s.Payout_Ratio, s.Five_Year_Avg_Yield, s.Dividend_Paid_As,
                      s.Analyst_Rating, s.Analyst_Target_Price
             ORDER BY s.Ticker ASC
         """, conn, params=params if params else None)
@@ -974,6 +975,7 @@ def upsert_security(data: dict):
             _s('tax_category'),
             data.get('issuer_id') or None,
             (_s('country') or '').strip().upper()[:2] or None,
+            'Units' if data.get('dividend_paid_as') == 'Units' else None,   # NULL = Cash
         )
         cols = """Ticker, Securities_Name, Securities_Type, Currencies_Id,
                   Is_Active, Is_Tax_Exempt, ISIN, Sector, Industry,
@@ -983,7 +985,7 @@ def upsert_security(data: dict):
                   Ex_Dividend_Date, Dividend_Pay_Date,
                   Payout_Ratio, Five_Year_Avg_Yield,
                   Analyst_Rating, Analyst_Target_Price,
-                  Tax_Category, Issuer_Id, Country"""
+                  Tax_Category, Issuer_Id, Country, Dividend_Paid_As"""
         placeholders = ','.join(['%s'] * len(vals))
         if sid:
             set_clause = ', '.join(f"{c.strip()}=%s" for c in cols.split(','))

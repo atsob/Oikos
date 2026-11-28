@@ -14,7 +14,7 @@ export const EMPTY_SECURITY_FORM: Record<string, string> = {
   dividend_yield: '', dividend_rate: '', dividend_frequency: '', ex_dividend_date: '',
   dividend_pay_date: '', payout_ratio: '', five_year_avg_yield: '',
   analyst_rating: '', analyst_target_price: '',
-  tax_category: '', issuer_id: '', country: '',
+  tax_category: '', issuer_id: '', country: '', dividend_paid_as: '',
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
@@ -124,6 +124,13 @@ export function SecurityFormFields({ form, set, currencies, taxRules, issuers = 
       <FormField label="Dividend Pay Date"><Input type="date" value={form.dividend_pay_date} onChange={e => set('dividend_pay_date', e.target.value)} /></FormField>
       <FormField label="Payout Ratio %"><Input type="number" step="0.01" value={form.payout_ratio} onChange={e => set('payout_ratio', e.target.value)} placeholder="0.00" /></FormField>
       <FormField label="5Y Avg Yield %"><Input type="number" step="0.0001" value={form.five_year_avg_yield} onChange={e => set('five_year_avg_yield', e.target.value)} placeholder="0.0000" /></FormField>
+      <FormField label="Dividends Paid As">
+        <select className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm" value={form.dividend_paid_as === 'Units' ? 'Units' : ''} onChange={e => set('dividend_paid_as', e.target.value)}
+          title="Units: dividends come as new units or shares instead of cash (a fund that distributes in units, or a standing reinvestment plan). They still count as dividend income, but the Cash Flow Forecast leaves them out. A single dividend can differ: set Paid As on its row in the Dividends tab.">
+          <option value="">Cash</option>
+          <option value="Units">Units (reinvested)</option>
+        </select>
+      </FormField>
 
       <FormSection>Analyst</FormSection>
       <FormField label="Rating"><Input value={form.analyst_rating} onChange={e => set('analyst_rating', e.target.value)} placeholder="Buy" /></FormField>

@@ -1789,7 +1789,7 @@ _DIV_HIST_CTES = """
             WHERE NULLIF(TRIM(ISIN), '') IS NOT NULL AND NULLIF(TRIM(Dividend_Frequency), '') IS NOT NULL
             GROUP BY ISIN
         )"""
-_DIV_HIST_COLS = """dt.ttm_per_share, dt.ttm_payments, dsp.first_ex_date, isf.isin_frequency,
+_DIV_HIST_COLS = """dt.ttm_per_share, dt.ttm_payments, dsp.first_ex_date, isf.isin_frequency, s.Dividend_Paid_As AS dividend_paid_as,
             CASE WHEN pl.Close > 0 THEN dt.ttm_per_share / pl.Close * 100 END AS calc_yield"""
 _DIV_HIST_JOINS = """LEFT JOIN div_ttm dt ON dt.Securities_Id = s.Securities_Id
         LEFT JOIN div_span dsp ON dsp.Securities_Id = s.Securities_Id
@@ -1814,7 +1814,7 @@ def _div_add_months(d, n: int):
 def _load_declared_dividends(conn) -> dict:
     """Dividends already in a security's history but not paid yet, by security id, oldest first."""
     df = pd.read_sql("""
-        SELECT Securities_Id AS securities_id, Ex_Date AS ex_date, Pay_Date AS pay_date, Amount AS amount
+        SELECT Securities_Id AS securities_id, Ex_Date AS ex_date, Pay_Date AS pay_date, Amount AS amount, Paid_As AS paid_as
         FROM Securities_Dividends
         WHERE COALESCE(Pay_Date, Ex_Date) > CURRENT_DATE AND Amount > 0
         ORDER BY Ex_Date
@@ -1831,7 +1831,9 @@ def _project_security_dividends(r, declared: list, today, horizon_end) -> Option
     shares held → own 12-month dividend income. Frequency: provider → past year's payment count when the
     history covers a full year → another listing of the same ISIN → Quarterly assumed. Dividends already
     declared (in the history, not paid yet) come first at their own amount and dates; the following
-    payments are projected from the last of them. None when there is nothing to project."""
+    payments are projected from the last of them. Each payment says whether it comes as new units instead
+    of cash ("units"): a declared dividend's own Paid As, else the security's Dividend_Paid_As.
+    None when there is nothing to project."""
     from datetime import timedelta as _td
 
     def _num(v, default=0.0):
@@ -1910,6 +1912,8 @@ def _project_security_dividends(r, declared: list, today, horizon_end) -> Option
 
     ex_dates, pay_dates = _dates(ex_anchor), _dates(pay_anchor)
     amounts = [per_pmt] * len(pay_dates)
+    sec_units = r.get("dividend_paid_as") == "Units"
+    units = [sec_units] * len(pay_dates)
     if declared:
         lag_d = _td(days=lag or 0)
         dec = [(pd.Timestamp(d.ex_date).date(),
@@ -1919,12 +1923,14 @@ def _project_security_dividends(r, declared: list, today, horizon_end) -> Option
         ex_dates  = [e for e, _, _ in dec] + [e for e, _ in proj]
         pay_dates = [p for _, p, _ in dec] + [p for _, p in proj]
         amounts   = [a for _, _, a in dec] + [per_pmt] * len(proj)
+        units     = [(d.paid_as == "Units") if d.paid_as in ("Cash", "Units") else sec_units for d in declared] + [sec_units] * len(proj)
     return {
         "annual": annual, "method": method, "per_pmt": per_pmt, "ppy": ppy,
         "frequency": str(freq) if freq else "Quarterly (assumed)",
         "dividend_yield": float(dy) if pd.notna(dy) else None, "yield_calculated": bool(yield_calculated),
         "raw_ex": raw_ex, "raw_pay": raw_pay, "lag": lag, "declared": bool(declared),
-        "ex_dates": ex_dates, "pay_dates": pay_dates, "amounts": amounts,
+        "ex_dates": ex_dates, "pay_dates": pay_dates, "amounts": amounts, "units": units,
+        "paid_as_units": sec_units,
     }
 
 
@@ -2031,6 +2037,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
         ex_dates  = [d for d in next_ex_dates if d <= cutoff_date]
         in_period = [(d, a) for d, a in zip(next_pay_dates, next_amounts) if d <= cutoff_date]
         pay_dates = [d for d, _ in in_period]
+        units_in_period = [u for d, u in zip(next_pay_dates, pj["units"]) if d <= cutoff_date]
 
         rows.append({
             "securities_id":            int(r["securities_id"]),
@@ -2043,6 +2050,9 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             "period_forecast_eur":      round(sum(a for _, a in in_period), 2),
             "per_payment_eur":          round(next_amounts[0] if next_amounts else pj["per_pmt"], 2),   # the next payment (a declared one at its own amount)
             "declared":                 pj["declared"],
+            # paid in new units instead of cash: still income here, but no cash (the Cash Flow Forecast leaves it out)
+            "next_paid_in_units":       bool(pj["units"][0]) if pj["units"] else pj["paid_as_units"],
+            "period_units_eur":         round(sum(a for (_, a), u in zip(in_period, units_in_period) if u), 2),
             "payments_per_year":        pj["ppy"],
             "frequency":                pj["frequency"],
             "method":                   pj["method"],
@@ -2057,6 +2067,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             "_pay_dates":               [str(d) for d in pay_dates],
             "_pay_amounts":             [a for _, a in in_period],
             "_amounts_full":            next_amounts,
+            "_units_full":              pj["units"],
             # Full 13-month lookahead, independent of the selected period — backs
             # "Upcoming payments (next 3 months)", which stays a fixed near-term
             # view regardless of whether the broader forecast period is EOY/6m/12m.
@@ -2098,13 +2109,14 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
     cutoff_3m = str(_add_months(today, 3))
     upcoming: list = []
     for r in rows:
-        for ex_d, pay_d, amt in zip(r["_ex_dates_full"], r["_pay_dates_full"], r["_amounts_full"]):
+        for ex_d, pay_d, amt, un in zip(r["_ex_dates_full"], r["_pay_dates_full"], r["_amounts_full"], r["_units_full"]):
             if ex_d <= cutoff_3m:
                 upcoming.append({
                     "ex_date":         ex_d,
                     "pay_date":        pay_d,
                     "securities_name": r["securities_name"],
                     "per_payment_eur": round(amt, 2),
+                    "paid_in_units":   bool(un),
                     "frequency":       r["frequency"],
                     "method":          r["method"],
                 })
@@ -2125,6 +2137,7 @@ def get_dividends_forecast(period: str = Query("12m", pattern="^(eoy|6m|12m)$"),
             "total_period_eur":  round(total_period, 2),
             "total_annual_eur":  round(total_annual, 2),
             "total_monthly_eur": round(total_monthly, 2),
+            "total_period_units_eur": round(sum(r["period_units_eur"] for r in rows), 2),   # of which paid in units, not cash
             "securities_count":  len(by_security),
             "portfolio_yoc_pct": round(portfolio_yoc, 2),
         },
@@ -3962,7 +3975,9 @@ def get_cash_flow_forecast_full(
         pj = _project_security_dividends(r, declared_divs.get(int(r["securities_id"]), []), today, cutoff)
         if pj is None:
             continue
-        for d, amt in zip(pj["pay_dates"], pj["amounts"]):
+        for d, amt, un in zip(pj["pay_dates"], pj["amounts"], pj["units"]):
+            if un:
+                continue   # paid in new units, not cash: no cash flow
             if today < d <= cutoff:
                 dividend_rows.append({
                     'date': d.isoformat(),

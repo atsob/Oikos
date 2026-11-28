@@ -1114,6 +1114,20 @@ const SECTIONS: { id: string; label: string; body: React.ReactNode }[] = [
           covers a full year, otherwise from another listing of the same ISIN, otherwise Quarterly is assumed.
         </Note>
         <Note>
+          <b>Dividends paid in units.</b> Some dividends come as new units or shares instead of cash: a fund that
+          distributes in units, a standing reinvestment plan, or a scrip option you take for one dividend. Set
+          <b> Dividends Paid As → Units</b> on the security (Security → Setup) when that is how all its dividends come,
+          or set <b>Paid As</b> on a single row of Security → Dividends for one dividend (Default follows the
+          security). The Dividend Tracker still counts them as income, tagged <b>units</b>, with the units part shown
+          under the projected total; the Cash Flow Forecast leaves them out, since no cash arrives. When one is paid,
+          book it on Security → Corporate Actions → Dividend with <b>Paid as: Units</b> and the reinvestment price
+          (e.g. the fund's NAV on the pay date): each account gets a <b>Reinvest</b> entry — new units = net amount ÷
+          price, its amount the net value reinvested (the new units' cost), any withholding as tax — and no cash
+          transaction. Paid As stays the same on the Dividends row and the corporate action; switching it on either
+          re-books the transactions (cash Dividends with their cash transactions ⇄ Reinvest entries). A cash
+          transaction already reconciled with a bank statement blocks the switch.
+        </Note>
+        <Note>
           <b>Savings</b> has the same Actual/Forecast/Recommendations structure as Dividend Tracker. <b>Actual</b>{' '}
           has its own period selector, scoping interest/principal/YOC%/APY% to that window; the "Detail for Last
           Interest Period" table below it always shows each account's most recent real interest period,

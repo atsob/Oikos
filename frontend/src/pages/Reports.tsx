@@ -3462,7 +3462,7 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
   }
   type ForecastResult = {
     period: 'eoy' | '6m' | '12m'
-    summary: { total_period_eur: number; total_annual_eur: number; total_monthly_eur: number; securities_count: number; portfolio_yoc_pct: number }
+    summary: { total_period_eur: number; total_period_units_eur?: number; total_annual_eur: number; total_monthly_eur: number; securities_count: number; portfolio_yoc_pct: number }
     monthly_forecast: { month: string; income_eur: number }[]
     by_security: Row[]
     upcoming: Row[]
@@ -3558,6 +3558,8 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <p className="text-xs text-slate-500 mb-1"><Tooltip text={`Total projected dividend and interest income ${fcPeriod === 'eoy' ? 'between now and the end of this year' : `over the ${fcPeriod === '6m' ? 'next 6 months' : 'next 12 months'}`}, based on current holdings' real expected payment dates.`}>Projected ({FC_PERIOD_SHORT[fcPeriod]})</Tooltip></p>
                 <p className="text-xl font-bold text-green-600">{fmtEur(fcResult.summary.total_period_eur)}</p>
+                {(fcResult.summary.total_period_units_eur ?? 0) > 0 && (
+                  <p className="text-xs text-violet-600" title="Dividends paid in new units instead of cash: income, but no cash">of which {fmtEur(fcResult.summary.total_period_units_eur ?? 0)} in units</p>)}
               </div>
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <p className="text-xs text-slate-500 mb-1"><Tooltip text="Projected period total divided by the number of months in the period — average expected monthly income.">Monthly Average</Tooltip></p>
@@ -3622,7 +3624,7 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                         <td className="px-2 py-1.5 font-medium truncate" title={String(r.securities_name)}><SecLink id={r.securities_id}>{String(r.securities_name)}</SecLink></td>
                         <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.period_forecast_eur))}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{fmtEur(Number(r.annual_forecast_eur))}</td>
-                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{fmtEur(Number(r.per_payment_eur))}{r.next_paid_in_units ? <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-violet-100 text-violet-700 font-medium" title="Paid in new units instead of cash: counted as dividend income, but left out of the Cash Flow Forecast">units</span> : null}</td>
                         <td className="px-2 py-1.5 text-slate-500 truncate" title={String(r.frequency)}>{String(r.frequency)}</td>
                         <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">{r.dividend_yield != null ? `${Number(r.dividend_yield).toFixed(2)}%` : '—'}{r.dividend_yield != null && r.yield_calculated ? <span className="text-slate-400" title="Calculated: last 12 months of the dividend history ÷ latest close">*</span> : null}</td>
                         <td className="px-2 py-1.5 text-right text-slate-500 whitespace-nowrap">{r.next_expected_ex_date ? String(r.next_expected_ex_date).slice(0, 10) : '—'}</td>
@@ -3668,7 +3670,7 @@ function DividendTrackerTab({ accountIds }: { accountIds?: number[] }) {
                               <td className="px-3 py-2 text-slate-500">{String(r.ex_date).slice(0, 10)}</td>
                               <td className="px-3 py-2 text-slate-500">{String(r.pay_date).slice(0, 10)}</td>
                               <td className="px-3 py-2 font-medium">{String(r.securities_name)}</td>
-                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.per_payment_eur))}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{fmtEur(Number(r.per_payment_eur))}{r.paid_in_units ? <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-violet-100 text-violet-700 font-medium" title="Paid in new units instead of cash: counted as dividend income, but left out of the Cash Flow Forecast">units</span> : null}</td>
                               <td className="px-3 py-2 text-slate-500">{String(r.frequency)}</td>
                               <td className="px-3 py-2 text-slate-500 text-xs">{String(r.method)}</td>
                             </tr>
