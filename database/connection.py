@@ -326,6 +326,11 @@ def _seed_reference_data(conn) -> None:
          for (t, name, typ, ccy, sector, industry, yt, tvs, tve, isin, taxcat, active, taxexempt)
          in sd.SECURITIES],
     )
+    # Funds whose distributions are paid as new units (Reinvest), not cash.
+    cur.executemany(
+        "UPDATE Securities SET Dividend_Paid_As = 'Units' WHERE Ticker = %s",
+        [(t,) for t in sd.SECURITIES_DIVIDENDS_IN_UNITS],
+    )
 
     # Where each seeded fund's country/currency breakdown is refreshed from (the monthly Fund Country Exposure
     # job), and single-country index funds, which are 100% that country by definition.

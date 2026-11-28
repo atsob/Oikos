@@ -3206,3 +3206,9 @@ FUND_COUNTRY_SOURCES = [
 FUND_COUNTRY_INDEX = [
     ('VUAA.DE', 'Stocks', 'US', 100.0, 'S&P 500 index: US companies only'),
 ]
+
+# Tickers of seeded funds that pay their distributions as new units, not cash (their KID says so); seeded with
+# Dividend_Paid_As = 'Units', so their dividends book Reinvest transactions and stay out of the Cash Flow Forecast.
+SECURITIES_DIVIDENDS_IN_UNITS = [
+    'AETF.AT',  # ALPHA ETF FTSE Athex Large Cap: annual distribution at the end of June, in units of the fund
+]
