@@ -715,6 +715,9 @@ export const deleteSecurityTopHolding = (secId: number, holdingId: number) =>
 export const getSecurityDividends = (secId: number) =>
   api.get(`/securities/${secId}/dividends`).then(r => r.data)
 
+export const getSecurityDividendStats = (secId: number) =>
+  api.get(`/securities/${secId}/dividend-stats`).then(r => r.data)
+
 export const createSecurityDividend = (secId: number, data: Record<string, unknown>) =>
   api.post(`/securities/${secId}/dividends`, data).then(r => r.data)
 

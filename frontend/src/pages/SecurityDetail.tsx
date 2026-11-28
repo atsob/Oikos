@@ -24,7 +24,7 @@ import {
   setSecurityMorningstarCategory,
   setSecurityAssetMixOverride, setSecurityAssetClassOverride, setSecurityExpenseRatioOverride, setSecurityFieldOverride, setSecurityBreakdownOverride,
   addSecurityTopHolding, updateSecurityTopHolding, deleteSecurityTopHolding,
-  getSecurityDividends, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
+  getSecurityDividends, getSecurityDividendStats, createSecurityDividend, updateSecurityDividend, deleteSecurityDividend, deleteSecurityDividendsBulk,
   getSecurityCorporateActions, updateCorporateAction, deleteCorporateAction,
   previewCorporateAction, executeCorporateAction, applySplitCorporateAction,
   getSecurityPriceAnomalies, deleteSecurityPrice,
@@ -1290,6 +1290,23 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     createMut.mutate({ ex_date: newExDate, pay_date: newPayDate || null, amount: Number(newAmount) })
   }
 
+  // Provider (Yahoo) figures first; where it gave none, the figure worked out from the dividend history and prices, marked "Calculated"
+  const { data: statsData } = useQuery({ queryKey: ['sec-dividends', secId, 'stats'], queryFn: () => getSecurityDividendStats(secId) })
+  const stats = (statsData ?? {}) as Record<string, unknown>
+  const pick = (key: string, fmt: (v: number) => string, note: string) => {
+    if (security[key] != null && security[key] !== '') return { value: fmt(Number(security[key])) }
+    if (stats[key] != null) return { value: fmt(Number(stats[key])), sub: note }
+    return { value: '—' }
+  }
+  const pickText = (key: string, note: string) => {
+    if (security[key] != null && security[key] !== '') return { value: String(security[key]) }
+    if (stats[key] != null) return { value: String(stats[key]), sub: note }
+    return { value: '—' }
+  }
+  const statsRateNote = 'Calculated: dividends of the last 12 months'
+  const statsYieldNote = `Calculated: last 12 months over the ${stats.price_date ?? 'latest'} close`
+  const statsFiveNote = `Calculated: average of ${Number(stats.five_year_years ?? 0)} complete year(s), dividends over average close`
+
   // Bar chart: total per year
   const byYear = useMemo(() => {
     const map: Record<string, number> = {}
@@ -1304,15 +1321,16 @@ function DividendsTab({ secId, security }: { secId: number; security: Record<str
     <div className="p-3 sm:p-4 space-y-5">
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Dividend Yield" value={fmtPct(security.dividend_yield != null ? Number(security.dividend_yield) : null)} />
-        <StatCard label="Annual Rate" value={security.dividend_rate != null ? fmtNum(Number(security.dividend_rate), 4) : '—'} />
-        <StatCard label="5Y Avg Yield" value={fmtPct(security.five_year_avg_yield != null ? Number(security.five_year_avg_yield) : null)} />
-        <StatCard label="Payout Ratio" value={fmtPct(security.payout_ratio != null ? Number(security.payout_ratio) : null)} />
+        <StatCard label="Dividend Yield" {...pick('dividend_yield', v => fmtPct(v), statsYieldNote)} />
+        <StatCard label="Annual Rate" {...pick('dividend_rate', v => fmtNum(v, 4), statsRateNote)} />
+        <StatCard label="5Y Avg Yield" {...pick('five_year_avg_yield', v => fmtPct(v), statsFiveNote)} />
+        <StatCard label="Payout Ratio" value={fmtPct(security.payout_ratio != null ? Number(security.payout_ratio) : null)}
+          sub={security.payout_ratio == null ? 'Needs earnings data; not calculated' : undefined} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <StatCard label="Ex-Dividend Date" value={String(security.ex_dividend_date ?? '—')} />
-        <StatCard label="Payment Date" value={String(security.dividend_pay_date ?? '—')} />
-        <StatCard label="Frequency" value={String(security.dividend_frequency ?? '—')} />
+        <StatCard label="Ex-Dividend Date" {...pickText('ex_dividend_date', 'Calculated: last ex-date in history')} />
+        <StatCard label="Payment Date" {...pickText('dividend_pay_date', 'Calculated: last pay date in history')} />
+        <StatCard label="Frequency" {...pickText('dividend_frequency', `Calculated: ${Number(stats.payments_12m ?? 0)} payments in the last 12 months`)} />
       </div>
 
       {isLoading ? <div className="flex justify-center py-8"><Spinner /></div> : (

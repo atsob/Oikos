@@ -644,6 +644,54 @@ def get_security_dividends(sec_id: int):
     return _df(df)
 
 
+@router.get("/{sec_id}/dividend-stats")
+def get_security_dividend_stats(sec_id: int):
+    """Dividend figures worked out from the stored dividend history and prices, for the Dividends tab to show where the
+    provider gave none: trailing-12-month rate and yield, 5-year average yield (each complete year's dividends over that
+    year's average close), last ex/pay date and the frequency seen over the past year. Payout ratio needs earnings, so none."""
+    with get_db() as conn:
+        divs = pd.read_sql("""
+            SELECT ex_date, pay_date, amount FROM securities_dividends
+            WHERE securities_id = %(sid)s AND amount IS NOT NULL ORDER BY ex_date
+        """, conn, params={"sid": sec_id})
+        px = pd.read_sql("""
+            SELECT Close AS price, Date::text AS price_date FROM Historical_Prices
+            WHERE Securities_Id = %(sid)s AND Close IS NOT NULL ORDER BY Date DESC LIMIT 1
+        """, conn, params={"sid": sec_id})
+        yearly_px = pd.read_sql("""
+            SELECT EXTRACT(YEAR FROM Date)::int AS yr, AVG(Close) AS avg_close FROM Historical_Prices
+            WHERE Securities_Id = %(sid)s AND Close > 0 AND Date >= (date_trunc('year', CURRENT_DATE) - interval '5 years')
+            GROUP BY 1
+        """, conn, params={"sid": sec_id})
+    if divs.empty:
+        return {}
+    divs["ex_date"] = pd.to_datetime(divs["ex_date"])
+    today = pd.Timestamp.today().normalize()
+    ttm = divs[divs["ex_date"] > today - pd.DateOffset(years=1)]
+    rate = float(ttm["amount"].sum()) if not ttm.empty else None
+    price = float(px["price"].iloc[0]) if not px.empty else None
+    out: dict = {
+        "dividend_rate": round(rate, 6) if rate else None,
+        "dividend_yield": round(rate / price * 100, 4) if rate and price else None,
+        "price": price,
+        "price_date": px["price_date"].iloc[0] if not px.empty else None,
+        "payments_12m": int(len(ttm)),
+    }
+    # 5-year average: complete calendar years only (the current one is still running)
+    avg_px = {int(r.yr): float(r.avg_close) for r in yearly_px.itertuples()}
+    by_year = divs.groupby(divs["ex_date"].dt.year)["amount"].sum()
+    yields = [float(by_year[y]) / avg_px[y] * 100 for y in range(today.year - 5, today.year) if y in by_year.index and avg_px.get(y)]
+    out["five_year_avg_yield"] = round(sum(yields) / len(yields), 4) if yields else None
+    out["five_year_years"] = len(yields)
+    last = divs.iloc[-1]
+    out["ex_dividend_date"] = last["ex_date"].date().isoformat()
+    out["dividend_pay_date"] = str(last["pay_date"]) if pd.notna(last["pay_date"]) else None
+    n = len(ttm)
+    out["dividend_frequency"] = {1: "Annual", 2: "Semi-Annual", 3: "Quarterly", 4: "Quarterly", 12: "Monthly"}.get(n) or (
+        "Monthly" if n >= 10 else "Quarterly" if n >= 3 else None)
+    return out
+
+
 @router.post("/{sec_id}/dividends")
 def create_security_dividend(sec_id: int, data: dict):
     conn = get_connection()
